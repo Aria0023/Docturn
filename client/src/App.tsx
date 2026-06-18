@@ -7,6 +7,8 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Messaging } from "@/pages/Messaging";
 import { Directory } from "@/pages/Directory";
 import { Settings } from "@/pages/Settings";
+import { PatientBoard } from "@/pages/PatientBoard";
+import { DevConsole } from "@/pages/DevConsole";
 
 export function App() {
   const { user, loading } = useAuth();
@@ -26,9 +28,11 @@ export function App() {
       <AppShell>
         <Switch>
           <Route path="/" component={Dashboard} />
+          <Route path="/board" component={PatientBoard} />
           <Route path="/messages" component={Messaging} />
           <Route path="/directory" component={Directory} />
           <Route path="/settings" component={Settings} />
+          <Route path="/console" component={DevConsole} />
           <Route>
             <div className="text-sm text-muted-foreground">Not found.</div>
           </Route>

@@ -26,14 +26,23 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | M5 | Secure messaging (conversations, send, read receipts, soft-delete) | ✅ |
 | M6 | WebSocket realtime: presence, heartbeat, tenant-scoped fan-out | ✅ |
 | M7 | React web client (login, role dashboards, messaging, directory, settings) | ✅ |
-| C1 | Runtime settings (`org_settings` / `user_preferences`) | ✅ (routes) |
+| M8 | Hardening: Helmet, tiered rate limiting, error shape, audit, reduced-motion | ✅ |
+| M9 | Full MFA: TOTP enroll/verify, single-use backup codes, SMS OTP, 202 gate | ✅ |
+| M10 | Live integration factories (OpenAI/Twilio+carriers/FCM) — env-gated, stubbed | ✅ |
+| M11 | Registration approval queue + developer console + CMS | ✅ |
+| M12 | Departments/beds/equipment + metrics; emergency broadcasts + acks | ✅ |
+| M13 | Mobile API + Expo app skeleton (`mobile-app/`) | ✅ |
+| M14 | PHI logging on PHI routes, audit on sensitive actions, login rate-limit | ✅ |
+| C1 | Runtime settings (`org_settings` / `user_preferences`) | ✅ |
+| C2 | Per-org feature flags | ✅ |
+| C3 | Adaptive suggestions (analyze → propose with evidence → human accept) | ✅ |
+| v2 | Care-team on-call units + fan-out/accept-lock, patient board, consults, census override, dev provisioning | ✅ |
 
-Remaining per `design/design_handoff_docturn/14_BUILD_PLAN.md`: **M8** hardening, **M9–M14** MFA /
-live integrations / dev console / scheduling / mobile / compliance closeout, and **C2–C3** flags +
-adaptive suggestions. The design system and high-fidelity UI kits live in [`design/`](design/).
+The full build plan is implemented. The design system and high-fidelity UI kits live in
+[`design/`](design/).
 
-`npm test` is green (21 tests across auth, the assignment state machine, messaging, and realtime
-WebSocket delivery).
+`npm test` is green (37 tests: auth, assignment state machine, messaging, realtime WebSocket, MFA,
+notification escalation, and the v2/platform features).
 
 ## Web client
 
@@ -41,7 +50,10 @@ A React 18 + Vite + Tailwind SPA in [`client/`](client/), wired to the API with 
 (query keys = endpoint paths) and a `WebSocketProvider` that invalidates queries on realtime events.
 Routing is `wouter`; theme tokens map to `design/colors_and_type.css`. Screens: login, role-aware
 dashboards (hospitalist accept/decline + on-shift toggle, ER intake with AI extraction + routing,
-director provider/rotation controls), messaging with read receipts, directory, and settings.
+director provider/rotation controls + emergency broadcast), the v2 **patient board**, messaging with
+read receipts, directory, a developer **console**, and settings (2FA enrollment, care-team
+management, adaptive suggestions, feature flags). A live broadcast banner acknowledges org-wide
+alerts over WebSocket.
 
 ```bash
 npm run dev            # API on :3000
@@ -49,6 +61,13 @@ npm run dev:client     # Vite dev server on :5173, proxying /api + /ws to :3000
 # or, single-origin: build the SPA and let Express serve it
 npm run build:client && npm run dev   # open http://localhost:3000
 ```
+
+## Mobile app
+
+An Expo / React Native app in [`mobile-app/`](mobile-app/) shares the backend through a typed
+`ApiClient`: bottom-tab navigation, login (QR org onboarding via the public `/api/mobile/org/:code`),
+a realtime pending-assignment queue over a native WebSocket, and FCM/APNs device-token registration.
+See [`mobile-app/README.md`](mobile-app/README.md).
 
 ## Architecture
 

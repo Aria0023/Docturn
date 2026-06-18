@@ -80,3 +80,60 @@ export interface Message {
   createdAt: string;
   deletedAt: string | null;
 }
+
+export interface BoardRow {
+  patient: {
+    id: number;
+    initials: string;
+    room: string | null;
+    department: string | null;
+    issue: string;
+    status: string;
+  };
+  responsible: {
+    attending: { userId: number; displayName: string } | null;
+    unit: Array<{ userId: number; credential: string | null; displayName: string }>;
+  } | null;
+  consultants: string[];
+  admittedBy: { userId: number; displayName: string } | null;
+  status: string;
+}
+
+export interface CareTeam {
+  owner: { userId: number; displayName: string };
+  members: Array<{
+    userId: number;
+    displayName: string;
+    credential: string | null;
+    onCall: boolean;
+  }>;
+}
+
+export interface Candidate {
+  userId: number;
+  displayName: string;
+  credential: string | null;
+  role: string;
+}
+
+export interface Suggestion {
+  id: number;
+  key: string;
+  proposedValue: unknown;
+  evidence: string | null;
+  status: string;
+}
+
+export interface FeatureFlag {
+  id: number;
+  flag: string;
+  enabled: boolean;
+  variant: string | null;
+}
+
+export interface Broadcast {
+  id: number;
+  message: string;
+  severity: "info" | "urgent" | "critical";
+  createdAt: string;
+}

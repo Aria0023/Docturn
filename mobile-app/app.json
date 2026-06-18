@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "DocTurn",
+    "slug": "docturn",
+    "scheme": "docturn",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": { "backgroundColor": "#2563EB" },
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.docturn.app" },
+    "android": { "package": "com.docturn.app" },
+    "extra": {
+      "apiBaseUrl": "http://localhost:3000"
+    }
+  }
+}

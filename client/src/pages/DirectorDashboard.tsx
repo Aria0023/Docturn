@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Hospitalist, User } from "@/lib/types";
@@ -6,6 +7,7 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  Input,
   Stat,
 } from "@/components/ui";
 
@@ -52,6 +54,13 @@ export function DirectorDashboard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/org/config"] }),
   });
 
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const broadcast = useMutation({
+    mutationFn: (severity: "urgent" | "critical") =>
+      api.post("/api/broadcasts", { message: broadcastMsg, severity }),
+    onSuccess: () => setBroadcastMsg(""),
+  });
+
   const working = hospitalists.filter((h) => h.working).length;
   const totalCensus = hospitalists.reduce(
     (s, h) => s + h.currentPatientCount,
@@ -61,6 +70,31 @@ export function DirectorDashboard() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Director dashboard</h1>
+
+      <Card>
+        <CardHeader title="Emergency broadcast" subtitle="Org-wide, acknowledged" />
+        <div className="flex gap-2 p-6">
+          <Input
+            placeholder="Message to all staff…"
+            value={broadcastMsg}
+            onChange={(e) => setBroadcastMsg(e.target.value)}
+          />
+          <Button
+            variant="secondary"
+            disabled={!broadcastMsg}
+            onClick={() => broadcast.mutate("urgent")}
+          >
+            Urgent
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!broadcastMsg}
+            onClick={() => broadcast.mutate("critical")}
+          >
+            Critical
+          </Button>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-4 gap-4">
         <Stat label="Providers" value={hospitalists.length} />

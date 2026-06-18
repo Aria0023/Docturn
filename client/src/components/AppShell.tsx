@@ -4,14 +4,17 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   LayoutDashboard,
+  LayoutGrid,
   MessageSquare,
   Users,
   Settings as SettingsIcon,
+  Terminal,
   LogOut,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import type { Assignment, Role } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { BroadcastBanner } from "./BroadcastBanner";
 
 interface NavItem {
   href: string;
@@ -28,10 +31,22 @@ const NAV: NavItem[] = [
     roles: ["director", "er_director", "er_doctor", "hospitalist", "developer"],
   },
   {
+    href: "/board",
+    label: "Patient board",
+    icon: <LayoutGrid size={18} />,
+    roles: ["director", "er_director", "er_doctor", "hospitalist"],
+  },
+  {
     href: "/messages",
     label: "Messages",
     icon: <MessageSquare size={18} />,
     roles: ["director", "er_director", "er_doctor", "hospitalist", "developer"],
+  },
+  {
+    href: "/console",
+    label: "Console",
+    icon: <Terminal size={18} />,
+    roles: ["developer"],
   },
   {
     href: "/directory",
@@ -116,6 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="flex-1 overflow-auto">
+        <BroadcastBanner />
         <div className="mx-auto max-w-6xl p-6">{children}</div>
       </main>
     </div>
