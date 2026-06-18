@@ -143,9 +143,12 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   };
 }
 
-// CLI entrypoint: wipe-and-reseed the persistent dev database.
-const isMain =
-  process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+// CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
+// backslashes so this also fires on Windows (the naive `file://${argv[1]}`
+// string compare fails on Windows paths, silently skipping the seed).
+const isMain = process.argv[1]
+  ?.replace(/\\/g, "/")
+  .endsWith("server/seed.ts");
 if (isMain) {
   (async () => {
     const handle = getHandle();
