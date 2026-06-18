@@ -156,15 +156,21 @@ if (isMain) {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
     try {
-      const result = await seed(storage);
-      console.log(
-        `Seeded org MERCY (#${result.orgId}) with ${Object.keys(result.userIds).length} users. Dev password: "${DEV_PASSWORD}".`,
-      );
+      // Idempotent: if the demo org already exists, skip cleanly rather than
+      // failing on the unique-code constraint.
+      const existing = await storage.getOrganizationByCode("MERCY");
+      if (existing) {
+        console.log(
+          'Database already seeded (org MERCY exists) — nothing to do. To reseed from scratch, delete the ".pglite" folder and run "npm run seed" again.',
+        );
+      } else {
+        const result = await seed(storage);
+        console.log(
+          `Seeded org MERCY (#${result.orgId}) with ${Object.keys(result.userIds).length} users. Dev password: "${DEV_PASSWORD}".`,
+        );
+      }
     } catch (err) {
-      console.error(
-        "Seed failed (already seeded? run against a fresh DB):",
-        err,
-      );
+      console.error("Seed failed:", err);
       process.exitCode = 1;
     }
     await handle.close();
