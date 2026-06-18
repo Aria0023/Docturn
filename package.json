@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "dev:client": "npm --prefix client run dev",
+    "dev:client": "npm --prefix client install && npm --prefix client run dev",
     "build": "npm run build:client && tsc -p tsconfig.json",
     "build:client": "npm --prefix client install && npm --prefix client run build",
     "start": "node dist/server/index.js",
