@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import session from "express-session";
 import passport from "passport";
 import helmet from "helmet";
@@ -18,7 +18,9 @@ export interface CreateAppOptions {
 /**
  * Build the Express app: security middleware, session, Passport, routes, and a
  * consistent JSON error shape. Listening is the caller's job (so Supertest can
- * use the app directly).
+ * use the app directly). The configured session middleware is stashed on
+ * `app.locals.sessionMiddleware` so the WebSocket server can authenticate the
+ * upgrade request against the SAME session store.
  */
 export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
@@ -42,22 +44,23 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     process.env.SESSION_SECRET ??
     randomBytes(32).toString("hex");
 
-  app.use(
-    session({
-      name: "docturn.sid",
-      secret,
-      resave: false,
-      saveUninitialized: false,
-      store,
-      rolling: true, // 15-minute rolling, inactivity expiry.
-      cookie: {
-        httpOnly: true,
-        sameSite: "strict",
-        secure: isProd,
-        maxAge: 15 * 60 * 1000,
-      },
-    }),
-  );
+  const sessionMiddleware: RequestHandler = session({
+    name: "docturn.sid",
+    secret,
+    resave: false,
+    saveUninitialized: false,
+    store,
+    rolling: true, // 15-minute rolling, inactivity expiry.
+    cookie: {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: isProd,
+      maxAge: 15 * 60 * 1000,
+    },
+  });
+  app.locals.sessionMiddleware = sessionMiddleware;
+
+  app.use(sessionMiddleware);
 
   configurePassport();
   app.use(passport.initialize());
