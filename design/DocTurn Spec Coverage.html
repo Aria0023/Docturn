@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Spec Coverage & Gap Analysis" subtitle="Full vision spec vs. v1 buildable blueprint — what's in, partial, or deferred" viewport="1080x620" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Spec Coverage &amp; Gap Analysis</title>
+<style>
+  :root{
+    --primary:#2563EB; --fg:#0b1220; --muted:#64748B; --border:#E2E8F0; --bg:#fff;
+    --secondary:#F1F5F9; --sky:#0EA5E9; --sky7:#0369A1;
+    --pending:#D97706; --pending-bg:#FEF3C7; --accepted:#059669; --accepted-bg:#D1FAE5;
+    --active:#2563EB; --active-bg:#DBEAFE; --rejected:#DC2626; --rejected-bg:#FEE2E2;
+    --neutral:#64748B; --neutral-bg:#F1F5F9;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --marketing:linear-gradient(160deg,#E0F2FE 0%,#FFFFFF 52%,#FFE4E6 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--sans);color:var(--fg);background:#F6F8FB;-webkit-font-smoothing:antialiased;line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  a{color:var(--primary)}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  /* hero */
+  header.hero{background:var(--marketing);border-bottom:1px solid var(--border)}
+  .hero-in{padding:40px 0 44px;display:flex;flex-direction:column;gap:18px}
+  .brand{display:flex;align-items:center;gap:13px}
+  .glyph{width:48px;height:48px;border-radius:13px;background:var(--primary);color:#fff;font-weight:700;font-size:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(37,99,235,.28)}
+  .brand .nm{font-size:22px;font-weight:700;letter-spacing:-.01em}
+  .brand .tag{font-size:12.5px;color:var(--muted)}
+  h1{font-size:40px;line-height:1.08;letter-spacing:-.025em;margin:6px 0 0;max-width:780px}
+  .lede{font-size:17px;color:#475569;max-width:720px;margin:0}
+  /* verdict pills */
+  .scorerow{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+  .score{display:inline-flex;align-items:center;gap:9px;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.85);padding:9px 14px;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+  .score .big{font-size:21px;font-weight:800;letter-spacing:-.02em}
+  .score .lbl{font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);line-height:1.2}
+  .score.cov .big{color:var(--accepted)} .score.par .big{color:var(--pending)} .score.mis .big{color:var(--rejected)}
+  /* sections */
+  section{padding:40px 0}
+  section + section{border-top:1px solid var(--border)}
+  .kicker{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--sky)}
+  h2{font-size:27px;letter-spacing:-.02em;margin:9px 0 4px}
+  h3{font-size:16px;margin:0 0 4px}
+  p.sub{color:var(--muted);margin:0 0 22px;max-width:760px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:860px){.g2,.g3{grid-template-columns:1fr}}
+  .pad{padding:18px}
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 20px}
+  .st{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:99px}
+  .st-cov{background:var(--accepted-bg);color:var(--accepted)}
+  .st-par{background:var(--pending-bg);color:var(--pending)}
+  .st-mis{background:var(--rejected-bg);color:var(--rejected)}
+  .dot{width:9px;height:9px;border-radius:99px;background:currentColor;flex:none}
+  /* matrix table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;background:#FbFcFe}
+  tbody tr:last-child td{border-bottom:none}
+  td .cap{font-weight:600;color:var(--fg)}
+  td .note{color:var(--muted);font-size:12.5px;margin-top:2px;display:block}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:4px 9px;border-radius:7px;white-space:nowrap}
+  .b-cov{background:var(--accepted-bg);color:var(--accepted)}
+  .b-par{background:var(--pending-bg);color:var(--pending)}
+  .b-mis{background:var(--rejected-bg);color:var(--rejected)}
+  .rowstripe:hover{background:#FbFcFe}
+  /* agent chain */
+  .chain{display:flex;flex-direction:column;gap:10px}
+  .agent{display:flex;align-items:flex-start;gap:13px;padding:13px 15px;border:1px solid var(--border);border-radius:12px;background:#fff}
+  .agent .ab{flex:none;margin-top:1px}
+  .agent .an{font-weight:600;font-size:14px}
+  .agent .ad{font-size:12.5px;color:var(--muted);margin-top:2px}
+  /* contrast cols */
+  .vs{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:#fff}
+  @media(max-width:860px){.vs{grid-template-columns:1fr}}
+  .vs .col{padding:20px}
+  .vs .col + .col{border-left:1px solid var(--border)}
+  @media(max-width:860px){.vs .col + .col{border-left:none;border-top:1px solid var(--border)}}
+  .vs h3{display:flex;align-items:center;gap:9px;margin:0 0 12px}
+  .vs .tagm{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:3px 8px;border-radius:6px}
+  ul.tight{margin:0;padding-left:18px}
+  ul.tight li{margin:6px 0;font-size:13.5px}
+  ul.tight li::marker{color:var(--muted)}
+  .note-box{border-radius:12px;padding:14px 16px;font-size:13.5px;display:flex;gap:11px;line-height:1.5}
+  .note-warn{background:#FEF2F2;border:1px solid #FECACA;color:#7f1d1d}
+  .note-info{background:#EFF6FF;border:1px solid #BFDBFE;color:#1e3a8a}
+  .note-box b{font-weight:700}
+  .recs{display:flex;flex-direction:column;gap:0}
+  .rec{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--border)}
+  .rec:last-child{border-bottom:none}
+  .rec .pr{flex:none;width:54px}
+  .rec .pr span{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 8px;border-radius:6px}
+  .pr-now span{background:var(--rejected-bg);color:var(--rejected)}
+  .pr-next span{background:var(--pending-bg);color:var(--pending)}
+  .pr-later span{background:var(--neutral-bg);color:var(--neutral)}
+  .rec .rt{font-size:13.5px}
+  .rec .rt b{font-weight:600}
+  footer{padding:30px 0 50px;color:var(--muted);font-size:12.5px}
+  .colhead{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Spec Coverage &amp; Gap Analysis · vision spec ↔ v1 blueprint</div></div>
+    </div>
+    <h1>Does the v1 architecture include the full spec's functionality?</h1>
+    <p class="lede"><b>Short answer: no — and on purpose.</b> The Implementation Architecture is a deliberately trimmed backend that runs locally with zero secrets. This sheet verifies, line by line, which of the full spec's 13 capabilities and 6 agents are <b>covered</b>, <b>partial</b>, or <b>deferred</b> — and flags the one omission that matters most.</p>
+    <div class="scorerow">
+      <div class="score cov"><span class="big">2</span><span class="lbl">Fully<br>covered</span></div>
+      <div class="score par"><span class="big">5</span><span class="lbl">Partial /<br>stubbed</span></div>
+      <div class="score mis"><span class="big">6</span><span class="lbl">Missing /<br>deferred</span></div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Capability matrix</div>
+    <h2>The 13 core capabilities, verified against the blueprint</h2>
+    <p class="sub">Each capability from spec §1.2 mapped to what the Implementation Architecture actually models. Status reflects the blueprint's stated scope — not a defect.</p>
+    <div class="legend">
+      <span class="st st-cov"><span class="dot"></span>Covered — modeled &amp; tested in v1</span>
+      <span class="st st-par"><span class="dot"></span>Partial — present but reduced or stubbed</span>
+      <span class="st st-mis"><span class="dot"></span>Missing — not in v1 (deferred)</span>
+    </div>
+    <div class="card" style="overflow:hidden">
+      <table>
+        <thead><tr><th style="width:30%">Capability (full spec)</th><th style="width:13%">Status</th><th>How the v1 blueprint handles it</th></tr></thead>
+        <tbody>
+          <tr class="rowstripe"><td><span class="cap">Natural voice / text request interface</span></td><td><span class="badge b-mis">Missing</span></td><td>Only a single <code>POST /api/patients/extract</code> returning mock AI fields. No voice capture, no conversational turn-taking.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Multi-agent AI system w/ layered verification</span><span class="note">LangGraph: Orchestrator · Extraction · Drafting · Verification · Guardrail · Routing</span></td><td><span class="badge b-mis">Missing</span></td><td>The entire agent layer collapses to one deterministic mock extractor. <b>This is the product's core differentiator — and it is absent from v1.</b></td></tr>
+          <tr class="rowstripe"><td><span class="cap">Flexible Amion routing, manual-first (RR optional)</span></td><td><span class="badge b-par">Partial</span></td><td>Blueprint is <b>round-robin-centric</b> (lowest-census selection); Amion is a local schedule stub; manual is a route flag. Spec emphasizes manual-first with RR <em>never forced</em>.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Live queue with acuity prioritization (1–5)</span></td><td><span class="badge b-mis">Missing</span></td><td>No acuity score, no prioritized surfacing. Assignments are a flat state machine ordered by creation.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">HIPAA secure messaging + delivery/read receipts</span></td><td><span class="badge b-cov">Covered</span></td><td><code>conversations</code> + <code>messages</code> + <code>message_delivery_status</code> + <code>/mark-read</code>, participant-scoped. Solid.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Text-message fallback (read-only Accept/Deny link)</span></td><td><span class="badge b-mis">Missing</span></td><td>SMS is a console-logging stub only. No tokenized read-only link flow — and not listed in the &ldquo;Later&rdquo; set either.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Full Epic integration (Redox/Keragon/FHIR) + standalone</span></td><td><span class="badge b-par">Partial</span></td><td>Integrations sit behind interfaces with stubs — effectively <b>standalone mode</b> ✓. Epic/FHIR not modeled; live integration is explicitly &ldquo;Later.&rdquo;</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Insurance-aware routing suggestions</span></td><td><span class="badge b-mis">Missing</span></td><td>No insurance fields on <code>patients</code>; no insurance routing rules in org config.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Comprehensive audit logging</span></td><td><span class="badge b-cov">Covered</span></td><td><code>audit_logs</code> table (action · resource · risk). Lightweight but present and asserted.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Consult vs. Admission distinct workflows</span><span class="note">Admission adds bed availability, level of care, isolation, draft H&amp;P</span></td><td><span class="badge b-mis">Missing</span></td><td>Single generic assignment flow. No request-type branching, no admission-specific data or H&amp;P generation.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Director config: timeouts, escalation, override, analytics, insurance rules</span></td><td><span class="badge b-par">Partial</span></td><td>Org config + rotation reset + reassign/cancel present. Escalation thresholds, system-wide analytics, and insurance rules absent.</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Five roles incl. ER Director &amp; Developer/Platform Operator</span></td><td><span class="badge b-par">Partial</span></td><td>RBAC + tenant scoping scaffolded. ER Director not enumerated; cross-tenant Developer console is &ldquo;Later.&rdquo;</td></tr>
+          <tr class="rowstripe"><td><span class="cap">Auto-reminders &amp; escalation on no-acknowledgement</span></td><td><span class="badge b-par">Partial</span></td><td>Expiry → reroute tick exists. Reminder cadence and director-escalation path not modeled.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">The biggest gap</div>
+    <h2>Agent-by-agent: the verification core is the missing piece</h2>
+    <p class="sub">The spec frames a stateful hierarchical multi-agent system as DocTurn's reason for being — &ldquo;nothing critical is missed.&rdquo; Here is how each agent fares in v1.</p>
+    <div class="grid g2">
+      <div class="chain">
+        <div class="agent"><span class="ab badge b-mis">Missing</span><div><div class="an">Orchestrator Agent</div><div class="ad">Central brain — request typing, sequencing, final synthesis &amp; preview. No equivalent in v1.</div></div></div>
+        <div class="agent"><span class="ab badge b-par">Partial</span><div><div class="an">Data Extraction Agent</div><div class="ad">Reduced to a deterministic mock extractor. No Epic pull, no normalization/flagging of stale data.</div></div></div>
+        <div class="agent"><span class="ab badge b-mis">Missing</span><div><div class="an">Consult / Admission Drafting Agent</div><div class="ad">No draft order or H&amp;P generation; no service/urgency suggestions.</div></div></div>
+      </div>
+      <div class="chain">
+        <div class="agent" style="border-color:#FECACA;background:#FEF2F2"><span class="ab badge b-mis">Missing</span><div><div class="an">Verification Agent <span style="color:var(--rejected)">— critical safety layer</span></div><div class="ad">Missing-data / contradiction / completeness checks with loop-back. Entirely absent.</div></div></div>
+        <div class="agent" style="border-color:#FECACA;background:#FEF2F2"><span class="ab badge b-mis">Missing</span><div><div class="an">Guardrail / Clinical Safety Agent</div><div class="ad">Sepsis/instability/high-risk-med evaluation &amp; mandatory review flags. Absent.</div></div></div>
+        <div class="agent"><span class="ab badge b-par">Partial</span><div><div class="an">Routing Agent</div><div class="ad">Exists as a census-based round-robin selector — but philosophy differs (RR-first vs. spec's manual-first ranked options).</div></div></div>
+      </div>
+    </div>
+    <div class="note-box note-warn" style="margin-top:18px"><span>⚠️</span><span><b>Headline finding:</b> the Verification → Guardrail safety loop — the spec's central &ldquo;nothing gets missed&rdquo; promise — has <b>no representation in the v1 blueprint</b>. v1 builds a correct routing &amp; messaging backbone, but not the clinical-safety AI that defines the product.</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Compare &amp; contrast</div>
+    <h2>Two documents, two scopes</h2>
+    <p class="sub">They are not in conflict — they describe different layers. The vision spec is the destination; the blueprint is a runnable first leg that intentionally defers the AI core.</p>
+    <div class="vs">
+      <div class="col">
+        <h3><span class="tagm" style="background:var(--active-bg);color:var(--primary)">Full vision spec</span></h3>
+        <ul class="tight">
+          <li>AI-first: 6 cooperating LangGraph agents with verification loops</li>
+          <li>Voice &amp; text natural-language intake</li>
+          <li>Consult <em>and</em> admission workflows, each with deep checks</li>
+          <li>Acuity-scored live queue (1–5)</li>
+          <li>Manual-first routing; round-robin optional &amp; configurable</li>
+          <li>Live Epic / Redox / FHIR + insurance-aware suggestions</li>
+          <li>Text-link fallback, auto-reminders, director escalation</li>
+          <li>5 roles incl. ER Director &amp; cross-tenant Developer</li>
+        </ul>
+      </div>
+      <div class="col">
+        <h3><span class="tagm" style="background:var(--accepted-bg);color:var(--accepted)">v1 buildable blueprint</span></h3>
+        <ul class="tight">
+          <li>Infra-first: one TS monolith, SQLite, WS realtime, zero secrets</li>
+          <li>Deterministic mock extractor stands in for all AI</li>
+          <li>Single generic assignment state machine</li>
+          <li>Flat creation-ordered queue, no acuity</li>
+          <li>Round-robin-centric selection (census/cap), manual flag</li>
+          <li>All integrations stubbed → standalone by default</li>
+          <li>WS notify + expiry/reroute; no SMS link, no escalation</li>
+          <li>RBAC + tenant scope; Director + provider roles</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note-box note-info" style="margin-top:16px"><span>ℹ️</span><span><b>Verdict:</b> The architecture is internally honest — it openly labels itself &ldquo;deliberately trimmed.&rdquo; The risk is only that several headline spec features (multi-agent core, acuity, consult/admission split, text fallback, insurance routing) are <b>not yet named in its &ldquo;Later&rdquo; backlog</b>, so they could read as forgotten rather than deferred.</span></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Recommendations</div>
+    <h2>Closing the gap — what to add, and when</h2>
+    <p class="sub">To make the architecture faithfully <em>include</em> the additional functionality (even as deferred scope), three moves:</p>
+    <div class="card pad">
+      <div class="recs">
+        <div class="rec pr-now"><div class="pr"><span>Now</span></div><div class="rt"><b>Name the deferred features explicitly.</b> Add to the blueprint's &ldquo;Later&rdquo; chips: <code>multi-agent verification</code>, <code>acuity scoring</code>, <code>consult/admission split</code>, <code>text-link fallback</code>, <code>insurance routing</code>. Turns silent omissions into a tracked backlog.</div></div>
+        <div class="rec pr-next"><div class="pr"><span>Next</span></div><div class="rt"><b>Add a Milestone 9 — Agent orchestration seam.</b> Define the Orchestrator → Extraction → Drafting → Verification → Guardrail → Routing interface now (even mock-backed) so the safety loop has a home and the API shape is stable before real models arrive.</div></div>
+        <div class="rec pr-next"><div class="pr"><span>Next</span></div><div class="rt"><b>Add an <code>acuity</code> field + <code>requestType</code> (consult/admission)</b> to the data model. Cheap to add early; expensive to retrofit once the queue and routing assume a flat, single-type world.</div></div>
+        <div class="rec pr-later"><div class="pr"><span>Later</span></div><div class="rt"><b>Schedule the AI core &amp; integrations as their own phase.</b> Verification/Guardrail agents, live Epic/FHIR, insurance suggestions, and the SMS Accept/Deny link land after the v1 backbone is green.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Comparison of the pasted full vision spec against <code>DocTurn Architecture.html</code> (v1 buildable blueprint). Status reflects stated v1 scope, not implementation defects. <b>Covered 2 · Partial 5 · Missing 6.</b>
+  </div>
+</footer>
+
+</body>
+</html>

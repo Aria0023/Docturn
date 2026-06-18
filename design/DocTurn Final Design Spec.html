@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Final Design Specification" subtitle="Full production target — Postgres, 37 tables, live integrations, mobile, MFA. Claude Code handoff." viewport="1120x640" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Final Design Specification</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn active" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Final Design Specification · production target</div></div>
+    </div>
+    <h1>The complete buildable specification — full production functionality, ready for Claude Code.</h1>
+    <p class="lede">This supersedes the trimmed v1 blueprint. It folds in <b>every capability of the Engineering Specification (<code>docturn.pdf</code>)</b>: PostgreSQL, the full 37-table data model, live Twilio / OpenAI / Firebase / Amion integrations, complete MFA, the Expo mobile app, developer &amp; CMS tooling, resource/scheduling, emergency broadcasts, and HIPAA-grade security logging — while preserving the org-scoped, server-authoritative core that already passes tests.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-SPEC-001</b></span>
+      <span>Revision <b>2.0 — Full Target</b></span>
+      <span>Status <b>For Implementation</b></span>
+      <span>Owner <b>DocTurn Engineering</b></span>
+    </div>
+    <div class="pills">
+      <span class="pill">PostgreSQL + Drizzle</span>
+      <span class="pill">41 tables</span>
+      <span class="pill">Live integrations</span>
+      <span class="pill">Full MFA</span>
+      <span class="pill">Expo mobile</span>
+      <span class="pill">Dev + CMS console</span>
+      <span class="pill">PHI access logging</span>
+      <span class="pill">Runtime-configurable</span>
+      <span class="pill">Org-scoped multi-tenant</span>
+    </div>
+  </div>
+</header>
+
+<!-- 1. SYSTEM OVERVIEW -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">1</span> System overview</div>
+    <h2>What DocTurn is, who uses it</h2>
+    <p class="sub">A multi-tenant, HIPAA-oriented platform that coordinates <b>patient assignment</b> (ER → hospitalist) and <b>secure clinical messaging</b> inside hospitals, on web and mobile. Marketed publicly as <b>DoctorHeidi</b>. Every record is isolated to one organization; the server is authoritative for routing, expiry, and roles.</p>
+    <div class="grid g3">
+      <div class="card pad"><h4>1.1 — Primary roles</h4>
+        <ul class="tight">
+          <li><b>Director</b> — hospital admin: provider management, rotation config, reassignment, org settings, incident review.</li>
+          <li><b>ER Director</b> — manages ER physicians; superset of ER Doctor.</li>
+          <li><b>ER Doctor</b> — patient intake, AI extraction, create assignments.</li>
+          <li><b>Hospitalist</b> — census, accept/decline, messaging, on-shift toggle.</li>
+          <li><b>Developer</b> — cross-tenant platform operator: org admin, impersonation, CMS, diagnostics.</li>
+        </ul>
+      </div>
+      <div class="card pad"><h4>1.2 — Core capabilities</h4>
+        <ul class="tight">
+          <li>Authn + MFA, RBAC, session lifecycle</li>
+          <li>Provider rotation &amp; capacity management</li>
+          <li>AI-assisted patient intake (OpenAI)</li>
+          <li>Round-robin &amp; manual assignment + expiry</li>
+          <li>Secure messaging (direct/group/emergency)</li>
+          <li>Realtime WebSocket presence &amp; events</li>
+          <li>SMS + push notification cascade</li>
+          <li>Resources, scheduling, broadcasts</li>
+          <li>Developer console + CMS</li>
+        </ul>
+      </div>
+      <div class="card pad"><h4>1.3 — Document scope</h4>
+        <p class="sub" style="margin:0">Defines the <b>target</b> system: architecture, stack, data model, API, auth, tenancy, workflows, integrations, frontend, security, deployment, and a milestone roadmap (M0–M16). Read alongside the three companion documents in this pack — Use Cases, Function List, and System Requirements — which trace directly to the sections here.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. ARCHITECTURE -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">2</span> Architecture</div>
+    <h2>One TypeScript monolith, two clients, live services behind interfaces</h2>
+    <p class="sub">A single Express process hosts the REST API and the WebSocket server, serves the React SPA, and talks to PostgreSQL through Drizzle. The Expo mobile app shares the same backend via a typed <code>ApiClient</code>. Every external service is an interface with a stub fallback, so dev/CI run with zero secrets and production flips to live by env.</p>
+    <div class="diagram">
+<pre>     Web SPA (React+Vite+TanStack, PWA)          Expo Mobile (React Native + native WS)
+                  \                                       /
+                   \___ HTTPS (cookie session) + WS /ws _/
+                                     |
+        ┌────────────────────────────▼─────────────────────────────┐
+        │  Express (TypeScript, ESM) — single port                  │
+        │   REST routes · WebSocket /ws · Passport sessions (15m)   │
+        │   RBAC + tenant-scope middleware · PHI access logging     │
+        │   Helmet · rate limiting · audit + security incidents     │
+        └─────────┬───────────────────────────────┬────────────────┘
+          Drizzle │                               │  service factories (env-gated)
+                  ▼                               ▼
+      ┌────────────────────────┐   ┌──────────────────────────────────────────┐
+      │  PostgreSQL (Drizzle)  │   │  OpenAI · Twilio · Firebase FCM · Amion   │
+      │  37 tables, scoped by  │   │  each: Live impl  ⇄  Stub fallback        │
+      │  organization_id       │   │  (MockAI · ConsoleSms · NoopPush · Local) │
+      │  connect-pg-simple ses.│   └──────────────────────────────────────────┘
+      └────────────────────────┘</pre>
+    </div>
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card pad"><div class="ico" style="background:var(--active-bg);color:var(--primary)">◆</div><h3>2.3a Tenant isolation first</h3><p class="sub" style="margin:0">Every storage method takes <code>organizationId</code> as its first argument and filters by it. The selector helpers are the highest-risk surface — they must never cross tenants.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">⛨</div><h3>2.3b Server-authoritative</h3><p class="sub" style="margin:0">Routing, expiry, roles, and MFA gating are computed server-side and never trusted from the client. Thin routes (Zod validate + authorize) call a central <code>storage</code> module; logic lives in testable <code>services/</code>.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--pending-bg);color:var(--pending)">⇄</div><h3>2.3c Integrations behind interfaces</h3><p class="sub" style="margin:0">A factory picks live-vs-stub at startup by env. Notification cascade <b>WS → push → SMS</b> degrades gracefully; stub/transport errors are swallowed + logged so the workflow always continues.</p></div>
+    </div>
+    <h4 style="margin-top:22px">2.2 — Request lifecycle</h4>
+    <div class="card pad">
+      <ol style="margin:0;padding-left:20px;font-size:13px;color:var(--muted-2);line-height:1.8">
+        <li><b>Session resolution</b> — <code>connect-pg-simple</code> deserializes the <code>docturn.sid</code> cookie into <code>req.user</code> (Passport).</li>
+        <li><b>Authorization</b> — <code>requireAuth</code> + <code>requireRole(...)</code> assert role; handlers <code>assertSameOrg</code> on the target row.</li>
+        <li><b>PHI gate</b> — requests to <code>/api/patients</code> and <code>/api/assignments</code> append a <code>phi_access_logs</code> row (user, org, resource, method, IP, UA).</li>
+        <li><b>Validation</b> — request body parsed with the shared Zod schema.</li>
+        <li><b>Data access</b> — handler calls tenant-scoped <code>storage.*</code> (Drizzle).</li>
+        <li><b>Audit</b> — security-relevant actions append <code>audit_logs</code>; suspicious events call <code>logSecurityIncident()</code>.</li>
+        <li><b>Realtime fan-out</b> — state changes broadcast over WebSocket (org-scoped); content-free push, then SMS only on ack timeout, for out-of-app delivery (see §9b).</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- 3. TECHNOLOGY STACK -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">3</span> Technology stack</div>
+    <h2>Production stack</h2>
+    <div class="grid g4">
+      <div class="card pad"><h4>3.1 Backend</h4><ul class="tight"><li>Node 20, Express, TypeScript (ESM)</li><li>Drizzle ORM + <code>pg</code>/postgres.js</li><li>Zod validation</li><li>Passport local + scrypt/bcrypt(12)</li><li>express-session + connect-pg-simple</li><li><code>ws</code> WebSocket server</li><li>speakeasy (TOTP)</li></ul></div>
+      <div class="card pad"><h4>3.2 Frontend (web)</h4><ul class="tight"><li>React 18 + Vite</li><li>Tailwind + shadcn/ui</li><li>wouter routing</li><li>TanStack Query (keys = endpoint path)</li><li><code>@dnd-kit</code> rotation reorder</li><li>lucide-react icons · light mode only</li><li>PWA / service worker</li></ul></div>
+      <div class="card pad"><h4>3.3 Mobile</h4><ul class="tight"><li>Expo / React Native</li><li>Bottom-tab navigation</li><li>Native WebSocket client</li><li>Shared typed <code>ApiClient</code></li><li>FCM push registration</li><li>QR-code org onboarding</li></ul></div>
+      <div class="card pad"><h4>3.4 Data &amp; infra</h4><ul class="tight"><li>PostgreSQL (<code>drizzle-kit push</code>)</li><li><code>pg.Pool</code> max 10</li><li>Helmet + tiered rate limiting</li><li>Twilio · OpenAI · Firebase · Amion</li><li>Nginx/Caddy TLS termination</li><li>Vitest + Supertest</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. DATA MODEL -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">4</span> Data model</div>
+    <h2>41 tables, grouped by subsystem — all scoped by organization</h2>
+    <p class="sub">Drizzle schema in <code>shared/schema.ts</code> is the single source of truth; Zod insert schemas derive from it. The <b>10 core tables</b> (already built) anchor the model; the <b>31 expansion tables</b> land per their milestone. Conventions: integer autoincrement PK, timestamp columns, text-enum columns, <code>organization_id</code> FK on nearly every table.</p>
+    <div class="grid g2">
+      <div class="card tbl-card">
+        <table>
+          <thead><tr><th>Core clinical &amp; messaging (10)</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td><code>organizations</code> — tenant root, rotation cursor, timeout</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>users</code> — all accounts, role, password hash, 2FA flag</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>hospitalists</code> — provider rotation profile (census, cap)</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>patients</code> — PHI (initials only), room, complaint, status</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>assignments</code> — routing lifecycle, via, expires_at</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>conversations</code> — direct / group / emergency</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>messages</code> — content, sender, timestamp</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>message_delivery_status</code> — per-recipient read/delivered</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>audit_logs</code> — action, resource, risk_level</td><td><span class="badge b-v1">core</span></td></tr>
+            <tr><td><code>sessions</code> — connect-pg-simple store</td><td><span class="badge b-v1">core</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card tbl-card">
+        <table>
+          <thead><tr><th>Expansion subsystems (31)</th><th>Group</th></tr></thead>
+          <tbody>
+            <tr><td><code>mfa_credentials</code>, <code>mfa_backup_codes</code>, <code>sms_verification_codes</code>, <code>phi_access_logs</code>, <code>security_incidents</code></td><td><span class="badge b-new">Auth/Sec</span></td></tr>
+            <tr><td><code>pending_registrations</code></td><td><span class="badge b-new">Registration</span></td></tr>
+            <tr><td><code>device_tokens</code>, <code>push_notifications</code>, <code>firebase_configurations</code></td><td><span class="badge b-violet">Mobile/Push</span></td></tr>
+            <tr><td><code>departments</code>, <code>beds</code>, <code>equipment</code>, <code>resource_alerts</code>, <code>resource_metrics</code>, <code>amion_sync_state</code></td><td><span class="badge b-teal">Resources</span></td></tr>
+            <tr><td><code>provider_directory</code>, <code>on_call_schedules</code></td><td><span class="badge b-teal">Directory</span></td></tr>
+            <tr><td><code>emergency_broadcasts</code>, <code>broadcast_acknowledgments</code></td><td><span class="badge b-should">Broadcast</span></td></tr>
+            <tr><td><code>landing_page_settings</code>, <code>contact_page_settings</code></td><td><span class="badge b-info">CMS</span></td></tr>
+            <tr><td><code>message_threads</code>, <code>sms_history</code></td><td><span class="badge b-info">Messaging+</span></td></tr>
+            <tr><td><code>role_types</code> + reference/junction tables</td><td><span class="badge b-later">Reference</span></td></tr>
+            <tr><td><code>org_settings</code>, <code>user_preferences</code>, <code>feature_flags</code>, <code>suggestions</code></td><td><span class="badge b-violet">Config</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h4 style="margin-top:22px">4.7 — Assignment status state machine</h4>
+    <div class="card pad">
+      <div class="sm"><span class="arrow">create (ER) →</span><span class="node n-pending">pending</span><span class="arrow">— accept →</span><span class="node n-accepted">accepted</span><span class="arrow">· census ++ · patient = assigned</span></div>
+      <div class="sm" style="margin-top:11px"><span class="node n-pending">pending</span><span class="arrow">— reject →</span><span class="node n-rejected">rejected</span><span class="arrow">— reroute → next eligible (new pending row)</span></div>
+      <div class="sm" style="margin-top:11px"><span class="node n-pending">pending</span><span class="arrow">— expires_at reached →</span><span class="node n-expired">expired</span><span class="arrow">— reroute → next eligible (new pending row)</span></div>
+      <div class="sm" style="margin-top:11px"><span class="node n-accepted">accepted</span><span class="arrow">— director cancel →</span><span class="node n-cancelled">cancelled</span><span class="arrow">· census −−</span></div>
+      <p class="sub" style="margin:12px 0 0">History is preserved: reject/expire stamps <code>resolved_at</code> and creates a <b>new</b> pending row rather than mutating the old one. <b>Census changes only on accept (++) and cancel-of-accepted (−−).</b></p>
+    </div>
+  </div>
+</section>
+
+<!-- 5. API SURFACE -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">5</span> API surface</div>
+    <h2>REST under <code>/api</code> + the WebSocket protocol</h2>
+    <p class="sub">JSON in/out, cookie-session auth. Every privileged route asserts role + tenant. Errors are <code>{ error }</code> with standard codes: 400 validation · 401 no session · 403 role/tenant · 404 not-in-org · 409 conflict.</p>
+    <div class="grid g3">
+      <div class="card pad"><h4>5.1 Auth &amp; users</h4><ul class="tight"><li><code>POST /api/register</code> → pending</li><li><code>POST /api/login</code> → 200 | 202 MFA</li><li><code>POST /api/2fa/complete-login</code></li><li><code>POST /api/logout</code> · <code>GET /api/user</code></li><li><code>GET /api/users</code> <span class="chip">director</span></li><li>MFA: <code>/api/mfa/enroll · verify · backup-codes</code></li></ul></div>
+      <div class="card pad"><h4>5.2 Providers &amp; rotation</h4><ul class="tight"><li><code>GET /api/hospitalists</code> · <code>/working</code></li><li><code>GET /api/physicians/directory</code></li><li><code>POST /api/director/hospitalists</code></li><li><code>PATCH …/:id/working-status · capacity</code></li><li><code>PATCH /api/hospitalists/rotation-order</code></li><li><code>POST /api/round-robin/reset</code></li><li><code>GET/PATCH /api/org/config</code></li></ul></div>
+      <div class="card pad"><h4>5.3 Patients &amp; assignments</h4><ul class="tight"><li><code>POST /api/patients/extract</code> → AI fields</li><li><code>POST /api/patients</code> · <code>GET /api/patients</code></li><li><code>POST /api/assignments</code> <span class="chip">round_robin · manual</span></li><li><code>GET /api/assignments/pending · /my</code></li><li><code>PATCH …/:id/accept · reject</code></li><li><code>PATCH …/:id/reassign · cancel</code></li></ul></div>
+      <div class="card pad"><h4>5.4 Messaging</h4><ul class="tight"><li><code>GET/POST /api/messaging/conversations</code></li><li><code>GET …/:id/messages</code></li><li><code>POST /api/messaging/send</code></li><li><code>POST …/messages/mark-read</code></li><li><code>DELETE …/messages/:id</code> (soft + audit)</li></ul></div>
+      <div class="card pad"><h4>5.5 Org · dev · CMS · SMS</h4><ul class="tight"><li><code>/api/dev/organizations</code> (admin)</li><li><code>POST /api/dev/impersonate</code> (audited)</li><li><code>/api/dev/ai-diagnostics</code></li><li><code>GET/PUT /api/cms/:key</code> <span class="chip">developer</span></li><li><code>/api/sms/send · /history</code></li><li><code>/api/broadcasts</code> + <code>/ack</code></li></ul></div>
+      <div class="card pad"><h4>5.6–5.7 Health · mobile · WS</h4><ul class="tight"><li><code>GET /api/health</code> → <code>{ ok, db }</code></li><li><code>GET /api/mobile/org/:code</code> (public, safe)</li><li><code>/api/mobile/assignments</code> (compact)</li><li><code>POST /api/mobile/device-tokens</code></li><li><b>WS</b> at <code>/ws</code> — cookie→session, close 1008</li></ul></div>
+    </div>
+    <div class="card pad" style="margin-top:16px">
+      <h4>WebSocket events — all fan-out org-scoped via <code>broadcast(orgId)</code> / <code>sendToUsers(ids)</code></h4>
+      <div class="tagrow">
+        <span class="chip">CONNECTION_ESTABLISHED</span><span class="chip">USER_PRESENCE_CHANGED</span><span class="chip">ASSIGNMENT_CREATED</span><span class="chip">ASSIGNMENT_UPDATED</span><span class="chip">MESSAGE_RECEIVED</span><span class="chip">typing_start / stop → user_typing</span><span class="chip">PROVIDER_CREATED / UPDATED</span><span class="chip">HOSPITALIST_DELETED</span><span class="chip">BROADCAST_*</span><span class="chip">PING / PONG (20s)</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 + 7. AUTH + TENANCY -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">6 · 7</span> Authentication, authorization &amp; multi-tenancy</div>
+    <h2>Full MFA, RBAC, and the tenant-isolation invariant</h2>
+    <div class="grid g3">
+      <div class="card pad"><h4>6.1–6.2 Auth + MFA</h4><ul class="tight"><li>Passport local, scrypt/bcrypt(12) per-user salt</li><li>15-min rolling session, inactivity expiry</li><li><code>httpOnly</code>, <code>sameSite:strict</code>, <code>secure</code> in prod</li><li>TOTP (speakeasy) enrollment + verify</li><li>SMS OTP via Twilio</li><li>10 SHA-256 backup codes, consumed once</li><li>Gate enforced via <code>req.session.pendingMfa</code></li></ul></div>
+      <div class="card pad"><h4>6.3 RBAC</h4><p class="sub" style="margin:0 0 8px">Enforced server-side; mirrored in client only for UX.</p><div class="codeblock"><span class="k">requireAuth</span>            <span class="c">// 401</span>
+<span class="k">requireRole</span>(...roles)  <span class="c">// 403</span>
+<span class="k">assertSameOrg</span>(row)     <span class="c">// 403; dev bypass</span></div><p class="sub" style="margin:8px 0 0">5 roles; <code>er_director</code> may create only <code>er_doctor</code> accounts; <code>developer</code> is cross-tenant. See the RBAC matrix in the Function List.</p></div>
+      <div class="card pad"><h4>7 Multi-tenancy</h4><ul class="tight"><li>Every query scoped by <code>organization_id</code> from the <b>session</b>, never user input.</li><li>Storage layer takes <code>organizationId</code> first-arg as a second line of defense.</li><li>Rotation/selection helpers operate strictly within one org.</li><li>Developer role bypasses scoping deliberately, every action audited.</li></ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8. WORKFLOW -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">8</span> Patient assignment workflow</div>
+    <h2>Intake → routing → acknowledgement</h2>
+    <div class="grid g2">
+      <div>
+        <h4>8.1 End-to-end</h4>
+        <div class="card pad" style="margin-bottom:14px"><ol style="margin:0;padding-left:18px;font-size:12.8px;color:var(--muted-2);line-height:1.75">
+          <li><b>Intake</b> (ER): note → <code>ai-intake</code> returns <code>{ initials, roomNumber, issueSummary, specialty }</code>.</li>
+          <li><b>Routing</b>: <code>rotation.selectNext()</code> (round-robin) or manual <code>hospitalistId</code>.</li>
+          <li><b>Persist</b>: patient (<code>waiting</code>) + assignment (<code>pending</code>, <code>expires_at = now + timeout</code>).</li>
+          <li><b>Notify</b>: WS to target → content-free push → SMS only on ack timeout (see 9b).</li>
+          <li><b>Acknowledge</b>: accept (census++, <code>assigned</code>) / decline (reroute) / no response before expiry (reroute).</li>
+        </ol></div>
+        <h4>8.3 Expiry &amp; reassignment</h4>
+        <p class="sub" style="margin:0">A <code>setInterval</code> (~15s, capped 50/tick) finds expired pending rows, marks <code>expired</code>, and reroutes. Reject reroutes immediately. If none eligible even after cap relief → patient stays <code>waiting</code>, emit <code>assignment.unrouted</code>.</p>
+      </div>
+      <div>
+        <h4>8.2 Round-robin selection</h4>
+        <div class="codeblock"><span class="c">// org-scoped; lowest census wins</span>
+eligible = providers WHERE
+  working <span class="k">AND</span> shiftType ∈ org.shiftTypes
+  <span class="k">AND</span> census &lt; cap
+  <span class="k">AND</span> specialty matches (if required)
+
+<span class="k">if</span> eligible empty:        <span class="c">// cap relief</span>
+  cap += <span class="s">1</span> for every working provider
+  recompute eligible
+
+sort by (census ASC, rotationOrder ASC)
+pick = eligible[<span class="s">0</span>]
+advance org.rotationIndex   <span class="c">// persist cursor</span>
+<span class="k">return</span> pick</div>
+        <div class="note note-warn" style="margin-top:14px"><span>⚠️</span><span><b>Highest-risk bug:</b> a selector that drops the org filter could route a patient to another hospital. Keep every storage method org-scoped and unit-test the invariant.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9. INTEGRATIONS -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">9</span> External integrations</div>
+    <h2>Four services, each a Live ⇄ Stub interface chosen by env</h2>
+    <p class="sub">No secret is required to run or test — stubs activate automatically when env vars are absent. Real SDK calls are server-side only; clients never receive third-party credentials. PHI is stripped from AI prompts and never placed in SMS/push payloads.</p>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>Service</th><th>Interface</th><th>Stub (default / CI)</th><th>Live (production)</th><th>Env to go live</th></tr></thead>
+        <tbody>
+          <tr><td><b>SMS / MFA</b></td><td><code>SmsService.send()</code></td><td><code>ConsoleSms</code> logs</td><td><code>TwilioSms</code> + <code>sms_history</code></td><td class="num-col">TWILIO_ACCOUNT_SID …</td></tr>
+          <tr><td><b>AI intake</b></td><td><code>AIExtractor.extract()</code></td><td><code>MockAIExtractor</code> (regex, deterministic)</td><td><code>OpenAIExtractor</code> gpt-4o / 4o-mini</td><td class="num-col">OPENAI_API_KEY</td></tr>
+          <tr><td><b>Push</b></td><td><code>PushService.send()</code></td><td><code>NoopPush</code> logs</td><td><code>FirebasePush</code> (FCM, per-org)</td><td class="num-col">FIREBASE_SERVICE_ACCOUNT_JSON</td></tr>
+          <tr><td><b>Scheduling</b></td><td><code>Scheduler.syncShifts()</code></td><td><code>LocalScheduler</code> (uses <code>working</code>)</td><td><code>AmionScheduler</code></td><td class="num-col">amionFacilityId, amionApiKey</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-info" style="margin-top:14px"><span>ℹ️</span><span>Keep stub fallbacks behind <code>USE_STUB_AI</code> / missing-env throughout. Tests and CI must never depend on live third-party credentials; live-mode smoke tests are gated behind an env flag.</span></div>
+  </div>
+</section>
+
+<!-- 9b. NOTIFICATION ARCHITECTURE & COST -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">9b</span> Notification architecture &amp; delivery cost</div>
+    <h2>Push-first delivery, SMS only on escalation — content-free payloads</h2>
+    <p class="sub">This is how the established clinical-communication platforms (TigerConnect, PerfectServe, OnPage) actually move messages: the default channel is an <b>OS push notification</b> that carries <b>no PHI</b> — it only wakes the app, which then fetches the encrypted message over TLS. Plain <b>SMS / voice are escalation endpoints</b>, fired only when a push goes unacknowledged within a timeout. Routine traffic therefore rides <b>free</b> APNs/FCM push and never touches carrier-billed SMS — the lever that keeps their per-message costs near zero. DocTurn adopts the same model: <code>WebSocket → push → (timeout) → SMS</code>.</p>
+
+    <h4 style="margin-top:22px">9b.1 — Delivery &amp; escalation ladder</h4>
+    <div class="diagram">
+<pre>  assignment.created / message.sent
+            │
+            ▼
+   ┌─────────────────────┐   in-app, live   ┌──────────────────────────────┐
+   │ 1. WebSocket (/ws)   │ ───────────────▶ │ recipient on-screen → done    │
+   └─────────────────────┘                   └──────────────────────────────┘
+            │ not connected / backgrounded
+            ▼
+   ┌─────────────────────┐   APNs / FCM      ┌──────────────────────────────┐
+   │ 2. PUSH (content-    │ ───────────────▶ │ "New assignment" → opens app  │
+   │    free wake-up)     │   FREE, no PHI    │ → fetches encrypted msg (TLS) │
+   └─────────────────────┘                   └──────────────────────────────┘
+            │ unacknowledged after  ack_timeout  (e.g. 90–120 s)
+            ▼
+   ┌─────────────────────┐   re-push + fan    ┌──────────────────────────────┐
+   │ 3. RE-PUSH / FAN-OUT │ ─── out to all ──▶ │ all registered device_tokens  │
+   └─────────────────────┘   devices          └──────────────────────────────┘
+            │ still unacknowledged after  escalation_timeout
+            ▼
+   ┌─────────────────────┐   carrier-billed   ┌──────────────────────────────┐
+   │ 4. SMS  (then VOICE) │ ───────────────▶  │ code/initials only, deep-link │
+   └─────────────────────┘   $ per message    └──────────────────────────────┘
+            │ still no ack
+            ▼
+        reroute (round-robin) / backup recipient / director alert</pre>
+    </div>
+
+    <div class="grid g3" style="margin-top:20px">
+      <div class="card pad"><div class="ico" style="background:var(--active-bg);color:var(--primary)">◆</div><h3>9b.2 Push carries no PHI</h3><p class="sub" style="margin:0">The notification payload is a <b>content-free wake-up</b> — title like "New assignment", no patient initials, no room, no diagnosis. The app opens and fetches the encrypted message body server-side over TLS. Same rule for SMS: <b>code / initials only</b> plus a deep-link, never clinical detail.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">⛨</div><h3>9b.3 Read / ack receipts</h3><p class="sub" style="margin:0">Because push opens an app-controlled channel, DocTurn keeps <b>Sent / Delivered / Read</b> + an explicit <b>acknowledge</b> action (plain SMS can't report "Read"). The escalation clock is driven by ack state, not by send success.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--pending-bg);color:var(--pending)">⇄</div><h3>9b.4 Timeouts are org-config</h3><p class="sub" style="margin:0"><code>ack_timeout</code> and <code>escalation_timeout</code> live in <code>org_settings</code> (server-authoritative), so a high-acuity site can shorten the SMS fallback and a calm clinic can lengthen it — no carrier cost for routine traffic either way.</p></div>
+    </div>
+
+    <h4 style="margin-top:24px">9b.5 — Configurable delivery profile (per org)</h4>
+    <p class="sub">Delivery is not hard-wired. Each organization's <b>delivery mode</b> and, if SMS is enabled, its <b>SMS carrier</b> are set in the <b>Developer console</b> and stored in <code>org_settings.notification_profile</code>. The channel order, timeouts, and vendor are all configuration, never code: <code>PushService</code> always runs; <code>SmsService</code> resolves to the selected carrier adapter only when the mode includes SMS.</p>
+    <div class="grid g2">
+      <div class="card pad"><h4>Delivery mode</h4><ul class="tight">
+        <li><b>Push only</b> — WS → push → re-push/fan-out → reroute. <b>Zero carrier cost.</b> No SMS step.</li>
+        <li><b>Push + SMS escalation</b> <span class="badge b-target">default</span> — adds the timeout-gated SMS (then optional voice) step from §9b.1.</li>
+        <li><b>Push + SMS + voice</b> — high-acuity sites add a voice call as the final endpoint.</li>
+      </ul>
+      <p class="sub" style="margin:10px 0 0"><code>ack_timeout</code> and <code>escalation_timeout</code> stay org-tunable in every mode.</p></div>
+      <div class="card pad"><h4>SMS carrier (when mode includes SMS)</h4><div class="codeblock"><span class="c">// org_settings.notification_profile</span>
+{
+  <span class="k">mode</span>: <span class="s">"push" | "push_sms" | "push_sms_voice"</span>,
+  <span class="k">smsCarrier</span>: <span class="s">"twilio" | "sns" | "pinpoint" | "messagebird" | "vonage"</span>,
+  <span class="k">ackTimeoutSec</span>: <span class="s">90</span>,
+  <span class="k">escalationTimeoutSec</span>: <span class="s">180</span>
+}</div>
+      <p class="sub" style="margin:10px 0 0">Each carrier is an adapter behind the one <code>SmsService.send()</code> interface; a registry maps the <code>smsCarrier</code> value to its adapter + per-org credentials. Adding a carrier = one adapter, no workflow changes.</p></div>
+    </div>
+
+    <h4 style="margin-top:24px">9b.5a — Configured in the Developer console</h4>
+    <p class="sub">To keep it simple, the notification profile is <b>developer-only</b> — one place owns delivery mode, carrier choice, timeouts, and secrets. Directors and other roles don't see these controls.</p>
+    <div class="card pad"><div class="ico" style="background:var(--violet-bg);color:var(--violet)">⚙</div><h3>Developer panel owns the full profile</h3><ul class="tight" style="margin-top:6px">
+      <li><b>Delivery mode</b> per org — push only / push + SMS / push + SMS + voice.</li>
+      <li><b>SMS carrier</b> per org — Twilio · SNS · Pinpoint · MessageBird · Vonage.</li>
+      <li><b>Carrier credentials</b> (Twilio SID, AWS keys, etc.) — server-side only, never sent to clients.</li>
+      <li><b>Timeouts</b> — <code>ackTimeoutSec</code>, <code>escalationTimeoutSec</code>.</li>
+      <li>10DLC registration status &amp; delivery diagnostics.</li>
+    </ul></div>
+
+    <h4 style="margin-top:24px">9b.6 — Cost impact (architecture &gt; vendor, but they stack)</h4>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>Model</th><th>What hits SMS</th><th>Typical hospital / month</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><b>SMS-first (naive)</b></td><td>Every assignment + message + reminder</td><td class="num-col">$300 – $2,000 / mo</td><td>Tens of thousands of carrier-billed segments.</td></tr>
+          <tr><td><b>Push-first + SMS escalation</b></td><td>Only unacknowledged escalations + MFA OTP</td><td class="num-col">often &lt; $100 – $300 / mo</td><td>A small fraction of traffic ever escalates.</td></tr>
+          <tr><td><b>One-time</b></td><td>10DLC brand + campaign registration</td><td class="num-col">one-time setup</td><td>Required for US A2P SMS regardless of volume.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4 style="margin-top:24px">9b.7 — SMS carrier options &amp; recommendation</h4>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>Provider</th><th><code>smsCarrier</code></th><th>BAA / HIPAA</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><b>Amazon SNS / Pinpoint</b> <span class="badge b-target">default</span></td><td class="num-col">"sns" / "pinpoint"</td><td class="num-col">free BAA</td><td>Lower per-message cost; free BAA; fits an AWS deployment.</td></tr>
+          <tr><td><b>Twilio</b> <span class="badge b-should">alternative</span></td><td class="num-col">"twilio"</td><td class="num-col">BAA available</td><td>Richer tooling; the current <code>SmsService</code> reference adapter.</td></tr>
+          <tr><td>MessageBird</td><td class="num-col">"messagebird"</td><td class="num-col">BAA available</td><td>Strong international coverage; drop-in adapter.</td></tr>
+          <tr><td>Vonage</td><td class="num-col">"vonage"</td><td class="num-col">BAA available</td><td>Alternative global carrier; drop-in adapter.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note note-ok" style="margin-top:16px"><span>✓</span><span><b>Spec mandate:</b> push-first delivery with a content-free payload and an SMS escalation gated on an acknowledgement timeout. SMS/voice are a fallback, not the default channel. Keep <code>PushService.send()</code> and <code>SmsService.send()</code> behind their interfaces so the channel order and the SMS vendor are configuration, not code. <b>The architecture change saves more than the vendor change — doing both stacks.</b></span></div>
+
+    <h4 style="margin-top:24px">9b.8 — Messaging acceptance criteria (must pass before ship)</h4>
+    <p class="sub">Every message path must be verified <b>both directions</b> and <b>across both surfaces</b>, for <b>all five roles</b>. The kit's Verification Suite already proves the shared send/receive logic and per-surface composer; the items marked <span class="badge b-target">integration</span> run against the live WebSocket + push backend on a staging server with two real sessions/devices.</p>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>#</th><th>Test</th><th>Pass condition</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td class="num-col">1</td><td>Each role sends a 1:1 message</td><td>Outbound message stored &amp; rendered (<code>me:true</code>); read receipt updates</td><td class="num-col">Suite ✓</td></tr>
+          <tr><td class="num-col">2</td><td>Each role receives an inbound message</td><td>Inbound message rendered (<code>me:false</code>); unread badge clears on open</td><td class="num-col">Suite ✓</td></tr>
+          <tr><td class="num-col">3</td><td>Web ↔ web, both directions, all roles</td><td>Message sent in session A appears live in session B (same org)</td><td class="num-col"><span class="badge b-target">integration</span></td></tr>
+          <tr><td class="num-col">4</td><td>Mobile ↔ web, both directions, all roles</td><td>Message sent on mobile arrives on web (and vice-versa) over <code>/ws</code></td><td class="num-col"><span class="badge b-target">integration</span></td></tr>
+          <tr><td class="num-col">5</td><td>Group / care-team thread</td><td>All members receive; per-member read state tracked</td><td class="num-col"><span class="badge b-target">integration</span></td></tr>
+          <tr><td class="num-col">6</td><td>Out-of-app delivery</td><td>Backgrounded recipient gets content-free push; SMS only after ack timeout</td><td class="num-col"><span class="badge b-target">integration</span></td></tr>
+          <tr><td class="num-col">7</td><td>Tenant isolation</td><td>A message never crosses <code>organization_id</code>; cross-tenant send rejected</td><td class="num-col"><span class="badge b-target">integration</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-info" style="margin-top:14px"><span>ℹ️</span><span>Items 1–2 run today in <code>tests/DocTurn Test Suite.html</code> (every role, both directions, web &amp; mobile composer). Items 3–7 need the production backend, so they're staged as live integration tests — the kits are independent mockups and can't carry a real socket between two sessions.</span></div>
+  </div>
+</section>
+
+<!-- 10. FRONTEND -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">10</span> Frontend architecture</div>
+    <h2>Web SPA, role dashboards, mobile app</h2>
+    <p class="sub">Recreate the high-fidelity HTML UI kits as a real React + Vite + Tailwind + shadcn app, mapping shadcn theme tokens to <code>design/colors_and_type.css</code>. Status-color language is fixed: <b>amber = pending</b>, <b>emerald = accepted</b>, <b>blue = sent/active</b>, <b>red = rejected</b>, <b>slate = offline</b>. Light mode only; one primary action per view; patients shown by <b>initials only</b>.</p>
+    <div class="grid g4">
+      <div class="card pad"><h4>Login</h4><p class="sub" style="margin:0">Org code + credentials → role dashboard; 202 → MFA step.</p></div>
+      <div class="card pad"><h4>Hospitalist</h4><p class="sub" style="margin:0">Census/cap stats, pending Accept/Decline, my patients, on-shift toggle.</p></div>
+      <div class="card pad"><h4>ER Doctor</h4><p class="sub" style="margin:0">Intake + AI extract, quick/manual routing, recently-sent with status.</p></div>
+      <div class="card pad"><h4>Director</h4><p class="sub" style="margin:0">Provider list + toggles, rotation config + reset, drag-reorder rotation.</p></div>
+      <div class="card pad"><h4>Messaging</h4><p class="sub" style="margin:0">Conversation list + thread + composer, presence dots, delivery/read ticks, typing.</p></div>
+      <div class="card pad"><h4>Directory</h4><p class="sub" style="margin:0">Searchable provider grid with presence + quick message/call.</p></div>
+      <div class="card pad"><h4>Developer</h4><p class="sub" style="margin:0">Cross-tenant org admin, impersonation, AI diagnostics, CMS editor, notification profile (mode + carrier + secrets).</p></div>
+      <div class="card pad"><h4>Mobile (Expo)</h4><p class="sub" style="margin:0">Bottom-tab nav, realtime assignments, FCM push, QR onboarding.</p></div>
+    </div>
+    <p class="sub" style="margin-top:14px">A <code>WebSocketProvider</code> streams events and invalidates TanStack queries (keys = endpoint paths) so missed events reconcile on reconnect (exponential backoff).</p>
+  </div>
+</section>
+
+<!-- 11. SECURITY -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">11</span> Security &amp; HIPAA compliance</div>
+    <h2>STRIDE-aligned controls</h2>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>STRIDE category</th><th>Representative controls</th></tr></thead>
+        <tbody>
+          <tr><td><b>Spoofing</b></td><td>bcrypt(12); failed logins → <code>audit_logs</code>; <code>httpOnly</code>+<code>strict</code> cookies, 15-min rolling session; MFA gate server-side; mobile endpoints require auth.</td></tr>
+          <tr><td><b>Tampering</b></td><td>Every query scoped by session <code>organizationId</code>; <code>requireRole</code> on writes; rotation-order restricted to director; backup codes SHA-256, <code>used_at</code> prevents replay.</td></tr>
+          <tr><td><b>Repudiation</b></td><td><code>phi_access_logs</code> on every <code>/patients</code> + <code>/assignments</code> request; <code>audit_logs</code> for auth/MFA/assignment; impersonation fully audited before session swap.</td></tr>
+          <tr><td><b>Info disclosure</b></td><td>PHI stripped from AI prompts; PHI only in POST/PATCH bodies; OTP SMS carry only the code; error handler returns generic message; user object sanitized (no <code>password_hash</code>).</td></tr>
+          <tr><td><b>Denial of service</b></td><td>Expiry tick capped 50/tick; WS requires authenticated session; only director creates broadcasts; <code>pg.Pool</code> max 10.</td></tr>
+          <tr><td><b>Elevation of privilege</b></td><td><code>pending_registrations</code> + director approval; <code>/api/dev/*</code> gated to developer (not seeded in prod); CMS writes developer-only; <code>twoFactorEnabled</code> read from DB each login.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-warn" style="margin-top:14px"><span>⚠️</span><span><b>Open residual risks (close before production):</b> add <code>express-rate-limit</code> to <code>/api/login</code>; enforce HTTPS at the reverse proxy (Nginx/Caddy TLS); add a <code>phone</code> field to <code>users</code> for SMS MFA.</span></div>
+  </div>
+</section>
+
+<!-- 12. DEPLOYMENT -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">12</span> Deployment &amp; operations</div>
+    <h2>Environments, secrets, schema, observability</h2>
+    <div class="grid g4">
+      <div class="card pad"><h4>12.1 Environments</h4><p class="sub" style="margin:0">Dev (stubs, no secrets) · CI (stubs, Vitest) · Prod (Postgres, live services, TLS proxy).</p></div>
+      <div class="card pad"><h4>12.2 Config &amp; secrets</h4><p class="sub" style="margin:0"><code>.env.example</code> ships only <code>SESSION_SECRET</code> + <code>DATABASE_URL</code>. Live keys added per integration; stored in a secrets manager in prod.</p></div>
+      <div class="card pad"><h4>12.3 Schema changes</h4><p class="sub" style="margin:0"><code>drizzle-kit push</code> — no hand-written SQL migrations. <code>seed.ts</code> is deterministic (one org, users per role).</p></div>
+      <div class="card pad"><h4>12.4 Observability</h4><p class="sub" style="margin:0">Structured request logs, <code>audit_logs</code>, <code>phi_access_logs</code>, <code>security_incidents</code>; director/dev dashboards surface open incidents.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- CFG. CONFIGURABILITY -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">CFG</span> Configuration &amp; personalization</div>
+    <h2>User-adjustable tweaks without a release</h2>
+    <p class="sub">An additive layer over the server-authoritative, config-driven core: org policy + user preferences read <b>live at decision time</b>, per-org feature flags, and adaptive defaults that <b>suggest</b> (never silently apply) changes learned from logged usage. Full design in <a href="DocTurn Configurability &amp; Adaptive Behavior.html">DT-NOTE-001</a>.</p>
+    <div class="grid g3">
+      <div class="card pad"><div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">①</div><h3>C1 · Runtime settings</h3><p class="sub" style="margin:0"><code>org_settings</code> + <code>user_preferences</code> + a cached <code>config</code> service; validated (Zod), audited, reversible. No redeploy.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--active-bg);color:var(--primary)">②</div><h3>C2 · Behavior flags</h3><p class="sub" style="margin:0"><code>feature_flags</code> per org — dark-ship, gradual rollout, instant rollback, safe default when unset.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--violet-bg);color:var(--violet)">③</div><h3>C3 · Adaptive defaults</h3><p class="sub" style="margin:0"><code>suggestions</code> mined from logged usage with evidence; a human accepts → written + audited. No ML infra.</p></div>
+    </div>
+    <div class="note note-info" style="margin-top:14px"><span>ℹ️</span><span><b>Boundary to hold:</b> org policy (director-only, affects all) vs user preference (self-service). Clinical-routing behavior stays org policy — never a silent per-user change.</span></div>
+  </div>
+</section>
+
+<!-- 13. ROADMAP -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">13</span> Build roadmap</div>
+    <h2>M0–M16 — each milestone independently testable</h2>
+    <p class="sub">M0–M8 are the trimmed v1 (already built / in progress on SQLite + stubs). M9–M16 carry the build to the full production target. Run the acceptance check at the end of each milestone before moving on.</p>
+    <div class="grid g2">
+      <div class="card pad">
+        <div class="ms"><span class="num done">M0</span><div><h3>Scaffold &amp; database</h3><div class="acc">Schema + Drizzle + health route.</div></div></div>
+        <div class="ms"><span class="num done">M1</span><div><h3>Auth, sessions &amp; RBAC</h3><div class="acc">Passport local, role+tenant middleware, seed.</div></div></div>
+        <div class="ms"><span class="num done">M2</span><div><h3>Providers, directory &amp; org config</h3><div class="acc">Tenant-scoped CRUD + rotation config.</div></div></div>
+        <div class="ms"><span class="num done">M3</span><div><h3>Patient intake (+ mock AI)</h3><div class="acc">Deterministic extractor + patient create.</div></div></div>
+        <div class="ms"><span class="num core">M4</span><div><h3>Assignments, round-robin &amp; expiry · core</h3><div class="acc">State machine + selection + expiry + notify.</div></div></div>
+        <div class="ms"><span class="num done">M5</span><div><h3>Secure messaging</h3><div class="acc">Conversations, send, read receipts, audit.</div></div></div>
+        <div class="ms"><span class="num done">M6</span><div><h3>WebSocket realtime</h3><div class="acc">Presence, heartbeat, event fan-out.</div></div></div>
+        <div class="ms"><span class="num done">M7</span><div><h3>Web client</h3><div class="acc">Recreate web-app kit; TanStack + WS provider.</div></div></div>
+        <div class="ms"><span class="num done">M8</span><div><h3>Hardening &amp; polish</h3><div class="acc">Helmet, rate limits, audit, states.</div></div></div>
+      </div>
+      <div class="card pad">
+        <div class="ms"><span class="num">M9</span><div><h3>Postgres migration</h3><div class="acc">Swap driver, connect-pg-simple, re-verify org-scoping. <b>✓</b> suite green on Postgres.</div></div></div>
+        <div class="ms"><span class="num">M10</span><div><h3>Full MFA</h3><div class="acc">TOTP + SMS OTP + 10 backup codes; 15-min rolling. <b>✓</b> real MFA in non-dev.</div></div></div>
+        <div class="ms"><span class="num">M11</span><div><h3>Live integrations</h3><div class="acc">OpenAI · Twilio · Firebase · Amion behind flags. <b>✓</b> CI on stubs, gated live smoke.</div></div></div>
+        <div class="ms"><span class="num">M12</span><div><h3>Registration &amp; developer tooling</h3><div class="acc">Approval queue, /api/dev, CMS editor. <b>✓</b> director sign-off; scoping intact.</div></div></div>
+        <div class="ms"><span class="num">M13</span><div><h3>Scheduling, resources, broadcasts</h3><div class="acc">Departments/beds/equipment, directory, broadcasts. <b>✓</b> live metrics + per-org acks.</div></div></div>
+        <div class="ms"><span class="num">M14</span><div><h3>Web client polish</h3><div class="acc">@dnd-kit reorder, PWA offline, new WS events. <b>✓</b> offline + drag works.</div></div></div>
+        <div class="ms"><span class="num">M15</span><div><h3>Mobile app</h3><div class="acc">Expo, shared ApiClient, native WS, FCM, QR onboarding. <b>✓</b> realtime + push on device.</div></div></div>
+        <div class="ms"><span class="num">M16</span><div><h3>Security/compliance closeout</h3><div class="acc">PHI logs everywhere, threat model final, HIPAA review. <b>✓</b> all PHI routes logged.</div></div></div>
+      </div>
+    </div>
+    <div class="card pad" style="margin-top:16px">
+      <div class="ms"><span class="num" style="background:var(--violet-bg);color:var(--violet)">C1</span><div><h3>Configurability — runtime settings <span class="chip" style="vertical-align:1px">can land early</span></h3><div class="acc">org_settings + user_preferences + cached config service + Settings UI; extends existing org config. <b>✓</b> change a tweak in-app, next action reflects it, no deploy.</div></div></div>
+      <div class="ms"><span class="num" style="background:var(--violet-bg);color:var(--violet)">C2</span><div><h3>Configurability — behavior flags</h3><div class="acc">feature_flags per org; gate a new behavior behind a flag. <b>✓</b> flip on one site without a release; instant rollback.</div></div></div>
+      <div class="ms"><span class="num" style="background:var(--violet-bg);color:var(--violet)">C3</span><div><h3>Configurability — adaptive suggestions</h3><div class="acc">suggestions + analyze loop + review card. <b>✓</b> system proposes a change with evidence; human accepts → audited.</div></div></div>
+    </div>
+    <div class="note note-info" style="margin-top:16px"><span>ℹ️</span><span><b>Sequencing:</b> M9 (Postgres) lands before M10–M13. M11 (live integrations) runs in parallel with M12/M13 behind feature flags. M15 (mobile) is the largest standalone chunk; start once M9–M11 stabilize the API surface it depends on.</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-SPEC-001 · Rev 2.0</b> — DocTurn Final Design Specification (full production target). Companion documents in this pack: <a href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a> · <a href="DocTurn Function List.html">Function List</a> · <a href="DocTurn System Requirements.html">System Requirements</a>. Source: <code>docturn.pdf</code> Engineering Specification + the v1 implementation blueprint &amp; expansion plan. Hand this folder to Claude Code with: <i>"Implement DocTurn following the roadmap — continue from M9 toward the full target; keep every query org-scoped and the server authoritative."</i>
+  </div>
+</footer>
+
+</body>
+</html>

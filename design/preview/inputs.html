@@ -1,0 +1,52 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+  .field { display:flex; align-items:center; gap:8px; height:40px; padding:0 12px; border:1px solid var(--input); border-radius:var(--radius-md); background:#fff; }
+  .field svg { width:16px;height:16px;color:var(--muted-foreground); }
+  .field input { border:none;outline:none;font-size:14px;width:100%;font-family:inherit;background:transparent;color:var(--foreground); }
+  .field.focus { border-color:var(--ring); box-shadow:0 0 0 2px hsl(221 83% 53% / .25); }
+  .field.err { border-color:var(--destructive); }
+  .help { font-size:11.5px;color:var(--muted-foreground);margin-top:5px; }
+  .errtext { font-size:11.5px;color:var(--destructive);margin-top:5px;display:flex;gap:4px;align-items:center; }
+  .errtext svg{width:12px;height:12px;}
+  select.field { appearance:none; }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Forms &amp; inputs</b><span>input border, rounded-md, focus ring matching --ring. Clear labels + inline validation.</span></div>
+  <div class="grid">
+    <div>
+      <label>Room number</label>
+      <div class="field focus"><i data-lucide="door-open"></i><input value="412"></div>
+      <div class="help">Where the patient is currently located.</div>
+    </div>
+    <div>
+      <label>Patient initials</label>
+      <div class="field err"><i data-lucide="user"></i><input value=""></div>
+      <div class="errtext"><i data-lucide="alert-circle"></i>Initials are required.</div>
+    </div>
+    <div>
+      <label>Specialty</label>
+      <div class="field" style="justify-content:space-between"><span style="font-size:14px">Cardiology</span><i data-lucide="chevron-down"></i></div>
+      <div class="help">AI‑suggested from the intake note.</div>
+    </div>
+    <div>
+      <label>Search providers</label>
+      <div class="field"><i data-lucide="search"></i><input placeholder="Search by name…"></div>
+      <div class="help">Directory shows HIPAA‑safe fields only.</div>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

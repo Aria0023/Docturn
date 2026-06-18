@@ -1,0 +1,40 @@
+<!-- @dsCard group="Brand" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .grid { display:grid; grid-template-columns: 1.4fr 1fr; gap:14px; }
+  .panel { border-radius:var(--radius-2xl); border:1px solid var(--border); overflow:hidden; height:150px; position:relative; display:flex; align-items:flex-end; padding:14px; }
+  .marketing { background:var(--marketing-bg); }
+  .product { background:#fff; }
+  .product .grid2 { position:absolute; inset:14px; display:grid; grid-template-rows:auto 1fr; gap:8px; }
+  .tag { position:absolute; top:12px; left:14px; font-size:11px; font-weight:600; color:#0369a1; background:rgba(255,255,255,.7); padding:2px 8px; border-radius:99px; }
+  .tag.dk { color:var(--muted-foreground); background:var(--secondary); }
+  .cta { background:var(--sky-gradient); color:#fff; font-size:13px; font-weight:600; padding:9px 16px; border-radius:var(--radius-md); box-shadow:var(--shadow-glow); }
+  .bar { height:10px; background:var(--secondary); border-radius:6px; }
+  .chip { display:inline-block; font-size:11px; font-weight:600; color:var(--status-pending); background:var(--status-pending-bg); padding:2px 9px; border-radius:99px; }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Two surfaces, one system</b><span>Same tokens — only density &amp; decoration change.</span></div>
+  <div class="grid">
+    <div class="panel marketing">
+      <span class="tag">Marketing · sky→white→rose</span>
+      <span class="cta">Get started free</span>
+    </div>
+    <div class="panel product">
+      <span class="tag dk">Product · calm + neutral</span>
+      <div class="grid2" style="top:42px">
+        <div class="bar" style="width:55%"></div>
+        <div><span class="chip">Pending</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

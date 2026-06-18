@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Function List" subtitle="Functional decomposition tree with subsystem allocation and v1/target status" viewport="1120x640" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Function List</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn active" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Function List · functional decomposition</div></div>
+    </div>
+    <h1>Functional decomposition — what the system does, broken into reviewable units.</h1>
+    <p class="lede">Seventeen top-level functional areas (F1–F17) decomposed into ~96 leaf functions. Each leaf names the subsystem that owns it and whether it ships in the built <b>v1</b> core or arrives with the <b>target</b> expansion (milestone). This is the bridge between the use-case model and the system requirements.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-FL-001</b></span>
+      <span>Functional areas <b>17</b></span>
+      <span>Leaf functions <b>~96</b></span>
+      <span>Legend <b><span class="badge b-v1" style="vertical-align:middle">v1</span> built core · <span class="badge b-target" style="vertical-align:middle">target</span> expansion</b></span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">FL</span> Functional tree</div>
+    <h2>F1–F17 — owners and status</h2>
+    <p class="sub">Allocation tags name the owning module: <code>auth</code>, <code>rbac</code>, <code>storage</code>, <code>rotation</code>, <code>expiry</code>, <code>notifications</code>, <code>ws</code>, <code>ai-intake</code>, <code>sms</code>, <code>push</code>, <code>scheduler</code>, <code>cms</code>, <code>config</code>, <code>analytics</code>, <code>web</code>, <code>mobile</code>. Numbers in the area header note the milestone where the area completes.</p>
+
+    <div class="card pad ftree">
+
+      <!-- F1 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F1</span><span class="fname">Authentication &amp; Identity</span><span class="fdesc">— credentials, MFA, sessions</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F1.1</span><span class="sname"><b>Register account</b> — create pending account scoped to org code</span><span class="salloc">auth · <span class="badge b-target">M12</span></span></div>
+          <div class="srow"><span class="sid">F1.2</span><span class="sname"><b>Authenticate credentials</b> — scrypt/bcrypt verify, org-scoped</span><span class="salloc">auth · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F1.3</span><span class="sname"><b>Enroll TOTP</b> — speakeasy secret + QR provisioning</span><span class="salloc">auth · <span class="badge b-target">M10</span></span></div>
+          <div class="srow"><span class="sid">F1.4</span><span class="sname"><b>Verify MFA</b> — TOTP / SMS OTP / backup code</span><span class="salloc">auth · <span class="badge b-target">M10</span></span></div>
+          <div class="srow"><span class="sid">F1.5</span><span class="sname"><b>Generate &amp; consume backup codes</b> — 10 SHA-256, single-use</span><span class="salloc">auth · <span class="badge b-target">M10</span></span></div>
+          <div class="srow"><span class="sid">F1.6</span><span class="sname"><b>Manage session</b> — 15-min rolling, inactivity expiry, logout</span><span class="salloc">auth · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F1.7</span><span class="sname"><b>Sanitize identity</b> — strip password_hash on user reads</span><span class="salloc">auth · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F2 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F2</span><span class="fname">Authorization &amp; Tenancy</span><span class="fdesc">— RBAC + org isolation</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F2.1</span><span class="sname"><b>Enforce role</b> — requireRole on every privileged route</span><span class="salloc">rbac · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F2.2</span><span class="sname"><b>Assert tenant</b> — assertSameOrg on target rows</span><span class="salloc">rbac · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F2.3</span><span class="sname"><b>Scope storage</b> — organizationId first-arg on every method</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F2.4</span><span class="sname"><b>Developer cross-tenant bypass</b> — deliberate, fully audited</span><span class="salloc">rbac · <span class="badge b-target">M12</span></span></div>
+        </div>
+      </div>
+
+      <!-- F3 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F3</span><span class="fname">Provider Management</span><span class="fdesc">— rotation profile, capacity, directory</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F3.1</span><span class="sname"><b>Create provider</b> — user + hospitalist profile (role-gated)</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.2</span><span class="sname"><b>List providers</b> — all / working, with census &amp; cap</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.3</span><span class="sname"><b>Toggle working status</b> — self or director</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.4</span><span class="sname"><b>Set capacity (patient cap)</b></span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.5</span><span class="sname"><b>Delete provider</b> — 409 guard on pending work</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.6</span><span class="sname"><b>Reorder rotation</b> — drag-and-drop (@dnd-kit), director-only</span><span class="salloc">web · <span class="badge b-target">M14</span></span></div>
+          <div class="srow"><span class="sid">F3.7</span><span class="sname"><b>Serve directory</b> — HIPAA-safe fields, searchable</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F3.8</span><span class="sname"><b>Maintain on-call schedule</b></span><span class="salloc">scheduler · <span class="badge b-target">M13</span></span></div>
+        </div>
+      </div>
+
+      <!-- F4 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F4</span><span class="fname">Patient Intake</span><span class="fdesc">— record creation + AI assist</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F4.1</span><span class="sname"><b>Extract structured fields</b> — note → initials/room/issue/specialty</span><span class="salloc">ai-intake · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F4.2</span><span class="sname"><b>Live AI extraction</b> — OpenAI gpt-4o, PHI stripped, mock fallback</span><span class="salloc">ai-intake · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F4.3</span><span class="sname"><b>Process NL command</b> — gpt-4o-mini</span><span class="salloc">ai-intake · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F4.4</span><span class="sname"><b>Persist patient</b> — initials only, org-scoped, status=waiting</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F5 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F5</span><span class="fname">Assignment &amp; Routing <span class="badge b-v1" style="margin-left:6px">core</span></span><span class="fdesc">— the operational heart</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F5.1</span><span class="sname"><b>Select next provider</b> — lowest-census eligible, org-scoped</span><span class="salloc">rotation · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.2</span><span class="sname"><b>Apply cap relief</b> — raise all working caps when none eligible</span><span class="salloc">rotation · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.3</span><span class="sname"><b>Advance rotation cursor</b> — persist fairness index</span><span class="salloc">rotation · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.4</span><span class="sname"><b>Create assignment</b> — round-robin or manual, set expires_at</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.5</span><span class="sname"><b>Accept</b> — census++, patient assigned, resolve</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.6</span><span class="sname"><b>Reject</b> — resolve + immediate reroute</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.7</span><span class="sname"><b>Expire &amp; reroute</b> — interval tick, capped 50/tick</span><span class="salloc">expiry · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.8</span><span class="sname"><b>Reassign / override</b> — director / er_director to next or named</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.9</span><span class="sname"><b>Cancel</b> — director; census−− if was accepted</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F5.10</span><span class="sname"><b>Emit unrouted</b> — keep waiting when no provider eligible</span><span class="salloc">expiry · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F6 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F6</span><span class="fname">Secure Messaging</span><span class="fdesc">— conversations, receipts, typing</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F6.1</span><span class="sname"><b>Create conversation</b> — direct / group / emergency</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F6.2</span><span class="sname"><b>Send message</b> — persist + per-recipient delivery rows</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F6.3</span><span class="sname"><b>Mark read</b> — set read_at, emit delivery update</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F6.4</span><span class="sname"><b>Relay typing</b> — typing_start/stop → user_typing</span><span class="salloc">ws · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F6.5</span><span class="sname"><b>Delete message</b> — soft-delete + audit</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F6.6</span><span class="sname"><b>Enforce participant access</b> — non-participant → 403</span><span class="salloc">rbac · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F7 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F7</span><span class="fname">Realtime &amp; Presence</span><span class="fdesc">— WebSocket fan-out</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F7.1</span><span class="sname"><b>Authenticate socket</b> — cookie→session, close 1008 on fail</span><span class="salloc">ws · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F7.2</span><span class="sname"><b>Broadcast org-scoped</b> — broadcast(orgId) / sendToUsers(ids)</span><span class="salloc">ws · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F7.3</span><span class="sname"><b>Track presence</b> — online/offline, 20s heartbeat</span><span class="salloc">ws · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F7.4</span><span class="sname"><b>Emit entity events</b> — assignment / message / provider / broadcast</span><span class="salloc">ws · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F7.5</span><span class="sname"><b>Reconcile on reconnect</b> — backoff + query invalidation</span><span class="salloc">web · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F8 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F8</span><span class="fname">Notifications</span><span class="fdesc">— WS → push → SMS cascade</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F8.1</span><span class="sname"><b>Cascade delivery</b> — in-app first, degrade gracefully</span><span class="salloc">notifications · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F8.2</span><span class="sname"><b>Send SMS</b> — Twilio live + sms_history audit</span><span class="salloc">sms · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F8.3</span><span class="sname"><b>Send push</b> — Firebase FCM, device-token registry</span><span class="salloc">push · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F8.4</span><span class="sname"><b>Enforce PHI-free payloads</b> — generic copy only</span><span class="salloc">notifications · <span class="badge b-v1">v1</span></span></div>
+        </div>
+      </div>
+
+      <!-- F9 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F9</span><span class="fname">Administration &amp; Configuration</span><span class="fdesc">— org settings, approvals</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F9.1</span><span class="sname"><b>Get/patch org config</b> — timeout, shift types</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F9.2</span><span class="sname"><b>Reset rotation</b> — clear rotation_index</span><span class="salloc">storage · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F9.3</span><span class="sname"><b>Approve registration</b> — director gate on pending accounts</span><span class="salloc">storage · <span class="badge b-target">M12</span></span></div>
+          <div class="srow"><span class="sid">F9.4</span><span class="sname"><b>Review incidents</b> — surface open security_incidents</span><span class="salloc">web · <span class="badge b-target">M16</span></span></div>
+        </div>
+      </div>
+
+      <!-- F10 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F10</span><span class="fname">Developer / Platform Tooling</span><span class="fdesc">— cross-tenant ops</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F10.1</span><span class="sname"><b>Administer organizations</b> — cross-tenant CRUD</span><span class="salloc">storage · <span class="badge b-target">M12</span></span></div>
+          <div class="srow"><span class="sid">F10.2</span><span class="sname"><b>Impersonate</b> — audited session swap</span><span class="salloc">auth · <span class="badge b-target">M12</span></span></div>
+          <div class="srow"><span class="sid">F10.3</span><span class="sname"><b>Run AI diagnostics</b> — extractor health, prompt review</span><span class="salloc">ai-intake · <span class="badge b-target">M12</span></span></div>
+        </div>
+      </div>
+
+      <!-- F11 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F11</span><span class="fname">Mobile Application</span><span class="fdesc">— Expo / React Native</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F11.1</span><span class="sname"><b>Onboard via QR</b> — org lookup by code (public, safe fields)</span><span class="salloc">mobile · <span class="badge b-target">M15</span></span></div>
+          <div class="srow"><span class="sid">F11.2</span><span class="sname"><b>Register device token</b> — FCM, dedupe, deregister</span><span class="salloc">mobile · <span class="badge b-target">M15</span></span></div>
+          <div class="srow"><span class="sid">F11.3</span><span class="sname"><b>Stream realtime</b> — native WS client</span><span class="salloc">mobile · <span class="badge b-target">M15</span></span></div>
+          <div class="srow"><span class="sid">F11.4</span><span class="sname"><b>Serve compact payloads</b> — initials/room/specialty only</span><span class="salloc">storage · <span class="badge b-target">M15</span></span></div>
+        </div>
+      </div>
+
+      <!-- F12 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F12</span><span class="fname">Security &amp; Compliance</span><span class="fdesc">— audit, PHI, incidents, hardening</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F12.1</span><span class="sname"><b>Audit sensitive actions</b> — action/resource/risk</span><span class="salloc">audit · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F12.2</span><span class="sname"><b>Log PHI access</b> — every /patients + /assignments request</span><span class="salloc">audit · <span class="badge b-target">M16</span></span></div>
+          <div class="srow"><span class="sid">F12.3</span><span class="sname"><b>Record security incidents</b> — type/severity/link</span><span class="salloc">audit · <span class="badge b-target">M16</span></span></div>
+          <div class="srow"><span class="sid">F12.4</span><span class="sname"><b>Harden HTTP</b> — Helmet, tiered rate limits, generic errors</span><span class="salloc">server · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F12.5</span><span class="sname"><b>Terminate TLS</b> — reverse-proxy HTTPS enforcement</span><span class="salloc">infra · <span class="badge b-target">M16</span></span></div>
+        </div>
+      </div>
+
+      <!-- F13 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F13</span><span class="fname">External Integrations</span><span class="fdesc">— live ⇄ stub factories</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F13.1</span><span class="sname"><b>Select implementation</b> — env-gated factory at startup</span><span class="salloc">services · <span class="badge b-v1">v1</span></span></div>
+          <div class="srow"><span class="sid">F13.2</span><span class="sname"><b>Integrate OpenAI</b></span><span class="salloc">ai-intake · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F13.3</span><span class="sname"><b>Integrate Twilio</b></span><span class="salloc">sms · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F13.4</span><span class="sname"><b>Integrate Firebase FCM</b></span><span class="salloc">push · <span class="badge b-target">M11</span></span></div>
+          <div class="srow"><span class="sid">F13.5</span><span class="sname"><b>Integrate Amion</b> — shift sync</span><span class="salloc">scheduler · <span class="badge b-target">M11</span></span></div>
+        </div>
+      </div>
+
+      <!-- F14 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F14</span><span class="fname">Resources &amp; Scheduling</span><span class="fdesc">— departments, beds, equipment</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F14.1</span><span class="sname"><b>Manage departments / beds / equipment</b></span><span class="salloc">storage · <span class="badge b-target">M13</span></span></div>
+          <div class="srow"><span class="sid">F14.2</span><span class="sname"><b>Surface resource alerts &amp; metrics</b></span><span class="salloc">web · <span class="badge b-target">M13</span></span></div>
+        </div>
+      </div>
+
+      <!-- F15 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F15</span><span class="fname">Emergency Broadcast</span><span class="fdesc">— org-wide + acknowledgment</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F15.1</span><span class="sname"><b>Create broadcast</b> — director-only, org-scoped fan-out</span><span class="salloc">storage · <span class="badge b-target">M13</span></span></div>
+          <div class="srow"><span class="sid">F15.2</span><span class="sname"><b>Track acknowledgments</b> — per-recipient ack state</span><span class="salloc">storage · <span class="badge b-target">M13</span></span></div>
+        </div>
+      </div>
+
+      <!-- F16 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F16</span><span class="fname">Content Management (CMS)</span><span class="fdesc">— public marketing surfaces</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F16.1</span><span class="sname"><b>Edit landing page settings</b> — developer-only</span><span class="salloc">cms · <span class="badge b-target">M12</span></span></div>
+          <div class="srow"><span class="sid">F16.2</span><span class="sname"><b>Edit contact page settings</b></span><span class="salloc">cms · <span class="badge b-target">M12</span></span></div>
+        </div>
+      </div>
+
+      <!-- F17 -->
+      <div class="fnode">
+        <div class="frow"><span class="fid">F17</span><span class="fname">Configuration &amp; Personalization <span class="badge b-target" style="margin-left:6px">C1–C3</span></span><span class="fdesc">— runtime tweaks, flags, learned defaults</span></div>
+        <div class="fsub">
+          <div class="srow"><span class="sid">F17.1</span><span class="sname"><b>Manage org settings</b> — director-only policy tweaks, validated &amp; audited</span><span class="salloc">storage · <span class="badge b-target">C1</span></span></div>
+          <div class="srow"><span class="sid">F17.2</span><span class="sname"><b>Manage user preferences</b> — self-service per-person prefs</span><span class="salloc">storage · <span class="badge b-target">C1</span></span></div>
+          <div class="srow"><span class="sid">F17.3</span><span class="sname"><b>Resolve config at runtime</b> — cached read in hot paths, no redeploy</span><span class="salloc">config · <span class="badge b-target">C1</span></span></div>
+          <div class="srow"><span class="sid">F17.4</span><span class="sname"><b>Evaluate feature flags</b> — per-org dark-ship + rollback, safe default</span><span class="salloc">config · <span class="badge b-target">C2</span></span></div>
+          <div class="srow"><span class="sid">F17.5</span><span class="sname"><b>Generate adaptive suggestions</b> — heuristics over logged usage, with evidence</span><span class="salloc">analytics · <span class="badge b-target">C3</span></span></div>
+          <div class="srow"><span class="sid">F17.6</span><span class="sname"><b>Apply / dismiss suggestion</b> — human-confirmed, audited, reversible</span><span class="salloc">storage · <span class="badge b-target">C3</span></span></div>
+        </div>
+      </div>
+
+    </div>
+    <div class="note note-info" style="margin-top:16px"><span>ℹ️</span><span>Allocation tags map each leaf to a module in <code>server/services/</code>, <code>server/storage</code>, <code>client/</code>, or <code>mobile-app/</code> — so a function can be picked up, implemented, and unit-tested in isolation. Functions trace upward to use cases (Use Cases doc) and downward to requirements (System Requirements doc).</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-FL-001</b> — DocTurn Function List. Decomposed from the <a href="DocTurn Use Cases (SysML).html">Use-Case Model</a>; each leaf is verified against a requirement in <a href="DocTurn System Requirements.html">System Requirements</a>. Functional source: <code>docturn.pdf</code> §1.2 capabilities + the workflow and integration specs.
+  </div>
+</footer>
+
+</body>
+</html>

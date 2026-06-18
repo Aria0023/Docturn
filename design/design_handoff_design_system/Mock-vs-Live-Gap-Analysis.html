@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Mock vs. Live App: Developer Gap Analysis</title>
+<style>
+  :root{
+    --primary:#2563EB; --fg:hsl(222 84% 5%); --muted:hsl(215 16% 47%);
+    --border:hsl(214 32% 91%); --bg:#fff; --secondary:hsl(210 40% 96%);
+    --pending:#D97706; --pending-bg:#FEF3C7; --accepted:#059669; --accepted-bg:#D1FAE5;
+    --active:#2563EB; --active-bg:#DBEAFE; --rejected:#DC2626; --rejected-bg:#FEE2E2;
+    --neutral:#64748B; --neutral-bg:#F1F5F9;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-font-smoothing:antialiased}
+  body{margin:0;background:var(--secondary);color:var(--fg);font-family:var(--sans);line-height:1.5;font-size:15px}
+  .page{max-width:980px;margin:0 auto;background:var(--bg);padding:64px 72px 96px}
+  @media(max-width:720px){.page{padding:40px 24px 64px}}
+
+  /* ---- masthead ---- */
+  .mast{border-bottom:3px solid var(--fg);padding-bottom:22px;margin-bottom:8px}
+  .mast .kicker{display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}
+  .mast .glyph{width:26px;height:26px;border-radius:7px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+  h1{font-size:34px;line-height:1.1;font-weight:700;letter-spacing:-.02em;margin:14px 0 6px}
+  .mast .sub{font-size:16px;color:var(--muted);max-width:64ch}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 28px;margin-top:18px;font-size:12.5px;color:var(--muted)}
+  .meta b{color:var(--fg);font-weight:600}
+
+  h2{font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--primary);margin:54px 0 4px;display:flex;align-items:baseline;gap:10px}
+  h2 .n{font-variant-numeric:tabular-nums;color:var(--muted)}
+  h2 + .lede{font-size:15px;color:var(--muted);margin:0 0 18px;max-width:72ch}
+  h3{font-size:18px;font-weight:700;margin:30px 0 10px;letter-spacing:-.01em}
+
+  p{margin:0 0 12px;max-width:74ch}
+  .small{font-size:13px;color:var(--muted)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--neutral-bg);padding:1.5px 5px;border-radius:4px;color:#334155}
+  a{color:var(--primary)}
+
+  /* ---- status chips ---- */
+  .chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:9999px;font-size:11.5px;font-weight:700;white-space:nowrap;line-height:1.5}
+  .chip::before{content:"";width:6px;height:6px;border-radius:50%}
+  .c-match{background:var(--accepted-bg);color:var(--accepted)} .c-match::before{background:var(--accepted)}
+  .c-partial{background:var(--pending-bg);color:var(--pending)} .c-partial::before{background:var(--pending)}
+  .c-missing{background:var(--rejected-bg);color:var(--rejected)} .c-missing::before{background:var(--rejected)}
+  .c-mockonly{background:var(--active-bg);color:var(--active)} .c-mockonly::before{background:var(--active)}
+  .c-data{background:#EDE9FE;color:#6D28D9} .c-data::before{background:#6D28D9}
+
+  /* ---- legend ---- */
+  .legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 22px;background:var(--secondary);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:8px 0 4px}
+  .legend .row{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--muted)}
+  .legend .row b{color:var(--fg)}
+
+  /* ---- comparison tables ---- */
+  table{width:100%;border-collapse:collapse;margin:6px 0 8px;font-size:13.5px}
+  thead th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:0 12px 8px;border-bottom:2px solid var(--border);vertical-align:bottom}
+  tbody td{padding:12px;border-bottom:1px solid var(--border);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  td.area{font-weight:600;width:24%}
+  td.area .sub{font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+  td.st{width:108px}
+  td .rec{color:var(--fg)}
+  td .rec b{color:var(--primary)}
+  .live{color:var(--muted)}
+
+  .block{border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:14px 0}
+  .block > .hd{background:var(--secondary);padding:11px 16px;font-weight:700;font-size:13.5px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--border)}
+  .block > .hd .tag{font-size:11.5px;font-weight:600;color:var(--muted)}
+  .block table{margin:0}
+  .block tbody td{padding:11px 16px}
+
+  /* callouts */
+  .note{border-left:3px solid var(--primary);background:#F5F9FF;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0;font-size:14px}
+  .note.warn{border-color:var(--pending);background:#FFFBEB}
+  .note .lbl{font-weight:700;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--primary);margin-bottom:4px;display:block}
+  .note.warn .lbl{color:var(--pending)}
+
+  ul.tight{margin:6px 0 14px;padding-left:20px}
+  ul.tight li{margin:5px 0;max-width:72ch}
+
+  /* priority list */
+  .prio{counter-reset:p;list-style:none;padding:0;margin:10px 0}
+  .prio li{counter-increment:p;position:relative;padding:14px 16px 14px 56px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px}
+  .prio li::before{content:"P" counter(p);position:absolute;left:14px;top:14px;width:28px;height:28px;border-radius:7px;background:var(--primary);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .prio li b{display:block;margin-bottom:2px}
+  .prio .small{margin-top:4px}
+
+  hr{border:none;border-top:1px solid var(--border);margin:0}
+  .foot{margin-top:60px;padding-top:20px;border-top:1px solid var(--border);font-size:12.5px;color:var(--muted)}
+
+  @media print{
+    body{background:#fff;font-size:11.5px}
+    .page{max-width:none;padding:0 8mm}
+    h2{margin-top:30px}
+    .block,.prio li,.note,.legend{break-inside:avoid}
+    tr{break-inside:avoid}
+    a{color:var(--fg);text-decoration:none}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="mast">
+    <div class="kicker"><span class="glyph">D</span> DocTurn · Developer Handoff Addendum</div>
+    <h1>Design Mock vs. Live App — Gap Analysis &amp; Recommendations</h1>
+    <p class="sub">A screen-by-screen reconciliation of the DocTurn design mock against the running Replit build and the Requirements &amp; Data-Model spec (v1.0). Use this to decide what the mock should adopt from the live app, what the live app should adopt from the mock, and where the data model needs to move.</p>
+    <div class="meta">
+      <span><b>Sources</b> Live Replit build (Developer + Director portals), Requirements &amp; Data Model v1.0 (37 domain tables)</span>
+      <span><b>Scope</b> Whole system — all roles &amp; portals</span>
+      <span><b>Intent</b> Flag differences · propose improvements</span>
+    </div>
+  </header>
+
+  <h2><span class="n">00</span> How to read this</h2>
+  <p class="lede">Every row carries a status chip comparing the live app to the current mock. "Live app" is the source of truth for <em>features</em>; the mock is the source of truth for <em>visual language</em> (see the DocTurn design system). Recommendations reconcile the two.</p>
+  <div class="legend">
+    <div class="row"><span class="chip c-match">Match</span><span>Mock and live app agree; keep aligned.</span></div>
+    <div class="row"><span class="chip c-partial">Partial</span><span>Concept exists in both but differs in structure, IA, or depth.</span></div>
+    <div class="row"><span class="chip c-missing">Missing</span><span>In the live app (and/or spec) but absent from the mock.</span></div>
+    <div class="row"><span class="chip c-mockonly">Mock-only</span><span>In the mock but not yet in the live app — a proposed improvement.</span></div>
+    <div class="row"><span class="chip c-data">Data model</span><span>Needs a schema change or a backing relationship to ship.</span></div>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">01</span> Roles &amp; portals (cross-cutting)</h2>
+  <p class="lede">The biggest structural gap. The live app and spec define <b>five</b> roles and a configurable RBAC layer; the mock currently models a subset with hard-coded roles.</p>
+  <div class="block">
+    <div class="hd"><span>Roles &amp; access model</span><span class="tag">spec §1.2, FR-3.4 · tables <code>role_types</code>, <code>portal_configurations</code></span></div>
+    <table>
+      <thead><tr><th>Area</th><th>Status</th><th>Live app / spec vs. mock — recommendation</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="area">Role set<div class="sub">director · er_director · er_doctor · hospitalist · developer</div></td>
+          <td class="st"><span class="chip c-partial">Partial</span></td>
+          <td><span class="live">Live app exposes all five; <code>er_director</code> manages the ER side of the flow and has its own portal.</span><div class="rec">The mock has ER physician, Director, Developer, Hospitalist but <b>no <code>er_director</code> role or ER Director portal</b>. Add it, or document it as out-of-scope for the mock.</div></td>
+        </tr>
+        <tr>
+          <td class="area">Configurable / custom roles</td>
+          <td class="st"><span class="chip c-missing">Missing</span></td>
+          <td><span class="live">Live app: Role Management with custom per-org roles, portal-access matrix, and permission flags (<code>role_types.permissions</code>, <code>portalAccess</code>).</span><div class="rec">Mock treats roles as fixed. <b>No need to mock the RBAC editor visually</b> unless desired — but the dev build must keep roles data-driven, not hard-coded.</div></td>
+        </tr>
+        <tr>
+          <td class="area">Portal mirroring</td>
+          <td class="st"><span class="chip c-missing">Missing</span></td>
+          <td><span class="live">Live Developer dashboard has "Portal Access &amp; Mirroring" — open Director / ER Doctor / Mobile App portals directly, plus a Mobile QR.</span><div class="rec">Absent from mock. Low priority for design; note for dev as an existing capability to preserve.</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">02</span> Developer dashboard</h2>
+  <p class="lede">The live Developer portal is far deeper than the mock. It is an 11-tab platform-operator console; the mock covers only a slice.</p>
+  <div class="block">
+    <div class="hd"><span>Developer portal — tab coverage</span><span class="tag">live nav: Overview · AI Monitor · Organizations · Roles · Portal Access · Firebase · Twilio SMS · Integrations · System Logs · System Controls · Website CMS</span></div>
+    <table>
+      <thead><tr><th>Tab / feature</th><th>Status</th><th>Live app vs. mock — recommendation</th></tr></thead>
+      <tbody>
+        <tr><td class="area">Overview</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Stat tiles (Organizations, Total Users, Active Hospitalists, Total Assignments, System Health), System Health strip (DB / SMS / uptime), Organization Performance (per-org role breakdown), live monitoring, Performance Metrics.</span><div class="rec">Mock has a lighter overview. <b>Adopt the stat-tile row + System Health strip</b> styling into the mock; they're clean and on-brand.</div></td></tr>
+        <tr><td class="area">Organizations<div class="sub">Create org · user mgmt</div></td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Create New Organization (name + <code>code</code>), expandable org → role groups (Director / ER Director / ER Doctor / Hospitalist) with per-user cards (activate, mirror, edit, delete), Custom Roles per org.</span><div class="rec">Not in mock. High-value to mock if Developer portal is in design scope.</div></td></tr>
+        <tr><td class="area">Roles<div class="sub">Role Management</div></td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Create Role: name, description, portal-access checkboxes, access permissions (View Census, Assign Patients, Manage Assignments, View Reports, Manage Staff, System Settings), special features (AI Chatbot, Portal Customization); Existing Roles list w/ access-level badges.</span><div class="rec">Not in mock.</div></td></tr>
+        <tr><td class="area">Portal Access</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Portal Access &amp; Mirroring + sub-tabs Portal Access / Portal Customization / Portal Settings.</span><div class="rec">Not in mock — see §1.</div></td></tr>
+        <tr><td class="area">Integrations<div class="sub">Firebase · Twilio · Amion · Epic</div></td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Dedicated Firebase, Twilio SMS, and Integrations tabs (<code>integration_settings</code>, <code>firebase_configurations</code>).</span><div class="rec">Not in mock; spec-backed (§3.6).</div></td></tr>
+        <tr><td class="area">System Logs / Controls</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Logs, diagnostics, system controls incl. data-reset (FR-10.2).</span><div class="rec">Not in mock.</div></td></tr>
+        <tr><td class="area">Website CMS</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Editable marketing landing + contact page (hero, pricing, carousel, testimonials, trust badges, SEO/OG), publish toggle (<code>landing_page_settings</code>, <code>contact_page_settings</code>).</span><div class="rec">Not in mock; the marketing kit covers the public page but not the CMS editor.</div></td></tr>
+        <tr><td class="area">Test / junk data visible</td><td class="st"><span class="chip c-data">Data model</span></td><td><span class="live">Live build shows test artifacts ("Test Role 2", "ewrtwert" shift, "Test Bug Provider").</span><div class="rec"><b>Cleanup task for dev:</b> seed/scrub test rows before any stakeholder demo or production cutover.</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note warn"><span class="lbl">Decision needed</span>Is the Developer portal in design scope at all? It's a platform-operator tool, not a clinical surface. Recommendation: <b>keep the mock focused on Director / ER / Hospitalist clinical portals</b>, and treat Developer as build-only (document, don't re-mock) unless you want a polished operator UI.</div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">03</span> Director dashboard</h2>
+  <p class="lede">Closest to the mock, but the information architecture diverged. The live app splits responsibilities across six tabs; the mock collapsed several onto one screen. This is the most important section to reconcile.</p>
+  <div class="block">
+    <div class="hd"><span>Director portal — IA &amp; features</span><span class="tag">live tabs: Overview · Provider &amp; Rotation Management · Assignments · Redistribute · Approvals · Settings</span></div>
+    <table>
+      <thead><tr><th>Area</th><th>Status</th><th>Live app vs. mock — recommendation</th></tr></thead>
+      <tbody>
+        <tr><td class="area">Shift model placement</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Live app: <b>shift TYPE definitions live in Settings</b> (name + start/end + color, "+ Add Custom Shift"); the provider screen shows one flat rotation-ordered list with a <b>per-provider inline shift editor</b> (type dropdown + times + ✓/✗).</span><div class="rec">Mock <b>groups providers into Day/Swing/Night blocks</b> with hours edited on the main screen. Recommendation: <b>realign to the live split</b> — define shift types in Settings, assign per-provider inline on the roster. The mock's grouped view can stay as an optional grouped <em>display</em> mode, but editing hours belongs in Settings.</div></td></tr>
+        <tr><td class="area">Rotation order</td><td class="st"><span class="chip c-match">Match</span></td><td><span class="live">Both: drag-to-reorder, numbered rotation index, On/Off, census stepper, load %.</span><div class="rec">Keep. Mock's "Next up" highlight is a nice touch worth porting to live.</div></td></tr>
+        <tr><td class="area">Off-rotation while working</td><td class="st"><span class="chip c-data">Data model</span></td><td><span class="live">Mock adds an explicit "In rotation / Off rotation" toggle independent of On-shift.</span><div class="rec"><b>Good improvement, but schema has no boolean for it</b> — <code>hospitalists</code> has <code>rotationOrder</code> + <code>isWorkingToday</code> only. Add <code>inRotation boolean</code> (or treat <code>rotationOrder = null</code> as "off"). Flag for dev.</div></td></tr>
+        <tr><td class="area">Mass-set census cap</td><td class="st"><span class="chip c-match">Match</span></td><td><span class="live">Live: "Default Cap for All" + Apply to All. Mock: same idea.</span><div class="rec">Aligned. Note: live app keeps an org-level <code>Max Patient Cap per Provider</code> default in Settings <em>and</em> per-provider <code>patientCap</code> — make the mock's "apply to all" write both.</div></td></tr>
+        <tr><td class="area">Search · Filter (by role)</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Live: provider search + "All Roles" filter + Active/Total counts (e.g. 6 Active / 9 Total) + bulk Delete(n).</span><div class="rec">Mock lacks search/filter/bulk-select. Add — useful at 15+ hospitalists.</div></td></tr>
+        <tr><td class="area">Assignments tab</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Dedicated director view of all assignments (cancel / reassign — FR-4.6).</span><div class="rec">Not in mock.</div></td></tr>
+        <tr><td class="area">Redistribute tab</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Tool to rebalance census across hospitalists.</span><div class="rec">Not in mock — strong candidate to design well; it's the director's core load-balancing job.</div></td></tr>
+        <tr><td class="area">Approvals tab</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">Provider-registration approval pipeline — pending / approved / rejected / on_hold (FR-3.2/3.3, <code>provider_registrations</code>).</span><div class="rec">Not in mock; spec-backed.</div></td></tr>
+        <tr><td class="area">Notifications + Settings sub-tabs</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Header has Notifications w/ unread badge; Settings has General / Notifications / Security / Integrations / Testing / Account, plus Round Robin config (On-Call Only, Available Only, Include Shift Types) and System Status.</span><div class="rec">Mock surfaces a thinner round-robin config on the main screen. <b>Move round-robin rules + shift defs into a Settings tab</b> to match.</div></td></tr>
+        <tr><td class="area">Shift naming</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Live/spec enum: <code>rounding · swing · nocturnist</code> (live UI shows "Rounding / Swing / Night"). Mock uses "Day call / Swing / Nights".</span><div class="rec">Align names to the configurable <code>shiftTypeDefinitions</code> rather than hard-coding; don't invent "Day call".</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">04</span> ER physician portal</h2>
+  <p class="lede">The mock is ahead of the spec here — several mock features are genuine improvements, but two need data-model support before they can ship.</p>
+  <div class="block">
+    <div class="hd"><span>ER intake &amp; assignment</span><span class="tag">spec §2.4 (FR-4.x), tables <code>patients</code>, <code>assignments</code></span></div>
+    <table>
+      <thead><tr><th>Area</th><th>Status</th><th>Notes — recommendation</th></tr></thead>
+      <tbody>
+        <tr><td class="area">Patient intake + AI extract</td><td class="st"><span class="chip c-match">Match</span></td><td><span class="live">Initials / room / issue summary (PHI), AI-assisted extraction from free text (FR-4.1, FR-9.1).</span><div class="rec">Mock matches. Keep "synthetic examples only" guard rail visible.</div></td></tr>
+        <tr><td class="area">Round-robin vs. manual routing</td><td class="st"><span class="chip c-match">Match</span></td><td><span class="live">FR-4.2/4.3 — quick (round-robin) or manual override.</span><div class="rec">Aligned.</div></td></tr>
+        <tr><td class="area">Multi-consultant select</td><td class="st"><span class="chip c-data">Data model</span></td><td><span class="live">Mock adds: route to a primary hospitalist <em>plus</em> one or more consult services (Cardiology, GI, …).</span><div class="rec"><b>Improvement, but not in the schema</b> — an <code>assignment</code> links to exactly one hospitalist. Needs an <code>assignment_consults</code> join (or consult-type conversations). Flag for dev before building.</div></td></tr>
+        <tr><td class="area">Recently sent — 2-day history, accepted retained</td><td class="st"><span class="chip c-mockonly">Mock-only</span></td><td><span class="live">Mock keeps sent assignments 2 days, grouped Today/Yesterday, accepted hand-offs stay visible.</span><div class="rec">Good UX. Backed by <code>assignments.assignedAt/respondedAt</code> — no schema change, just a query window. Adopt into live.</div></td></tr>
+        <tr><td class="area">Reassign from the list</td><td class="st"><span class="chip c-mockonly">Mock-only</span></td><td><span class="live">Mock: per-row Reassign dropdown.</span><div class="rec">Maps cleanly to FR-4.6 + <code>assignments.reassignedAt</code>. Adopt.</div></td></tr>
+        <tr><td class="area">Assignment lifecycle states</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Spec: <code>pending → accepted / rejected / expired / cancelled</code> with timestamps + auto-expiry re-route (FR-4.4/4.5).</span><div class="rec">Mock shows sent / accepted / rejected but not <b>expired</b> or the expiry countdown. Add an "expiring soon" (amber) state to match status language.</div></td></tr>
+        <tr><td class="area">Assignment-scoped chat</td><td class="st"><span class="chip c-missing">Missing</span></td><td><span class="live">FR-4.8 — chat on an assignment (<code>assignment_messages</code>).</span><div class="rec">Not in mock.</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">05</span> Hospitalist &amp; shared surfaces</h2>
+  <div class="block">
+    <div class="hd"><span>Hospitalist portal, directory, messaging, resources</span></div>
+    <table>
+      <thead><tr><th>Area</th><th>Status</th><th>Notes — recommendation</th></tr></thead>
+      <tbody>
+        <tr><td class="area">Hospitalist accept/decline + census</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Receives assignment, accepts/declines, manages census/cap (FR-4.7).</span><div class="rec">Confirm the mock's hospitalist view covers accept/decline with census auto-increment on accept.</div></td></tr>
+        <tr><td class="area">Provider directory</td><td class="st"><span class="chip c-match">Match</span></td><td><span class="live">Name, title, specialty, contact, on-call, availability (FR-6.4, <code>provider_directory</code>).</span><div class="rec">Mock's compact single-row directory is good and aligns. Could add availability states (<code>available / busy / do_not_disturb / offline</code>).</div></td></tr>
+        <tr><td class="area">Messaging (direct/group/emergency)</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Threading, attachments, edit, soft-delete, per-recipient delivery status (FR-6.1–6.3).</span><div class="rec">Mock has secure messaging; confirm delivery-status + emergency broadcast acknowledgement depth.</div></td></tr>
+        <tr><td class="area">Emergency broadcasts + ack</td><td class="st"><span class="chip c-partial">Partial</span></td><td><span class="live">Targeted by role/department, optional required acknowledgement w/ tracking (FR-6.5, <code>emergency_broadcasts</code>).</span><div class="rec">Mock has a Broadcasts screen; add the acknowledgement-tracking view.</div></td></tr>
+        <tr><td class="area">Hospital resources (beds/equipment/alerts)</td><td class="st"><span class="chip c-data">Data model</span></td><td><span class="live">Spec §2.8 defines departments / beds / equipment / resource_alerts; you directed these be <b>removed from the UI as out of scope</b>.</span><div class="rec"><b>Resolved &amp; consistent:</b> mock no longer shows Resources. Keep the tables in the schema (don't drop) but leave the UI de-scoped. Documented so dev doesn't "restore" it by mistake.</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">06</span> Data-model actions for dev</h2>
+  <p class="lede">The schema items the mock's improvements depend on. Nothing here is cosmetic — each is a build blocker for a mock-only feature.</p>
+  <ul class="tight">
+    <li><b>Off-rotation flag.</b> Add <code>hospitalists.inRotation boolean</code> (default true), independent of <code>isWorkingToday</code>, so a provider can be on shift yet out of round-robin. Round-robin selection must exclude <code>inRotation = false</code>.</li>
+    <li><b>Consult services on an assignment.</b> The mock's multi-consultant routing has no home in <code>assignments</code> (one hospitalist per assignment). Add an <code>assignment_consults</code> join (assignmentId, service/specialty, status) or model consults as typed conversations.</li>
+    <li><b>Configurable shift types over hard-coded names.</b> Drive shift labels/hours from <code>organizations.shiftTypeDefinitions</code> (jsonb) + <code>roundRobinShiftTypes</code>; don't hard-code "Day call / Swing / Nights" in the UI.</li>
+    <li><b>Expiry state in ER list.</b> Surface <code>assignments.expiresAt</code> as an "expiring soon" (amber) + "expired" (slate) state to match the status color language.</li>
+    <li><b>Apply-to-all cap.</b> "Default Cap for All" should write both the org default (<code>Max Patient Cap per Provider</code>) and each <code>hospitalists.patientCap</code>, clamping current census.</li>
+    <li><b>Test-data hygiene.</b> Scrub seed/test rows (<code>Test Role 2</code>, <code>ewrtwert</code> shift, <code>Test Bug Provider</code>) before demo/production.</li>
+  </ul>
+
+  <!-- ====================================================== -->
+  <h2><span class="n">07</span> Recommended priorities</h2>
+  <p class="lede">If you act on one section, make it the Director reconciliation — it's where the mock and live app disagree most on structure.</p>
+  <ol class="prio">
+    <li><b>Reconcile Director IA to the live six-tab model.</b>Move shift-type definitions + round-robin rules into a <b>Settings</b> tab; keep the roster as one rotation-ordered list with inline per-provider shift editing. Add search / role filter / bulk select.<div class="small">Resolves the largest structural divergence (§3).</div></li>
+    <li><b>Land the data-model changes in §6.</b>Off-rotation flag, consult join, configurable shift types, expiry state. These unblock the mock's best ideas.<div class="small">Build blockers — do before re-mocking those features.</div></li>
+    <li><b>Design the missing Director tabs: Redistribute &amp; Approvals.</b>Both are spec-backed and central to the director's job; neither exists in the mock yet.<div class="small">Net-new design work with clear requirements (FR-4.6, FR-3.2/3.3).</div></li>
+    <li><b>Adopt the mock's ER improvements into live.</b>2-day recently-sent history, accepted-retained, per-row reassign — all ship with existing tables.<div class="small">Quick wins, no schema change.</div></li>
+    <li><b>Decide Developer-portal scope.</b>Keep it build-only and documented, or invest in a polished operator UI. Don't half-mock it.<div class="small">Scope decision, not a build task (§2).</div></li>
+  </ol>
+
+  <div class="foot">
+    DocTurn — Developer handoff addendum · Mock vs. Live gap analysis. Visual language per the DocTurn Design System (brand blue <code>#2563EB</code>, status color set, Tailwind type/space scale). Live app + Requirements &amp; Data Model v1.0 are the feature/data source of truth; this document only reconciles them with the design mock.
+  </div>
+
+</div>
+</body>
+</html>

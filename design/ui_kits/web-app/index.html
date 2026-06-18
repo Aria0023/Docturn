@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Clinical Web App (Extended UI Kit)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: hsl(214 25% 86%); border-radius: 99px; border: 2px solid #fff; }
+  @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
+  @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  textarea, input { font-family: var(--font-sans); }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="store.js"></script>
+</head>
+<body>
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#2563EB"/>
+    <text x="50" y="68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="700" fill="#fff" text-anchor="middle">D</text>
+  </svg>
+</template>
+<div id="root"></div>
+
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="LoginScreen.jsx"></script>
+<script type="text/babel" src="LockScreen.jsx"></script>
+<script type="text/babel" src="AppShell.jsx"></script>
+<script type="text/babel" src="HospitalistDashboard.jsx"></script>
+<script type="text/babel" src="ErDoctorDashboard.jsx"></script>
+<script type="text/babel" src="DirectorDashboard.jsx"></script>
+<script type="text/babel" src="ErDirectorDashboard.jsx"></script>
+<script type="text/babel" src="Messaging.jsx"></script>
+<script type="text/babel" src="Directory.jsx"></script>
+<script type="text/babel" src="CareTeam.jsx"></script>
+<script type="text/babel" src="PatientBoard.jsx"></script>
+<script type="text/babel" src="DeveloperDashboard.jsx"></script>
+<script type="text/babel" src="Compliance.jsx"></script>
+<script type="text/babel" src="Broadcasts.jsx"></script>
+<script type="text/babel" src="ScheduleSync.jsx"></script>
+<script type="text/babel" src="OrgSettings.jsx"></script>
+<script type="text/babel" src="RoleManagement.jsx"></script>
+<script type="text/babel" src="People.jsx"></script>
+<script type="text/babel" src="Appearance.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect } = React;
+
+const ROLE_META = {
+  hospitalist: { title: "Census & assignments", subtitle: "Accept incoming hand‑offs and manage your patients" },
+  er_doctor:   { title: "Patient intake", subtitle: "Admit a patient and route to a hospitalist" },
+  er_director: { title: "ER operations", subtitle: "Intake throughput, ER staffing and routing performance" },
+  director:    { title: "Hospital overview", subtitle: "Hospitalist providers, rotation and reassignment" },
+  developer:   { title: "Organizations", subtitle: "Cross‑tenant platform administration" },
+};
+
+// Per-role navigation. Director & developer unlock the new admin surfaces.
+const NAV = {
+  hospitalist: [
+    { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "board",     label: "Patient board", icon: "layout-list" },
+    { id: "team",      label: "My care team", icon: "users-round" },
+    { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
+    { id: "directory", label: "Directory", icon: "contact" },
+    { id: "compliance", label: "Compliance", icon: "shield-check" },
+  ],
+  er_doctor: [
+    { id: "dashboard", label: "Intake",    icon: "clipboard-plus" },
+    { id: "board",     label: "Patient board", icon: "layout-list" },
+    { id: "team",      label: "My care team", icon: "users-round" },
+    { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
+    { id: "directory", label: "Directory", icon: "contact" },
+    { id: "compliance", label: "Compliance", icon: "shield-check" },
+  ],
+  er_director: [
+    { id: "dashboard",  label: "ER operations", icon: "ambulance" },
+    { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
+    { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
+    { id: "access",     label: "Access & people", icon: "users-round" },
+    { id: "directory",  label: "Directory",  icon: "contact" },
+    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "appearance", label: "Appearance", icon: "palette" },
+    { id: "settings",   label: "Settings",   icon: "settings" },
+  ],
+  director: [
+    { id: "dashboard",  label: "Overview",   icon: "layout-dashboard" },
+    { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
+    { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
+    { id: "access",     label: "Access & people", icon: "users-round" },
+    { id: "directory",  label: "Directory",  icon: "contact" },
+    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "appearance", label: "Appearance", icon: "palette" },
+    { id: "settings",   label: "Settings",   icon: "settings" },
+  ],
+  developer: [
+    { id: "dashboard",  label: "Organizations",   icon: "building-2" },
+    { id: "roles",      label: "Role management", icon: "shield-half" },
+    { id: "compliance", label: "Compliance",      icon: "shield-check" },
+    { id: "appearance", label: "Appearance",      icon: "palette" },
+    { id: "settings",   label: "Tenant settings", icon: "settings" },
+  ],
+};
+
+// Topbar title/subtitle for the shared admin screens.
+const TOP = {
+  board:      ["Patient board", "Who's responsible for every distributed patient"],
+  team:       ["My care team", "Link midlevels and partners into your on-call unit"],
+  messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
+  directory:  ["Care team", "On‑call and availability"],
+  broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
+  compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
+  people:     ["People", "Manage everyone in your organization, grouped by role"],
+  access:     ["Access & people", "Manage your organization's people and the roles that govern their access"],
+  appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
+  settings:   ["Organization settings", "Rotation rules, feature flags and integrations"],
+};
+
+function Toast({ toast }) {
+  if (!toast) return null;
+  const tone = toast.tone || "accepted";
+  const ic = { accepted: "check-circle-2", sent: "send", rejected: "alert-triangle" }[tone] || "check-circle-2";
+  const fg = { accepted: "var(--status-accepted)", sent: "var(--status-active)", rejected: "var(--destructive)" }[tone];
+  return (
+    <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50, animation: "dt-toast-in .25s ease" }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
+        <Icon name={ic} size={18} color={fg} style={{ marginTop: 1 }} />
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{toast.title}</div>
+          {toast.msg && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{toast.msg}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoleSwitcher({ role, onChange }) {
+  const roles = [["hospitalist", "Hospitalist"], ["er_doctor", "ER physician"], ["er_director", "ER director"], ["director", "Hosp. director"], ["developer", "Developer"]];
+  return (
+    <div style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+      {roles.map(([id, label]) => (
+        <button key={id} onClick={() => onChange(id)}
+          style={{ padding: "6px 11px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
+            background: role === id ? "#fff" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
+            boxShadow: role === id ? "var(--shadow-sm)" : "none" }}>{label}</button>
+      ))}
+    </div>
+  );
+}
+
+function NotificationsPanel({ open, items, onClose }) {
+  if (!open) return null;
+  return (
+    <React.Fragment>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+      <div style={{ position: "fixed", top: 58, right: 18, width: 344, zIndex: 41, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+        <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>Notifications</span>
+          <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{items.length} recent</span>
+        </div>
+        <div style={{ maxHeight: 400, overflowY: "auto" }}>
+          {items.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>You're all caught up.</div>}
+          {items.map((n, i) => (
+            <div key={n.id} style={{ display: "flex", gap: 11, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              <span style={{ width: 32, height: 32, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={n.icon} size={16} color="var(--primary)" /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{n.title}</div>
+                <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{n.body}</div>
+                <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 3 }}>{dtFmt.ago(n.at)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function App() {
+  const st = useStore();
+  const a = useActions();
+  const role = st.session && st.session.role;
+  const nav = st.ui.nav;
+  const [locked, setLocked] = React.useState(false);
+
+  // Idle auto-lock (HIPAA). Resets on any interaction; locks after 15 min idle.
+  React.useEffect(() => {
+    if (!role) return;
+    let timer;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => setLocked(true), 15 * 60 * 1000); };
+    const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
+    evs.forEach((e) => window.addEventListener(e, arm));
+    arm();
+    return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, arm)); };
+  }, [role]);
+
+  useEffect(() => {
+    if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
+  }, [st.__toast]);
+
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+
+  const sortedProviders = DT.sortedProviders();
+  // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
+  const master = NAV[role];
+  const hidden = st.navHidden[role] || [];
+  const order = st.navOrder[role];
+  let composed = master.filter((it) => it.id === "dashboard" || !hidden.includes(it.id));
+  if (order && order.length) {
+    composed = composed.slice().sort((x, y) => {
+      const ix = order.indexOf(x.id), iy = order.indexOf(y.id);
+      return (ix < 0 ? 999 : ix) - (iy < 0 ? 999 : iy);
+    });
+  }
+  const navItems = composed.map((it) => it.id === "messages" ? { ...it, badge: DT.unreadMessages() || undefined } : it);
+  const meta = ROLE_META[role];
+
+  const message = (person) => { a.startConversation(person); a.setNav("messages"); };
+
+  let screen;
+  if (nav === "messages") screen = <Messaging />;
+  else if (nav === "directory") screen = <Directory providers={sortedProviders} onMessage={message} />;
+  else if (nav === "board") screen = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+  else if (nav === "team") screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} />;
+  else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
+  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
+  else if (nav === "access") {
+    const dom = role === "er_director"
+      ? { roles: ["er_doctor", "er_director"], portals: ["er_physician", "er_director"] }
+      : { roles: ["hospitalist", "director"], portals: ["hospitalist", "hosp_director"] };
+    screen = <AccessPeople scopeOrg={st.selectedOrg} domainRoles={dom.roles} domainPortals={dom.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  }
+  else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
+  else if (nav === "settings") screen = <OrgSettings />;
+  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myPatients={st.myPatients} acceptedToday={st.acceptedToday} onAccept={a.accept} onDecline={a.decline} unit={st.team.filter((m) => m.onCall)} onOpenTeam={() => a.setNav("team")} onMessage={message} />;
+  else if (role === "er_doctor") screen = <ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} />;
+  else if (role === "er_director") screen = <ErDirectorDashboard erPhysicians={st.erPhysicians} shifts={st.shifts} sent={st.sent} board={st.board} diversion={st.diversion} avgAcceptSec={st.avgAcceptSec} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} onToggleDiversion={a.toggleDiversion} onBroadcasts={() => a.setNav("broadcasts")} />;
+  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDiagnostics={a.runDiagnostics} />;
+  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} />;
+
+  const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
+  const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
+
+  return (
+    <div style={{ display: "flex", minHeight: "100vh", background: "var(--secondary)" }}>
+      <ThemeStyle theme={st.theme} />
+      <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <Topbar title={topTitle} subtitle={topSub}
+          working={role === "hospitalist" ? st.ui.onShift : undefined}
+          onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
+          notifCount={DT.unreadNotifs()}
+          onBell={() => a.toggleNotif()}
+          onLock={() => setLocked(true)}
+          right={<RoleSwitcher role={role} onChange={a.setRole} />} />
+        <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}>{screen}</main>
+      </div>
+      <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
+      <Toast toast={st.__toast} />
+      {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

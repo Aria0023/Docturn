@@ -1,0 +1,37 @@
+<!-- @dsCard group="Type" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .stack > div { margin-bottom: 12px; }
+  .anno { font-family:var(--font-mono); font-size:10.5px; color:var(--muted-foreground); display:block; margin-top:2px;}
+</style>
+</head>
+<body>
+  <div class="lead"><b>Headings in practice</b><span>The exact recipes used in the product &amp; on marketing.</span></div>
+  <div class="stack">
+    <div>
+      <span style="font-size:24px;font-weight:700;line-height:1.35">Census &amp; assignments</span>
+      <span class="anno">page heading · text-2xl font-bold text-foreground</span>
+    </div>
+    <div>
+      <span style="font-size:18px;font-weight:700">Pending requests</span>
+      <span class="anno">section heading · text-lg font-bold</span>
+    </div>
+    <div>
+      <span style="font-size:30px;font-weight:700;letter-spacing:-.02em;color:hsl(222 47% 11%)">Patient hand‑offs, handled.</span>
+      <span class="anno">marketing hero · text-5xl/6xl font-bold leading-tight</span>
+    </div>
+    <div>
+      <span style="font-size:14px;color:var(--muted-foreground)">Routes each admit to the next available hospitalist.</span>
+      <span class="anno">muted body · text-sm text-muted-foreground</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — CEO Pitch Deck</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  deck-stage:not(:defined) { visibility: hidden; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #0b1220; }
+
+  :root {
+    --type-hero: 100px;
+    --type-figure: 128px;
+    --type-title: 66px;
+    --type-subtitle: 40px;
+    --type-lead: 36px;
+    --type-body: 30px;
+    --type-small: 24px;
+    --type-eyebrow: 22px;
+    --pad-x: 120px;
+    --pad-top: 92px;
+    --pad-bottom: 84px;
+    --ink: #0f172a;
+    --ink-2: #475569;
+    --ink-3: #64748b;
+    --line: hsl(214 32% 91%);
+  }
+
+  /* ---- slide frame ---- */
+  .slide {
+    padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
+    display: flex; flex-direction: column;
+    background: #fff; color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  .slide--grad { background: var(--marketing-bg); }
+  .slide--ink  { background: #0f172a; color: #fff; }
+
+  /* ---- shared bits ---- */
+  .eyebrow { font-size: var(--type-eyebrow); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--sky-700); margin: 0; }
+  .slide--ink .eyebrow { color: var(--sky-400); }
+  .title { font-size: var(--type-title); font-weight: 700; letter-spacing: -0.025em; line-height: 1.05; margin: 18px 0 0; text-wrap: balance; }
+  .lead  { font-size: var(--type-lead); line-height: 1.4; color: var(--ink-2); margin: 0; font-weight: 400; text-wrap: pretty; }
+
+  .ico { display: inline-flex; align-items: center; justify-content: center; }
+  .ico svg { width: 1em; height: 1em; stroke-width: 2; }
+
+  /* corner chrome for parallelism on content slides */
+  .chrome { position: absolute; top: 46px; left: var(--pad-x); right: var(--pad-x); display: flex; align-items: center; justify-content: space-between; font-size: 20px; color: var(--ink-3); }
+  .chrome img { height: 26px; opacity: .9; }
+  .chrome .pg { font-family: var(--font-mono); letter-spacing: .04em; }
+
+  .topbar { display: flex; align-items: baseline; gap: 22px; }
+  .topbar .pg { margin-left: auto; font-family: var(--font-mono); font-size: 20px; color: var(--ink-3); letter-spacing: .04em; }
+
+  /* entrance */
+  @media (prefers-reduced-motion: no-preference) {
+    [data-deck-active] .anim { animation: rise .55s cubic-bezier(.16,.84,.44,1) both; }
+    [data-deck-active] .anim.d1 { animation-delay: .08s; }
+    [data-deck-active] .anim.d2 { animation-delay: .16s; }
+    [data-deck-active] .anim.d3 { animation-delay: .24s; }
+    [data-deck-active] .anim.d4 { animation-delay: .32s; }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
+
+  .blob { position: absolute; border-radius: 50%; pointer-events: none; }
+</style>
+</head>
+<body>
+<deck-stage width="1920" height="1080">
+
+  <!-- ===== 1 · COVER ===== -->
+  <section data-label="Cover" class="slide slide--grad" style="justify-content: space-between; position: relative;">
+    <div class="blob" style="width: 720px; height: 720px; top: -260px; right: -200px; background: radial-gradient(circle, rgba(56,189,248,.22), transparent 68%);"></div>
+    <div class="blob" style="width: 560px; height: 560px; bottom: -200px; left: -200px; background: radial-gradient(circle, rgba(255,228,230,.6), transparent 68%);"></div>
+
+    <img class="anim" src="assets/docturn-wordmark-marketing.svg" alt="DocTurn" style="height: 60px; position: relative; z-index: 2;">
+
+    <div style="position: relative; z-index: 2;">
+      <p class="eyebrow anim d1">Confidential proposal · hospital leadership</p>
+      <h1 class="anim d2" style="font-size: var(--type-hero); font-weight: 700; letter-spacing: -0.035em; line-height: 1.02; margin: 26px 0 0; max-width: 1400px; text-wrap: balance;">Patient hand-offs, without the phone tag.</h1>
+      <p class="anim d3" style="font-size: var(--type-subtitle); line-height: 1.4; color: var(--ink-2); margin: 30px 0 0; max-width: 1120px;">Coordinating every ED-to-hospitalist admission — automatically, and fully tracked.</p>
+    </div>
+
+    <div class="anim d4" style="position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(15,23,42,.12); padding-top: 28px;">
+      <span style="font-size: var(--type-small); color: var(--ink-2);">Prepared for the office of the CEO</span>
+      <span style="font-size: var(--type-small); color: var(--ink-3); display: inline-flex; gap: 20px; align-items: center;"><span class="ico" style="font-size: 22px; color: #059669;"><i data-lucide="shield-check"></i></span> HIPAA · SOC 2 Type II</span>
+    </div>
+  </section>
+
+  <!-- ===== 2 · THE HAND-OFF PROBLEM ===== -->
+  <section data-label="The hand-off problem" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">02 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">The problem</p>
+      <h2 class="title anim d1">The hand-off problem</h2>
+    </div>
+    <div style="display: grid; grid-template-columns: 1.05fr .95fr; gap: 80px; align-items: center; margin-top: 56px; flex: 1;">
+      <div>
+        <p class="lead anim d1" style="margin-bottom: 40px;">Admitting a patient from the ED still depends on the phone — and the phone is where throughput goes to wait.</p>
+        <div class="anim d2" style="display: flex; flex-direction: column; gap: 26px;">
+          <div style="display: flex; gap: 22px; align-items: flex-start;">
+            <span class="ico" style="font-size: 30px; color: #DC2626; background: #FEE2E2; width: 64px; height: 64px; border-radius: 16px; flex: none;"><i data-lucide="phone-off"></i></span>
+            <div><div style="font-size: var(--type-body); font-weight: 700;">Phone tag</div><div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 4px;">Calling down a list to find whoever is covering.</div></div>
+          </div>
+          <div style="display: flex; gap: 22px; align-items: flex-start;">
+            <span class="ico" style="font-size: 30px; color: #DC2626; background: #FEE2E2; width: 64px; height: 64px; border-radius: 16px; flex: none;"><i data-lucide="scale"></i></span>
+            <div><div style="font-size: var(--type-body); font-weight: 700;">Uneven load</div><div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 4px;">No shared census, so the same providers get overloaded.</div></div>
+          </div>
+          <div style="display: flex; gap: 22px; align-items: flex-start;">
+            <span class="ico" style="font-size: 30px; color: #DC2626; background: #FEE2E2; width: 64px; height: 64px; border-radius: 16px; flex: none;"><i data-lucide="file-question"></i></span>
+            <div><div style="font-size: var(--type-body); font-weight: 700;">Nothing tracked</div><div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 4px;">Who accepted, and when, lives in a text thread.</div></div>
+          </div>
+        </div>
+      </div>
+      <!-- phone "recents" visual -->
+      <div class="anim d2" style="justify-self: center;">
+        <div style="width: 420px; background: #fff; border: 1px solid var(--line); border-radius: 28px; box-shadow: var(--shadow-2xl); overflow: hidden;">
+          <div style="background: #F8FAFC; padding: 22px 26px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 24px; font-weight: 700;">Recents</span>
+            <span style="font-size: 20px; color: var(--ink-3); font-family: var(--font-mono);">2:14 AM</span>
+          </div>
+          <div style="padding: 8px 0;">
+            <div style="display: flex; align-items: center; gap: 16px; padding: 16px 26px;">
+              <span class="ico" style="font-size: 22px; color: #DC2626;"><i data-lucide="phone-missed"></i></span>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600; color: #DC2626;">Dr. Okafor</div><div style="font-size: 18px; color: var(--ink-3);">missed · no answer</div></div>
+              <span style="font-size: 18px; color: var(--ink-3);">2:09</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px; padding: 16px 26px; border-top: 1px solid var(--line);">
+              <span class="ico" style="font-size: 22px; color: #DC2626;"><i data-lucide="phone-missed"></i></span>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600; color: #DC2626;">On-call pager</div><div style="font-size: 18px; color: var(--ink-3);">missed · voicemail</div></div>
+              <span style="font-size: 18px; color: var(--ink-3);">2:06</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px; padding: 16px 26px; border-top: 1px solid var(--line);">
+              <span class="ico" style="font-size: 22px; color: var(--ink-3);"><i data-lucide="phone-outgoing"></i></span>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600;">Dr. Reyes</div><div style="font-size: 18px; color: var(--ink-3);">outgoing · 47s</div></div>
+              <span style="font-size: 18px; color: var(--ink-3);">2:01</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px; padding: 16px 26px; border-top: 1px solid var(--line);">
+              <span class="ico" style="font-size: 22px; color: #DC2626;"><i data-lucide="phone-missed"></i></span>
+              <div style="flex: 1;"><div style="font-size: 22px; font-weight: 600; color: #DC2626;">Dr. Patel</div><div style="font-size: 18px; color: var(--ink-3);">missed · no answer</div></div>
+              <span style="font-size: 18px; color: var(--ink-3);">1:58</span>
+            </div>
+          </div>
+          <div style="background: #FEF2F2; padding: 16px 26px; text-align: center; font-size: 19px; font-weight: 600; color: #DC2626;">16 minutes · still no hospitalist</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 3 · THE COST ===== -->
+  <section data-label="The cost of a slow hand-off" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">03 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">Why it matters</p>
+      <h2 class="title anim d1">The cost of a slow hand-off</h2>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 56px; align-items: start; margin-top: auto; margin-bottom: auto;">
+      <div class="anim d1">
+        <div style="font-size: var(--type-figure); font-weight: 700; letter-spacing: -0.04em; line-height: 1; background: var(--sky-gradient); -webkit-background-clip: text; background-clip: text; color: transparent;">6 hrs</div>
+        <div style="font-size: var(--type-body); color: var(--ink); font-weight: 600; margin-top: 18px;">median ED boarding time</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 8px; line-height: 1.4;">that admitted patients wait once the decision to admit is made.</div>
+      </div>
+      <div class="anim d2">
+        <div style="font-size: var(--type-figure); font-weight: 700; letter-spacing: -0.04em; line-height: 1; background: var(--sky-gradient); -webkit-background-clip: text; background-clip: text; color: transparent;">30%+</div>
+        <div style="font-size: var(--type-body); color: var(--ink); font-weight: 600; margin-top: 18px;">of clinician time on coordination</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 8px; line-height: 1.4;">spent chasing people and relaying information — not on care.</div>
+      </div>
+      <div class="anim d3">
+        <div style="font-size: var(--type-figure); font-weight: 700; letter-spacing: -0.04em; line-height: 1; background: var(--sky-gradient); -webkit-background-clip: text; background-clip: text; color: transparent;">2&times;</div>
+        <div style="font-size: var(--type-body); color: var(--ink); font-weight: 600; margin-top: 18px;">burnout-driven turnover risk</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 8px; line-height: 1.4;">tied to after-hours coordination load on your providers.</div>
+      </div>
+    </div>
+    <p class="anim d3" style="font-size: 20px; color: var(--ink-3); margin: 0;">Industry benchmarks — illustrative of the operational drag a manual hand-off creates. Every hour of boarding ties up an ED bed your next patient needs.</p>
+  </section>
+
+  <!-- ===== 4 · MEET DOCTURN ===== -->
+  <section data-label="Meet DocTurn" class="slide slide--grad" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">04 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">The solution</p>
+      <h2 class="title anim d1">Meet DocTurn</h2>
+      <p class="lead anim d1" style="margin-top: 26px; max-width: 1180px;">One system that automates the ED-to-hospitalist hand-off end to end — so the right patient reaches the right provider in seconds.</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: auto;">
+      <div class="anim d1" style="background: #fff; border: 1px solid var(--line); border-radius: 24px; padding: 40px; box-shadow: var(--shadow-lg);">
+        <span class="ico" style="font-size: 36px; color: var(--sky-700); background: #E0F2FE; width: 80px; height: 80px; border-radius: 20px;"><i data-lucide="route"></i></span>
+        <div style="font-size: var(--type-subtitle); font-weight: 700; margin-top: 28px;">Automatic routing</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 12px; line-height: 1.5;">Round-robin assigns each admit to the next eligible hospitalist by lowest census.</div>
+      </div>
+      <div class="anim d2" style="background: #fff; border: 1px solid var(--line); border-radius: 24px; padding: 40px; box-shadow: var(--shadow-lg);">
+        <span class="ico" style="font-size: 36px; color: var(--primary); background: #DBEAFE; width: 80px; height: 80px; border-radius: 20px;"><i data-lucide="bell-ring"></i></span>
+        <div style="font-size: var(--type-subtitle); font-weight: 700; margin-top: 28px;">Notifications that land</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 12px; line-height: 1.5;">In-app, push, and SMS cascade until the assigned provider responds.</div>
+      </div>
+      <div class="anim d3" style="background: #fff; border: 1px solid var(--line); border-radius: 24px; padding: 40px; box-shadow: var(--shadow-lg);">
+        <span class="ico" style="font-size: 36px; color: #059669; background: #D1FAE5; width: 80px; height: 80px; border-radius: 20px;"><i data-lucide="messages-square"></i></span>
+        <div style="font-size: var(--type-subtitle); font-weight: 700; margin-top: 28px;">Secure messaging</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 12px; line-height: 1.5;">Direct, group, and broadcast threads — audited, PHI-safe, no personal texting.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 5 · HOW IT WORKS ===== -->
+  <section data-label="How DocTurn works" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">05 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">How it works</p>
+      <h2 class="title anim d1">How DocTurn works</h2>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; align-items: stretch; margin-top: auto; margin-bottom: auto; position: relative;">
+      <div style="position: absolute; top: 40px; left: 12%; right: 12%; height: 2px; background: linear-gradient(90deg, var(--sky-400), var(--sky-700)); z-index: 0;"></div>
+      <div class="anim d1" style="position: relative; z-index: 1; padding-right: 36px;">
+        <span class="ico" style="font-size: 34px; color: #fff; background: var(--sky-gradient); width: 80px; height: 80px; border-radius: 50%; box-shadow: var(--shadow-glow);"><i data-lucide="clipboard-plus"></i></span>
+        <div style="font-size: 22px; font-family: var(--font-mono); color: var(--sky-700); margin-top: 24px; font-weight: 700;">01</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 8px;">ED admits</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">The ED physician submits the patient — AI structures free-text notes.</div>
+      </div>
+      <div class="anim d2" style="position: relative; z-index: 1; padding-right: 36px;">
+        <span class="ico" style="font-size: 34px; color: #fff; background: var(--sky-gradient); width: 80px; height: 80px; border-radius: 50%; box-shadow: var(--shadow-glow);"><i data-lucide="route"></i></span>
+        <div style="font-size: 22px; font-family: var(--font-mono); color: var(--sky-700); margin-top: 24px; font-weight: 700;">02</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 8px;">DocTurn routes</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">Round-robin picks the next hospitalist by census — or assign manually.</div>
+      </div>
+      <div class="anim d3" style="position: relative; z-index: 1; padding-right: 36px;">
+        <span class="ico" style="font-size: 34px; color: #fff; background: var(--sky-gradient); width: 80px; height: 80px; border-radius: 50%; box-shadow: var(--shadow-glow);"><i data-lucide="smartphone"></i></span>
+        <div style="font-size: 22px; font-family: var(--font-mono); color: var(--sky-700); margin-top: 24px; font-weight: 700;">03</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 8px;">Provider notified</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">Alerts fire across devices. One tap to accept or decline.</div>
+      </div>
+      <div class="anim d4" style="position: relative; z-index: 1;">
+        <span class="ico" style="font-size: 34px; color: #fff; background: var(--sky-gradient); width: 80px; height: 80px; border-radius: 50%; box-shadow: var(--shadow-glow);"><i data-lucide="circle-check-big"></i></span>
+        <div style="font-size: 22px; font-family: var(--font-mono); color: var(--sky-700); margin-top: 24px; font-weight: 700;">04</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 8px;">Hand-off complete</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">Census updates, the team can message, every step is logged.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 6 · INSIDE THE PRODUCT ===== -->
+  <section data-label="Inside the product" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">06 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">The product</p>
+      <h2 class="title anim d1">Inside the product</h2>
+    </div>
+    <div class="anim d1" style="margin-top: 40px; flex: 1; display: flex; align-items: center; justify-content: center;">
+      <div style="width: 100%; max-width: 1480px; background: #fff; border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow-2xl); overflow: hidden;">
+        <div style="height: 56px; background: #F8FAFC; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 24px;">
+          <span style="width: 15px; height: 15px; border-radius: 99px; background: #FB7185;"></span>
+          <span style="width: 15px; height: 15px; border-radius: 99px; background: #FBBF24;"></span>
+          <span style="width: 15px; height: 15px; border-radius: 99px; background: #34D399;"></span>
+          <span style="margin-left: 16px; font-size: 18px; color: #94a3b8; font-family: var(--font-mono);">app.docturn.health</span>
+        </div>
+        <div style="display: grid; grid-template-columns: 280px 1fr;">
+          <div style="background: #F8FAFC; border-right: 1px solid var(--line); padding: 24px 18px; display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 6px 12px 20px;"><img src="assets/docturn-glyph.svg" alt="" style="width: 34px; height: 34px; border-radius: 9px;"><span style="font-weight: 700; font-size: 22px;">DocTurn</span></div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 10px; font-size: 20px; font-weight: 600; color: var(--primary); background: #fff; box-shadow: var(--shadow-sm);"><span class="ico" style="font-size: 22px;"><i data-lucide="layout-dashboard"></i></span>Dashboard</div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 10px; font-size: 20px; color: var(--ink-3);"><span class="ico" style="font-size: 22px;"><i data-lucide="inbox"></i></span>Assignments</div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 10px; font-size: 20px; color: var(--ink-3);"><span class="ico" style="font-size: 22px;"><i data-lucide="messages-square"></i></span>Messages</div>
+            <div style="display: flex; align-items: center; gap: 14px; padding: 13px 14px; border-radius: 10px; font-size: 20px; color: var(--ink-3);"><span class="ico" style="font-size: 22px;"><i data-lucide="users"></i></span>Directory</div>
+          </div>
+          <div style="padding: 26px 30px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px;">
+              <div><div style="font-size: 26px; font-weight: 700;">Assignment queue</div><div style="font-size: 18px; color: #94a3b8; margin-top: 4px;">Mercy General · 4 active</div></div>
+              <span style="display: inline-flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 600; color: var(--status-accepted); background: var(--status-accepted-bg); padding: 8px 16px; border-radius: 99px;"><span style="width: 10px; height: 10px; border-radius: 99px; background: var(--status-accepted);"></span>Live</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              <div style="display: flex; align-items: center; gap: 18px; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-sm);">
+                <span style="width: 52px; height: 52px; border-radius: 13px; background: #F1F5F9; color: #475569; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 700;">RM</span>
+                <div style="flex: 1;"><div style="font-size: 20px; font-weight: 700;">RM · Rm 318</div><div style="font-size: 17px; color: var(--ink-3); margin-top: 2px;">Acute abdominal pain</div></div>
+                <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 600; padding: 5px 13px; border-radius: 99px; background: var(--status-pending-bg); color: var(--status-pending);"><span class="ico" style="font-size: 16px;"><i data-lucide="clock"></i></span>Pending · 0:42</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 18px; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-sm);">
+                <span style="width: 52px; height: 52px; border-radius: 13px; background: #F1F5F9; color: #475569; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 700;">SC</span>
+                <div style="flex: 1;"><div style="font-size: 20px; font-weight: 700;">SC · Rm 412</div><div style="font-size: 17px; color: var(--ink-3); margin-top: 2px;">Chest pain — telemetry · Dr. Chen</div></div>
+                <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 600; padding: 5px 13px; border-radius: 99px; background: var(--status-accepted-bg); color: var(--status-accepted);"><span class="ico" style="font-size: 16px;"><i data-lucide="check"></i></span>Accepted</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 18px; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow-sm);">
+                <span style="width: 52px; height: 52px; border-radius: 13px; background: #F1F5F9; color: #475569; display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 700;">TK</span>
+                <div style="flex: 1;"><div style="font-size: 20px; font-weight: 700;">TK · Rm 205</div><div style="font-size: 17px; color: var(--ink-3); margin-top: 2px;">Post-op observation · Dr. Okafor</div></div>
+                <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 16px; font-weight: 600; padding: 5px 13px; border-radius: 99px; background: var(--status-active-bg); color: var(--status-active);"><span class="ico" style="font-size: 16px;"><i data-lucide="send"></i></span>Sent</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 7 · OPERATIONAL IMPACT ===== -->
+  <section data-label="The operational impact" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">07 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">The impact</p>
+      <h2 class="title anim d1">The operational impact</h2>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: auto; margin-bottom: auto;">
+      <div class="anim d1" style="border: 1px solid var(--line); border-radius: 24px; overflow: hidden;">
+        <div style="background: #F8FAFC; padding: 24px 36px; font-size: var(--type-body); font-weight: 700; color: var(--ink-2); display: flex; align-items: center; gap: 14px;"><span class="ico" style="font-size: 26px; color: var(--status-neutral);"><i data-lucide="phone"></i></span>Today</div>
+        <div style="padding: 12px 36px 28px;">
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Time to reach a hospitalist</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px;">10–20 min of calls</div></div>
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Load balancing</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px;">Ad hoc, by memory</div></div>
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Visibility &amp; audit</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px;">None</div></div>
+          <div style="padding: 22px 0 4px; font-size: var(--type-small);"><div style="color: var(--ink-3);">After-hours burden</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px;">Phone tag</div></div>
+        </div>
+      </div>
+      <div class="anim d2" style="border: 2px solid var(--primary); border-radius: 24px; overflow: hidden; box-shadow: var(--shadow-xl);">
+        <div style="background: var(--sky-gradient); padding: 24px 36px; font-size: var(--type-body); font-weight: 700; color: #fff; display: flex; align-items: center; gap: 14px;"><img src="assets/docturn-glyph-sky.svg" alt="" style="width: 30px; height: 30px; border-radius: 8px; background: #fff;">With DocTurn</div>
+        <div style="padding: 12px 36px 28px;">
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Time to reach a hospitalist</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px; color: var(--sky-700);">Under 30 seconds</div></div>
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Load balancing</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px; color: var(--sky-700);">Automatic, by census</div></div>
+          <div style="padding: 22px 0; border-bottom: 1px solid var(--line); font-size: var(--type-small);"><div style="color: var(--ink-3);">Visibility &amp; audit</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px; color: var(--sky-700);">Full audit trail</div></div>
+          <div style="padding: 22px 0 4px; font-size: var(--type-small);"><div style="color: var(--ink-3);">After-hours burden</div><div style="font-weight: 700; font-size: 28px; margin-top: 4px; color: var(--sky-700);">One tap to accept</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 8 · COMPLIANCE ===== -->
+  <section data-label="Compliance by design" class="slide" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">08 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">Risk &amp; compliance</p>
+      <h2 class="title anim d1">Compliance by design</h2>
+      <p class="lead anim d1" style="margin-top: 24px; max-width: 1180px;">Tenancy, auditing, and least-privilege access are the architecture — not a checkbox added later.</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: auto;">
+      <div class="anim d1" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="shield-check"></i></span><div><div style="font-size: 26px; font-weight: 700;">HIPAA audit trail</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">Every PHI access logged, immutable.</div></div></div>
+      <div class="anim d1" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="badge-check"></i></span><div><div style="font-size: 26px; font-weight: 700;">SOC 2 Type II</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">Independently assessed, BAA included.</div></div></div>
+      <div class="anim d2" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="key-round"></i></span><div><div style="font-size: 26px; font-weight: 700;">MFA on every account</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">TOTP and SMS with backup codes.</div></div></div>
+      <div class="anim d2" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="server"></i></span><div><div style="font-size: 26px; font-weight: 700;">Tenant isolation</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">Data scoped to your organization.</div></div></div>
+      <div class="anim d3" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="lock"></i></span><div><div style="font-size: 26px; font-weight: 700;">Encrypted end to end</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">In transit and at rest.</div></div></div>
+      <div class="anim d3" style="display: flex; gap: 18px; align-items: flex-start; padding: 28px; border: 1px solid var(--line); border-radius: 20px;"><span class="ico" style="font-size: 30px; color: #059669; flex: none;"><i data-lucide="eye-off"></i></span><div><div style="font-size: 26px; font-weight: 700;">PHI-safe alerts</div><div style="font-size: 21px; color: var(--ink-3); margin-top: 6px; line-height: 1.4;">Initials only; notifications carry no PHI.</div></div></div>
+    </div>
+  </section>
+
+  <!-- ===== 9 · LIVE IN A DAY ===== -->
+  <section data-label="Live in a day" class="slide slide--grad" style="position: relative;">
+    <div class="chrome"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">09 / 10</span></div>
+    <div style="margin-top: 40px;">
+      <p class="eyebrow anim">Implementation</p>
+      <h2 class="title anim d1">Live in a day</h2>
+      <p class="lead anim d1" style="margin-top: 24px; max-width: 1180px;">No IT project, no new hardware. DocTurn runs in the browser and on the phones your team already carries.</p>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 56px;">
+      <div class="anim d1" style="background: rgba(255,255,255,.85); border: 1px solid rgba(255,255,255,.9); border-radius: 22px; padding: 36px; box-shadow: var(--shadow-md);">
+        <div style="font-size: 22px; font-family: var(--font-mono); font-weight: 700; color: var(--sky-700);">DAY 0</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 14px;">Sign the BAA</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">Paperwork and security review — most of it already done.</div>
+      </div>
+      <div class="anim d2" style="background: rgba(255,255,255,.85); border: 1px solid rgba(255,255,255,.9); border-radius: 22px; padding: 36px; box-shadow: var(--shadow-md);">
+        <div style="font-size: 22px; font-family: var(--font-mono); font-weight: 700; color: var(--sky-700);">DAY 0–1</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 14px;">Import providers &amp; shifts</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">Sync your roster and on-call schedule; set round-robin rules.</div>
+      </div>
+      <div class="anim d3" style="background: rgba(255,255,255,.85); border: 1px solid rgba(255,255,255,.9); border-radius: 22px; padding: 36px; box-shadow: var(--shadow-md);">
+        <div style="font-size: 22px; font-family: var(--font-mono); font-weight: 700; color: var(--sky-700);">DAY 1</div>
+        <div style="font-size: var(--type-body); font-weight: 700; margin-top: 14px;">Go live</div>
+        <div style="font-size: var(--type-small); color: var(--ink-3); margin-top: 10px; line-height: 1.45;">First admit routes automatically. Your team is coordinating in DocTurn.</div>
+      </div>
+    </div>
+    <div class="anim d3" style="margin-top: auto; display: flex; align-items: center; gap: 40px; flex-wrap: wrap; border-top: 1px solid rgba(15,23,42,.12); padding-top: 28px;">
+      <span style="font-size: var(--type-small); color: var(--ink-2);"><strong style="color: var(--ink);">Simple per-provider pricing.</strong> Free to start.</span>
+      <span style="font-size: var(--type-small); color: var(--ink-3);">Department <strong style="color: var(--ink);">$0</strong> · Hospital <strong style="color: var(--ink);">$8</strong>/provider/mo · Network custom</span>
+    </div>
+  </section>
+
+  <!-- ===== 10 · THE PILOT / ASK ===== -->
+  <section data-label="A 60-day pilot" class="slide slide--grad" style="justify-content: space-between; position: relative;">
+    <div class="blob" style="width: 680px; height: 680px; top: -240px; right: -180px; background: radial-gradient(circle, rgba(56,189,248,.22), transparent 68%);"></div>
+    <div class="blob" style="width: 520px; height: 520px; bottom: -200px; left: -180px; background: radial-gradient(circle, rgba(255,228,230,.6), transparent 68%);"></div>
+
+    <div class="chrome" style="position: relative;"><img src="assets/docturn-wordmark.svg" alt="DocTurn"><span class="pg">10 / 10</span></div>
+
+    <div style="position: relative; z-index: 2; margin-top: 30px;">
+      <p class="eyebrow anim">The ask</p>
+      <h2 class="anim d1" style="font-size: 84px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.04; margin: 18px 0 0; max-width: 1300px; text-wrap: balance;">A 60-day pilot in one ED and hospitalist group.</h2>
+      <p class="lead anim d2" style="margin-top: 28px; max-width: 1080px;">Low risk, fast to stand up, and measured against metrics we agree on up front. If it works the way we expect, we expand from there.</p>
+    </div>
+
+    <div style="position: relative; z-index: 2;">
+      <div class="anim d3" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-bottom: 40px;">
+        <div style="background: #fff; border-radius: 20px; padding: 32px; box-shadow: var(--shadow-lg);"><div style="font-size: 56px; font-weight: 700; letter-spacing: -0.03em; color: var(--sky-700);">&lt; 30s</div><div style="font-size: 22px; color: var(--ink-3); margin-top: 10px;">median time to accept</div></div>
+        <div style="background: #fff; border-radius: 20px; padding: 32px; box-shadow: var(--shadow-lg);"><div style="font-size: 56px; font-weight: 700; letter-spacing: -0.03em; color: var(--sky-700);">&gt; 90%</div><div style="font-size: 22px; color: var(--ink-3); margin-top: 10px;">first-alert acceptance</div></div>
+        <div style="background: #fff; border-radius: 20px; padding: 32px; box-shadow: var(--shadow-lg);"><div style="font-size: 56px; font-weight: 700; letter-spacing: -0.03em; color: var(--sky-700);">↓ boarding</div><div style="font-size: 22px; color: var(--ink-3); margin-top: 10px;">measurable ED reduction</div></div>
+      </div>
+      <div class="anim d4" style="display: flex; align-items: center; justify-content: space-between; border-top: 1px solid rgba(15,23,42,.12); padding-top: 28px; flex-wrap: wrap; gap: 16px;">
+        <span style="font-size: var(--type-body); font-weight: 700;">Let's pick a unit and a start date.</span>
+        <span style="font-size: var(--type-small); color: var(--ink-2); font-family: var(--font-mono);">hello@docturn.health · docturn.health</span>
+      </div>
+    </div>
+  </section>
+
+</deck-stage>
+
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<script src="deck-stage.js"></script>
+<script>
+  function drawIcons() { if (window.lucide) window.lucide.createIcons(); }
+  drawIcons();
+  // redraw on slide change in case any icons were added/cloned
+  document.querySelector('deck-stage')?.addEventListener('slidechange', drawIcons);
+</script>
+</body>
+</html>

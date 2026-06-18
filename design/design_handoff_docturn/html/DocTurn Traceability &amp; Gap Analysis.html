@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Traceability &amp; Gap Analysis</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn active" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Traceability &amp; Gap Analysis · review artifact</div></div>
+    </div>
+    <h1>Do the use cases, functions, and requirements actually line up?</h1>
+    <p class="lede">A bidirectional coverage audit across the three layers of the pack — every use case traced down to a function and a requirement, every requirement traced back up. The headline: <b>the v1 clinical core is tightly covered (100% of Must-priority use cases), and the gaps cluster predictably in the expansion tier</b> (mobile, resources, CMS, dev tooling) plus a handful of security functions that deserve their own requirement.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-GAP-001</b></span>
+      <span>Method <b>UC ⇄ F ⇄ SR traceability</b></span>
+      <span>Inputs <b>31 UC · 17 F-areas · 59 SR</b></span>
+      <span>Resolution <b>6 Med + 2 risks closed · 4 Could tracked</b></span>
+    </div>
+  </div>
+</header>
+
+<!-- METHOD -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">0</span> Method &amp; a note on tooling</div>
+    <h2>How this was produced</h2>
+    <div class="grid g3">
+      <div class="card pad" style="grid-column:span 2">
+        <p class="sub" style="margin:0 0 10px"><b>No dedicated "systems-engineer" tool was available</b>, so this is a hand-traced audit applying standard requirements-engineering practice. For each requirement the trace column (<code>UC · F</code>) was inverted to build two coverage maps: <b>UC → requirements</b> (is every behavior specified &amp; verifiable?) and <b>Function → requirements</b> (is every function exercised by a shall-statement?). Findings are then classified by severity and given a recommended action.</p>
+        <p class="sub" style="margin:0">Severity reflects <b>priority × exposure</b>: a Must-priority or security/PHI-touching gap is High/Med; a Could-priority expansion feature with no requirement yet is Low (expected — its requirements are authored at its milestone).</p>
+      </div>
+      <div class="card pad">
+        <h4>Coverage verdicts</h4>
+        <div class="tagrow" style="margin-top:0">
+          <span class="badge b-new">Covered</span><span class="badge b-should">Partial</span><span class="badge b-could">Open / Gap</span>
+        </div>
+        <p class="sub" style="margin:10px 0 0"><b>Covered</b> = ≥1 dedicated requirement. <b>Partial</b> = covered only indirectly/transitively. <b>Open</b> = no requirement yet.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SCORECARD -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">1</span> Coverage scorecard</div>
+    <h2>Where things stand</h2>
+    <div class="grid g4">
+      <div class="card pad"><h4>Use-case coverage</h4><div style="font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--accepted)">25 / 31</div><p class="sub" style="margin:4px 0 0">covered · 2 partial · 4 open (all Could). <b>All Must + Should UCs covered.</b></p></div>
+      <div class="card pad"><h4>Must-priority UCs</h4><div style="font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--accepted)">100%</div><p class="sub" style="margin:4px 0 0">every Must use case has a verifiable requirement.</p></div>
+      <div class="card pad"><h4>Requirement → function</h4><div style="font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--accepted)">67 / 67</div><p class="sub" style="margin:4px 0 0">every requirement traces to a function — no orphans.</p></div>
+      <div class="card pad"><h4>Gaps resolved</h4><div style="font-size:30px;font-weight:800;letter-spacing:-.02em;color:var(--accepted)">8 closed</div><p class="sub" style="margin:4px 0 0">6 Med gaps + 2 risks fixed; 4 Could tracked to milestones.</p></div>
+    </div>
+    <div class="note note-ok" style="margin-top:16px"><span>✓</span><span><b>Most important result:</b> there is no Must-priority behavior left unspecified or unverifiable. The clinical-safety core (assignment state machine, census invariants, tenant isolation, messaging access control, PHI logging) is fully traced with <b>Test</b>-method verification.</span></div>
+  </div>
+</section>
+
+<!-- UC COVERAGE MATRIX -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">2</span> Use-case → requirement matrix</div>
+    <h2>All 31 use cases, with their verifying requirements</h2>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th style="width:62px">UC</th><th>Use case</th><th>Verifying requirements</th><th style="width:90px">Verdict</th></tr></thead>
+        <tbody>
+          <tr><td class="req-id">UC-01</td><td>Authenticate</td><td>FR-AUTH-01, SEC-01, SEC-05, SEC-08, DR-03</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-02</td><td>Complete MFA</td><td>FR-AUTH-02, FR-AUTH-03</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-03</td><td>Register (request access)</td><td>FR-REG-01</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-04</td><td>Manage profile / shift</td><td>FR-PROV-02</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-05</td><td>Register patient (intake)</td><td>SEC-03 <span class="num-col">(+ SEC-02 scope)</span></td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-06</td><td>Extract note with AI</td><td>FR-INT-01, FR-INT-02</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-07</td><td>Create assignment</td><td>FR-ASG-01/02/03, SEC-02, PR-01, PR-02</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-08</td><td>Accept / decline</td><td>FR-ASG-04/05, SEC-07, UR-02, RR-01</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-09</td><td>Auto-expire &amp; reroute</td><td>FR-ASG-06/07, PR-03, DR-02, RR-02</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-10</td><td>Reassign / cancel</td><td>FR-ASG-08</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-11</td><td>Send secure message</td><td>FR-MSG-01, FR-RT-01/02, UR-04</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-12</td><td>Manage conversation</td><td>FR-MSG-03</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-13</td><td>View presence &amp; receipts</td><td>FR-MSG-02, RR-04</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-14</td><td>Broadcast emergency</td><td>FR-BRD-01</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-15</td><td>Deliver push / SMS</td><td>FR-NOT-01, SEC-04, SEC-11, IR-01, DR-04, RR-03</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-16</td><td>Manage providers</td><td>FR-PROV-01/03, UR-01</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-17</td><td>Configure rotation</td><td>FR-CFG-01/03 <span class="num-col">(timeout, mode — transitive)</span></td><td><span class="badge b-should">Partial</span></td></tr>
+          <tr><td class="req-id">UC-18</td><td>Approve registration</td><td>FR-REG-01 <span class="num-col">(indirect — gate only)</span></td><td><span class="badge b-should">Partial</span></td></tr>
+          <tr><td class="req-id">UC-19</td><td>Manage resources / beds</td><td><span class="num-col">— none (Could)</span></td><td><span class="badge b-could">Open</span></td></tr>
+          <tr><td class="req-id">UC-20</td><td>Sync on-call schedule</td><td><span class="num-col">— none (Could)</span></td><td><span class="badge b-could">Open</span></td></tr>
+          <tr><td class="req-id">UC-21</td><td>Administer organizations</td><td>FR-DEV-01</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-22</td><td>Impersonate (audited)</td><td>FR-DEV-02, SEC-06</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-23</td><td>Edit CMS pages</td><td><span class="num-col">— none (Could)</span></td><td><span class="badge b-could">Open</span></td></tr>
+          <tr><td class="req-id">UC-24</td><td>Review audit / incidents</td><td>SEC-06</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-25</td><td>Run AI diagnostics</td><td><span class="num-col">— none (Could)</span></td><td><span class="badge b-could">Open</span></td></tr>
+          <tr><td class="req-id">UC-26</td><td>Onboard device (QR)</td><td>FR-MOB-02, SEC-12</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-27</td><td>Register push token</td><td>FR-MOB-03</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-28</td><td>Act on assignment (mobile)</td><td>FR-MOB-01, IR-03, IR-04</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-29</td><td>Adjust settings (tweak)</td><td>FR-CFG-01/02/03, DR-05</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-30</td><td>Manage feature flags</td><td>FR-CFG-04</td><td><span class="badge b-new">Covered</span></td></tr>
+          <tr><td class="req-id">UC-31</td><td>Review &amp; apply suggestion</td><td>FR-CFG-05/06</td><td><span class="badge b-new">Covered</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- GAP REGISTER -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">3</span> Gap register</div>
+    <h2>Findings, severity, and the fix</h2>
+    <p class="sub">Each gap names the missing trace, why it matters, and the smallest action that closes it. Recommended new requirement IDs continue the existing numbering.</p>
+    <div class="note note-ok" style="margin-bottom:14px"><span>✓</span><span><b>Resolved in System Requirements (now 67 reqs):</b> GAP-01 → FR-MOB-02 + SEC-12 · GAP-02 → FR-MOB-03 · GAP-03 → FR-AUTH-04 · GAP-04 → FR-NOT-02 + IR-05 · GAP-05 → FR-MSG-04 · GAP-06 → SEC-13. Verification upgrades VR-01 &amp; VR-02 applied — <b>SEC-04</b> and <b>SEC-05</b> are now <span class="verif v-test">Test</span>. <b>GAP-07–10</b> remain Low and are tracked to their milestones.</span></div>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th style="width:70px">ID</th><th style="width:64px">Sev.</th><th>Finding</th><th>Recommended action</th></tr></thead>
+        <tbody>
+          <tr><td class="req-id">GAP-01</td><td><span class="badge b-should">Med</span></td><td><b>UC-26 Onboard device (QR)</b> has no requirement, though it's Should-priority — and the public org-by-code lookup (<code>F11.1</code>) has a <b>security dimension</b> (must return only non-sensitive fields).</td><td>Add <b>FR-MOB-02</b> (QR onboarding) + <b>SEC-12</b> (org-by-code returns id/name/code/timezone only). <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-02</td><td><span class="badge b-should">Med</span></td><td><b>UC-27 Register push token</b> &amp; <code>F11.2</code> have no requirement; stale-token handling is undefined.</td><td>Add <b>FR-MOB-03</b> — register/deduplicate/deregister FCM device tokens. <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-03</td><td><span class="badge b-could">Low</span></td><td><b>F1.3 TOTP enrollment</b> is unverified — only MFA <i>verification</i> (FR-AUTH-02) is required, not enrollment/provisioning.</td><td>Add <b>FR-AUTH-04</b> — TOTP enroll + QR provisioning; Must, <span class="verif v-test">Test</span>.</td></tr>
+          <tr><td class="req-id">GAP-04</td><td><span class="badge b-should">Med</span></td><td><b>F8.3 push send (FCM)</b> and <b>F13.3 Twilio send</b> are verified only via the cascade (FR-NOT-01); channel-specific delivery + audit isn't required.</td><td>Add <b>FR-NOT-02</b> (push delivery + <code>push_notifications</code> log) and <b>IR-05</b> (env-gated live smoke test per integration). <span class="verif v-demo">Demo</span></td></tr>
+          <tr><td class="req-id">GAP-05</td><td><span class="badge b-should">Med</span></td><td><b>F6.5 Delete message</b> carries audit/PHI weight (soft-delete + audit) but has no dedicated requirement.</td><td>Add <b>FR-MSG-04</b> — soft-delete by sender + <code>audit_logs</code> row. <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-06</td><td><span class="badge b-should">Med</span></td><td><b>F2.4 Developer cross-tenant bypass</b> is a powerful capability; only impersonation (FR-DEV-02) is explicitly audited, not general cross-tenant reads.</td><td>Add <b>SEC-13</b> — every developer cross-tenant access writes a <code>phi_access_logs</code>/<code>audit_logs</code> entry. <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-07</td><td><span class="badge b-could">Low</span></td><td><b>UC-17 Configure rotation</b> — timeout &amp; mode are now covered transitively by FR-CFG, but <b>reset rotation</b> (<code>F9.2</code>) has no assertion.</td><td>Add a reset-rotation assertion to the assignment/config test suite (no new SR needed). <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-08</td><td><span class="badge b-could">Low</span></td><td><b>UC-18 Approve registration</b> — FR-REG-01 specifies the pending-gate but traces to UC-03; the director <i>approval action</i> (<code>F9.3</code>) is covered only indirectly.</td><td>Extend FR-REG-01's trace to UC-18, or add <b>FR-REG-02</b> for the approval action. <span class="verif v-test">Test</span></td></tr>
+          <tr><td class="req-id">GAP-09</td><td><span class="badge b-could">Low</span></td><td><b>Could-tier expansion</b> — UC-19 (resources), UC-20 (on-call sync), UC-23 (CMS), UC-25 (AI diagnostics) and functions F14.x / F16.x / F10.3 have no requirements yet.</td><td>Expected — author requirements <b>at their milestone</b> (M12/M13). Track as a backlog, not a defect.</td></tr>
+          <tr><td class="req-id">GAP-10</td><td><span class="badge b-could">Low</span></td><td><b>Minor functions</b> — F6.4 typing relay, F3.4 set capacity, F5.3 cursor advance — lack dedicated requirements (behaviorally exercised by adjacent tests).</td><td>Fold explicit assertions into existing messaging/assignment tests; no new SR required.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- VERIFICATION RISK + NON-GAPS -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">4</span> Verification-method risks &amp; non-gaps</div>
+    <h2>Where "Inspect" should probably be "Test"</h2>
+    <div class="grid g2">
+      <div class="card pad">
+        <h4>Verification risks</h4>
+        <table style="font-size:12.5px">
+          <tbody>
+            <tr><td class="req-id">VR-01</td><td><span class="badge b-should">Med</span></td><td><b>SEC-04</b> (no PHI in payloads / prompts / URLs) is <b>Must</b> but verified by <span class="verif v-insp">Inspect</span>. Recommend an automated test asserting push/SMS payloads and AI prompts contain no PHI fields.</td></tr>
+            <tr><td class="req-id">VR-02</td><td><span class="badge b-could">Low</span></td><td>Several Must constraints (<b>SEC-05</b> cookie flags, <b>SEC-10</b> TLS, <b>DR-01/DR-03</b>, <b>DEP-04</b>) rely on Inspection. Promote SEC-05 to <span class="verif v-test">Test</span> where feasible; TLS &amp; secret-store remain inspection by nature.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card pad">
+        <h4>Intentional non-gaps</h4>
+        <p class="sub" style="margin:0 0 8px"><b>12 requirements</b> trace to "—" rather than a use case: PR-04, SEC-09, SEC-10, DR-01, IR-02, UR-03, DEP-01–05. These are <b>system-wide quality / constraint requirements</b> (performance, deployment, error hygiene), not actor behaviors — so having no UC is correct, not a gap.</p>
+        <div class="note note-ok" style="margin-top:6px"><span>✓</span><span>Bidirectional completeness holds on the function axis: <b>every one of the 59 requirements traces to a function.</b></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RECOMMENDATION -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">5</span> Recommendation</div>
+    <h2>Eight additions — folded into the requirements register</h2>
+    <p class="sub">Done — these are now in the <a href="DocTurn System Requirements.html">System Requirements</a> register (67 total), closing every Med gap. The Low/Could items remain tracked to their milestones rather than fixed now.</p>
+    <div class="card pad">
+      <div class="grid g2">
+        <ul class="tight">
+          <li><b>FR-AUTH-04</b> — TOTP enrollment / provisioning <span class="badge b-must">Must</span></li>
+          <li><b>FR-MOB-02</b> — QR device onboarding <span class="badge b-should">Should</span></li>
+          <li><b>FR-MOB-03</b> — push-token register/deregister <span class="badge b-should">Should</span></li>
+          <li><b>FR-MSG-04</b> — message soft-delete + audit <span class="badge b-should">Should</span></li>
+        </ul>
+        <ul class="tight">
+          <li><b>FR-NOT-02</b> — push delivery + log <span class="badge b-should">Should</span></li>
+          <li><b>SEC-12</b> — org-by-code returns safe fields only <span class="badge b-must">Must</span></li>
+          <li><b>SEC-13</b> — developer cross-tenant access is logged <span class="badge b-must">Must</span></li>
+          <li><b>IR-05</b> — env-gated live integration smoke tests <span class="badge b-should">Should</span></li>
+        </ul>
+      </div>
+      <div class="note note-ok" style="margin-top:12px"><span>✓</span><span><b>Applied:</b> the two verification upgrades (VR-01 PHI-payload test; VR-02 promote SEC-05 to Test) are in — SEC-04 and SEC-05 are now Test-verified. Every Must/Should use case and security-relevant function now has a dedicated, mostly Test-verified requirement.</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-GAP-001</b> — Traceability &amp; Gap Analysis across <a href="DocTurn Use Cases (SysML).html">Use Cases</a>, <a href="DocTurn Function List.html">Functions</a>, and <a href="DocTurn System Requirements.html">Requirements</a>. Hand-traced coverage audit (no automated SE tool available). Verdict: <b>v1 core fully covered; the 6 Med gaps + 2 verification risks are closed (8 new/upgraded requirements → 67 total), and GAP-07–10 remain milestone-tracked.</b>
+  </div>
+</footer>
+
+</body>
+</html>

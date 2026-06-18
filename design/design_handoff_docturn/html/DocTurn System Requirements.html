@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — System-Level Requirements</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn active" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">System-Level Requirements · verification baseline</div></div>
+    </div>
+    <h1>System requirements — what the system shall do, and how we'll prove it.</h1>
+    <p class="lede">The verification baseline for the full DocTurn target. Each requirement is a single testable <i>shall</i> statement with a priority (MoSCoW), a verification method, and a trace back to the use case and function it satisfies. Organized into eight categories: Functional, Performance, Security/Compliance, Data, Interface, Usability, Reliability, and Deployment.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-SR-001</b></span>
+      <span>Requirements <b>67</b></span>
+      <span>Priority <b>MoSCoW</b></span>
+      <span>Verification <b>Test · Demo · Inspection · Analysis</b></span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">0</span> How to read this</div>
+    <h2>Conventions</h2>
+    <div class="grid g3">
+      <div class="card pad"><h4>Priority (MoSCoW)</h4><div class="tagrow"><span class="badge b-must">Must</span><span class="badge b-should">Should</span><span class="badge b-could">Could</span></div><p class="sub" style="margin:10px 0 0">Must = required for production go-live. Should = high value, scheduled. Could = desirable, deferrable.</p></div>
+      <div class="card pad"><h4>Verification method</h4><div class="tagrow"><span class="verif v-test">Test</span><span class="verif v-demo">Demo</span><span class="verif v-insp">Inspect</span><span class="verif v-anal">Analyze</span></div><p class="sub" style="margin:10px 0 0">Test = automated assertion (Vitest/Supertest). Demo = observed run. Inspect = code/config review. Analyze = reasoned argument / threat model.</p></div>
+      <div class="card pad"><h4>Traceability</h4><p class="sub" style="margin:0">Every requirement links to a <code>UC-NN</code> (Use Cases) and an <code>F#</code> (Function List). The set is bidirectionally complete — no orphan requirements, no untraced functions.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">SR</span> Requirements register</div>
+    <h2>67 system-level requirements</h2>
+    <p class="sub">"The system shall…" statements. The register is the contract Claude Code builds against and the QA team verifies.</p>
+
+    <div class="card tbl-card">
+      <table class="req-table">
+        <thead><tr><th style="width:74px">ID</th><th>Requirement — the system shall…</th><th style="width:70px">Priority</th><th style="width:82px">Verify</th><th style="width:120px">Trace</th></tr></thead>
+        <tbody>
+          <!-- FUNCTIONAL -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">FR</span>Functional requirements</td></tr>
+          <tr><td class="req-id">FR-AUTH-01</td><td class="req-stmt">authenticate a user against credentials <b>scoped to their organization</b>, rejecting unknown org/username/password with a generic 401.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-01 · F1.2</td></tr>
+          <tr><td class="req-id">FR-AUTH-02</td><td class="req-stmt">require a second factor (TOTP, SMS OTP, or backup code) when <code>twoFactorEnabled</code>, gated server-side via <code>pendingMfa</code>.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-02 · F1.4</td></tr>
+          <tr><td class="req-id">FR-AUTH-03</td><td class="req-stmt">issue exactly 10 single-use backup codes and reject any reused code.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-02 · F1.5</td></tr>
+          <tr><td class="req-id">FR-AUTH-04</td><td class="req-stmt">support TOTP enrollment with QR provisioning and verify the enrolled secret before activation.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-02 · F1.3</td></tr>
+          <tr><td class="req-id">FR-REG-01</td><td class="req-stmt">place self-registrations into a pending state requiring director approval before the account is active.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-03 · F9.3</td></tr>
+          <tr><td class="req-id">FR-PROV-01</td><td class="req-stmt">allow a director (or er_director for er_doctor) to create provider accounts and profiles within their org only.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-16 · F3.1</td></tr>
+          <tr><td class="req-id">FR-PROV-02</td><td class="req-stmt">let a provider toggle their own working status and a director toggle any provider's, reflecting it in eligibility.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-04 · F3.3</td></tr>
+          <tr><td class="req-id">FR-PROV-03</td><td class="req-stmt">refuse provider deletion with a 409 when pending assignments reference that provider.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-16 · F3.5</td></tr>
+          <tr><td class="req-id">FR-INT-01</td><td class="req-stmt">return deterministic structured intake fields (initials, room, issue, specialty) from a free-text note.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-06 · F4.1</td></tr>
+          <tr><td class="req-id">FR-INT-02</td><td class="req-stmt">use OpenAI for extraction in production and fall back to the mock extractor when AI is unavailable or stubbed.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-06 · F4.2</td></tr>
+          <tr><td class="req-id">FR-ASG-01</td><td class="req-stmt">select the lowest-census eligible provider, breaking ties by rotation order, strictly within the org.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-07 · F5.1</td></tr>
+          <tr><td class="req-id">FR-ASG-02</td><td class="req-stmt">apply cap relief (raise every working provider's cap) when no provider is eligible, then re-select.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-07 · F5.2</td></tr>
+          <tr><td class="req-id">FR-ASG-03</td><td class="req-stmt">support both round-robin and manual assignment modes, creating one pending row with a computed <code>expires_at</code>.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-07 · F5.4</td></tr>
+          <tr><td class="req-id">FR-ASG-04</td><td class="req-stmt">increase a provider's census only on accept and decrease it only on cancel of an accepted assignment.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-08 · F5.5</td></tr>
+          <tr><td class="req-id">FR-ASG-05</td><td class="req-stmt">on reject, resolve the assignment and immediately create exactly one new pending row when a provider is eligible.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-08 · F5.6</td></tr>
+          <tr><td class="req-id">FR-ASG-06</td><td class="req-stmt">expire pending assignments past <code>expires_at</code> on a periodic tick and reroute them to the next eligible provider.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-09 · F5.7</td></tr>
+          <tr><td class="req-id">FR-ASG-07</td><td class="req-stmt">keep a patient <code>waiting</code> and emit <code>assignment.unrouted</code> when no provider is eligible after cap relief.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-09 · F5.10</td></tr>
+          <tr><td class="req-id">FR-ASG-08</td><td class="req-stmt">allow a director to reassign or cancel, and an er_director to reassign, with audit.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-10 · F5.8</td></tr>
+          <tr><td class="req-id">FR-MSG-01</td><td class="req-stmt">deliver a message only to conversation participants and reject non-participant access with 403.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-11 · F6.6</td></tr>
+          <tr><td class="req-id">FR-MSG-02</td><td class="req-stmt">record per-recipient delivered/read state and update the sender's receipts on mark-read.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-13 · F6.3</td></tr>
+          <tr><td class="req-id">FR-MSG-03</td><td class="req-stmt">support direct, group, and emergency conversation types.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-12 · F6.1</td></tr>
+          <tr><td class="req-id">FR-MSG-04</td><td class="req-stmt">allow only the sender to soft-delete a message and append an <code>audit_logs</code> row for the deletion.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-12 · F6.5</td></tr>
+          <tr><td class="req-id">FR-RT-01</td><td class="req-stmt">authenticate every WebSocket connection by session cookie and close unauthenticated sockets with code 1008.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-11 · F7.1</td></tr>
+          <tr><td class="req-id">FR-RT-02</td><td class="req-stmt">restrict all realtime fan-out to the originating organization.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-11 · F7.2</td></tr>
+          <tr><td class="req-id">FR-NOT-01</td><td class="req-stmt">attempt delivery in the order WebSocket → push → SMS, continuing the workflow if a downstream channel fails.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-15 · F8.1</td></tr>
+          <tr><td class="req-id">FR-NOT-02</td><td class="req-stmt">deliver push notifications via FCM to registered devices and record each in <code>push_notifications</code>, with PHI-free payloads.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-15 · F8.3</td></tr>
+          <tr><td class="req-id">FR-BRD-01</td><td class="req-stmt">allow only a director to create an emergency broadcast and track acknowledgments per recipient.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-14 · F15.1</td></tr>
+          <tr><td class="req-id">FR-DEV-01</td><td class="req-stmt">restrict all <code>/api/dev/*</code> routes to the developer role and exclude that role from production seed.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-21 · F10.1</td></tr>
+          <tr><td class="req-id">FR-DEV-02</td><td class="req-stmt">write a full audit entry before performing any impersonation session swap.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-22 · F10.2</td></tr>
+          <tr><td class="req-id">FR-MOB-01</td><td class="req-stmt">let the mobile app authenticate, receive assignments in realtime, and act on them.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-28 · F11.3</td></tr>
+          <tr><td class="req-id">FR-MOB-02</td><td class="req-stmt">onboard a mobile device by scanning an org QR / code, resolving the organization without an authenticated session.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-26 · F11.1</td></tr>
+          <tr><td class="req-id">FR-MOB-03</td><td class="req-stmt">register, deduplicate, and deregister FCM device tokens per user / device.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-27 · F11.2</td></tr>
+          <tr><td class="req-id">FR-CFG-01</td><td class="req-stmt">apply org- and user-level runtime settings at decision time so a saved change takes effect <b>without a redeploy</b>.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-29 · F17.3</td></tr>
+          <tr><td class="req-id">FR-CFG-02</td><td class="req-stmt">restrict org-policy settings to the director role while letting any user manage their own preferences.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-29 · F17.1</td></tr>
+          <tr><td class="req-id">FR-CFG-03</td><td class="req-stmt">validate every setting against a typed schema and bounded range, rejecting out-of-range values server-side.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-29 · F17.1</td></tr>
+          <tr><td class="req-id">FR-CFG-04</td><td class="req-stmt">evaluate per-org feature flags and fall back to a safe default when a flag is unset.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-30 · F17.4</td></tr>
+          <tr><td class="req-id">FR-CFG-05</td><td class="req-stmt">generate adaptive default suggestions from logged usage with supporting evidence, and <b>never</b> auto-apply them.</td><td><span class="badge b-could">Could</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-31 · F17.5</td></tr>
+          <tr><td class="req-id">FR-CFG-06</td><td class="req-stmt">audit every applied tweak (actor, old→new value) and support reverting it.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-31 · F17.6</td></tr>
+
+          <!-- PERFORMANCE -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">PR</span>Performance requirements</td></tr>
+          <tr><td class="req-id">PR-01</td><td class="req-stmt">deliver an in-app assignment notification to a connected target within 1 second of creation under nominal load.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-07 · F8.1</td></tr>
+          <tr><td class="req-id">PR-02</td><td class="req-stmt">complete provider selection in O(working providers) per assignment without N+1 cross-tenant scans.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-anal">Analyze</span></td><td>UC-07 · F5.1</td></tr>
+          <tr><td class="req-id">PR-03</td><td class="req-stmt">cap the expiry reroute batch at 50 assignments per tick to bound memory and DB load.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-09 · F5.7</td></tr>
+          <tr><td class="req-id">PR-04</td><td class="req-stmt">bound the database connection pool (default max 10) to prevent connection exhaustion.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F12.4</td></tr>
+
+          <!-- SECURITY -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">SEC</span>Security &amp; compliance requirements</td></tr>
+          <tr><td class="req-id">SEC-01</td><td class="req-stmt">store passwords only as salted hashes (bcrypt cost ≥12 / scrypt) and never return a hash in any response.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-01 · F1.7</td></tr>
+          <tr><td class="req-id">SEC-02</td><td class="req-stmt">scope every data query by an <code>organizationId</code> derived from the session, never from client input.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-07 · F2.3</td></tr>
+          <tr><td class="req-id">SEC-03</td><td class="req-stmt">record every PHI read/write to <code>/patients</code> and <code>/assignments</code> in <code>phi_access_logs</code> (user, org, resource, method, IP, UA).</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-05 · F12.2</td></tr>
+          <tr><td class="req-id">SEC-04</td><td class="req-stmt">never display a patient by more than initials and never place PHI in push/SMS payloads, URLs, or AI prompts.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-15 · F8.4</td></tr>
+          <tr><td class="req-id">SEC-05</td><td class="req-stmt">use <code>httpOnly</code>, <code>sameSite=strict</code> session cookies with a 15-minute rolling lifetime, and <code>secure</code> in production.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-01 · F1.6</td></tr>
+          <tr><td class="req-id">SEC-06</td><td class="req-stmt">log security-relevant events to <code>audit_logs</code> and suspicious events to <code>security_incidents</code>.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-24 · F12.3</td></tr>
+          <tr><td class="req-id">SEC-07</td><td class="req-stmt">enforce role on every privileged route and tenant ownership on every targeted row.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-08 · F2.1</td></tr>
+          <tr><td class="req-id">SEC-08</td><td class="req-stmt">apply rate limiting to authentication endpoints to resist credential stuffing.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-01 · F12.4</td></tr>
+          <tr><td class="req-id">SEC-09</td><td class="req-stmt">return a generic error body to clients, never a stack trace.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F12.4</td></tr>
+          <tr><td class="req-id">SEC-10</td><td class="req-stmt">terminate TLS at the reverse proxy and reject plaintext HTTP in production.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F12.5</td></tr>
+          <tr><td class="req-id">SEC-11</td><td class="req-stmt">keep all third-party credentials server-side; clients shall never receive integration secrets.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-15 · F13.1</td></tr>
+          <tr><td class="req-id">SEC-12</td><td class="req-stmt">restrict the public org-by-code lookup to non-sensitive fields (id, name, code, timezone) only.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-26 · F11.4</td></tr>
+          <tr><td class="req-id">SEC-13</td><td class="req-stmt">log every developer cross-tenant access to <code>phi_access_logs</code> / <code>audit_logs</code>, not only impersonation.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-22 · F2.4</td></tr>
+
+          <!-- DATA -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">DR</span>Data requirements</td></tr>
+          <tr><td class="req-id">DR-01</td><td class="req-stmt">treat the Drizzle schema in <code>shared/schema.ts</code> as the single source of truth, with Zod insert schemas derived from it.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F2.3</td></tr>
+          <tr><td class="req-id">DR-02</td><td class="req-stmt">preserve assignment history by creating new rows on reroute rather than mutating resolved ones.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-09 · F5.7</td></tr>
+          <tr><td class="req-id">DR-03</td><td class="req-stmt">persist sessions in PostgreSQL via <code>connect-pg-simple</code> rather than memory.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-01 · F1.6</td></tr>
+          <tr><td class="req-id">DR-04</td><td class="req-stmt">retain SMS audit history (body truncated to 255 chars) in <code>sms_history</code>.</td><td><span class="badge b-could">Could</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-15 · F8.2</td></tr>
+          <tr><td class="req-id">DR-05</td><td class="req-stmt">persist runtime configuration in <code>org_settings</code> / <code>user_preferences</code> / <code>feature_flags</code> and adaptive proposals in <code>suggestions</code>.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-29 · F17.3</td></tr>
+
+          <!-- INTERFACE -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">IR</span>Interface requirements</td></tr>
+          <tr><td class="req-id">IR-01</td><td class="req-stmt">expose every external service behind a TypeScript interface with a stub and a live implementation chosen by env at startup.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-15 · F13.1</td></tr>
+          <tr><td class="req-id">IR-02</td><td class="req-stmt">run and pass the full test suite with no external secrets configured (all stubs active).</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>— · F13.1</td></tr>
+          <tr><td class="req-id">IR-03</td><td class="req-stmt">share a single typed <code>ApiClient</code> contract between web and mobile clients.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-28 · F11.3</td></tr>
+          <tr><td class="req-id">IR-04</td><td class="req-stmt">return mobile assignment payloads containing only initials, room, and specialty.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-28 · F11.4</td></tr>
+          <tr><td class="req-id">IR-05</td><td class="req-stmt">provide env-gated live smoke tests for each external integration (OpenAI, Twilio, Firebase, Amion) that never run in default CI.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-15 · F13.2</td></tr>
+
+          <!-- USABILITY -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">UR</span>Usability requirements</td></tr>
+          <tr><td class="req-id">UR-01</td><td class="req-stmt">render light mode only and present one primary action per view.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-16 · F3.2</td></tr>
+          <tr><td class="req-id">UR-02</td><td class="req-stmt">pair every status color with an icon and/or label using the fixed status language (amber/emerald/blue/red/slate).</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>UC-08 · F6.2</td></tr>
+          <tr><td class="req-id">UR-03</td><td class="req-stmt">honor <code>prefers-reduced-motion</code> and provide loading/empty/skeleton states.</td><td><span class="badge b-could">Could</span></td><td><span class="verif v-demo">Demo</span></td><td>— · F7.5</td></tr>
+          <tr><td class="req-id">UR-04</td><td class="req-stmt">reconcile missed realtime events on reconnect via query invalidation.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-11 · F7.5</td></tr>
+
+          <!-- RELIABILITY -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">RR</span>Reliability requirements</td></tr>
+          <tr><td class="req-id">RR-01</td><td class="req-stmt">maintain the assignment census invariant under concurrent accept/cancel without double-counting.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-08 · F5.5</td></tr>
+          <tr><td class="req-id">RR-02</td><td class="req-stmt">produce exactly one new pending assignment on reroute when a provider is eligible, and zero otherwise.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>UC-09 · F5.7</td></tr>
+          <tr><td class="req-id">RR-03</td><td class="req-stmt">degrade gracefully when an integration is down, logging the failure without aborting the workflow.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-test">Test</span></td><td>UC-15 · F8.1</td></tr>
+          <tr><td class="req-id">RR-04</td><td class="req-stmt">maintain WebSocket presence accuracy via a 20-second heartbeat and disconnect detection.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-demo">Demo</span></td><td>UC-13 · F7.3</td></tr>
+
+          <!-- DEPLOYMENT -->
+          <tr class="cat-head"><td colspan="5"><span class="cat-id">DEP</span>Deployment requirements</td></tr>
+          <tr><td class="req-id">DEP-01</td><td class="req-stmt">boot the full stack locally with only <code>SESSION_SECRET</code> and <code>DATABASE_URL</code> configured.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-demo">Demo</span></td><td>— · F13.1</td></tr>
+          <tr><td class="req-id">DEP-02</td><td class="req-stmt">apply schema changes via <code>drizzle-kit push</code> with no hand-written SQL migrations.</td><td><span class="badge b-should">Should</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F2.3</td></tr>
+          <tr><td class="req-id">DEP-03</td><td class="req-stmt">seed a deterministic dataset (one org, a user per role) for demo and test.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>— · F9.1</td></tr>
+          <tr><td class="req-id">DEP-04</td><td class="req-stmt">store production secrets in a secrets manager, not in source or plain env files.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-insp">Inspect</span></td><td>— · F13.1</td></tr>
+          <tr><td class="req-id">DEP-05</td><td class="req-stmt">pass the complete automated suite in CI before any deploy.</td><td><span class="badge b-must">Must</span></td><td><span class="verif v-test">Test</span></td><td>— · all</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g2" style="margin-top:18px">
+      <div class="note note-ok"><span>✓</span><span><b>Coverage:</b> every Must/Should use case and all 17 functional areas trace to at least one requirement; remaining Could-tier expansion use cases are tracked to their milestones. The four assignment invariants (RR-01, RR-02, FR-ASG-04, DR-02) are the highest-risk and are all <b>Must / Test</b>.</span></div>
+      <div class="note note-warn"><span>⚠️</span><span><b>Production gates:</b> SEC-08 (login rate-limit), SEC-10 (TLS), and the <code>users.phone</code> field for SMS MFA are open items in the current build — flagged in the threat model and must close before go-live.</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-SR-001</b> — DocTurn System-Level Requirements. Verifies the <a href="DocTurn Use Cases (SysML).html">Use-Case Model</a> and the <a href="DocTurn Function List.html">Function List</a>; realized by the <a href="DocTurn Final Design Spec.html">Final Design Specification</a>. Requirement source: <code>docturn.pdf</code> + <code>threat_model.md</code>. Priorities are MoSCoW; verification methods are Test / Demo / Inspection / Analysis.
+  </div>
+</footer>
+
+</body>
+</html>

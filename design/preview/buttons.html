@@ -1,0 +1,48 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .grp { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  .btn { height:40px; padding:0 16px; border-radius:var(--radius-md); font-size:14px; font-weight:500; display:inline-flex; align-items:center; gap:7px; border:1px solid transparent; cursor:pointer; }
+  .btn svg { width:16px; height:16px; }
+  .default { background:var(--primary); color:#fff; box-shadow:var(--shadow-sm); }
+  .destructive { background:var(--destructive); color:#fff; }
+  .outline { background:#fff; border-color:var(--border); color:var(--foreground); }
+  .secondary { background:var(--secondary); color:var(--foreground); }
+  .ghost { background:transparent; color:var(--foreground); }
+  .link { background:transparent; color:var(--primary); text-decoration:underline; padding:0 4px; }
+  .sizes .btn { background:var(--primary); color:#fff; }
+  .sm { height:36px; padding:0 12px; }
+  .lg { height:44px; padding:0 32px; }
+  .ico { width:40px; height:40px; padding:0; justify-content:center; }
+  .cap { font-family:var(--font-mono); font-size:10.5px; color:var(--muted-foreground); margin:0 4px 6px; }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Buttons</b><span>Six variants · one primary action per view · rounded-md, medium weight.</span></div>
+  <div class="grp">
+    <button class="btn default"><i data-lucide="send"></i>Send assignment</button>
+    <button class="btn destructive"><i data-lucide="trash-2"></i>Delete</button>
+    <button class="btn outline">Reassign</button>
+    <button class="btn secondary">Message</button>
+    <button class="btn ghost"><i data-lucide="settings"></i>Settings</button>
+    <button class="btn link">Learn more</button>
+  </div>
+  <div class="cap">variants: default · destructive · outline · secondary · ghost · link</div>
+  <div class="grp sizes">
+    <button class="btn sm">sm · h‑9</button>
+    <button class="btn">default · h‑10</button>
+    <button class="btn lg">lg · h‑11</button>
+    <button class="btn ico"><i data-lucide="bell"></i></button>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

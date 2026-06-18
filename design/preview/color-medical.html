@@ -1,0 +1,31 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .sw { border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); }
+  .chip { height: 52px; }
+  .meta { padding: 7px 10px; }
+  .name { font-size: 12.5px; font-weight: 600; }
+  .hsl { font-size: 10.5px; color: var(--muted-foreground); font-family: var(--font-mono); margin-top: 2px; }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 14px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Healthcare palette</b><span>.bg‑medical‑* utilities for clinical semantics beyond the base tokens.</span></div>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:var(--medical-primary)"></div><div class="meta"><div class="name">medical‑primary</div><div class="hsl">210 100% 50%</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--medical-secondary)"></div><div class="meta"><div class="name">medical‑secondary</div><div class="hsl">159 100% 35%</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--medical-accent)"></div><div class="meta"><div class="name">medical‑accent</div><div class="hsl">45 100% 51%</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--medical-emergency)"></div><div class="meta"><div class="name">medical‑emergency</div><div class="hsl">0 84% 60%</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--medical-success)"></div><div class="meta"><div class="name">medical‑success</div><div class="hsl">142 76% 36%</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--medical-warning)"></div><div class="meta"><div class="name">medical‑warning</div><div class="hsl">38 92% 50%</div></div></div>
+  </div>
+</body>
+</html>

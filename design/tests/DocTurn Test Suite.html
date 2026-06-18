@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Verification Suite</title>
+<style>
+  :root{
+    --fg:#0b1220;--muted:#64748B;--muted2:#475569;--border:#E2E8F0;--bg:#F6F8FB;--card:#fff;
+    --primary:#2563EB;--ok:#059669;--ok-bg:#D1FAE5;--fail:#DC2626;--fail-bg:#FEE2E2;
+    --warn:#D97706;--warn-bg:#FEF3C7;--info:#2563EB;--info-bg:#DBEAFE;--secondary:#F1F5F9;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--sans);color:var(--fg);background:var(--bg);-webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header.hero{background:linear-gradient(160deg,#E0F2FE 0%,#fff 60%,#EDE9FE 100%);border-bottom:1px solid var(--border)}
+  .hero-in{padding:30px 0 26px;display:flex;flex-direction:column;gap:12px}
+  .brand{display:flex;align-items:center;gap:12px}
+  .glyph{width:44px;height:44px;border-radius:12px;background:var(--primary);color:#fff;font-weight:700;font-size:24px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(37,99,235,.28)}
+  h1{font-size:27px;letter-spacing:-.02em;margin:4px 0 0}
+  .lede{font-size:14.5px;color:var(--muted2);max-width:760px;margin:0}
+  .bar{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+  .bar-in{display:flex;align-items:center;gap:14px;padding:11px 0;flex-wrap:wrap}
+  button.run{display:inline-flex;align-items:center;gap:8px;border:none;background:var(--primary);color:#fff;font-weight:600;font-size:14px;padding:10px 18px;border-radius:10px;cursor:pointer;font-family:var(--sans)}
+  button.run:disabled{opacity:.55;cursor:default}
+  button.ghost{border:1px solid var(--border);background:#fff;color:var(--fg);font-weight:600;font-size:13px;padding:9px 14px;border-radius:10px;cursor:pointer;font-family:var(--sans)}
+  .counts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;padding:4px 10px;border-radius:99px}
+  .pill.ok{background:var(--ok-bg);color:var(--ok)}
+  .pill.fail{background:var(--fail-bg);color:var(--fail)}
+  .pill.tot{background:var(--secondary);color:var(--muted2)}
+  .pill.run{background:var(--info-bg);color:var(--info)}
+  .meta{font-size:12px;color:var(--muted);margin-left:auto}
+  section{padding:26px 0}
+  section+section{border-top:1px solid var(--border)}
+  h2{font-size:19px;letter-spacing:-.01em;margin:0 0 3px}
+  .sub{font-size:13px;color:var(--muted);margin:0 0 16px;max-width:760px}
+  .suite{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:16px}
+  .suite-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:#FbFcFe;cursor:pointer}
+  .suite-h .nm{font-weight:700;font-size:14px}
+  .suite-h .st{margin-left:auto;display:flex;gap:6px}
+  .case{display:flex;gap:11px;padding:9px 16px;border-top:1px solid #EEF2F7;align-items:flex-start;font-size:13px}
+  .case:first-child{border-top:none}
+  .ico{width:18px;height:18px;border-radius:99px;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:#fff;margin-top:1px}
+  .ico.ok{background:var(--ok)}.ico.fail{background:var(--fail)}.ico.pend{background:#CBD5E1}.ico.run{background:var(--info)}
+  .case .nm{font-weight:500}
+  .case .msg{color:var(--fail);font-family:var(--mono);font-size:11.5px;margin-top:3px;white-space:pre-wrap}
+  .case .ms{margin-left:auto;color:var(--muted);font-size:11px;font-family:var(--mono);flex:none;padding-left:10px}
+  .hidden{display:none}
+  table{width:100%;border-collapse:collapse;font-size:12.8px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;background:#FbFcFe}
+  tbody tr:last-child td{border-bottom:none}
+  .sev{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;white-space:nowrap}
+  .sev.high{background:var(--fail-bg);color:var(--fail)}
+  .sev.med{background:var(--warn-bg);color:var(--warn)}
+  .sev.low{background:var(--secondary);color:var(--muted2)}
+  .sev.done{background:var(--ok-bg);color:var(--ok)}
+  code{font-family:var(--mono);background:var(--secondary);padding:1px 5px;border-radius:5px;font-size:.9em}
+  .note{border-radius:11px;padding:12px 15px;font-size:12.5px;display:flex;gap:10px;line-height:1.5;background:#EFF6FF;border:1px solid #BFDBFE;color:#1e3a8a;margin-bottom:16px}
+  iframe.harness{position:absolute;width:430px;height:880px;left:-9999px;top:0;border:0}
+  footer{padding:26px 0 50px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand"><span class="glyph">D</span>
+      <div><div style="font-size:13px;color:var(--muted)">DocTurn · QA</div><h1>Verification Suite</h1></div>
+    </div>
+    <p class="lede">Automated checks across the DocTurn application — store/logic functions (real <code>store.js</code> run in an isolated sandbox), the web &amp; mobile UI surfaces, and a standing audit of duplications &amp; inefficiencies. Re-runnable anytime; last result is saved locally.</p>
+  </div>
+</header>
+
+<div class="bar"><div class="wrap bar-in">
+  <button class="run" id="runBtn">▶ Run all tests</button>
+  <button class="ghost" id="failBtn">Show failures only</button>
+  <div class="counts" id="counts">
+    <span class="pill tot" id="cTot">0 total</span>
+    <span class="pill ok" id="cOk">0 passed</span>
+    <span class="pill fail" id="cFail">0 failed</span>
+  </div>
+  <span class="meta" id="meta">Not run yet</span>
+</div></div>
+
+<section><div class="wrap">
+  <div class="note"><span>🔒</span><div><b>Safe to run.</b> Logic tests execute the real <code>store.js</code> inside a sandboxed, opaque-origin iframe, so they never read or write your live app data. UI tests load the actual apps; the web app's saved state (<code>docturn:store:v6</code>) is snapshotted before and restored after the run.</div></div>
+  <h2>1 · Logic &amp; function I/O</h2>
+  <p class="sub">Every store action and helper, exercised with explicit inputs and asserted outputs. Each case resets to a clean seed first.</p>
+  <div id="logicOut"></div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>2 · UI / UX surfaces</h2>
+  <p class="sub">Loads the web and mobile apps and verifies each role, screen and key interaction renders and behaves.</p>
+  <div id="uiOut"></div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>2b · Cross-surface messaging — every role, both directions</h2>
+  <p class="sub">Proves a user of <b>every role</b> can send a message and receive a reply, on both the web and mobile surfaces. Web and mobile drive the <b>same</b> messaging logic (<code>store.js</code> / the <code>ChatThread</code> composer), so this exercises the one code path both clients share.</p>
+  <div class="note"><span>📨</span><div><b>What "mobile ↔ web" means here.</b> The kits are independent mockups that share the same store/composer logic, so these tests verify the shared send/receive path per role and per surface. <b>True device-to-device delivery</b> (a text typed on mobile arriving on another user's web session) runs through the production WebSocket + push backend and is an <b>integration test</b> on the live server — see the messaging acceptance criteria in the handoff. The architecture is push-first: WS in-app, push wake-up, SMS only on escalation.</div></div>
+  <div id="msgOut"></div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>3 · Duplication &amp; inefficiency audit</h2>
+  <p class="sub">Standing findings from a static read of the codebase. Re-review after refactors.</p>
+  <div class="suite"><table id="auditTbl">
+    <thead><tr><th style="width:70px">Severity</th><th style="width:130px">Area</th><th>Finding</th><th>Recommendation</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</div></section>
+
+<footer><div class="wrap">DocTurn Verification Suite · open this file and click <b>Run all tests</b> to re-verify after any change. Logic = real code in isolation; UI = live apps in iframes; Audit = static review.</div></footer>
+
+<script>
+/* ============================ tiny framework ============================ */
+const SUITES = [];          // {name, el, cases:[{name, fn}]}
+let RESULTS = [];           // flat results
+function suite(name){ const s={name, cases:[]}; SUITES.push(s); return s; }
+function tcase(s,name,fn){ s.cases.push({name,fn}); }
+function eq(a,b,m){ if(JSON.stringify(a)!==JSON.stringify(b)) throw new Error((m?m+': ':'')+'expected '+JSON.stringify(b)+' but got '+JSON.stringify(a)); }
+function ok(c,m){ if(!c) throw new Error(m||'expected truthy'); }
+function has(hay,needle,m){ if(String(hay).indexOf(needle)<0) throw new Error((m||'')+' — missing: '+JSON.stringify(needle)); }
+function not(hay,needle,m){ if(String(hay).indexOf(needle)>=0) throw new Error((m||'')+' — should NOT contain: '+JSON.stringify(needle)); }
+const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+async function waitFor(fn,timeout=9000,step=80){ const t0=Date.now(); while(Date.now()-t0<timeout){ try{ if(fn()) return true; }catch(e){} await sleep(step); } throw new Error('waitFor timed out'); }
+
+/* ============================ DOM rendering ============================ */
+function suiteEl(s){
+  const wrap=document.createElement('div'); wrap.className='suite';
+  const h=document.createElement('div'); h.className='suite-h';
+  h.innerHTML='<span class="nm">'+s.name+'</span><span class="st"></span>';
+  const body=document.createElement('div');
+  h.onclick=()=>body.classList.toggle('hidden');
+  wrap.appendChild(h); wrap.appendChild(body);
+  s._h=h.querySelector('.st'); s._body=body;
+  s.cases.forEach(c=>{
+    const row=document.createElement('div'); row.className='case';
+    row.innerHTML='<span class="ico pend">·</span><div style="flex:1;min-width:0"><div class="nm"></div></div><span class="ms"></span>';
+    row.querySelector('.nm').textContent=c.name;
+    c._row=row; c._ico=row.querySelector('.ico'); c._body=row.querySelector('div'); c._ms=row.querySelector('.ms');
+    body.appendChild(row);
+  });
+  return wrap;
+}
+function setCase(c,status,msg,ms){
+  c._ico.className='ico '+status; c._ico.textContent = status==='ok'?'✓':status==='fail'?'✗':status==='run'?'…':'·';
+  c._row.dataset.status=status;
+  let m=c._body.querySelector('.msg');
+  if(status==='fail'){ if(!m){m=document.createElement('div');m.className='msg';c._body.appendChild(m);} m.textContent=msg; }
+  else if(m){ m.remove(); }
+  if(ms!=null) c._ms.textContent=ms.toFixed(0)+'ms';
+}
+function updateCounts(){
+  const tot=RESULTS.length, ok=RESULTS.filter(r=>r.status==='ok').length, fail=RESULTS.filter(r=>r.status==='fail').length;
+  document.getElementById('cTot').textContent=tot+' total';
+  document.getElementById('cOk').textContent=ok+' passed';
+  document.getElementById('cFail').textContent=fail+' failed';
+  SUITES.forEach(s=>{ if(!s._h) return; const cs=s.cases.map(c=>c._status).filter(Boolean);
+    const f=s.cases.filter(c=>c._status==='fail').length, p=s.cases.filter(c=>c._status==='ok').length;
+    s._h.innerHTML='<span class="pill ok">'+p+'</span>'+(f?'<span class="pill fail">'+f+'</span>':'');
+  });
+}
+
+/* ============================ logic tests (sandbox) ============================ */
+/* Runs real store.js in an opaque-origin iframe; posts results back. */
+function logicSandboxScript(){
+  return `
+  (function(){
+    var R=[]; function t(n,f){var a=performance.now();try{f();R.push({name:n,status:'ok',ms:performance.now()-a})}catch(e){R.push({name:n,status:'fail',msg:e.message,ms:performance.now()-a})}}
+    function eq(a,b,m){if(JSON.stringify(a)!==JSON.stringify(b))throw new Error((m?m+': ':'')+'expected '+JSON.stringify(b)+' got '+JSON.stringify(a))}
+    function ok(c,m){if(!c)throw new Error(m||'expected truthy')}
+    function done(){ parent.postMessage({__dt:'logic',results:R}, '*'); }
+    if(!window.DT){ R.push({name:'load store.js',status:'fail',msg:'window.DT not defined — store.js failed to load'}); return done(); }
+    var DT=window.DT, A=DT.actions, F=window.dtFmt, S=DT.getState;
+    A.toggleRealtime(false);
+    function reset(){ A.resetAll(); A.toggleRealtime(false); }
+
+    /* ---- formatters ---- */
+    t('dtFmt.initialsOf — "Dr. Sarah Chen" → SC', function(){ eq(F.initialsOf('Dr. Sarah Chen'),'SC'); });
+    t('dtFmt.initialsOf — "Priya Shah, NP" → PS', function(){ eq(F.initialsOf('Priya Shah, NP'),'PS'); });
+    t('dtFmt.initialsOf — "Jordan Wu, PA-C" → JW', function(){ eq(F.initialsOf('Jordan Wu, PA-C'),'JW'); });
+    t('dtFmt.mmss — 0 → 0:00', function(){ eq(F.mmss(0),'0:00'); });
+    t('dtFmt.mmss — 65000 → 1:05', function(){ eq(F.mmss(65000),'1:05'); });
+    t('dtFmt.mmss — negative → 0:00', function(){ eq(F.mmss(-9),'0:00'); });
+    t('dtFmt.ago — now → just now', function(){ eq(F.ago(Date.now()),'just now'); });
+    t('dtFmt.ago — 2m ago', function(){ eq(F.ago(Date.now()-120000),'2m ago'); });
+    t('dtFmt.ago — 2h ago', function(){ eq(F.ago(Date.now()-7200000),'2h ago'); });
+
+    /* ---- AI intake extraction (every specialty branch) ---- */
+    t('extractIntake — chest pain → Cardiology', function(){ eq(DT.extractIntake('chest pain on exertion').specialty,'Cardiology'); });
+    t('extractIntake — COPD → Pulmonology', function(){ eq(DT.extractIntake('COPD exacerbation').specialty,'Pulmonology'); });
+    t('extractIntake — DKA → Endocrine', function(){ eq(DT.extractIntake('diabetic ketoacidosis').specialty,'Endocrine'); });
+    t('extractIntake — AKI/CKD → Nephrology', function(){ eq(DT.extractIntake('AKI on CKD, hyperkalemia').specialty,'Nephrology'); });
+    t('extractIntake — GI bleed → GI', function(){ eq(DT.extractIntake('GI bleed, melena').specialty,'GI'); });
+    t('extractIntake — sepsis → Infectious Disease', function(){ eq(DT.extractIntake('septic shock').specialty,'Infectious Disease'); });
+    t('extractIntake — stroke → Neurology', function(){ eq(DT.extractIntake('acute stroke, facial droop').specialty,'Neurology'); });
+    t('extractIntake — unmatched → Hospital Medicine (default)', function(){ eq(DT.extractIntake('left leg laceration').specialty,'Hospital Medicine'); });
+    t('extractIntake — empty note → {empty:true}', function(){ var r=DT.extractIntake(''); eq(r.empty,true); eq(r.specialty,''); });
+    t('extractIntake — parses room + initials', function(){ var r=DT.extractIntake('Pt A.B., room 412, chest pain with SOB'); eq(r.room,'412'); eq(r.initials,'AB'); eq(r.specialty,'Cardiology'); });
+
+    /* ---- derived selectors (seeded) ---- */
+    t('sortedProviders — working first, lowest census first', function(){ reset(); var p=DT.sortedProviders(); ok(p[0].working,'first is working'); eq(p[0].id,'h1','lowest-census working provider'); });
+    t('rotationList — working && inRotation = 4', function(){ reset(); eq(DT.rotationList().length,4); });
+    t('nextUp — lowest-census eligible = Dr. Sarah Chen (h1)', function(){ reset(); eq(DT.nextUp().id,'h1'); });
+    t('unreadMessages — seed = 2', function(){ reset(); eq(DT.unreadMessages(),2); });
+    t('unreadNotifs — seed = 2', function(){ reset(); eq(DT.unreadNotifs(),2); });
+
+    /* ---- hospitalist actions ---- */
+    t('accept — removes pending, +1 census count, +1 patient', function(){ reset(); var before=S().acceptedToday; A.accept('a1'); var s=S(); eq(s.pending.some(function(p){return p.id==='a1'}),false); eq(s.acceptedToday,before+1); ok(s.myPatients[0].initials==='RM'); });
+    t('decline — removes pending a2', function(){ reset(); A.decline('a2'); eq(S().pending.some(function(p){return p.id==='a2'}),false); });
+
+    /* ---- director / provider mgmt ---- */
+    t('toggleWorking — flips working', function(){ reset(); A.toggleWorking('h1'); eq(S().providers.find(function(p){return p.id==='h1'}).working,false); });
+    t('adjustCensus +1 — 3 → 4', function(){ reset(); A.adjustCensus('h1',1); eq(S().providers.find(function(p){return p.id==='h1'}).census,4); });
+    t('adjustCensus — clamps at cap', function(){ reset(); A.adjustCensus('h1',999); var p=S().providers.find(function(p){return p.id==='h1'}); eq(p.census,p.cap); });
+    t('adjustCensus — floors at 0', function(){ reset(); A.adjustCensus('h1',-999); eq(S().providers.find(function(p){return p.id==='h1'}).census,0); });
+    t('adjustCap — min 1', function(){ reset(); A.adjustCap('h4',-999); eq(S().providers.find(function(p){return p.id==='h4'}).cap,1); });
+    t('bulkWorking(false) — all off → nextUp null', function(){ reset(); A.bulkWorking(false); ok(S().providers.every(function(p){return !p.working})); eq(DT.nextUp(),null); });
+    t('setAllCap(10) — caps all, clamps census', function(){ reset(); A.setAllCap(10); ok(S().providers.every(function(p){return p.cap===10 && p.census<=10})); });
+    t('toggleRotation(h1) — nextUp moves to h2', function(){ reset(); A.toggleRotation('h1'); eq(DT.nextUp().id,'h2'); });
+    t('addProvider — formats name, adds row', function(){ reset(); var n=S().providers.length; A.addProvider({name:'Tessa Vance',specialty:'Cardiology',cap:'8',shift:'day'}); var s=S(); eq(s.providers.length,n+1); var np=s.providers[s.providers.length-1]; eq(np.name,'Dr. Tessa Vance'); eq(np.avatar,'TV'); });
+    t('removeProvider — removes row', function(){ reset(); var id=S().providers[0].id; var n=S().providers.length; A.removeProvider(id); eq(S().providers.length,n-1); });
+
+    /* ---- ER ---- */
+    t('sendAssignment — adds sent + pending + board', function(){ reset(); var s0=S(); var ns=s0.sent.length, np=s0.pending.length, nb=s0.board.length; A.sendAssignment({id:'h1',name:'Dr. Sarah Chen'},{initials:'ZZ',room:'500',complaint:'test pt',specialty:'Cardiology'},['GI']); var s=S(); eq(s.sent.length,ns+1); eq(s.pending.length,np+1); eq(s.board.length,nb+1); eq(s.sent[0].provider,'Dr. Sarah Chen'); eq(s.sent[0].consultants,['GI']); });
+    t('reassignSent — updates provider', function(){ reset(); var id=S().sent[0].id; A.reassignSent(id,'Dr. Amir Patel'); eq(S().sent.find(function(x){return x.id===id}).provider,'Dr. Amir Patel'); });
+    t('toggleErPhysician — flips working', function(){ reset(); var id=S().erPhysicians[0].id; var w=S().erPhysicians[0].working; A.toggleErPhysician(id); eq(S().erPhysicians.find(function(p){return p.id===id}).working,!w); });
+    t('toggleDiversion — sets flag + broadcast', function(){ reset(); var nb=S().broadcasts.length; A.toggleDiversion(); eq(S().diversion,true); eq(S().broadcasts.length,nb+1); });
+
+    /* ---- messaging ---- */
+    t('startConversation — adds a thread', function(){ reset(); var n=S().conversations.length; A.startConversation({name:'Dr. New Person',specialty:'Cardiology'}); eq(S().conversations.length,n+1); });
+    t('sendMessage — appends my message', function(){ reset(); var id=S().conversations[2].id; var n=S().conversations[2].messages.length; A.sendMessage(id,'test ping'); var c=S().conversations.find(function(x){return x.id===id}); eq(c.messages.length,n+1); var last=c.messages[c.messages.length-1]; eq(last.me,true); eq(last.text,'test ping'); });
+    t('openConversation — clears unread', function(){ reset(); var id=S().conversations[0].id; A.openConversation(id); eq(S().conversations.find(function(x){return x.id===id}).unread,0); });
+
+    /* ---- broadcasts / roles / settings / dev ---- */
+    t('sendBroadcast — adds broadcast', function(){ reset(); var n=S().broadcasts.length; A.sendBroadcast({title:'Test BC',severity:'info',audience:['all'],ackReq:false}); eq(S().broadcasts.length,n+1); eq(S().broadcasts[0].title,'Test BC'); });
+    t('createRole — adds custom role', function(){ reset(); var n=S().roles.length; A.createRole({name:'Float Pool'}); eq(S().roles.length,n+1); });
+    t('deleteRole — system role is protected', function(){ reset(); var n=S().roles.length; A.deleteRole('r_super'); eq(S().roles.length,n); ok(S().__toast && /Protected/.test(S().__toast.title)); });
+    t('toggleFlag — flips feature flag', function(){ reset(); var v=S().settings.flags.sms; A.toggleFlag('sms'); eq(S().settings.flags.sms,!v); });
+    t('toggleIntegration — flips + toast', function(){ reset(); var v=S().settings.integrations.amion; A.toggleIntegration('amion'); eq(S().settings.integrations.amion,!v); ok(S().__toast); });
+    t('addTenant — adds org', function(){ reset(); var n=S().orgs.length; A.addTenant({name:'Test Hospital',code:'TSTH'}); eq(S().orgs.length,n+1); ok(S().orgs.some(function(o){return o.code==='TSTH'})); });
+    t('addUser — adds user + increments org count', function(){ reset(); var n=S().devUsers.length; var u0=S().orgs.find(function(o){return o.code==='MAYO'}).users; A.addUser({name:'New User',role:'hospitalist',org:'MAYO',specialty:'GI'}); eq(S().devUsers.length,n+1); eq(S().orgs.find(function(o){return o.code==='MAYO'}).users,u0+1); });
+    t('resolveIncident — sets resolved', function(){ reset(); var id=S().incidents[0].id; A.resolveIncident(id); eq(S().incidents.find(function(i){return i.id===id}).status,'resolved'); });
+
+    done();
+  })();`;
+}
+
+async function runLogic(s){
+  return new Promise((resolve)=>{
+    const onMsg=(e)=>{
+      if(!e.data || e.data.__dt!=='logic') return;
+      window.removeEventListener('message',onMsg);
+      const map={}; e.data.results.forEach(r=>map[r.name]=r);
+      s.cases.forEach(c=>{
+        const r=map[c.name];
+        if(r){ setCase(c,r.status,r.msg,r.ms); c._status=r.status; RESULTS.push({status:r.status}); }
+        else { setCase(c,'fail','no result returned'); c._status='fail'; RESULTS.push({status:'fail'}); }
+      });
+      if(frame.parentNode) frame.parentNode.removeChild(frame);
+      updateCounts(); resolve();
+    };
+    window.addEventListener('message',onMsg);
+    const frame=document.createElement('iframe');
+    frame.className='harness'; frame.setAttribute('sandbox','allow-scripts');
+    frame.srcdoc='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'
+      +'<script src="../ui_kits/web-app/store.js"><\/script>'
+      +'<script>'+logicSandboxScript()+'<\/script></body></html>';
+    document.body.appendChild(frame);
+    setTimeout(()=>{ // safety timeout
+      if(s.cases.some(c=>!c._status)){ window.removeEventListener('message',onMsg);
+        s.cases.forEach(c=>{ if(!c._status){ setCase(c,'fail','timed out / store.js did not post results'); c._status='fail'; RESULTS.push({status:'fail'}); } });
+        updateCounts(); resolve();
+      }
+    },12000);
+  });
+}
+
+/* ============================ messaging tests (sandbox, async) ============================ */
+/* Runs real store.js; exercises send + simulated reply for every role, both directions. */
+function messagingSandboxScript(roles){
+  return `
+  (async function(){
+    var R=[];
+    function push(n,s,m,ms){R.push({name:n,status:s,msg:m,ms:ms})}
+    function ok(c,m){if(!c)throw new Error(m||'expected truthy')}
+    function eq(a,b,m){if(JSON.stringify(a)!==JSON.stringify(b))throw new Error((m?m+': ':'')+'expected '+JSON.stringify(b)+' got '+JSON.stringify(a))}
+    function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+    function done(){ parent.postMessage({__dt:'msg',results:R}, '*'); }
+    async function at(n,fn){var a=performance.now();try{await fn();push(n,'ok',null,performance.now()-a)}catch(e){push(n,'fail',e.message,performance.now()-a)}}
+    if(!window.DT){ push('load store.js (messaging)','fail','window.DT not defined — store.js failed to load'); return done(); }
+    var DT=window.DT, A=DT.actions, S=DT.getState;
+    function reset(){ A.resetAll(); A.toggleRealtime(false); }
+    var ROLES=${JSON.stringify(roles)};
+    for(var i=0;i<ROLES.length;i++){
+      await (async function(role,label){
+        reset(); A.login(role,'MAYO','qa');
+        var cid=S().conversations[0].id;
+        await at('msg: '+label+' — send stored (outbound, me:true)', async function(){
+          var before=S().conversations.find(function(c){return c.id===cid}).messages.length;
+          A.sendMessage(cid,'ping from '+label);
+          var c=S().conversations.find(function(c){return c.id===cid});
+          var last=c.messages[c.messages.length-1];
+          ok(c.messages.length===before+1,'message appended');
+          ok(last.me===true,'outbound flagged me:true');
+          eq(last.text,'ping from '+label);
+        });
+        await at('msg: '+label+' — reply received (inbound, me:false)', async function(){
+          var base=S().conversations.find(function(c){return c.id===cid}).messages.filter(function(m){return !m.me}).length;
+          var got=false;
+          for(var w=0;w<80;w++){ await sleep(100);
+            var c=S().conversations.find(function(c){return c.id===cid});
+            var inbound=c.messages.filter(function(m){return !m.me}).length;
+            var last=c.messages[c.messages.length-1];
+            if(inbound>base && last && last.me===false){ got=true; break; }
+          }
+          ok(got,'simulated inbound reply received within ~8s');
+        });
+      })(ROLES[i][0],ROLES[i][1]);
+    }
+    reset(); A.login('hospitalist','MAYO','qa');
+    await at('msg: new conversation thread created', async function(){
+      var n=S().conversations.length;
+      A.startConversation({name:'Dr. QA Recipient',specialty:'Cardiology'});
+      ok(S().conversations.length===n+1,'thread count +1');
+      ok(S().conversations[0].name==='Dr. QA Recipient','new thread on top');
+    });
+    await at('msg: open conversation clears unread (read receipt)', async function(){
+      var withUnread=S().conversations.find(function(c){return c.unread>0});
+      ok(withUnread,'a seeded unread thread exists');
+      A.openConversation(withUnread.id);
+      eq(S().conversations.find(function(c){return c.id===withUnread.id}).unread,0);
+    });
+    done();
+  })();`;
+}
+async function runMessaging(s){
+  return new Promise((resolve)=>{
+    const onMsg=(e)=>{
+      if(!e.data || e.data.__dt!=='msg') return;
+      window.removeEventListener('message',onMsg);
+      const map={}; e.data.results.forEach(r=>map[r.name]=r);
+      s.cases.forEach(c=>{
+        const r=map[c.name];
+        if(r){ setCase(c,r.status,r.msg,r.ms); c._status=r.status; RESULTS.push({status:r.status}); }
+        else { setCase(c,'fail','no result returned'); c._status='fail'; RESULTS.push({status:'fail'}); }
+      });
+      if(frame.parentNode) frame.parentNode.removeChild(frame);
+      updateCounts(); resolve();
+    };
+    window.addEventListener('message',onMsg);
+    const frame=document.createElement('iframe');
+    frame.className='harness'; frame.setAttribute('sandbox','allow-scripts');
+    frame.srcdoc='<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'
+      +'<script src="../ui_kits/web-app/store.js"><\/script>'
+      +'<script>'+messagingSandboxScript(MSG_ROLES)+'<\/script></body></html>';
+    document.body.appendChild(frame);
+    setTimeout(()=>{
+      if(s.cases.some(c=>!c._status)){ window.removeEventListener('message',onMsg);
+        s.cases.forEach(c=>{ if(!c._status){ setCase(c,'fail','timed out / no results'); c._status='fail'; RESULTS.push({status:'fail'}); } });
+        if(frame.parentNode) frame.parentNode.removeChild(frame);
+        updateCounts(); resolve();
+      }
+    },30000);
+  });
+}
+
+/* ============================ UI tests (live apps) ============================ */
+function byText(win,txt,sel){ return [...win.document.querySelectorAll(sel||'button,a')].find(b=>b.textContent.trim().indexOf(txt)>=0); }
+function loadApp(src){
+  return new Promise((resolve,reject)=>{
+    const f=document.createElement('iframe'); f.className='harness';
+    f.onload=()=>resolve(f);
+    f.onerror=()=>reject(new Error('iframe failed to load '+src));
+    f.src=src; document.body.appendChild(f);
+  });
+}
+async function runCase(c,fn){
+  setCase(c,'run'); const t0=performance.now();
+  try{ await fn(); setCase(c,'ok',null,performance.now()-t0); c._status='ok'; RESULTS.push({status:'ok'}); }
+  catch(e){ setCase(c,'fail',e.message,performance.now()-t0); c._status='fail'; RESULTS.push({status:'fail'}); }
+  updateCounts();
+}
+
+const WEB_KEY='docturn:store:v6';
+async function runWeb(s){
+  const backup = localStorage.getItem(WEB_KEY);
+  let f, win;
+  try{
+    f=await loadApp('../ui_kits/web-app/index.html');
+    win=f.contentWindow;
+    await waitFor(()=>win.DT && win.document.querySelector('#root') && win.document.body.textContent.length>40);
+    win.DT.actions.toggleRealtime(false);
+  }catch(e){ s.cases.forEach(c=>{ setCase(c,'fail','app load failed: '+e.message); c._status='fail'; RESULTS.push({status:'fail'}); }); updateCounts(); if(f&&f.parentNode)f.parentNode.removeChild(f); return; }
+
+  const login=(role)=>{ win.DT.actions.resetAll(); win.DT.actions.toggleRealtime(false); win.DT.actions.login(role,'MAYO','qa'); };
+  const txt=()=>{ const r=win.document.getElementById('root'); return r?r.innerText:''; };
+
+  for(const c of s.cases){
+    await runCase(c, async()=>{
+      if(c.name.startsWith('web: boots')){ login('director'); await waitFor(()=>txt().indexOf('Overview')>=0,7000); has(txt(),'Settings','shell rendered'); }
+      else if(c.name.indexOf('director nav')>=0){ login('director'); await waitFor(()=>txt().indexOf('Patient board')>=0,7000); has(txt(),'Settings'); }
+      else if(c.name.indexOf('hospitalist nav')>=0){ login('hospitalist'); await waitFor(()=>txt().indexOf('My care team')>=0,7000); has(txt(),'Compliance'); }
+      else if(c.name.indexOf('developer nav')>=0){ login('developer'); await waitFor(()=>txt().indexOf('Role management')>=0,7000); not(txt(),'Patient board','dev should not see patient board'); not(txt(),'My care team','dev should not see care team'); }
+      else if(c.name.indexOf('ER intake')>=0){ login('er_doctor'); win.DT.actions.setNav('dashboard'); await waitFor(()=>txt().toLowerCase().indexOf('round')>=0,7000); }
+      else if(c.name.indexOf('schedule sync card')>=0){ login('director'); win.DT.actions.setNav('settings'); await waitFor(()=>txt().indexOf('On-call schedule sync')>=0,7000); has(txt(),'Sign-in capture'); }
+      else if(c.name.indexOf('sign-in capture parses')>=0){ login('director'); win.DT.actions.setNav('settings'); await waitFor(()=>byText(win,'Sign in & capture'),7000); byText(win,'Sign in & capture').click(); await waitFor(()=>txt().indexOf('to invite')>=0,7000); has(txt().toUpperCase(),'PARSED'); has(txt(),'assignments'); }
+      else if(c.name.indexOf('director schedule strip')>=0){ login('director'); win.DT.actions.setNav('dashboard'); await waitFor(()=>txt().indexOf('On-call schedule synced')>=0,7000); has(txt(),'Amion'); }
+      else if(c.name.indexOf('messaging retention')>=0){ login('hospitalist'); win.DT.actions.setNav('messages'); await waitFor(()=>txt().indexOf('auto-deletes in 30 days')>=0,7000); }
+      else if(c.name.indexOf('messaging send')>=0){
+        login('hospitalist'); win.DT.actions.setNav('messages');
+        await waitFor(()=>txt().toLowerCase().indexOf('message')>=0,7000);
+        const cid=win.DT.getState().conversations[0].id;
+        win.DT.actions.openConversation(cid);
+        const before=win.DT.getState().conversations.find(x=>x.id===cid).messages.length;
+        win.DT.actions.sendMessage(cid,'QA web ping');
+        const c=win.DT.getState().conversations.find(x=>x.id===cid);
+        const last=c.messages[c.messages.length-1];
+        ok(last.text==='QA web ping' && last.me===true,'outbound stored as me:true');
+        await waitFor(()=>{ const cc=win.DT.getState().conversations.find(x=>x.id===cid); return cc.messages.length>before+1 && cc.messages[cc.messages.length-1].me===false; },7000,120);
+      }
+      else if(c.name.indexOf('lock screen')>=0){ login('director'); await waitFor(()=>win.document.querySelector('button[title="Lock app"]'),7000); win.document.querySelector('button[title="Lock app"]').click(); await sleep(220); ok([...win.document.querySelectorAll('div')].some(d=>win.getComputedStyle(d).position==='fixed'&&win.getComputedStyle(d).zIndex==='80'),'lock overlay shown'); has(txt(),'locked'); }
+    });
+  }
+  if(f&&f.parentNode) f.parentNode.removeChild(f);
+  // restore user's web-app state
+  try{ if(backup===null) localStorage.removeItem(WEB_KEY); else localStorage.setItem(WEB_KEY,backup); }catch(e){}
+}
+
+async function runMobile(s){
+  let f, win;
+  try{
+    f=await loadApp('../ui_kits/mobile/all-roles.html');
+    win=f.contentWindow;
+    await waitFor(()=>[...win.document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Developer'),9000);
+    await sleep(150);
+  }catch(e){ s.cases.forEach(c=>{ setCase(c,'fail','app load failed: '+e.message); c._status='fail'; RESULTS.push({status:'fail'}); }); updateCounts(); if(f&&f.parentNode)f.parentNode.removeChild(f); return; }
+  const txt=()=>{ const r=win.document.getElementById('root'); return r?r.innerText:''; };
+  const pill=(label)=>{ const b=[...win.document.querySelectorAll('button')].find(x=>x.textContent.trim()===label); ok(b,'role pill "'+label+'" present'); b.click(); };
+
+  for(const c of s.cases){
+    await runCase(c, async()=>{
+      if(c.name.indexOf('role pills')>=0){ ['Hospitalist','ER physician','ER director','Hospitalist director','Developer'].forEach(l=>{ ok([...win.document.querySelectorAll('button')].some(b=>b.textContent.trim()===l),'pill '+l); }); }
+      else if(c.name.indexOf('ER intake service')>=0){ pill('ER physician'); await waitFor(()=>txt().toUpperCase().indexOf('ROUTE TO')>=0,4000); has(txt().toUpperCase(),'ADD CONSULTS'); }
+      else if(c.name.indexOf('developer tabs')>=0){ pill('Developer'); await waitFor(()=>txt().indexOf('Incidents')>=0,4000); has(txt(),'Logs'); not(txt(),'On call','dev tabs should exclude On call'); }
+      else if(c.name.indexOf('director schedule card')>=0){ pill('Hospitalist director'); await waitFor(()=>txt().indexOf('On-call schedule')>=0,4000); has(txt(),'Amion'); }
+      else if(c.name.indexOf('group compose')>=0){
+        pill('Hospitalist'); await sleep(250);
+        const msgTab=[...win.document.querySelectorAll('button')].find(b=>b.textContent.trim().indexOf('Messages')>=0);
+        ok(msgTab,'Messages tab'); msgTab.click(); await sleep(300);
+        const pen=win.document.querySelector('.lucide-pen-square'); ok(pen,'compose button'); (pen.closest('button')||pen.parentNode).click();
+        await waitFor(()=>txt().indexOf('New message')>=0,4000); has(txt(),'Dr. Ruth Kim');
+        const r1=byText(win,'Dr. Amir Patel'); const r2=byText(win,'Dr. Ruth Kim');
+        ok(r1&&r2,'roster rows'); r1.click(); r2.click();
+        await waitFor(()=>txt().indexOf('Create group')>=0,4000);
+      }
+      else if(c.name.indexOf('chat send')>=0){
+        pill('Hospitalist'); await sleep(250);
+        const msgTab=[...win.document.querySelectorAll('button')].find(b=>b.textContent.trim().indexOf('Messages')>=0);
+        ok(msgTab,'Messages tab'); msgTab.click(); await sleep(300);
+        const row=[...win.document.querySelectorAll('button')].find(b=>b.textContent.indexOf('Dr. Sarah Chen')>=0 && b.textContent.indexOf('Accepting')>=0);
+        ok(row,'a conversation row'); row.click(); await sleep(300);
+        const input=win.document.querySelector('input[placeholder="Message…"]');
+        ok(input,'composer input present');
+        const setter=Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype,'value').set;
+        setter.call(input,'QA mobile ping'); input.dispatchEvent(new win.Event('input',{bubbles:true}));
+        await sleep(60);
+        const sendBtn=input.parentNode.querySelector('button'); ok(sendBtn,'send button'); sendBtn.click();
+        await waitFor(()=>txt().indexOf('QA mobile ping')>=0,3000);
+        const REPLIES=["Copy — on it.","Thanks for the heads up.","Accepting now.","On my way up.","Understood, I'll update the chart."];
+        await waitFor(()=>REPLIES.some(r=>txt().indexOf(r)>=0),4000,120);
+      }
+    });
+  }
+  if(f&&f.parentNode) f.parentNode.removeChild(f);
+}
+
+/* ============================ audit data ============================ */
+const AUDIT=[
+  ['high','Logic','AI intake duplicated &amp; divergent: <code>store.extractIntake()</code> (web, rich specialty mapping) vs the mobile <code>ERIntakeScreen.route()</code> regex (weaker, no specialty detection, random provider).','Have mobile reuse the same extraction logic so web &amp; mobile route identically.'],
+  ['high','Data','Provider/roster lists are seeded in many places — <code>store.seed.providers</code>, mobile <code>DIRECTOR_SEED</code>, <code>DirectoryScreen.everyone</code>, <code>TeamScreen</code>, <code>MSG_ROSTER</code>, <code>ER_SERVICES</code>. They drift.','Single source of provider data shared across surfaces.'],
+  ['med','Components','UI primitives reimplemented per platform: web <code>Icon/Badge/Avatar/StatusDot</code> vs mobile <code>MI/MBadge/MAvatar/Dot</code>.','Acceptable as a platform split, but document the mapping so they stay visually in sync.'],
+  ['med','Components','<code>Toggle</code> switch reimplemented 3×: web <code>OrgSettings</code>, mobile <code>ProfileScreen</code>, mobile <code>MToggle</code> (DirectorScreen).','Extract one shared toggle per platform.'],
+  ['done','Data','<b>Fixed.</b> Status→color is token-backed on both surfaces: web <code>STATUS</code> and mobile <code>SB</code>/shift tints all read <code>var(--status-*)</code> from <code>colors_and_type.css</code>. The per-platform objects remain by design.','—'],
+  ['done','Logic','<b>Fixed.</b> Time formatting unified on <code>dtFmt.hhmm()</code> — store <code>clockLabel</code> and web Messaging <code>fmtTime</code> both call it.','—'],
+  ['done','Perf','<b>Fixed.</b> <code>Icon</code> (web) &amp; <code>MI</code> (mobile) now gate <code>lucide.createIcons</code> on <code>[name,size,strokeWidth]</code> deps — no longer re-runs every render.','—'],
+  ['med','Data','Specialty / consult lists repeated: <code>ER_SERVICES</code> (mobile), <code>CONSULT_OPTIONS</code> (web ErDoctor), <code>SPECIALTY_KEYS</code> (store).','Derive all three from one specialty catalog.'],
+  ['low','Nav','Navigation defined twice: web <code>NAV</code> map vs mobile <code>ROLE_CONFIG.tabs</code>.','Share a per-role capability map driving both.'],
+  ['high','Perf','Both apps transform JSX with in-browser Babel at runtime (console warning present). Recompiles every load.','Pre-compile JSX for any production/perf-sensitive use.'],
+  ['med','Perf','Icon components (<code>MI</code> mobile, <code>Icon</code> web) call <code>lucide.createIcons</code> in a <code>useEffect</code> with no dependency array → re-runs on every render.','Gate on <code>[name,size]</code> deps or render inline SVG.'],
+  ['done','Perf','<b>Fixed.</b> The 1s clock is now managed — <code>setInterval</code> only runs while live countdown UI is subscribed (via <code>useClock</code>); pauses on the login screen / when idle.','—'],
+  ['done','Perf','<b>Fixed.</b> Persistence is debounced (≈250ms) and flushed on <code>beforeunload</code> — write-heavy flows no longer hit localStorage on every mutation.','—'],
+  ['low','Structure','Large monolith files: <code>store.js</code> (~806 lines), <code>roles.jsx</code> (~600), <code>screens.jsx</code> (~450).','Split by domain to ease review &amp; testing.'],
+  ['low','Data','<code>ScheduleSync</code> capture rows are hardcoded (Tarzana demo).','Fine for the kit; wire to a fixture/source for real parsing tests.'],
+];
+function renderAudit(){
+  const tb=document.querySelector('#auditTbl tbody');
+  AUDIT.forEach(([sev,area,find,rec])=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td><span class="sev '+sev+'">'+(sev==='done'?'Fixed':sev==='high'?'High':sev==='med'?'Medium':'Low')+'</span></td><td>'+area+'</td><td>'+find+'</td><td style="color:var(--muted2)">'+rec+'</td>';
+    tb.appendChild(tr);
+  });
+}
+
+/* ============================ wire up ============================ */
+const sLogic=suite('Store / logic (real store.js, sandboxed)');
+[
+ 'dtFmt.initialsOf — "Dr. Sarah Chen" → SC','dtFmt.initialsOf — "Priya Shah, NP" → PS','dtFmt.initialsOf — "Jordan Wu, PA-C" → JW',
+ 'dtFmt.mmss — 0 → 0:00','dtFmt.mmss — 65000 → 1:05','dtFmt.mmss — negative → 0:00',
+ 'dtFmt.ago — now → just now','dtFmt.ago — 2m ago','dtFmt.ago — 2h ago',
+ 'extractIntake — chest pain → Cardiology','extractIntake — COPD → Pulmonology','extractIntake — DKA → Endocrine','extractIntake — AKI/CKD → Nephrology','extractIntake — GI bleed → GI','extractIntake — sepsis → Infectious Disease','extractIntake — stroke → Neurology','extractIntake — unmatched → Hospital Medicine (default)','extractIntake — empty note → {empty:true}','extractIntake — parses room + initials',
+ 'sortedProviders — working first, lowest census first','rotationList — working && inRotation = 4','nextUp — lowest-census eligible = Dr. Sarah Chen (h1)','unreadMessages — seed = 2','unreadNotifs — seed = 2',
+ 'accept — removes pending, +1 census count, +1 patient','decline — removes pending a2',
+ 'toggleWorking — flips working','adjustCensus +1 — 3 → 4','adjustCensus — clamps at cap','adjustCensus — floors at 0','adjustCap — min 1','bulkWorking(false) — all off → nextUp null','setAllCap(10) — caps all, clamps census','toggleRotation(h1) — nextUp moves to h2','addProvider — formats name, adds row','removeProvider — removes row',
+ 'sendAssignment — adds sent + pending + board','reassignSent — updates provider','toggleErPhysician — flips working','toggleDiversion — sets flag + broadcast',
+ 'startConversation — adds a thread','sendMessage — appends my message','openConversation — clears unread',
+ 'sendBroadcast — adds broadcast','createRole — adds custom role','deleteRole — system role is protected','toggleFlag — flips feature flag','toggleIntegration — flips + toast','addTenant — adds org','addUser — adds user + increments org count','resolveIncident — sets resolved',
+].forEach(n=>tcase(sLogic,n,null));
+
+const sWeb=suite('Web app — roles, screens, interactions');
+['web: boots & renders the app shell','web: director nav shows admin surfaces','web: hospitalist nav & screens','web: developer nav (no patient board)','web: ER intake dashboard renders','web: settings → schedule sync card','web: schedule sign-in capture parses grid','web: director dashboard schedule strip','web: messaging retention banner','web: messaging send → my bubble + reply','web: lock screen opens'].forEach(n=>tcase(sWeb,n,null));
+
+const sMob=suite('Mobile app — role switcher & screens');
+['mobile: 5 role pills present','mobile: ER intake service & consults picker','mobile: developer tabs (Incidents/Logs, no On call)','mobile: director schedule card (Amion)','mobile: group message compose (multi-select)','mobile: chat send → outbound bubble + reply'].forEach(n=>tcase(sMob,n,null));
+
+const MSG_ROLES=[['director','Director'],['er_director','ER director'],['er_doctor','ER doctor'],['hospitalist','Hospitalist'],['developer','Developer']];
+const sMsg=suite('Messaging — every role, both directions (shared store.js)');
+MSG_ROLES.forEach(function(r){ tcase(sMsg,'msg: '+r[1]+' — send stored (outbound, me:true)',null); tcase(sMsg,'msg: '+r[1]+' — reply received (inbound, me:false)',null); });
+tcase(sMsg,'msg: new conversation thread created',null);
+tcase(sMsg,'msg: open conversation clears unread (read receipt)',null);
+
+// mount suite DOM
+document.getElementById('logicOut').appendChild(suiteEl(sLogic));
+const uiOut=document.getElementById('uiOut'); uiOut.appendChild(suiteEl(sWeb)); uiOut.appendChild(suiteEl(sMob));
+document.getElementById('msgOut').appendChild(suiteEl(sMsg));
+renderAudit();
+
+// restore last run summary
+try{ const last=JSON.parse(localStorage.getItem('docturn:testsuite:last')||'null'); if(last) document.getElementById('meta').textContent='Last run: '+last.when+' · '+last.ok+'/'+last.tot+' passed'; }catch(e){}
+
+let running=false;
+async function runAll(){
+  if(running) return; running=true;
+  const btn=document.getElementById('runBtn'); btn.disabled=true; btn.textContent='Running…';
+  RESULTS=[]; SUITES.forEach(s=>s.cases.forEach(c=>{ c._status=null; setCase(c,'pend'); }));
+  updateCounts();
+  await runLogic(sLogic);
+  await runMessaging(sMsg);
+  await runWeb(sWeb);
+  await runMobile(sMob);
+  const ok=RESULTS.filter(r=>r.status==='ok').length, tot=RESULTS.length;
+  const when=new Date().toLocaleString();
+  document.getElementById('meta').textContent='Last run: '+when+' · '+ok+'/'+tot+' passed';
+  try{ localStorage.setItem('docturn:testsuite:last',JSON.stringify({when,ok,tot})); }catch(e){}
+  btn.disabled=false; btn.textContent='▶ Run all tests'; running=false;
+}
+document.getElementById('runBtn').onclick=runAll;
+let failOnly=false;
+document.getElementById('failBtn').onclick=()=>{
+  failOnly=!failOnly; document.getElementById('failBtn').textContent=failOnly?'Show all':'Show failures only';
+  document.querySelectorAll('.case').forEach(r=>{ r.style.display = (failOnly && r.dataset.status!=='fail') ? 'none':''; });
+};
+</script>
+</body>
+</html>

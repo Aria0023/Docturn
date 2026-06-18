@@ -1,0 +1,9 @@
+/* ============================================================================
+   DocTurn Design System — root stylesheet (single entry point)
+
+   Consumers: link THIS file. It pulls in the full token + helper layer.
+   Everything lives in colors_and_type.css (the source of truth); this file
+   exists so there is one canonical import instead of N individual files.
+   ============================================================================ */
+
+@import "./colors_and_type.css";

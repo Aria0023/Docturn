@@ -1,0 +1,48 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .item { display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius: var(--radius-full); font-size:12px; font-weight:600; }
+  .pill svg { width:13px; height:13px; }
+  .dot { width:9px; height:9px; border-radius:var(--radius-full); }
+  .lbl { font-size:11px; color: var(--muted-foreground); }
+  .lbl b { color: var(--foreground); font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Status color language</b><span>Fixed, learnable mapping — always paired with an icon or label, never color alone.</span></div>
+  <div class="grid">
+    <div class="item">
+      <span class="pill" style="background:var(--status-pending-bg);color:var(--status-pending)"><i data-lucide="clock"></i>Pending</span>
+      <span class="lbl"><b>Amber</b> · awaiting / expiring</span>
+    </div>
+    <div class="item">
+      <span class="pill" style="background:var(--status-accepted-bg);color:var(--status-accepted)"><i data-lucide="check"></i>Accepted</span>
+      <span class="lbl"><b>Emerald</b> · accepted / online</span>
+    </div>
+    <div class="item">
+      <span class="pill" style="background:var(--status-active-bg);color:var(--status-active)"><i data-lucide="send"></i>Sent</span>
+      <span class="lbl"><b>Blue</b> · in‑flight / sent</span>
+    </div>
+    <div class="item">
+      <span class="pill" style="background:var(--status-rejected-bg);color:var(--status-rejected)"><i data-lucide="x"></i>Rejected</span>
+      <span class="lbl"><b>Red</b> · declined / error</span>
+    </div>
+    <div class="item">
+      <span class="pill" style="background:var(--status-neutral-bg);color:var(--status-neutral)"><i data-lucide="minus"></i>Offline</span>
+      <span class="lbl"><b>Slate</b> · inactive / expired</span>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

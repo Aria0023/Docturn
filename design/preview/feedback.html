@@ -1,0 +1,52 @@
+<!-- @dsCard group="Components" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 16px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  .toast { display:flex; gap:11px; align-items:flex-start; background:#fff; border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); padding:12px 14px; }
+  .toast .ic { width:18px;height:18px;flex:none;margin-top:1px; }
+  .toast .ttl { font-size:13.5px;font-weight:600; }
+  .toast .msg { font-size:12px;color:var(--muted-foreground);margin-top:2px; }
+  /* skeleton */
+  .skel { background:#fff;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px; }
+  .line { height:11px;border-radius:6px;background:linear-gradient(90deg,#eef2f7 25%,#e2e8f0 37%,#eef2f7 63%);background-size:400% 100%;animation:shimmer 1.5s infinite; margin-bottom:9px;}
+  @keyframes shimmer { 0%{background-position:100% 0} 100%{background-position:-100% 0} }
+  .dot { width:9px;height:9px;border-radius:99px;display:inline-block;position:relative;}
+  .dot::after{content:'';position:absolute;inset:0;border-radius:99px;background:inherit;animation:pulse 1.5s infinite;}
+  @keyframes pulse{0%{transform:scale(1);opacity:.6}70%{transform:scale(2.4);opacity:0}100%{opacity:0}}
+  .presence{display:flex;gap:8px;align-items:center;font-size:13px;margin-top:4px;}
+</style>
+</head>
+<body>
+  <div class="lead"><b>Feedback</b><span>Toasts for transient confirms/errors · skeletons for loading · pulsing presence dots.</span></div>
+  <div class="grid">
+    <div class="toast">
+      <span class="ic" style="color:var(--status-accepted)"><i data-lucide="check-circle-2"></i></span>
+      <div><div class="ttl">Assignment sent to Dr. Chen</div><div class="msg">They'll be notified by push and SMS.</div></div>
+    </div>
+    <div class="toast">
+      <span class="ic" style="color:var(--destructive)"><i data-lucide="alert-triangle"></i></span>
+      <div><div class="ttl">Couldn't send — try again</div><div class="msg">Check the connection and retry.</div></div>
+    </div>
+    <div class="skel">
+      <div class="line" style="width:60%"></div>
+      <div class="line" style="width:90%"></div>
+      <div class="line" style="width:75%;margin-bottom:0"></div>
+    </div>
+    <div style="padding:4px 2px">
+      <div class="presence"><span class="dot" style="background:var(--status-accepted)"></span>Dr. Chen — online</div>
+      <div class="presence"><span class="dot" style="background:var(--status-pending);animation:none"></span>Dr. Patel — on shift</div>
+      <div class="presence"><span class="dot" style="background:var(--status-neutral);animation:none"></span>Dr. Liu — offline</div>
+    </div>
+  </div>
+  <script>lucide.createIcons();</script>
+</body>
+</html>

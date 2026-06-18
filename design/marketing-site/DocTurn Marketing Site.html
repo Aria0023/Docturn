@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Patient hand-offs, without the phone tag</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); color: #0f172a; background: #fff; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .m-wrap { max-width: 1140px; margin: 0 auto; padding-left: 24px; padding-right: 24px; }
+  a:hover { opacity: .82; }
+  .m-card-hover:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
+
+  /* the hero + nav + compliance strip sit on the signature gradient */
+  .m-top { background: var(--marketing-bg); }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .m-float { animation: m-float 6s ease-in-out infinite; }
+    .m-pulse { animation: m-pulse 1.6s ease-in-out infinite; }
+  }
+  @keyframes m-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+  @keyframes m-pulse { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(5,150,105,.5); } 50% { opacity: .65; box-shadow: 0 0 0 4px rgba(5,150,105,0); } }
+
+  @media (max-width: 1000px) {
+    .m-hero-grid { grid-template-columns: 1fr !important; }
+    .m-hero-side { display: none !important; }
+    .m-route-grid { grid-template-columns: 1fr !important; }
+    .m-route-left { border-right: none !important; border-bottom: 1px solid var(--border) !important; }
+  }
+  @media (max-width: 900px) {
+    .m-navlinks, .m-signin { display: none !important; }
+    .m-hero-h1 { font-size: 42px !important; }
+    .m-feature-grid, .m-steps, .m-price-grid, .m-sec-grid, .m-foot-grid, .m-stat-grid { grid-template-columns: 1fr !important; }
+    .m-sec-grid { gap: 36px !important; }
+    .m-reverse .m-order-1 { order: 1; }
+    .m-reverse .m-order-2 { order: 2; }
+    .m-stat { border-right: none !important; }
+    .m-stat-grid { grid-template-columns: 1fr 1fr !important; gap: 28px 20px !important; }
+  }
+  @media (max-width: 560px) {
+    .m-hero-h1 { font-size: 34px !important; }
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="site-core.jsx"></script>
+<script type="text/babel" src="site-hero.jsx"></script>
+<script type="text/babel" src="site-flow.jsx"></script>
+<script type="text/babel" src="site-trust.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+function Site() {
+  return (
+    <div>
+      <div className="m-top">
+        <Nav />
+        <Hero />
+        <ComplianceStrip />
+      </div>
+      <Problem />
+      <HowItWorks />
+      <Features />
+      <MessagingShowcase />
+      <NotifyShowcase />
+      <Security />
+      <SocialProof />
+      <Pricing />
+      <FinalCTA />
+      <Footer />
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Site />);
+</script>
+</body>
+</html>

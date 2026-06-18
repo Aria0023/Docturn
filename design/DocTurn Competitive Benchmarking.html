@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Competitive Benchmarking" subtitle="PerfectServe vs TigerConnect capability matrix + Adopt/Adapt/Avoid for DocTurn" viewport="1120x640" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Competitive Benchmarking</title>
+<link rel="stylesheet" href="docturn-spec.css">
+<style>
+  /* local helpers for the capability matrix */
+  .matrix td:first-child{font-weight:600}
+  .cap{display:inline-flex;align-items:center;justify-content:center;width:100%;font-weight:700;font-size:12.5px}
+  .cap.full{color:var(--accepted)}
+  .cap.part{color:var(--pending)}
+  .cap.none{color:var(--neutral)}
+  .matrix th:not(:first-child),.matrix td:not(:first-child){text-align:center;width:130px}
+  .matrix .dt-col{background:#F5F9FF}
+  .matrix th.dt-col{color:var(--primary-d)}
+  .legendrow{display:flex;flex-wrap:wrap;gap:18px;margin:0 0 18px;font-size:12.5px;color:var(--muted-2)}
+  .legendrow span{display:inline-flex;align-items:center;gap:7px}
+  .verdict{display:flex;gap:13px;padding:15px 16px;border-bottom:1px solid var(--border-2)}
+  .verdict:last-child{border-bottom:none}
+  .verdict .vtag{flex:none;width:74px}
+  .verdict .vbody{font-size:13px}
+  .verdict .vbody .vh{font-weight:700;font-size:13.5px;margin-bottom:2px}
+  .verdict .vbody .vs{color:var(--muted-2);line-height:1.5}
+  .verdict .vbody .src{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:4px}
+  .vendcard .vh{display:flex;align-items:center;gap:11px;margin-bottom:4px}
+  .vendcard .logo{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:#fff;flex:none}
+  .vendcard h3{font-size:16px}
+  .vendcard .role{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn active" href="DocTurn Competitive Benchmarking.html">Competitive Benchmarking</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Competitive Benchmarking · Requirements &amp; Functionality Analysis</div></div>
+    </div>
+    <h1>PerfectServe vs. TigerConnect — what to borrow, what to skip.</h1>
+    <p class="lede">A side-by-side of the two market-leading clinical communication &amp; collaboration (CC&amp;C) platforms, read through DocTurn's lens: an automated hospitalist <b>patient-assignment</b> engine with secure comms. The capability matrix maps where each vendor is strong; the <b>Adopt / Adapt / Avoid</b> register turns that into a build decision for DocTurn.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-CB-001</b></span>
+      <span>Vendors <b>2</b> benchmarked</span>
+      <span>Capabilities <b>28</b> compared</span>
+      <span>Legend <b><span class="badge b-new" style="vertical-align:middle">Adopt</span> <span class="badge b-should" style="vertical-align:middle">Adapt</span> <span class="badge b-later" style="vertical-align:middle">Avoid</span></b></span>
+    </div>
+  </div>
+</header>
+
+<!-- ============ AT A GLANCE ============ -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">01</span> Vendors at a glance</div>
+    <h2>Two unified platforms; DocTurn is a focused wedge</h2>
+    <p class="sub">Both incumbents have spent a decade widening from secure texting into full "care activation" suites — scheduling, alarms, operator consoles, patient engagement. DocTurn deliberately does <b>not</b> compete on breadth. It competes on one job the incumbents leave to humans: deciding <b>which provider</b> receives each new patient.</p>
+
+    <div class="grid g3">
+      <div class="card pad vendcard">
+        <div class="vh"><span class="logo" style="background:#0EA5E9">PS</span><div><h3>PerfectServe</h3><div class="role">Unite · Lightning Bolt</div></div></div>
+        <p style="font-size:13px;color:var(--muted-2);margin:8px 0 0;line-height:1.5">Unified platform spanning clinical communication, provider &amp; staff scheduling, a cloud operator console, a medical answering service, and patient engagement. Signature strength is <b>dynamic intelligent routing</b> to the right on-call person.</p>
+        <div class="tagrow">
+          <span class="chip">Best in KLAS 2025 ×2</span>
+          <span class="chip">Founded 2000</span>
+          <span class="chip">Scheduling-led</span>
+        </div>
+      </div>
+      <div class="card pad vendcard">
+        <div class="vh"><span class="logo" style="background:#F26A21">TC</span><div><h3>TigerConnect</h3><div class="role">Clinical Collaboration Platform</div></div></div>
+        <p style="font-size:13px;color:var(--muted-2);margin:8px 0 0;line-height:1.5">Most broadly adopted secure-messaging platform, now an "activation layer": messaging, voice/video, alarm management (FDA 510(k)-cleared), scheduling, transfer, patient engagement, and EHR integration via the Epic Showroom.</p>
+        <div class="tagrow">
+          <span class="chip">2025 Gartner MQ Leader</span>
+          <span class="chip">HITRUST</span>
+          <span class="chip">Messaging-led</span>
+        </div>
+      </div>
+      <div class="card pad vendcard" style="border-color:#BFDBFE;background:#FbFdFF">
+        <div class="vh"><span class="logo" style="background:#2563EB">D</span><div><h3>DocTurn</h3><div class="role">Assignment + secure comms</div></div></div>
+        <p style="font-size:13px;color:var(--muted-2);margin:8px 0 0;line-height:1.5">Automates the <b>round-robin, census-fair</b> assignment of patients to hospitalists — accept / decline / auto-expire-and-reroute — with role-based multi-tenant comms, AI intake, and an audit/PHI trail. The decision the incumbents don't make.</p>
+        <div class="tagrow">
+          <span class="chip">Automated routing</span>
+          <span class="chip">Multi-tenant</span>
+          <span class="chip">Niche-first</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="note note-info" style="margin-top:18px">
+      <span>▶</span><div><b>Read this as a build filter, not a feature wishlist.</b> The incumbents' breadth is their moat <i>and</i> their cost. For DocTurn, most of their surface area is a distraction; a few specific patterns (message lifecycle, coverage auto-forward, schedule-aware routing) are worth lifting. The matrix below separates the two.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CAPABILITY MATRIX ============ -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">02</span> Capability matrix</div>
+    <h2>Feature-by-feature — where each platform stands</h2>
+    <p class="sub">Twenty-eight capabilities across seven domains. DocTurn's column reflects the current spec (built v1 + near-term target), not aspiration.</p>
+    <div class="legendrow">
+      <span><span class="cap full">●</span> Full / mature capability</span>
+      <span><span class="cap part">◑</span> Partial / add-on / emerging</span>
+      <span><span class="cap none">—</span> Not offered</span>
+    </div>
+
+    <div class="card tbl-card matrix">
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>PerfectServe</th><th>TigerConnect</th><th class="dt-col">DocTurn</th></tr>
+        </thead>
+        <tbody>
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">A</span>Secure communication</td></tr>
+          <tr><td>1:1 &amp; group secure messaging</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Broadcast / mass notification</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Message lifecycle (read receipts, auto-delete TTL)</td><td><span class="cap part">◑</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>Voice &amp; video calling</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+          <tr><td>Coverage auto-forward (off-shift redirect)</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">B</span>Assignment &amp; routing</td></tr>
+          <tr><td>Message routing to on-call role / schedule</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td><b>Automated patient→provider assignment</b></td><td><span class="cap none">—</span></td><td><span class="cap none">—</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Census/capacity-fair load balancing</td><td><span class="cap none">—</span></td><td><span class="cap none">—</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Accept / decline / auto-expire &amp; reroute</td><td><span class="cap part">◑</span></td><td><span class="cap part">◑</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">C</span>Scheduling</td></tr>
+          <tr><td>Physician / provider shift scheduling</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>On-call schedule &amp; swaps</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>Rotation / round-robin management</td><td><span class="cap part">◑</span></td><td><span class="cap part">◑</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">D</span>Clinical workflow &amp; alerting</td></tr>
+          <tr><td>Alarm management (monitors, nurse call)</td><td><span class="cap part">◑</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+          <tr><td>Event / critical-result notification</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>Interfacility patient transfer</td><td><span class="cap part">◑</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+          <tr><td>AI orchestration / "care activation"</td><td><span class="cap part">◑</span></td><td><span class="cap part">◑</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">E</span>Interoperability</td></tr>
+          <tr><td>EHR/EMR integration (HL7/FHIR, Epic)</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>ADT / census feed ingestion</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>Operator console / answering service</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">F</span>Patient engagement</td></tr>
+          <tr><td>App-less patient text / voice / video</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+          <tr><td>Appointment reminders / follow-up</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+
+          <tr class="cat-head"><td colspan="4"><span class="cat-id">G</span>Security, identity &amp; admin</td></tr>
+          <tr><td>HIPAA-compliant transport &amp; storage</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>HITRUST certification</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap none">—</span></td></tr>
+          <tr><td>End-to-end encryption</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>MFA (TOTP / SMS / backup codes)</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Mobile PIN / biometric lock</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap part">◑</span></td></tr>
+          <tr><td>Multi-tenant org isolation</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+          <tr><td>Audit trail &amp; PHI-access logs</td><td><span class="cap full">●</span></td><td><span class="cap full">●</span></td><td class="dt-col"><span class="cap full">●</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">DocTurn ratings reflect the SE-pack spec (built v1 + flagged targets). Incumbent ratings synthesized from vendor materials and analyst recognition listed in §05; some capabilities are paid add-ons or higher-tier on the incumbent side.</p>
+  </div>
+</section>
+
+<!-- ============ ADOPT / ADAPT / AVOID ============ -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">03</span> The decision register</div>
+    <h2>Adopt · Adapt · Avoid — for DocTurn</h2>
+    <p class="sub">The actionable output. Each row is a competitor pattern and DocTurn's recommended stance, with rationale tied to DocTurn's wedge (automated, fair hospitalist assignment) rather than feature parity.</p>
+
+    <div class="grid g2" style="align-items:start">
+      <!-- ADOPT -->
+      <div class="card">
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <span class="badge b-new">Adopt</span><h3 style="margin:0">Lift these directly</h3>
+        </div>
+        <div class="verdict"><span class="vtag"><span class="badge b-new">Adopt</span></span><div class="vbody"><div class="vh">Coverage auto-forward</div><div class="vs">When a provider goes off-shift, redirect their messages to the covering role. DocTurn already models <code>working</code> status + rotation — this is a small, high-value extension.</div><div class="src">src: TigerConnect auto-forward; PerfectServe routing</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-new">Adopt</span></span><div class="vbody"><div class="vh">Message lifecycle &amp; auto-delete TTL</div><div class="vs">Read receipts and time-bound message retention are table-stakes for clinical comms and a clean compliance story. Pairs with the existing PHI-log model.</div><div class="src">src: TigerConnect message TTL / receipts</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-new">Adopt</span></span><div class="vbody"><div class="vh">Mobile PIN / biometric lock</div><div class="vs">Both incumbents ship device-level PIN locks. Cheap to add to the mobile app, materially improves the security posture on shared devices.</div><div class="src">src: TigerConnect PIN locks</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-new">Adopt</span></span><div class="vbody"><div class="vh">HITRUST roadmap</div><div class="vs">HITRUST is the certification enterprise health-system buyers ask for first. Not a feature — a sales unlock. Plan the path even if v1 ships HIPAA-only.</div><div class="src">src: TigerConnect HITRUST</div></div></div>
+      </div>
+
+      <!-- ADAPT -->
+      <div class="card">
+        <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <span class="badge b-should">Adapt</span><h3 style="margin:0">Borrow the idea, fit our model</h3>
+        </div>
+        <div class="verdict"><span class="vtag"><span class="badge b-should">Adapt</span></span><div class="vbody"><div class="vh">Schedule-aware routing</div><div class="vs">PerfectServe's dynamic routing keys off on-call schedules. DocTurn routes off <b>census</b>. Combine: filter the round-robin pool by who is actually scheduled/on-shift before applying lowest-census — fairness <i>and</i> coverage-correctness.</div><div class="src">src: PerfectServe dynamic intelligent routing</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-should">Adapt</span></span><div class="vbody"><div class="vh">Provider scheduling — lightweight</div><div class="vs">Full physician scheduling (Lightning Bolt) is a product unto itself. DocTurn needs only enough: defined shifts (Day/Swing/Night) feeding the rotation pool. Resist building a scheduling suite.</div><div class="src">src: PerfectServe Lightning Bolt; TigerConnect scheduling</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-should">Adapt</span></span><div class="vbody"><div class="vh">EHR / ADT census feed</div><div class="vs">Incumbents integrate deeply via HL7/FHIR &amp; Epic. DocTurn doesn't need that depth — but a one-way ADT/FHIR feed to auto-update census would remove the system's biggest manual step.</div><div class="src">src: both — EHR/FHIR integration</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-should">Adapt</span></span><div class="vbody"><div class="vh">AI "care activation"</div><div class="vs">Both gesture at AI orchestration. DocTurn's AI intake (note→structured fields) is the right seed — extend it toward assignment explanations &amp; anomaly flags, not a generic AI layer.</div><div class="src">src: TigerConnect AI orchestration</div></div></div>
+      </div>
+    </div>
+
+    <!-- AVOID full width -->
+    <div class="card" style="margin-top:16px">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <span class="badge b-later">Avoid</span><h3 style="margin:0">Out of scope — the incumbents' breadth is their cost, not ours</h3>
+      </div>
+      <div class="grid g2" style="gap:0">
+        <div class="verdict"><span class="vtag"><span class="badge b-later">Avoid</span></span><div class="vbody"><div class="vh">Alarm management &amp; nurse call</div><div class="vs">FDA 510(k)-cleared, hardware-integrated, heavily regulated. Years of scope for a different buyer. Hard no for DocTurn.</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-later">Avoid</span></span><div class="vbody"><div class="vh">Operator console / answering service</div><div class="vs">Call-center replacement (PerfectServe's roots, Five9 partnership). Adjacent market, different sales motion.</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-later">Avoid</span></span><div class="vbody"><div class="vh">Patient engagement suite</div><div class="vs">App-less patient texting, appointment reminders, no-show reduction. Different buyer (ambulatory/marketing), dilutes the wedge.</div></div></div>
+        <div class="verdict"><span class="vtag"><span class="badge b-later">Avoid</span></span><div class="vbody"><div class="vh">Interfacility transfer &amp; pre-hospital</div><div class="vs">TigerConnect Transfer is a standalone logistics product. Revisit only if DocTurn expands beyond the inpatient hospitalist floor.</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ POSITIONING ============ -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">04</span> Positioning</div>
+    <h2>The wedge: automate the assignment decision</h2>
+    <p class="sub">Both incumbents are message-movers — they get the right message to whoever is <i>already</i> designated on-call. Neither decides <b>which hospitalist should own a new admit</b>. That decision is still a charge nurse with a whiteboard. DocTurn owns it.</p>
+    <div class="grid g3">
+      <div class="card pad">
+        <div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">◎</div>
+        <h3>Win where they're absent</h3>
+        <p style="font-size:13px;color:var(--muted-2);line-height:1.5;margin:4px 0 0">Census-fair, auto-expiring, auto-rerouting assignment is a blank cell in both competitors' matrices. Lead every demo with it.</p>
+      </div>
+      <div class="card pad">
+        <div class="ico" style="background:var(--active-bg);color:var(--primary-d)">⤳</div>
+        <h3>Match table-stakes, don't exceed</h3>
+        <p style="font-size:13px;color:var(--muted-2);line-height:1.5;margin:4px 0 0">Secure messaging, MFA, audit, multi-tenant isolation must feel complete — but they're the price of entry, not the pitch. Adopt the small lifecycle/coverage gaps and stop.</p>
+      </div>
+      <div class="card pad">
+        <div class="ico" style="background:var(--violet-bg);color:var(--violet)">⊘</div>
+        <h3>Stay narrow on purpose</h3>
+        <p style="font-size:13px;color:var(--muted-2);line-height:1.5;margin:4px 0 0">Every "Avoid" row is a quarter not spent chasing the incumbents into regulated, hardware-bound, or wrong-buyer territory. Depth on one job beats breadth.</p>
+      </div>
+    </div>
+    <div class="note note-ok" style="margin-top:18px">
+      <span>✓</span><div><b>One-line strategy.</b> Be the system of record for <i>who gets the patient</i> — and just enough secure comms around that decision to never send a clinician to a second app.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SOURCES ============ -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">05</span> Sources &amp; method</div>
+    <h2>How this was assembled</h2>
+    <p class="sub">Capability ratings synthesize public vendor materials, product pages, and third-party analyst recognition (current as of June 2026). Ratings are directional for build-planning, not a procurement scorecard; some incumbent capabilities are higher-tier or paid add-ons.</p>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>Source</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td>PerfectServe — corporate &amp; product pages (Unite, Lightning Bolt, Operator Console, Answering Service)</td><td>Platform scope; scheduling; routing; console; patient engagement</td></tr>
+          <tr><td>PerfectServe — 2025 Best in KLAS (physician scheduling + clinical communications); 2024 Gartner MQ recognition</td><td>Market position; scheduling &amp; comms strength</td></tr>
+          <tr><td>TigerConnect — Clinical Collaboration Platform product pages; 2025 newsroom (Transfer, auto-forward, inbox management)</td><td>Messaging; voice/video; alarm mgmt; transfer; coverage; security</td></tr>
+          <tr><td>TigerConnect — 2025 Gartner MQ Leader; G2 Winter 2025; HITRUST &amp; Epic Showroom listings</td><td>Market position; certification; interoperability</td></tr>
+          <tr><td>DocTurn SE Pack — Function List, System Requirements, RBAC, Design Spec</td><td>DocTurn column (built v1 + target capability ratings)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DocTurn — Competitive Benchmarking (DT-CB-001).</b> Internal strategy artifact · PerfectServe and TigerConnect are trademarks of their respective owners; this analysis is based on publicly available information and is directional for product planning. Companion to the DocTurn SE Pack.
+  </div>
+</footer>
+
+</body>
+</html>

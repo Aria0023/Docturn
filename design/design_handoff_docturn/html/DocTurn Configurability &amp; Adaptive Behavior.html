@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Configurability &amp; Adaptive Behavior</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn active" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Design note · configurability &amp; adaptive behavior</div></div>
+    </div>
+    <h1>Let users make the little tweaks — no new release required.</h1>
+    <p class="lede">A design note on making DocTurn <b>self-adjustable at runtime</b>: hospitals and providers change behavior through in-app settings (instant effect, no deploy), and the system <b>learns usage patterns and suggests</b> better defaults. The important part — this is a natural extension of the existing <i>server-authoritative, config-driven</i> architecture, not a new dependency or a pivot.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-NOTE-001</b></span>
+      <span>Status <b>Proposed — low-risk, additive</b></span>
+      <span>Touches <b>2–4 new tables, 0 rewrites</b></span>
+      <span>Principle <b>Suggest, don't silently change</b></span>
+    </div>
+    <div class="pills">
+      <span class="pill">Runtime settings</span>
+      <span class="pill">Behavior flags</span>
+      <span class="pill">Learned defaults</span>
+      <span class="pill">No-deploy tweaks</span>
+      <span class="pill">Human-in-the-loop</span>
+    </div>
+  </div>
+</header>
+
+<!-- WHY IT FITS -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">1</span> Why this fits the current design</div>
+    <h2>The pattern is already here</h2>
+    <p class="sub">DocTurn already computes behavior on the server from values stored in the database and read <b>live</b> at decision time. "User-adjustable tweaks" is mostly generalizing that — not inventing it.</p>
+    <div class="grid g2">
+      <div class="card pad">
+        <h4>Already runtime-configurable today</h4>
+        <ul class="tight">
+          <li><code>organizations.assignment_timeout_min</code> — the expiry window, read by the <code>expiry</code> service every tick.</li>
+          <li><code>organizations.round_robin_shift_types</code> — which shifts rotate, read by <code>rotation.selectNext()</code>.</li>
+          <li><code>organizations.rotation_index</code> — the fairness cursor, persisted and advanced live.</li>
+          <li><code>hospitalists.patient_cap</code> / <code>working</code> — capacity &amp; eligibility, editable in-app.</li>
+        </ul>
+        <p class="sub" style="margin:10px 0 0">Change any of these through the Director dashboard and the next assignment behaves differently — <b>with no redeploy.</b> That's the seed of the whole idea.</p>
+      </div>
+      <div class="card pad">
+        <h4>What's missing to make it general</h4>
+        <ul class="tight">
+          <li>A <b>typed settings store</b> beyond a handful of org columns (so new tweaks don't need a schema change each time).</li>
+          <li><b>User-level</b> preferences, not just org-level policy.</li>
+          <li><b>Behavior flags</b> to roll a change out per-hospital without a release.</li>
+          <li>An <b>adaptive layer</b> that turns logged usage into suggested defaults.</li>
+        </ul>
+        <div class="note note-ok" style="margin-top:12px"><span>✓</span><span>All four are <b>additive</b> — a few small tables and a config-reading service. No existing table or flow is rewritten.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- THREE TIERS -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">2</span> Three tiers, easiest first</div>
+    <h2>From in-app settings to a system that learns</h2>
+    <p class="sub">Adopt in order. Each tier delivers value on its own; you do not need the ambitious one to ship the cheap one.</p>
+    <div class="grid g3">
+      <div class="card pad">
+        <div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">①</div>
+        <h3>Runtime settings</h3>
+        <p class="sub" style="margin:0 0 8px">In-app preferences, read at decision time, instant effect.</p>
+        <ul class="tight">
+          <li>Org policy (director) + user prefs (everyone)</li>
+          <li>Key/value store, typed &amp; validated (Zod)</li>
+          <li>Edited in Settings UI → next action uses it</li>
+          <li><b>Effort:</b> small · <b>Risk:</b> low</li>
+        </ul>
+      </div>
+      <div class="card pad">
+        <div class="ico" style="background:var(--active-bg);color:var(--primary)">②</div>
+        <h3>Behavior flags</h3>
+        <p class="sub" style="margin:0 0 8px">Ship a behavior dark; flip it per hospital, no release.</p>
+        <ul class="tight">
+          <li>Per-org boolean / variant flags</li>
+          <li>Gradual rollout &amp; instant rollback</li>
+          <li>A/B a new routing rule on one site</li>
+          <li><b>Effort:</b> small · <b>Risk:</b> low</li>
+        </ul>
+      </div>
+      <div class="card pad">
+        <div class="ico" style="background:var(--violet-bg);color:var(--violet)">③</div>
+        <h3>Adaptive defaults</h3>
+        <p class="sub" style="margin:0 0 8px">Learn from usage; <b>suggest</b> a better default a human confirms.</p>
+        <ul class="tight">
+          <li>Heuristics over data you already log</li>
+          <li>Surfaced as a suggestion, never auto-applied</li>
+          <li>Starts with no ML infrastructure</li>
+          <li><b>Effort:</b> medium · <b>Risk:</b> medium</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TWEAKABLES CATALOG -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">3</span> The tweakables catalog</div>
+    <h2>Concretely — what becomes user-adjustable</h2>
+    <p class="sub">A starter set of "little tweaks" that move from code into runtime config. <b>Scope</b> says who controls it; <b>consumed by</b> names the service that reads it; <b>adaptive?</b> marks where the system could later suggest a value.</p>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>Tweak</th><th>Scope</th><th>Consumed by</th><th>Adaptive?</th></tr></thead>
+        <tbody>
+          <tr><td>Assignment timeout (expiry window)</td><td><span class="badge b-info">Org</span></td><td><code>expiry</code></td><td><span class="badge b-violet">suggest from median accept time</span></td></tr>
+          <tr><td>Rotation mode — lowest-census vs sequential</td><td><span class="badge b-info">Org</span></td><td><code>rotation</code></td><td>—</td></tr>
+          <tr><td>Auto-reassign on no-response — on/off</td><td><span class="badge b-info">Org</span></td><td><code>expiry</code></td><td>—</td></tr>
+          <tr><td>Reminder cadence + escalation threshold</td><td><span class="badge b-info">Org</span></td><td><code>expiry · notifications</code></td><td><span class="badge b-violet">suggest from response times</span></td></tr>
+          <tr><td>Specialty → service routing map</td><td><span class="badge b-info">Org</span></td><td><code>rotation</code></td><td><span class="badge b-violet">learn from past assignments</span></td></tr>
+          <tr><td>Default intake specialty per complaint keyword</td><td><span class="badge b-info">Org</span></td><td><code>ai-intake</code></td><td><span class="badge b-violet">learn from corrections</span></td></tr>
+          <tr><td>Quick-reply / message templates</td><td><span class="badge b-teal">User</span></td><td><code>messaging</code></td><td><span class="badge b-violet">surface frequent phrasings</span></td></tr>
+          <tr><td>Notification channel preference (in-app/push/SMS)</td><td><span class="badge b-teal">User</span></td><td><code>notifications</code></td><td>—</td></tr>
+          <tr><td>Default routing mode (quick vs manual)</td><td><span class="badge b-teal">User</span></td><td><code>web</code></td><td><span class="badge b-violet">learn per ER doctor</span></td></tr>
+          <tr><td>Dashboard layout / default landing tab</td><td><span class="badge b-teal">User</span></td><td><code>web</code></td><td><span class="badge b-violet">learn most-used view</span></td></tr>
+          <tr><td>Quiet hours / on-shift default window</td><td><span class="badge b-teal">User</span></td><td><code>notifications</code></td><td><span class="badge b-violet">learn from shift toggles</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note note-info" style="margin-top:14px"><span>ℹ️</span><span><b>Org vs User split matters:</b> org-scope tweaks are <i>policy</i> (only a director changes them, they affect everyone); user-scope tweaks are <i>preference</i> (anyone changes their own). Clinical-routing behavior is always org policy — never a silent per-user change.</span></div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">4</span> How it's built</div>
+    <h2>A thin configuration layer + an analytics-driven suggestion loop</h2>
+    <div class="grid g2">
+      <div>
+        <h4>Data model additions</h4>
+        <div class="card tbl-card">
+          <table>
+            <tbody>
+              <tr><td><code>org_settings</code></td><td>key · value(json) · type · updated_by · updated_at — org policy tweaks</td></tr>
+              <tr><td><code>user_preferences</code></td><td>user_id · key · value(json) — per-person preferences</td></tr>
+              <tr><td><code>feature_flags</code></td><td>org_id · flag · enabled / variant — dark-ship &amp; rollout</td></tr>
+              <tr><td><code>suggestions</code></td><td>scope · key · proposed_value · evidence · status (pending/accepted/dismissed)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="sub" style="margin:12px 0 0">Values are typed &amp; validated with Zod, exactly like the rest of the schema. A small <code>config</code> service loads + caches them so reads in hot paths (rotation, expiry) stay fast.</p>
+      </div>
+      <div>
+        <h4>The suggestion loop (Tier 3)</h4>
+        <div class="codeblock"><span class="c">// runs periodically, org-scoped, read-only</span>
+analyze(orgId):
+  <span class="c">// mine data you ALREADY log</span>
+  m = median(acceptTime from assignments)
+  <span class="k">if</span> m &lt; org.timeout * <span class="s">0.6</span>:
+    propose(<span class="s">'assignment_timeout'</span>, ceil(m),
+            evidence=<span class="s">"median accept 4m vs 10m window"</span>)
+
+  byKeyword = topSpecialty(per complaint, assignments)
+  <span class="k">for</span> kw, spec <span class="k">in</span> byKeyword:
+    propose(<span class="s">'specialty_map'</span>, {kw: spec}, evidence=…)
+
+<span class="c">// nothing changes until a human accepts:</span>
+accept(suggestion) → write org_settings + audit_logs
+dismiss(suggestion) → record, stop re-proposing</div>
+        <p class="sub" style="margin:12px 0 0">No ML, no new infrastructure — it's aggregate queries over <code>assignments</code>, <code>audit_logs</code>, and <code>messages</code>, surfaced as a review card.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRINCIPLES -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">5</span> Design principles for a self-adjusting system</div>
+    <h2>Keep it safe, legible, and reversible</h2>
+    <div class="grid g3">
+      <div class="card pad"><h3>Suggest, don't impose</h3><p class="sub" style="margin:0">The system proposes; a human applies. Especially for anything that affects clinical routing or safety — never a silent change.</p></div>
+      <div class="card pad"><h3>Everything audited &amp; reversible</h3><p class="sub" style="margin:0">Every applied tweak writes an <code>audit_logs</code> row (who, old→new, why) and can be reverted. A safe default always underlies the stack.</p></div>
+      <div class="card pad"><h3>Policy vs preference</h3><p class="sub" style="margin:0">Org policy (director-only, affects all) is separated from personal preference (self-service). The UI makes the scope obvious.</p></div>
+      <div class="card pad"><h3>Legible config</h3><p class="sub" style="margin:0">Show the current value, who set it, and when. No invisible behavior — a tweak you can't see is a bug you can't diagnose.</p></div>
+      <div class="card pad"><h3>Show the evidence</h3><p class="sub" style="margin:0">A suggestion always carries its reasoning ("median accept 4m vs 10m window"), so the human can judge it, not just obey it.</p></div>
+      <div class="card pad"><h3>Bounded &amp; validated</h3><p class="sub" style="margin:0">Every tweak has a type and allowed range (Zod). Users can't push a timeout to 0 or a cap negative; guardrails stay server-side.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ROADMAP FIT -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">6</span> How it threads into the plan</div>
+    <h2>Where it lands in the roadmap</h2>
+    <p class="sub">This doesn't disturb the M0–M16 build. It slots in as additive milestones, and the cheapest tier could even come early since it extends org-config that already exists.</p>
+    <div class="card pad">
+      <div class="ms"><span class="num">C1</span><div><h3>Runtime settings layer <span class="chip" style="vertical-align:1px">extends existing org config</span></h3><div class="acc"><code>org_settings</code> + <code>user_preferences</code> + a cached <code>config</code> service; Settings UI. <b>✓</b> change a tweak in-app, next action reflects it, no deploy.</div></div></div>
+      <div class="ms"><span class="num">C2</span><div><h3>Behavior flags</h3><div class="acc"><code>feature_flags</code> per org; gate one new behavior behind a flag. <b>✓</b> flip on one site without a release; instant rollback.</div></div></div>
+      <div class="ms"><span class="num">C3</span><div><h3>Adaptive suggestions</h3><div class="acc"><code>suggestions</code> + the analyze loop + a review card. <b>✓</b> system proposes a timeout/mapping change with evidence; human accepts → audited.</div></div></div>
+    </div>
+    <div class="note note-warn" style="margin-top:14px"><span>⚠️</span><span><b>One thing to decide early:</b> which tweaks are <b>org policy</b> vs <b>user preference</b>. Getting that boundary right up front avoids a painful reclassification later — and keeps clinical-routing behavior firmly on the director-controlled, audited side.</span></div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-NOTE-001</b> — Configurability &amp; Adaptive Behavior. An additive extension of the <a href="DocTurn Final Design Spec.html">Final Design Specification</a>'s server-authoritative, config-driven core. Captures the goal: <i>users make the little tweaks themselves, and the app learns their patterns — without a new release.</i> Not yet a committed build; proposed as low-risk milestones C1–C3.
+  </div>
+</footer>
+
+</body>
+</html>

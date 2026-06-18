@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Implementation Architecture" subtitle="Buildable v1 blueprint — architecture, data model, flows, milestones" viewport="1080x620" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Implementation Architecture</title>
+<style>
+  :root{
+    --primary:#2563EB; --fg:#0b1220; --muted:#64748B; --border:#E2E8F0; --bg:#fff;
+    --secondary:#F1F5F9; --sky:#0EA5E9; --sky7:#0369A1;
+    --pending:#D97706; --pending-bg:#FEF3C7; --accepted:#059669; --accepted-bg:#D1FAE5;
+    --active:#2563EB; --active-bg:#DBEAFE; --rejected:#DC2626; --rejected-bg:#FEE2E2;
+    --neutral:#64748B; --neutral-bg:#F1F5F9;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+    --marketing:linear-gradient(160deg,#E0F2FE 0%,#FFFFFF 52%,#FFE4E6 100%);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--sans);color:var(--fg);background:#F6F8FB;-webkit-font-smoothing:antialiased;line-height:1.55}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 28px}
+  a{color:var(--primary)}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  /* hero */
+  header.hero{background:var(--marketing);border-bottom:1px solid var(--border)}
+  .hero-in{padding:40px 0 44px;display:flex;flex-direction:column;gap:18px}
+  .brand{display:flex;align-items:center;gap:13px}
+  .glyph{width:48px;height:48px;border-radius:13px;background:var(--primary);color:#fff;font-weight:700;font-size:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(37,99,235,.28)}
+  .brand .nm{font-size:22px;font-weight:700;letter-spacing:-.01em}
+  .brand .tag{font-size:12.5px;color:var(--muted)}
+  h1{font-size:40px;line-height:1.08;letter-spacing:-.025em;margin:6px 0 0;max-width:760px}
+  .lede{font-size:17px;color:#475569;max-width:680px;margin:0}
+  .pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+  .pill{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.75);border:1px solid rgba(255,255,255,.8);color:var(--sky7);font-size:12.5px;font-weight:600;padding:5px 11px;border-radius:99px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  /* sections */
+  section{padding:40px 0}
+  section + section{border-top:1px solid var(--border)}
+  .kicker{font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--sky)}
+  h2{font-size:27px;letter-spacing:-.02em;margin:9px 0 4px}
+  h3{font-size:16px;margin:0 0 4px}
+  p.sub{color:var(--muted);margin:0 0 22px;max-width:720px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:860px){.g2,.g3,.g4{grid-template-columns:1fr}}
+  .pad{padding:18px}
+  .ico{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:11px}
+  /* diagram */
+  .diagram{background:#0b1220;border-radius:16px;padding:24px;color:#cbd5e1;overflow:auto}
+  .diagram pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.5;color:#cbd5e1;white-space:pre}
+  /* table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;background:#FbFcFe}
+  tbody tr:last-child td{border-bottom:none}
+  .yes{color:var(--accepted);font-weight:700}
+  .no{color:#cbd5e1}
+  td .mono{color:var(--primary)}
+  /* state machine */
+  .sm{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+  .node{padding:7px 14px;border-radius:99px;font-size:13px;font-weight:600;border:1px solid transparent}
+  .n-pending{background:var(--pending-bg);color:var(--pending)}
+  .n-accepted{background:var(--accepted-bg);color:var(--accepted)}
+  .n-rejected{background:var(--rejected-bg);color:var(--rejected)}
+  .n-expired{background:var(--neutral-bg);color:var(--neutral)}
+  .n-cancelled{background:var(--neutral-bg);color:var(--neutral)}
+  .arrow{color:var(--muted);font-size:13px;font-family:var(--mono)}
+  /* milestone list */
+  .ms{display:flex;gap:14px;padding:15px 0;border-bottom:1px solid var(--border)}
+  .ms:last-child{border-bottom:none}
+  .ms .num{flex:none;width:34px;height:34px;border-radius:9px;background:var(--secondary);color:var(--primary);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .ms .num.core{background:var(--primary);color:#fff}
+  .ms .acc{font-size:12.5px;color:var(--muted);margin-top:3px}
+  .ms .acc b{color:var(--accepted)}
+  ul.tight{margin:6px 0 0;padding-left:18px}
+  ul.tight li{margin:3px 0;font-size:13.5px}
+  .codeblock{background:#0b1220;color:#e2e8f0;border-radius:12px;padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.55;overflow:auto;white-space:pre}
+  .codeblock .c{color:#7c8aa5}
+  .codeblock .k{color:#7dd3fc}
+  .codeblock .s{color:#86efac}
+  footer{padding:30px 0 50px;color:var(--muted);font-size:12.5px}
+  .note{background:#EFF6FF;border:1px solid #BFDBFE;border-radius:12px;padding:13px 16px;font-size:13.5px;color:#1e3a8a;display:flex;gap:10px}
+  .note b{color:#1e3a8a}
+  .tagrow{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+  .chip{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:7px;background:var(--secondary);color:#334155}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Implementation Architecture · v1 blueprint</div></div>
+    </div>
+    <h1>A simple, buildable backend for hospital patient assignment &amp; secure messaging.</h1>
+    <p class="lede">A deliberately trimmed version of the full engineering spec — same architecture and behavior, but it runs and tests locally with <b>zero external secrets</b>. Pairs with the three HTML UI kits as the visual source of truth, and hands straight to Claude Code.</p>
+    <div class="pills">
+      <span class="pill">One TypeScript monolith</span>
+      <span class="pill">SQLite + Drizzle</span>
+      <span class="pill">WebSocket realtime</span>
+      <span class="pill">Integrations stubbed</span>
+      <span class="pill">Org-scoped multi-tenant</span>
+      <span class="pill">Vitest + Supertest</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">System shape</div>
+    <h2>One process, two clients, everything stubbed</h2>
+    <p class="sub">A single Express server hosts the REST API and a WebSocket server, serves the React SPA, and talks to SQLite through Drizzle. External services sit behind interfaces with local fallbacks, so the whole thing boots with no API keys.</p>
+    <div class="diagram">
+<pre>          Web SPA (React + Vite + TanStack Query)        (later) Expo mobile
+                         \                                      /
+                          \___ HTTP (cookie session) + WS /ws _/
+                                          |
+              ┌───────────────────────────▼────────────────────────────┐
+              │  Express (TypeScript, ESM) — single port                │
+              │   REST routes · WebSocket /ws · Passport sessions       │
+              │   RBAC + tenant-scope middleware · audit logging        │
+              └───────────────┬───────────────────────┬────────────────┘
+                      Drizzle  │                       │  service interfaces
+                               ▼                       ▼
+                   ┌────────────────────┐   ┌──────────────────────────────┐
+                   │  SQLite            │   │  Stubs (local fallback):     │
+                   │  scoped by         │   │  SMS→console · AI→mock ·      │
+                   │  organizationId    │   │  Push→noop · Schedule→local  │
+                   └────────────────────┘   └──────────────────────────────┘</pre>
+    </div>
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card pad"><div class="ico" style="background:var(--active-bg);color:var(--primary)">◆</div><h3>Thin routes, central storage</h3><p class="sub" style="margin:0">All data access goes through one tenant-scoped <code>storage</code> module. Routes only validate + authorize.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--accepted-bg);color:var(--accepted)">⛨</div><h3>Server-authoritative</h3><p class="sub" style="margin:0">Routing, expiry, and roles are computed on the server — never trusted from the client.</p></div>
+      <div class="card pad"><div class="ico" style="background:var(--pending-bg);color:var(--pending)">⇄</div><h3>Integrations behind interfaces</h3><p class="sub" style="margin:0">Twilio / OpenAI / Firebase / Amion each have a stub + a live impl; the factory picks by env.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Simplifications</div>
+    <h2>What we trimmed (and why it still matches production)</h2>
+    <p class="sub">The behavior is intact — only the infrastructure is swapped for things that run anywhere. Everything removed is documented as “Later” so nothing is lost.</p>
+    <div class="card" style="overflow:hidden">
+      <table>
+        <thead><tr><th>Area</th><th>Full spec</th><th>This blueprint</th></tr></thead>
+        <tbody>
+          <tr><td>Database</td><td>PostgreSQL</td><td><b>SQLite</b> via Drizzle — swap the driver to ship on Postgres</td></tr>
+          <tr><td>External services</td><td>Live Twilio / OpenAI / Firebase / Amion</td><td><b>Stubbed</b> behind interfaces (SMS→console, AI→mock, push→noop)</td></tr>
+          <tr><td>MFA</td><td>TOTP + SMS + backup codes</td><td><b>Optional stub</b> (fixed dev code) so login stays testable</td></tr>
+          <tr><td>Tables</td><td>37 domain tables</td><td><b>~10 core tables</b> for the v1 flows</td></tr>
+          <tr><td>Tenancy</td><td>Many orgs</td><td>Org-scoping <b>kept</b>, seeded with one hospital</td></tr>
+          <tr><td>Notifications</td><td>WS → push → SMS cascade</td><td><b>WebSocket real</b>; push/SMS are logging stubs</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Data model</div>
+    <h2>Ten core entities, all scoped by organization</h2>
+    <p class="sub">Drizzle schema in <code>shared/schema.ts</code> is the single source of truth. Nearly every table carries an <code>organization_id</code> that every query filters by.</p>
+    <div class="grid g4">
+      <div class="card pad"><h3>organizations</h3><p class="sub" style="margin:0">Tenant root — name, code, timeout, rotation cursor.</p></div>
+      <div class="card pad"><h3>users</h3><p class="sub" style="margin:0">All accounts; role + hashed password.</p></div>
+      <div class="card pad"><h3>hospitalists</h3><p class="sub" style="margin:0">Provider profile: census, cap, working, rotation order.</p></div>
+      <div class="card pad"><h3>patients</h3><p class="sub" style="margin:0">PHI-bearing — <b>initials only</b>, room, complaint, status.</p></div>
+      <div class="card pad"><h3>assignments</h3><p class="sub" style="margin:0">The routing lifecycle: status, via, expires_at.</p></div>
+      <div class="card pad"><h3>conversations</h3><p class="sub" style="margin:0">direct · group · emergency; participant ids.</p></div>
+      <div class="card pad"><h3>messages</h3><p class="sub" style="margin:0">Content + sender + timestamp.</p></div>
+      <div class="card pad"><h3>message_delivery_status</h3><p class="sub" style="margin:0">Per-recipient delivered / read.</p></div>
+      <div class="card pad"><h3>audit_logs</h3><p class="sub" style="margin:0">Lightweight HIPAA trail: action, resource, risk.</p></div>
+      <div class="card pad"><h3>sessions</h3><p class="sub" style="margin:0">Managed by the session store (not hand-modeled).</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Core workflow</div>
+    <h2>The assignment state machine</h2>
+    <p class="sub">The operational heart: ER intake → round-robin routing → provider acknowledgement. Server-driven, fully org-scoped, and the focus of the test suite.</p>
+    <div class="card pad" style="margin-bottom:16px">
+      <div class="sm">
+        <span class="arrow">create →</span>
+        <span class="node n-pending">pending</span>
+        <span class="arrow">— accept →</span>
+        <span class="node n-accepted">accepted</span>
+        <span class="arrow">· census ++</span>
+      </div>
+      <div class="sm" style="margin-top:12px">
+        <span class="node n-pending">pending</span>
+        <span class="arrow">— reject →</span>
+        <span class="node n-rejected">rejected</span>
+        <span class="arrow">— reroute → next eligible provider (new pending)</span>
+      </div>
+      <div class="sm" style="margin-top:12px">
+        <span class="node n-pending">pending</span>
+        <span class="arrow">— expires_at →</span>
+        <span class="node n-expired">expired</span>
+        <span class="arrow">— reroute → next eligible provider (new pending)</span>
+      </div>
+      <div class="sm" style="margin-top:12px">
+        <span class="node n-accepted">accepted</span>
+        <span class="arrow">— director cancel →</span>
+        <span class="node n-cancelled">cancelled</span>
+        <span class="arrow">· census −−</span>
+      </div>
+    </div>
+    <div class="grid g2">
+      <div>
+        <h3>Round-robin selection</h3>
+        <div class="codeblock"><span class="c">// org-scoped; lowest census wins</span>
+eligible = providers WHERE
+  working <span class="k">AND</span> shiftType ∈ org.shiftTypes
+  <span class="k">AND</span> census &lt; cap
+  <span class="k">AND</span> specialty matches
+
+<span class="k">if</span> eligible empty:        <span class="c">// cap relief</span>
+  cap += <span class="s">1</span> for all working
+  recompute eligible
+
+sort by (census ASC, rotationOrder ASC)
+pick = eligible[<span class="s">0</span>]; advance org.rotationIndex</div>
+      </div>
+      <div>
+        <h3>Invariants the tests assert</h3>
+        <ul class="tight">
+          <li>Census changes <b>only</b> on accept (++) and cancel-of-accepted (−−).</li>
+          <li>Reject/expire always yields exactly one new pending — or zero if none eligible.</li>
+          <li>Selection never crosses tenants and never exceeds cap (unless cap relief raised all).</li>
+          <li>Lowest-census provider is preferred; ties broken by rotation order.</li>
+          <li>Messages never reach a non-participant.</li>
+        </ul>
+        <div class="note" style="margin-top:14px"><span>⚠️</span><span><b>Highest-risk bug:</b> a rotation selector that forgets the org filter could route a patient to another hospital. Keep every storage method org-scoped.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">API surface</div>
+    <h2>REST + WebSocket, grouped by domain</h2>
+    <p class="sub">Cookie-session auth; every privileged route asserts role + tenant. Full request/response shapes live in <code>API.md</code>.</p>
+    <div class="grid g2">
+      <div class="card pad">
+        <h3>Representative REST endpoints</h3>
+        <ul class="tight">
+          <li><code>POST /api/login</code> · <code>GET /api/user</code> · <code>POST /api/logout</code></li>
+          <li><code>GET /api/hospitalists</code> · <code>/working</code> · <code>/directory</code></li>
+          <li><code>PATCH /api/hospitalists/:id/working-status</code></li>
+          <li><code>POST /api/patients/extract</code> → mock AI fields</li>
+          <li><code>POST /api/assignments</code> <span class="chip">round_robin · manual</span></li>
+          <li><code>PATCH /api/assignments/:id/accept · reject · reassign · cancel</code></li>
+          <li><code>GET/POST /api/messaging/conversations</code> · <code>/send</code> · <code>/mark-read</code></li>
+          <li><code>GET/PATCH /api/org/config</code> · <code>POST /api/round-robin/reset</code></li>
+        </ul>
+      </div>
+      <div class="card pad">
+        <h3>WebSocket events <span class="mono" style="color:var(--muted)">/ws</span></h3>
+        <ul class="tight">
+          <li><code>CONNECTION_ESTABLISHED</code> · <code>PING/PONG</code> (20s)</li>
+          <li><code>ASSIGNMENT_CREATED</code> → target provider</li>
+          <li><code>ASSIGNMENT_UPDATED</code> → org (status change)</li>
+          <li><code>MESSAGE_RECEIVED</code> → participants</li>
+          <li><code>typing_start/stop</code> → <code>user_typing</code></li>
+          <li><code>USER_PRESENCE_CHANGED</code> → org</li>
+          <li><code>PROVIDER_CREATED / UPDATED</code> → org</li>
+        </ul>
+        <p class="sub" style="margin:12px 0 0">Cookie→session auth on connect (close 1008 on failure); all fan-out tenant-scoped via <code>broadcast</code> / <code>sendToUsers</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="kicker">Build order</div>
+    <h2>Ten milestones, each independently testable</h2>
+    <p class="sub">Claude Code runs the acceptance check at the end of each milestone before moving on. Full detail in <code>BUILD_PLAN.md</code>.</p>
+    <div class="card pad">
+      <div class="ms"><span class="num">0</span><div><h3>Scaffold &amp; database</h3><div class="acc">Schema + Drizzle + health route. <b>✓</b> tables created, <code>/api/health</code> ok.</div></div></div>
+      <div class="ms"><span class="num">1</span><div><h3>Auth, sessions &amp; RBAC</h3><div class="acc">Passport local, role + tenant middleware, seed. <b>✓</b> auth tests pass.</div></div></div>
+      <div class="ms"><span class="num">2</span><div><h3>Providers, directory &amp; org config</h3><div class="acc">Tenant-scoped provider CRUD + rotation config. <b>✓</b> director-only gating.</div></div></div>
+      <div class="ms"><span class="num">3</span><div><h3>Patient intake (+ mock AI)</h3><div class="acc">Deterministic extractor + patient create. <b>✓</b> stable fields.</div></div></div>
+      <div class="ms"><span class="num core">4</span><div><h3>Assignments, round-robin &amp; expiry · core</h3><div class="acc">State machine + selection + expiry tick + notify. <b>✓</b> all invariants.</div></div></div>
+      <div class="ms"><span class="num">5</span><div><h3>Secure messaging</h3><div class="acc">Conversations, send, read receipts, audit. <b>✓</b> participant-only access.</div></div></div>
+      <div class="ms"><span class="num">6</span><div><h3>WebSocket realtime</h3><div class="acc">Presence, heartbeat, event fan-out. <b>✓</b> two-client live update.</div></div></div>
+      <div class="ms"><span class="num">7</span><div><h3>Web client</h3><div class="acc">Recreate the web-app kit; TanStack Query + WS provider. <b>✓</b> screens end-to-end.</div></div></div>
+      <div class="ms"><span class="num">8</span><div><h3>Hardening &amp; polish</h3><div class="acc">Helmet, rate limits, audit, states. <b>✓</b> boots with no secrets, tests green.</div></div></div>
+      <div class="ms"><span class="num">9</span><div><h3>Agent orchestration seam <span class="chip" style="vertical-align:1px">interface-only</span></h3><div class="acc">Define the <code>Orchestrator → Extraction → Drafting → Verification → Guardrail → Routing</code> interface now, mock-backed, so the clinical-safety loop has a stable home before real models arrive. <b>✓</b> request flows through the chain; each agent stub returns typed output.</div></div></div>
+    </div>
+    <div class="tagrow">
+      <span class="chip">Later: multi-agent verification core</span>
+      <span class="chip">guardrail / clinical safety</span>
+      <span class="chip">acuity scoring (1–5)</span>
+      <span class="chip">consult / admission split</span>
+      <span class="chip">voice / NL intake</span>
+      <span class="chip">text-link Accept/Deny fallback</span>
+      <span class="chip">insurance-aware routing</span>
+      <span class="chip">director analytics &amp; escalation</span>
+      <span class="chip">mobile app</span>
+      <span class="chip">emergency broadcasts</span>
+      <span class="chip">developer console</span>
+      <span class="chip">real integrations (Epic/Redox/FHIR)</span>
+      <span class="chip">TOTP/SMS MFA</span>
+      <span class="chip">resource tables</span>
+      <span class="chip">Postgres swap</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Read alongside the markdown specs in <code>design_handoff_docturn/</code> — <b>BUILD_PLAN.md</b> (start here), ARCHITECTURE · DATA_MODEL · API · RBAC · WORKFLOWS · INTEGRATIONS · SCREENS · TEST_PLAN — plus the interactive UI kits under <code>design/</code>. DocTurn v1 implementation blueprint.
+  </div>
+</footer>
+
+</body>
+</html>

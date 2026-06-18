@@ -1,0 +1,30 @@
+<!-- @dsCard group="Colors" -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../colors_and_type.css">
+<style>
+  body { margin: 0; padding: 22px; font-family: var(--font-sans); background: var(--background); color: var(--foreground); }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+  .sw { border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); }
+  .chip { height: 64px; }
+  .meta { padding: 8px 10px; }
+  .name { font-size: 13px; font-weight: 600; }
+  .hex { font-size: 11px; color: var(--muted-foreground); font-family: var(--font-mono); margin-top: 2px; }
+  .lead { display:flex; align-items:baseline; gap:8px; margin-bottom: 14px; }
+  .lead b { font-size: 14px; font-weight: 700; }
+  .lead span { font-size: 12px; color: var(--muted-foreground); }
+</style>
+</head>
+<body>
+  <div class="lead"><b>Brand &amp; primary</b><span>Blue is the single primary action color; marketing extends it into the sky family.</span></div>
+  <div class="row">
+    <div class="sw"><div class="chip" style="background:#2563EB"></div><div class="meta"><div class="name">Primary</div><div class="hex">#2563EB</div></div></div>
+    <div class="sw"><div class="chip" style="background:#38BDF8"></div><div class="meta"><div class="name">Sky 400</div><div class="hex">#38BDF8</div></div></div>
+    <div class="sw"><div class="chip" style="background:#0EA5E9"></div><div class="meta"><div class="name">Sky 500</div><div class="hex">#0EA5E9</div></div></div>
+    <div class="sw"><div class="chip" style="background:#0369A1"></div><div class="meta"><div class="name">Sky 700</div><div class="hex">#0369A1</div></div></div>
+    <div class="sw"><div class="chip" style="background:var(--marketing-bg)"></div><div class="meta"><div class="name">Sky→rose</div><div class="hex">gradient</div></div></div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,1075 @@
+DocTurn
+Requirements Specification & Complete Data Model
+Software Requirements + Database Reference
+Document type Requirements specification & full data model
+Version 1.0
+Date June 07, 2026
+Data model source shared/schema.ts — 38 tables (37 domain + session store)
+Status Confidential — internal reference
+This document specifies the complete functional and non-functional requirements of the DocTurn platform
+and documents every table and column in the production data model. Requirements use the convention FR-
+(functional) and NFR- (non-functional). The data model is transcribed directly from the Drizzle schema so it
+stays faithful to the running system.
+
+-- 1 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 2
+Contents
+2	Contents
+4	1. Introduction
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.1 Purpose & scope
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.2 Actors / roles
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.3 Definitions
+5	2. Functional Requirements
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5	2.1 Authentication & sessions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5	2.2 Multi-tenancy & organizations
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5	2.3 User & provider management
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.4 Patient assignment workflow
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.5 Notifications
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.6 Messaging & directory
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.7 Scheduling
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.8 Hospital resource management
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.9 AI assistance
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.10 Developer dashboard & CMS
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8	2.11 Audit & compliance
+9	3. Non-Functional Requirements
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	3.1 Security
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	3.2 Compliance (HIPAA)
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	3.3 Performance & availability
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	3.4 Usability & accessibility
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10	3.5 Maintainability & data
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10	3.6 External interfaces
+11	4. Data Model — Conventions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11	4.1 Table index
+
+-- 2 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 3
+13	5. Tenancy & Identity
+17	6. Providers & Scheduling
+20	7. Clinical Core
+22	8. Messaging & Broadcasts
+26	9. Hospital Resources
+29	10. Notifications & Integrations
+32	11. Compliance, Sessions & Configuration
+36	12. Content Management (CMS)
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 37	12.1 Key relationships
+
+-- 3 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 4
+1. Introduction
+1.1 Purpose & scope
+DocTurn (marketed as DoctorHeidi) is a multi-tenant, HIPAA-oriented platform that coordinates patient
+assignment and secure communication inside hospitals. Emergency-room (ER) physicians admit patients
+and hand them off to hospitalists; the platform automates routing through a configurable round-robin
+rotation, delivers real-time notifications across multiple channels, tracks acknowledgement, and maintains a
+HIPAA-compliant audit trail. It ships as a React/Vite web application and an Expo React Native mobile app
+that share one Express backend, session model, and PostgreSQL database.
+1.2 Actors / roles
+Role Description
+director Hospital administrator — manages providers, schedules, round-robin config, reassignment,
+and organization settings.
+er_director ER administrator — manages ER physicians and oversees the ER side of assignment flow.
+er_doctor / er_physician Admits patients, creates assignment requests, uses AI-assisted intake, messages providers.
+hospitalist Receives assignments, accepts/declines, manages census and patient cap, communicates
+with peers.
+developer Platform operator — cross-tenant administration of organizations, users, CMS, integrations,
+and diagnostics.
+1.3 Definitions
+Term Meaning
+Tenant / Organization An independent hospital; all data is isolated by organizationId.
+Assignment A request routing a patient from an ER physician to a hospitalist; has a lifecycle and expiry.
+Round-robin Rotation algorithm that selects the next eligible hospitalist by rotation order, cap, shift, and
+availability.
+PHI Protected Health Information — patient initials, room, issue summary, messages, and
+related records.
+Census / cap A hospitalist's current patient count vs. their maximum patient cap.
+
+-- 4 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 5
+2. Functional Requirements
+2.1 Authentication & sessions
+ID Requirement
+FR-1.1 The system shall authenticate users with a username and password using server-side session-based
+authentication (Passport.js).
+FR-1.2 Passwords shall be stored only as salted hashes; plaintext passwords shall never be persisted or logged.
+FR-1.3 The system shall support optional two-factor authentication via TOTP authenticator apps and via SMS
+one-time codes.
+FR-1.4 The system shall issue single-use backup codes for account recovery when 2FA is enabled.
+FR-1.5 Any configured second factor shall be enforced during the primary login flow, not bypassable through
+alternate paths.
+FR-1.6 The system shall maintain server-side session records, support session expiry/timeout, and allow
+administrative termination.
+FR-1.7 The system shall record last-login time and track active presence/online state per session.
+2.2 Multi-tenancy & organizations
+ID Requirement
+FR-2.1 Every domain record shall be scoped to an organization; users shall only read or write data within their own
+organization.
+FR-2.2 Organizations shall be identified by a unique code (e.g. MAYO) and be independently configurable
+(timezone, branding, feature flags).
+FR-2.3 Each organization shall configure assignment timeout, round-robin rules, and custom shift-type definitions.
+FR-2.4 Per-organization, per-portal feature toggles shall control availability of features such as SMS, AI chatbot,
+and integrations.
+FR-2.5 Developers may operate across tenants for administration; all such access shall be audited.
+2.3 User & provider management
+ID Requirement
+FR-3.1 Directors shall create, edit, deactivate, and delete provider accounts within their organization.
+FR-3.2 The system shall support a self-registration request workflow that requires director/approver review before
+an account is created.
+FR-3.3 A provider-registration approval pipeline shall capture applicant details (name, email, phone, specialty,
+license, credentials) and track status (pending / approved / rejected / on_hold).
+FR-3.4 Role types and their permissions/portal access shall be configurable, including custom roles per
+organization.
+
+-- 5 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 6
+ID Requirement
+FR-3.5 Hospitalist profiles shall capture specialty, phone, patient cap, rotation order, shift type/times, and daily
+census counters.
+2.4 Patient assignment workflow
+ID Requirement
+FR-4.1 ER physicians shall create a patient record (initials, room, issue summary) and an assignment request.
+FR-4.2 The system shall select the target hospitalist via round-robin, honoring rotation order, patient cap, shift type,
+on-call and availability filters as configured by the organization.
+FR-4.3 ER physicians/directors may also assign a specific hospitalist manually, overriding round-robin.
+FR-4.4 Each assignment shall have the lifecycle: pending → accepted / rejected / expired / cancelled, with
+timestamps for each transition.
+FR-4.5 Assignments shall expire automatically after the organization's configured timeout; expiry and rejection shall
+trigger re-routing to the next eligible provider.
+FR-4.6 Directors shall be able to cancel or reassign assignments.
+FR-4.7 Accepting an assignment shall update the hospitalist's current patient count and the patient's assigned
+provider.
+FR-4.8 Users shall be able to chat directly on an assignment (assignment-scoped messages with read tracking).
+2.5 Notifications
+ID Requirement
+FR-5.1 On assignment events, the system shall notify the target provider in real time via WebSocket.
+FR-5.2 The system shall send SMS notifications (Twilio) and track delivery and acknowledgement, including the
+provider message SID.
+FR-5.3 The system shall support push notifications (Firebase Cloud Messaging) to registered iOS/Android/web
+device tokens with priority and deep-link/web-fallback handling.
+FR-5.4 Providers shall be able to acknowledge assignments via SMS reply, updating assignment state.
+FR-5.5 The system shall support advance/expiry-warning notifications before an assignment times out.
+2.6 Messaging & directory
+ID Requirement
+FR-6.1 The system shall provide direct, group, and emergency conversations scoped to an organization.
+FR-6.2 Messages shall support text and attachments (image/file), replies (threading), editing, and soft deletion.
+FR-6.3 Per-recipient delivery status (sent / delivered / read / failed) shall be tracked, with push and SMS-backup
+flags.
+FR-6.4 A provider directory shall show display name, title, specialty, contact, on-call status, and availability.
+
+-- 6 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 7
+ID Requirement
+FR-6.5 Directors shall send emergency broadcasts to targeted roles/departments, optionally requiring
+acknowledgement, with acknowledgement tracking.
+FR-6.6 All messaging actions on patient-related content shall be recorded in a message audit log with a
+reason-for-access where applicable.
+2.7 Scheduling
+ID Requirement
+FR-7.1 The system shall maintain daily hospitalist schedules (date, shift type, start/end, working flag, notes).
+FR-7.2 Round-robin eligibility shall be able to consider schedule/shift data and on-call state.
+FR-7.3 The system may integrate with Amion to synchronize provider schedules per organization.
+2.8 Hospital resource management
+ID Requirement
+FR-8.1 The system shall manage departments with capacity and alert thresholds.
+FR-8.2 The system shall track beds (type, status, occupancy) and equipment (type, status, maintenance dates).
+FR-8.3 The system shall maintain staff schedules and generate resource alerts (bed capacity, staff shortage,
+equipment failure) by severity.
+FR-8.4 The system shall record resource metrics (e.g. bed occupancy, utilization) over time for monitoring.
+2.9 AI assistance
+ID Requirement
+FR-9.1 ER physicians and directors shall have access to OpenAI-powered assistance for structured patient-intake
+extraction from free text.
+FR-9.2 The system shall provide an AI monitoring assistant on the developer dashboard for metrics, insights,
+diagnostics, and alerting.
+FR-9.3 AI features shall be gated by per-organization feature flags and shall not expose PHI beyond the requesting
+tenant.
+2.10 Developer dashboard & CMS
+ID Requirement
+FR-10.1 Developers shall administer organizations, users, role configuration, portal access, and integrations.
+FR-10.2 Developers shall view system logs, diagnostics, and system controls including data-reset operations.
+FR-10.3 A Website CMS shall allow editing the marketing landing page (hero, pricing tiers, carousel, testimonials,
+features, trust badges, SEO/OG metadata, footer) and the contact page, each with a publish toggle.
+
+-- 7 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 8
+ID Requirement
+FR-10.4 CMS changes shall record the last modifier and be covered by audit logging.
+2.11 Audit & compliance
+ID Requirement
+FR-11.1 The system shall maintain a comprehensive audit trail covering authentication, PHI access, assignment
+operations, user management, and conversation deletion, with risk level.
+FR-11.2 PHI access shall be logged separately with accessed fields, purpose, success/denial, and optional duration.
+FR-11.3 The system shall record security incidents (failed logins, unauthorized access, suspicious activity) with
+severity and resolution tracking.
+
+-- 8 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 9
+3. Non-Functional Requirements
+3.1 Security
+ID Requirement
+NFR-1.1 All authorization shall be enforced server-side for every route, WebSocket action, and record, independent
+of frontend route guards.
+NFR-1.2 All reads/writes shall be scoped to the authenticated user's organizationId to prevent cross-tenant access.
+NFR-1.3 The server shall set hardened HTTP headers (Helmet) and apply tiered rate limiting on authentication and
+general API routes.
+NFR-1.4 Sessions shall use HttpOnly cookies; traffic shall be served over HTTPS in production.
+NFR-1.5 Secrets and integration credentials shall be held server-side and never exposed to clients, logs, or
+diagnostics.
+NFR-1.6 Non-production auth/test helpers shall be unreachable in production.
+3.2 Compliance (HIPAA)
+ID Requirement
+NFR-2.1 The system shall maintain HIPAA-compliant audit trails for all PHI access and administrative actions.
+NFR-2.2 Responses, logs, and admin tools shall never expose password hashes, session identifiers, backup codes,
+secrets, or PHI to unauthorized users.
+NFR-2.3 Message content shall be flagged for encryption and patient-related access shall capture a
+reason-for-access.
+3.3 Performance & availability
+ID Requirement
+NFR-3.1 Assignment and messaging events shall propagate to connected clients in real time via WebSocket, with
+SMS/push fallback.
+NFR-3.2 Public and low-auth endpoints shall avoid expensive operations triggerable by unauthenticated users and
+shall be rate-limited.
+NFR-3.3 Production deployment shall support horizontal auto-scaling behind a reverse proxy.
+3.4 Usability & accessibility
+ID Requirement
+NFR-4.1 The UI shall be responsive and mobile-first, with touch-friendly controls and accessible focus states and
+contrast support.
+NFR-4.2 Copy shall use plain, everyday language; status shall be conveyed with both color and text/icon.
+
+-- 9 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 10
+ID Requirement
+NFR-4.3 The web app shall provide PWA capabilities; the mobile app shall maintain feature parity with the web
+platform.
+3.5 Maintainability & data
+ID Requirement
+NFR-5.1 Frontend and backend shall share a single typed schema (Drizzle + drizzle-zod) as the source of truth for
+data shapes.
+NFR-5.2 Schema changes shall be applied via the Drizzle push workflow; manual SQL migrations shall not be
+hand-written.
+NFR-5.3 Inputs shall be validated server-side with Zod schemas before persistence.
+3.6 External interfaces
+Service Purpose
+PostgreSQL Primary datastore (Drizzle ORM); also session store.
+Twilio Outbound SMS notifications, delivery/ack tracking, SMS 2FA.
+OpenAI AI intake extraction and developer monitoring assistant.
+Firebase (FCM) Push notifications to iOS/Android/web devices.
+Amion Optional per-organization provider schedule integration.
+
+-- 10 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 11
+4. Data Model — Conventions
+• Source of truth: shared/schema.ts (Drizzle ORM). There are 38 tables: 37 domain tables plus the
+sessions store.
+• PK = primary key; FK→table = foreign key reference; NOT NULL = required. Defaults are shown where
+defined.
+• serial ids are auto-incrementing integers; uuid ids default to a random UUID.
+• text[] / integer[] are array columns; jsonb stores structured JSON.
+• Timestamps default to now() where indicated; audit/PHI timestamps are server-set.
+• Every tenant-scoped table carries organizationId (FK→organizations) to enforce isolation.
+4.1 Table index
+# Table Domain area
+1 sessions Auth / session store
+2 organizations Tenancy
+3 users Identity & access
+4 pending_registrations Identity & access
+5 role_types Identity & access
+6 provider_registrations Identity & access
+7 hospitalists Providers
+8 provider_directory Providers
+9 daily_schedules Scheduling
+10 staff_schedule Scheduling
+11 patients Clinical
+12 assignments Clinical
+13 assignment_messages Clinical
+14 conversations Messaging
+15 messages Messaging
+16 message_delivery_status Messaging
+17 message_threads Messaging
+18 emergency_broadcasts Messaging
+19 broadcast_acknowledgments Messaging
+20 departments / beds / equipment Resources
+21 resource_alerts / resource_metrics Resources
+22 device_tokens / push_notifications Notifications
+23 firebase_configurations Integrations
+24 integration_settings Integrations
+
+-- 11 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 12
+# Table Domain area
+25 sms_verification_codes Auth (2FA)
+26 audit_logs / phi_access_logs Compliance
+27 security_incidents / message_audit_log Compliance
+28 user_sessions Compliance / presence
+29 system_settings / portal_configurations Configuration
+30 landing_page_settings /
+contact_page_settings
+CMS
+
+-- 12 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 13
+5. Tenancy & Identity
+Sessions (sessions)
+Express session store (connect-pg-simple). Required for server-side sessions.
+Column Type Constraints & notes
+sid varchar PK. Session id.
+sess jsonb NOT NULL. Serialized session payload.
+expire timestamp NOT NULL. Expiry; indexed (IDX_session_expire).
+Organizations (organizations)
+Top-level tenant. All domain data is isolated by this record.
+Column Type Constraints & notes
+id serial PK
+name text NOT NULL
+code text NOT NULL, unique. Tenant code (e.g. MAYO).
+address text Optional.
+phoneNumber text Optional.
+amionFacilityId text Amion integration facility id.
+amionApiKey text Org-specific Amion API key.
+timezone text NOT NULL, default America/New_York.
+assignmentTimeoutMinu
+tes
+integer NOT NULL, default 10. Assignment expiry.
+roundRobinOnCallOnly boolean NOT NULL, default false.
+roundRobinActiveOnly boolean NOT NULL, default false.
+roundRobinShiftTypes text[] Default [rounding, swing, nocturnist].
+shiftTypeDefinitions jsonb Custom shift-type definitions (id, name, times, color).
+isActive boolean NOT NULL, default true.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 13 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 14
+Users (users)
+All identities across roles. Includes optional Replit-auth and 2FA fields.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+username text NOT NULL
+password text NOT NULL. Salted hash.
+role text NOT NULL. director / er_doctor / hospitalist / developer /
+er_director.
+name text NOT NULL
+phoneNumber text Optional.
+specialty text For hospitalists.
+isActive boolean NOT NULL, default true.
+replitUserId varchar Unique. Optional Replit id.
+email varchar Unique. Optional.
+firstName varchar Optional.
+lastName varchar Optional.
+profileImageUrl varchar Optional.
+twoFactorEnabled boolean NOT NULL, default false.
+twoFactorSecret text TOTP secret.
+smsVerificationEnable
+d
+boolean NOT NULL, default false.
+backupCodes text[] 2FA recovery codes.
+lastLoginAt timestamp Optional.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 14 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 15
+Pending registrations (pending_registrations)
+Self-service signup requests awaiting director approval.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+username text NOT NULL
+password text NOT NULL. Hashed.
+name text NOT NULL
+requestedAt timestamp Default now().
+status text NOT NULL, default pending. pending / approved / rejected.
+reviewedBy integer FK→users.
+reviewedAt timestamp Optional.
+rejectionReason text Optional.
+Role types (role_types)
+Configurable RBAC role definitions, including custom per-org roles.
+Column Type Constraints & notes
+id serial PK
+name text NOT NULL
+description text NOT NULL, default ''.
+displayName text NOT NULL
+accessLevel text NOT NULL. director / staff / custom.
+permissions text NOT NULL, default '[]'. JSON array.
+portalAccess text NOT NULL, default '[]'. JSON array.
+organizationId integer FK→organizations (null = system).
+isSystemRole boolean Default false.
+isActive boolean Default true.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 15 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 16
+Provider registrations (provider_registrations)
+Credentialed provider onboarding pipeline with approver review.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+requestedRole text NOT NULL
+applicantName text NOT NULL
+applicantEmail text NOT NULL
+applicantPhone text Optional.
+specialty text Optional.
+licenseNumber text Optional.
+credentials text JSON (education, certifications).
+requestedBy integer FK→users.
+approverRole text NOT NULL
+status text NOT NULL, default pending. pending / approved / rejected /
+on_hold.
+reviewedBy integer FK→users.
+reviewNotes text Optional.
+approvedAt timestamp Optional.
+rejectedAt timestamp Optional.
+createdUserId integer FK→users. Set after approval.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 16 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 17
+6. Providers & Scheduling
+Hospitalists (hospitalists)
+Hospitalist provider profile with census, cap, and shift data.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer NOT NULL, FK→users.
+specialty text NOT NULL
+phoneNumber text NOT NULL
+isWorkingToday boolean NOT NULL, default false.
+currentPatientCount integer NOT NULL, default 0.
+patientCap integer NOT NULL, default 15.
+rotationOrder integer NOT NULL, default 0. Round-robin order.
+shiftType text(enum) NOT NULL, default rounding. rounding / swing / nocturnist.
+shiftStartTime text NOT NULL, default 07:00.
+shiftEndTime text NOT NULL, default 19:00.
+admissionsToday integer NOT NULL, default 0.
+dischargesPlanned integer NOT NULL, default 0.
+amionPhysicianId text Amion physician identifier.
+
+-- 17 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 18
+Provider directory (provider_directory)
+Searchable directory entry for messaging and contact.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer NOT NULL, FK→users.
+displayName text NOT NULL
+title text NOT NULL. Dr. / RN / PA, etc.
+specialty text Optional.
+department text Optional.
+phoneNumber text Optional.
+pagerNumber text Optional.
+email text Optional.
+isOnCall boolean Default false.
+availability text Default available. available / busy / do_not_disturb / offline.
+lastSeen timestamp Optional.
+profileImageUrl text Optional.
+bio text Optional.
+languages text[] Languages spoken.
+certifications text[] Certifications.
+isVisible boolean Default true.
+messagePreferences text Default '{}'. JSON notification prefs.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 18 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 19
+Daily schedules (daily_schedules)
+Per-hospitalist daily shift schedule.
+Column Type Constraints & notes
+id serial PK
+hospitalistId integer NOT NULL, FK→hospitalists.
+scheduleDate text NOT NULL. YYYY-MM-DD.
+shiftType text(enum) NOT NULL. rounding / swing / nocturnist / off.
+shiftStartTime text NOT NULL
+shiftEndTime text NOT NULL
+isWorking boolean NOT NULL, default true.
+notes text Optional.
+createdAt timestamp NOT NULL, default now().
+updatedAt timestamp NOT NULL, default now().
+Staff schedule (staff_schedule)
+General staff shift schedule by department.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer NOT NULL, FK→users.
+departmentId integer FK→departments.
+shiftStart timestamp NOT NULL
+shiftEnd timestamp NOT NULL
+shiftType text NOT NULL. day / night / swing.
+status text NOT NULL, default scheduled. scheduled / active / completed /
+cancelled.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 19 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 20
+7. Clinical Core
+Patients (patients)
+Patient admitted from the ER. Carries PHI (initials, room, issue).
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+initials varchar(10) NOT NULL. PHI.
+roomNumber text NOT NULL. PHI.
+issueSummary text NOT NULL. PHI.
+assignedHospitalistId integer FK→hospitalists.
+erDoctorId integer NOT NULL, FK→users.
+assignedAt timestamp NOT NULL, default now().
+status text NOT NULL, default active. active / completed / transferred.
+Assignments (assignments)
+Routing of a patient to a hospitalist with lifecycle and SMS tracking.
+Column Type Constraints & notes
+id serial PK
+patientId integer NOT NULL, FK→patients.
+hospitalistId integer NOT NULL, FK→users.
+erDoctorId integer NOT NULL, FK→users.
+assignedAt timestamp NOT NULL, default now().
+notificationSent boolean NOT NULL, default false.
+advanceNotificationSe
+nt
+boolean NOT NULL, default false.
+status text(enum) NOT NULL, default pending. pending / accepted / rejected /
+expired / cancelled.
+hospitalistResponse text Optional response.
+respondedAt timestamp Optional.
+reassignedAt timestamp Optional.
+expiresAt timestamp Expiry time.
+smsDelivered boolean NOT NULL, default false.
+smsDeliveredAt timestamp Optional.
+smsAcknowledged boolean NOT NULL, default false.
+smsAcknowledgedAt timestamp Optional.
+smsSid text Twilio message SID.
+
+-- 20 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 21
+Assignment messages (assignment_messages)
+Chat scoped to a single assignment.
+Column Type Constraints & notes
+id serial PK
+assignmentId integer NOT NULL, FK→assignments.
+senderId integer NOT NULL, FK→users.
+content text NOT NULL
+messageType text NOT NULL, default assignment_chat.
+createdAt timestamp NOT NULL, default now().
+readAt timestamp Optional.
+isRead boolean NOT NULL, default false.
+
+-- 21 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 22
+8. Messaging & Broadcasts
+Conversations (conversations)
+Direct / group / emergency conversation container.
+Column Type Constraints & notes
+id uuid PK, default random.
+organizationId integer NOT NULL, FK→organizations.
+type text NOT NULL. direct / group / emergency.
+subject text Optional.
+participants integer[] NOT NULL. User ids.
+isArchived boolean Default false.
+isEncrypted boolean Default true.
+priority text Default normal. low / normal / high / urgent.
+departmentId integer FK→departments.
+patientId integer FK→patients.
+createdBy integer NOT NULL, FK→users.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 22 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 23
+Messages (messages)
+Individual message; supports attachments, replies, edit, soft-delete.
+Column Type Constraints & notes
+id uuid PK, default random.
+conversationId uuid NOT NULL, FK→conversations.
+senderId integer NOT NULL, FK→users.
+content text NOT NULL. Encrypted content.
+messageType text Default text. text / image / file / location / contact.
+attachmentUrl text Optional.
+attachmentType text MIME type.
+isEncrypted boolean Default true.
+encryptionKey text Message-specific key.
+priority text Default normal.
+isEdited boolean Default false.
+editedAt timestamp Optional.
+parentMessageId uuid FK→messages (reply).
+isDeleted boolean Default false.
+deletedAt timestamp Optional.
+sentAt timestamp Default now().
+createdAt timestamp Default now().
+Message delivery status (message_delivery_status)
+Per-recipient delivery/read state. Table-level constraint: UNIQUE (messageId, userId) — one status row
+per recipient per message.
+Column Type Constraints & notes
+id serial PK
+messageId uuid NOT NULL, FK→messages.
+userId integer NOT NULL, FK→users.
+status text NOT NULL. sent / delivered / read / failed.
+deviceType text mobile / web / sms.
+deliveredAt timestamp Optional.
+readAt timestamp Optional.
+failureReason text Optional.
+pushNotificationSent boolean Default false.
+smsBackupSent boolean Default false.
+createdAt timestamp Default now().
+
+-- 23 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 24
+Message threads (message_threads)
+Lightweight thread index within a conversation.
+Column Type Constraints & notes
+id uuid PK, default random.
+conversationId uuid NOT NULL, FK→conversations.
+subject text Optional.
+participantIds integer[] NOT NULL
+lastMessageId uuid FK→messages.
+lastActivity timestamp Default now().
+isActive boolean Default true.
+createdAt timestamp Default now().
+Emergency broadcasts (emergency_broadcasts)
+Org-wide or targeted urgent broadcast.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+senderId integer NOT NULL, FK→users.
+title text NOT NULL
+message text NOT NULL
+severity text NOT NULL. info / warning / critical / emergency.
+targetAudience text[] NOT NULL. Roles or user ids.
+departments integer[] Department ids.
+requiresAcknowledgmen
+t
+boolean Default false.
+expiresAt timestamp Optional.
+isActive boolean Default true.
+sentAt timestamp Default now().
+createdAt timestamp Default now().
+
+-- 24 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 25
+Broadcast acknowledgments (broadcast_acknowledgments)
+Per-user acknowledgement of a broadcast.
+Column Type Constraints & notes
+id serial PK
+broadcastId integer NOT NULL, FK→emergency_broadcasts.
+userId integer NOT NULL, FK→users.
+acknowledgedAt timestamp Default now().
+response text Optional.
+location text Optional.
+
+-- 25 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 26
+9. Hospital Resources
+Departments (departments)
+Hospital department with capacity and alert threshold.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+name text NOT NULL
+code text NOT NULL. ER / ICU / MED / SURG.
+floor text Optional.
+capacity integer NOT NULL, default 0.
+alertThreshold integer NOT NULL, default 80 (%).
+isActive boolean NOT NULL, default true.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+Beds (beds)
+Individual bed and its occupancy state.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+departmentId integer NOT NULL, FK→departments.
+roomNumber text NOT NULL
+bedNumber text NOT NULL
+bedType text NOT NULL. regular / icu / telemetry / isolation.
+status text NOT NULL, default available. available / occupied / cleaning /
+maintenance.
+patientId integer FK→patients.
+assignedAt timestamp Optional.
+isActive boolean NOT NULL, default true.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 26 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 27
+Equipment (equipment)
+Tracked medical equipment and maintenance.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+departmentId integer FK→departments.
+name text NOT NULL
+type text NOT NULL. ventilator / monitor / pump / defibrillator.
+serialNumber text Optional.
+status text NOT NULL, default available. available / in_use / maintenance /
+out_of_order.
+location text Optional.
+lastMaintenanceDate timestamp Optional.
+nextMaintenanceDate timestamp Optional.
+isActive boolean NOT NULL, default true.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+Resource alerts (resource_alerts)
+Alerts raised on resource thresholds/failures.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+alertType text NOT NULL. bed_capacity / staff_shortage / equipment_failure.
+severity text NOT NULL. low / medium / high / critical.
+title text NOT NULL
+message text NOT NULL
+resourceType text NOT NULL. bed / staff / equipment.
+resourceId integer Reference to the resource.
+departmentId integer FK→departments.
+isResolved boolean NOT NULL, default false.
+resolvedAt timestamp Optional.
+resolvedBy integer FK→users.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 27 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 28
+Resource metrics (resource_metrics)
+Time-series resource utilization samples.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+departmentId integer FK→departments.
+metricType text NOT NULL. bed_occupancy / staff_count / equipment_utilization.
+metricValue integer NOT NULL
+maxValue integer NOT NULL
+timestamp timestamp NOT NULL, default now().
+createdAt timestamp Default now().
+
+-- 28 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 29
+10. Notifications & Integrations
+Device tokens (device_tokens)
+Registered push tokens per user/device.
+Column Type Constraints & notes
+id serial PK
+userId integer NOT NULL, FK→users.
+organizationId integer NOT NULL, FK→organizations.
+token text NOT NULL
+deviceType text NOT NULL. ios / android / web.
+deviceInfo text JSON device details.
+isActive boolean Default true.
+lastUsed timestamp Default now().
+createdAt timestamp Default now().
+Push notifications (push_notifications)
+Outbound push notification records and status.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer NOT NULL, FK→users.
+title text NOT NULL
+body text NOT NULL
+data text JSON payload.
+deepLink text In-app link.
+webFallbackUrl text Browser fallback.
+notificationType text NOT NULL. assignment / urgent / reminder / system.
+priority text Default normal.
+status text Default pending. pending / sent / delivered / failed.
+sentAt timestamp Optional.
+deliveredAt timestamp Optional.
+errorMessage text Optional.
+createdAt timestamp Default now().
+
+-- 29 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 30
+Firebase configurations (firebase_configurations)
+Per-org Firebase project credentials for FCM.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+projectId text NOT NULL
+apiKey text NOT NULL
+appId text NOT NULL
+messagingSenderId text Optional.
+serverKey text Server-side push key.
+vapidKey text Web push key.
+isActive boolean Default true.
+lastTestDate timestamp Optional.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+Integration settings (integration_settings)
+Generic per-org integration config (firebase / twilio / epic / amion).
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+integrationType text NOT NULL
+isEnabled boolean Default false.
+configuration text NOT NULL, default '{}'. JSON.
+lastSync timestamp Optional.
+syncStatus text Default inactive. active / inactive / error.
+errorLog text Optional.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 30 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 31
+SMS verification codes (sms_verification_codes)
+One-time codes for SMS 2FA / setup / reset.
+Column Type Constraints & notes
+id serial PK
+userId integer NOT NULL, FK→users.
+phoneNumber text NOT NULL
+code text NOT NULL
+purpose text NOT NULL. login / setup / reset.
+isUsed boolean Default false.
+expiresAt timestamp NOT NULL
+createdAt timestamp Default now().
+
+-- 31 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 32
+11. Compliance, Sessions & Configuration
+Audit logs (audit_logs)
+Primary HIPAA audit trail for actions across the system.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer FK→users.
+action text NOT NULL. login / view_patient / create_user / access_phi …
+resourceType text user / patient / assignment / organization.
+resourceId text Affected resource id.
+ipAddress text Optional.
+userAgent text Optional.
+sessionId text Optional.
+details text JSON context.
+timestamp timestamp NOT NULL, default now().
+riskLevel text(enum) Default low. low / medium / high / critical.
+geolocation text Optional.
+PHI access logs (phi_access_logs)
+Dedicated log of PHI access events.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+userId integer NOT NULL, FK→users.
+patientId integer FK→patients.
+accessType text NOT NULL. view / edit / create / delete / export.
+dataFields text[] Fields accessed.
+purpose text Medical purpose.
+timestamp timestamp NOT NULL, default now().
+duration integer Seconds.
+ipAddress text Optional.
+successful boolean NOT NULL, default true.
+denialReason text If denied.
+
+-- 32 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 33
+Security incidents (security_incidents)
+Detected security events with resolution tracking.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+incidentType text NOT NULL. failed_login / unauthorized_access / data_breach /
+suspicious_activity.
+severity text(enum) NOT NULL. low / medium / high / critical.
+userId integer FK→users.
+ipAddress text Optional.
+description text NOT NULL
+status text(enum) NOT NULL, default open. open / investigating / resolved /
+false_positive.
+reportedAt timestamp NOT NULL, default now().
+resolvedAt timestamp Optional.
+assignedTo integer FK→users.
+resolution text Optional.
+affectedData text Optional.
+Message audit log (message_audit_log)
+HIPAA audit trail specific to messaging.
+Column Type Constraints & notes
+id serial PK
+organizationId integer NOT NULL, FK→organizations.
+messageId uuid FK→messages.
+conversationId uuid FK→conversations.
+userId integer NOT NULL, FK→users.
+action text NOT NULL. create / read / edit / delete / export / share.
+details text JSON.
+ipAddress text Optional.
+userAgent text Optional.
+deviceInfo text Optional.
+patientId integer FK→patients.
+reasonForAccess text Required for patient-related messages.
+timestamp timestamp Default now().
+
+-- 33 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 34
+User sessions (user_sessions)
+Application-level session + presence tracking (distinct from the session store).
+Column Type Constraints & notes
+id serial PK
+userId integer NOT NULL, FK→users.
+sessionToken text NOT NULL, unique.
+ipAddress text NOT NULL
+userAgent text Optional.
+isActive boolean NOT NULL, default true.
+lastActivity timestamp NOT NULL, default now().
+createdAt timestamp NOT NULL, default now().
+expiresAt timestamp NOT NULL
+terminatedAt timestamp Optional.
+terminationReason text timeout / logout / admin_termination / security_breach.
+isOnline boolean NOT NULL, default false.
+lastSeen timestamp Default now().
+activeConnectionCount integer NOT NULL, default 0.
+System settings (system_settings)
+Global key/value settings.
+Column Type Constraints & notes
+id serial PK
+key text NOT NULL, unique.
+value text NOT NULL
+updatedAt timestamp NOT NULL, default now().
+
+-- 34 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 35
+Portal configurations (portal_configurations)
+Per-org, per-portal feature toggles.
+Column Type Constraints & notes
+id serial PK
+portalId text NOT NULL. developer / director / er_director …
+organizationId integer NOT NULL, FK→organizations.
+featureId text NOT NULL. sms_notifications / ai_chatbot …
+enabled boolean NOT NULL, default true.
+config text JSON feature config.
+createdAt timestamp NOT NULL, default now().
+updatedAt timestamp NOT NULL, default now().
+
+-- 35 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 36
+12. Content Management (CMS)
+Landing page settings (landing_page_settings)
+Editable marketing landing-page content (singleton-style row). Every text column has a seeded default value
+in the schema.
+Column Type Constraints & notes
+id serial PK
+heroTitle text NOT NULL. Default 'Transform Patient Assignments'.
+heroSubtitle text NOT NULL. Default seeded subtitle copy.
+heroCta1Text text NOT NULL. Default 'Start Free Trial'.
+heroCta1Link text NOT NULL. Default '#pricing'.
+heroCta2Text text NOT NULL. Default 'Watch Demo'.
+heroCta2Link text NOT NULL. Default '#demo'.
+heroCheckmarks jsonb NOT NULL. Default bullet list.
+seoTitle text NOT NULL. Default SEO title.
+seoDescription text NOT NULL. Default SEO description.
+seoKeywords text NOT NULL. Default SEO keywords.
+ogTitle text NOT NULL. Default Open Graph title.
+ogDescription text NOT NULL. Default Open Graph description.
+ogImage text Default '/og-image.png'.
+pricingTiers jsonb NOT NULL. Default array of tiers (name, price, features…).
+carouselSlides jsonb NOT NULL. Default array of slides.
+testimonials jsonb NOT NULL. Default array of testimonials.
+featuresTitle text NOT NULL. Default features heading.
+featuresSubtitle text NOT NULL. Default features subheading.
+trustBadges jsonb NOT NULL. Default logos/labels.
+footerCopyright text NOT NULL. Default 'DocTurn by DoctorHeidi'.
+isPublished boolean NOT NULL, default true.
+lastModifiedBy integer FK→users.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+
+-- 36 of 37 --
+
+DocTurn — Requirements & Data Model Confidential
+Generated June 07, 2026 Page 37
+Contact page settings (contact_page_settings)
+Editable contact-page content and form copy. Every text column has a seeded default value in the schema.
+Column Type Constraints & notes
+id serial PK
+sectionTitle text NOT NULL. Default 'Get in Touch'.
+sectionSubtitle text NOT NULL. Default seeded subtitle.
+email text NOT NULL. Default 'hello@doctorheidi.com'.
+phone text NOT NULL. Default '+1 (555) 123-4567'.
+office text NOT NULL. Default 'San Francisco, CA'.
+responseTimeMessage text NOT NULL. Default response-time copy.
+formNamePlaceholder text NOT NULL. Default 'Dr. Jane Smith'.
+formEmailPlaceholder text NOT NULL. Default 'jane@hospital.com'.
+formOrgPlaceholder text NOT NULL. Default 'Metro General Hospital'.
+formMessagePlaceholde
+r
+text NOT NULL. Default 'Tell us about your needs…'.
+formSubmitText text NOT NULL. Default 'Send Message'.
+formThankYouMessage text NOT NULL. Default thank-you copy.
+isPublished boolean NOT NULL, default true.
+lastModifiedBy integer FK→users.
+createdAt timestamp Default now().
+updatedAt timestamp Default now().
+12.1 Key relationships
+• organizations is the tenant root; nearly every table references it via organizationId.
+• users 1→N hospitalists, patients (as ER doctor), and assignments.
+• patients 1→N assignments; an assignment references the patient, the hospitalist, and the ER doctor.
+• conversations 1→N messages 1→N message_delivery_status (unique per recipient); messages
+self-reference via parentMessageId for replies.
+• departments 1→N beds, equipment, resource_alerts, and resource_metrics.
+• emergency_broadcasts 1→N broadcast_acknowledgments.
+
+-- 37 of 37 --
+

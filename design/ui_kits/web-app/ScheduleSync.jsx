@@ -1,0 +1,240 @@
+/* DocTurn web-app UI kit — Schedule Sync (Amion / external on-call import).
+   Two ingestion modes:
+     • API        — token-based pull (preferred, when the vendor exposes one)
+     • Capture     — NO public API: DocTurn signs in on your behalf in a sandboxed
+                     headless browser and parses the published on-call grid off the
+                     rendered page ("rip contents off screen"). Credentials encrypted
+                     server-side, read-only, every fetch audited.
+   Self-contained demo component; manages its own local state. Director surface. */
+
+// Real captured grid — Tarzana ISP hospitalist schedule (amion.com/cgi-bin/ocs).
+// `secure` = "Secure message to Amion app" (onboarded) vs "Not ready to receive
+// secure messages" — the onboarding signal DocTurn uses to invite the rest.
+const SS_HRS = { "7a-7p": ["Day call", "amber"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
+const SS_ROWS = [
+  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
+  { slot: "Tarzana 2", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
+  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Ahmed, Amir", grp: "ISP North", secure: false },
+  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
+  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
+  { slot: "Tarzana 6", hrs: "7a-7p", prov: "Gideon, Danny", grp: "ISP North", secure: false },
+  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
+  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
+  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
+  { slot: "North Triage", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
+  { slot: "Tarzana 2 PM Swing", hrs: "4p-12a", prov: "Manukian, Naira", grp: "ISP North", secure: false },
+  { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
+  { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
+  { slot: "West Night2", hrs: "11p-7a", prov: "Shergill, Jasper", grp: "ISP Hospitalist", secure: true },
+  { slot: "11 PM Triage", hrs: "11p-7a", prov: "Guedikian, Roupen", grp: "Nocturnist", secure: true },
+  { slot: "11 PM X-Cover", hrs: "11p-7a", prov: "Tran, Ann", grp: "ISP Hospitalist", secure: true },
+  { slot: "11 PM Admit", hrs: "11p-7a", prov: "Chen, David", grp: "Nocturnist", secure: true },
+];
+const SS_MAP = [
+  { code: "7a–7p",  shift: "Day call",      tint: "amber" },
+  { code: "4p–12a", shift: "Swing",         tint: "blue" },
+  { code: "7p–7a",  shift: "Nights",        tint: "slate" },
+  { code: "11p–7a", shift: "Night X-cover", tint: "slate" },
+];
+// "Last, First" → "First Last"; initials from both.
+function ssName(prov) { const [last, first] = prov.split(", "); return (first || "") + " " + last; }
+function ssInit(prov) { const [last, first] = prov.split(", "); return ((first || " ")[0] + last[0]).toUpperCase(); }
+
+function SSModeTab({ active, icon, label, sub, onClick }) {
+  return (
+    <button onClick={onClick} style={{ flex: 1, textAlign: "left", display: "flex", gap: 11, alignItems: "flex-start", padding: "12px 13px", borderRadius: "var(--radius-md)", cursor: "pointer",
+      border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, background: active ? "#EFF6FF" : "#fff", transition: "all .15s" }}>
+      <span style={{ width: 32, height: 32, borderRadius: "var(--radius-md)", background: active ? "#fff" : "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <Icon name={icon} size={16} color={active ? "var(--primary)" : "var(--muted-foreground)"} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: active ? "var(--primary)" : "var(--foreground)" }}>{label}</div>
+        <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.35, marginTop: 1 }}>{sub}</div>
+      </div>
+    </button>
+  );
+}
+
+function ShiftChip({ shift, tint }) {
+  const c = { amber: ["var(--status-pending-bg)", "var(--status-pending)"], blue: ["var(--status-active-bg)", "var(--status-active)"], slate: ["var(--status-neutral-bg)", "var(--status-neutral)"] }[tint] || ["var(--secondary)", "var(--muted-foreground)"];
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: "var(--radius-full)", background: c[0], color: c[1], whiteSpace: "nowrap" }}><span style={{ width: 6, height: 6, borderRadius: 99, background: c[1], flex: "none" }} />{shift}</span>;
+}
+
+function ScheduleSync() {
+  const [connected, setConnected] = React.useState(false);
+  const [mode, setMode] = React.useState("capture"); // default to the no-API path
+  const [busy, setBusy] = React.useState(false);
+  const [revealed, setRevealed] = React.useState(false); // capture preview shown
+  const [lastSync, setLastSync] = React.useState("just now");
+  const [interval, setIntervalVal] = React.useState("15m");
+
+  // API fields
+  const [token, setToken] = React.useState("");
+  const [baseUrl, setBaseUrl] = React.useState("https://www.amion.com/api");
+  // Capture fields
+  const [loginUrl, setLoginUrl] = React.useState("https://www.amion.com");
+  const [username, setUsername] = React.useState("tarzana.isp");
+  const [password, setPassword] = React.useState("••••••••••");
+  const [schedKey, setSchedKey] = React.useState("!299a6dc6iJRQ");
+
+  const run = () => {
+    setBusy(true);
+    setTimeout(() => { setBusy(false); setConnected(true); setRevealed(true); setLastSync("just now"); }, 1200);
+  };
+  const syncNow = () => { setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900); };
+  const disconnect = () => { setConnected(false); setRevealed(false); };
+
+  return (
+    <Card style={{ padding: 18, marginBottom: 18 }}>
+      {/* header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
+        <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, whiteSpace: "nowrap" }}>On-call schedule sync</h3>
+            <Badge variant="secondary">Amion</Badge>
+            {connected && <span style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {mode === "api" ? "API" : "Capture"}</Badge></span>}
+          </div>
+          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>Import the live on-call grid to drive DocTurn's rotation pool. Manual overrides always win at game time.</p>
+        </div>
+        {connected && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={syncNow}>{busy ? "Syncing…" : "Sync now"}</Button>}
+      </div>
+
+      {!connected && (
+        <React.Fragment>
+          {/* mode selector */}
+          <div style={{ display: "flex", gap: 10, margin: "14px 0 6px" }}>
+            <SSModeTab active={mode === "api"} icon="plug-zap" label="API token" sub="Vendor exposes a schedule API. Cleanest, real-time." onClick={() => setMode("api")} />
+            <SSModeTab active={mode === "capture"} icon="scan-line" label="Sign-in capture" sub="No API? We log in & read the schedule off-screen." onClick={() => setMode("capture")} />
+          </div>
+
+          {mode === "api" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
+              <Field label="API base URL" icon="link" value={baseUrl} onChange={setBaseUrl} />
+              <Field label="API token" icon="key-round" value={token} onChange={setToken} type="password" placeholder="paste secret token" help="Stored server-side, never exposed to clients." />
+              <div style={{ gridColumn: "1 / -1" }}>
+                <Button icon="plug" onClick={run}>{busy ? "Connecting…" : "Test & connect"}</Button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
+                <Icon name="info" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
+                <span>No public API? DocTurn signs in to Amion inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. Credentials are <b>encrypted (AES-256) at rest</b>, used only to fetch the schedule, and every capture is written to the audit log.</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <Field label="Sign-in URL" icon="link" value={loginUrl} onChange={setLoginUrl} />
+                <Field label="Schedule key / org password" icon="hash" value={schedKey} onChange={setSchedKey} help="Amion's interactive-schedule password." />
+                <Field label="Username" icon="user" value={username} onChange={setUsername} />
+                <Field label="Password" icon="lock" value={password} onChange={setPassword} type="password" />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <Button icon="scan-line" onClick={run}>{busy ? "Signing in & capturing…" : "Sign in & capture"}</Button>
+              </div>
+            </div>
+          )}
+        </React.Fragment>
+      )}
+
+      {/* capture / sync result */}
+      {connected && revealed && (
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(0,260px) 1fr", gap: 16, alignItems: "start" }}>
+          {/* captured raw page */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+              <Icon name="scan-line" size={13} color="var(--muted-foreground)" />
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Captured page</span>
+            </div>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#fff" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ width: 8, height: 8, borderRadius: 99, background: "#E2574C" }} /><span style={{ width: 8, height: 8, borderRadius: 99, background: "#E9B23E" }} /><span style={{ width: 8, height: 8, borderRadius: 99, background: "#3FB950" }} />
+                <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 10.5, color: "var(--muted-foreground)", marginLeft: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>amion.com/cgi-bin/ocs?Lo=…</span>
+              </div>
+              <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+                  <thead><tr>
+                    <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Assignment</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Provider</th>
+                    <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready">Sec</th>
+                  </tr></thead>
+                  <tbody>
+                    {SS_ROWS.map((r, i) => (
+                      <tr key={i}>
+                        <td style={{ padding: "5px 10px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.slot}<span style={{ color: "var(--muted-foreground)", marginLeft: 5 }}>{r.hrs}</span></td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.prov}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", textAlign: "center" }}>
+                          <Icon name={r.secure ? "check" : "x"} size={12} color={r.secure ? "var(--status-accepted)" : "var(--status-rejected)"} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {/* hours → shift mapping */}
+            <div style={{ marginTop: 11 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)", marginBottom: 7 }}>Hours → shift</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {SS_MAP.map((m) => (
+                  <div key={m.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                    <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, background: "var(--secondary)", padding: "1px 6px", borderRadius: 5, minWidth: 46, textAlign: "center" }}>{m.code}</code>
+                    <Icon name="arrow-right" size={12} color="var(--muted-foreground)" />
+                    <ShiftChip shift={m.shift} tint={m.tint} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* parsed result */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
+              <Icon name="check-check" size={14} color="var(--status-accepted)" />
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Parsed → on-call today</span>
+              <Badge status="accepted">{SS_ROWS.length} assignments</Badge>
+              <Badge status="pending" icon="user-plus">{SS_ROWS.filter((r) => !r.secure).length} to invite</Badge>
+            </div>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", maxHeight: 360, overflowY: "auto" }}>
+              {SS_ROWS.map((r, i) => {
+                const [shift, tint] = SS_HRS[r.hrs];
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 13px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                    <Avatar initials={ssInit(r.prov)} size={30} tint={r.secure ? "emerald" : "amber"} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ssName(r.prov)}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.slot} · {r.grp}</div>
+                    </div>
+                    {r.secure
+                      ? <span title="Ready for secure messages" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-accepted)", flex: "none" }}><Icon name="message-square" size={12} />App</span>
+                      : <span title="Not on secure messaging — will be invited" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-pending)", flex: "none" }}><Icon name="mail" size={12} />Invite</span>}
+                    <ShiftChip shift={shift} tint={tint} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 9, fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
+              <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />Providers marked <b style={{ color: "var(--status-pending)", fontWeight: 600 }}>Invite</b> show "Not ready to receive secure messages" in Amion — DocTurn auto-sends an enrollment invite and falls back to SMS until they're on the app.
+            </div>
+
+            {/* controls */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 13, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--muted-foreground)" }}>
+                <Icon name="clock" size={14} />Re-sync every
+                <select value={interval} onChange={(e) => setIntervalVal(e.target.value)} style={{ fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600, padding: "5px 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", cursor: "pointer" }}>
+                  <option value="5m">5 min</option><option value="15m">15 min</option><option value="1h">1 hour</option><option value="manual">Manual only</option>
+                </select>
+              </div>
+              <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· Last sync <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{lastSync}</b></span>
+              <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 11.5, color: "var(--muted-foreground)" }}>
+              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · credentials encrypted at rest · every capture written to the audit log.
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+Object.assign(window, { ScheduleSync });

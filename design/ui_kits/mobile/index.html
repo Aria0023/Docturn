@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Mobile App (UI Kit)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); color: var(--foreground); background: #E7ECF3; -webkit-font-smoothing: antialiased;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; overflow: hidden; }
+  #scaler { transform: scale(var(--s, 1)); transform-origin: center center; transition: transform .1s; }
+  @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
+  input { font-family: var(--font-sans); }
+  ::-webkit-scrollbar { width: 0; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100" height="100" rx="20" fill="#2563EB"/>
+    <text x="50" y="68" font-family="ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="700" fill="#fff" text-anchor="middle">D</text>
+  </svg>
+</template>
+<div id="scaler"><div id="root"></div></div>
+<script>
+  function fit() {
+    const s = Math.min(1, (window.innerHeight - 32) / 874, (window.innerWidth - 32) / 402);
+    document.documentElement.style.setProperty('--s', s);
+  }
+  window.addEventListener('resize', fit); fit();
+</script>
+
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState } = React;
+
+const PROVIDERS = [
+  { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true },
+  { id: "h2", name: "Dr. Amir Patel",  avatar: "AP", specialty: "Hospital Medicine", census: 5, cap: 12, working: true },
+  { id: "h3", name: "Dr. Maria Lopez", avatar: "ML", specialty: "Pulmonology",       census: 7, cap: 10, working: true },
+  { id: "h4", name: "Dr. James Liu",   avatar: "JL", specialty: "Nephrology",        census: 2, cap: 8,  working: false },
+  { id: "h5", name: "Dr. Nina Okafor", avatar: "NO", specialty: "Endocrinology",     census: 4, cap: 10, working: false },
+];
+const CONVOS = [
+  { id: 1, name: "Dr. Sarah Chen", initials: "SC", status: "accepted", preview: "Accepting the 412 hand-off now.", time: "2m", unread: 2, tint: "emerald" },
+  { id: 2, name: "ICU Care Team", initials: "IC", status: "accepted", preview: "Bed 3 is open for the next admit.", time: "14m", unread: 0, tint: "blue", group: true },
+  { id: 3, name: "Dr. Amir Patel", initials: "AP", status: "pending", preview: "On my way up — give me 5.", time: "1h", unread: 0, tint: "amber" },
+  { id: 4, name: "Emergency broadcast", initials: "!", status: "rejected", preview: "Mass casualty drill at 14:00.", time: "3h", unread: 0, tint: "slate", group: true },
+];
+const PENDING_SEED = [
+  { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain", via: "Round-robin", specialty: "General Med", expires: "4:32" },
+  { id: "a2", initials: "TK", room: "205", complaint: "Diabetic ketoacidosis", via: "Manual", specialty: "Endocrine", expires: "7:10" },
+];
+
+const TABS = [
+  ["dashboard", "Dashboard", "layout-dashboard"],
+  ["messages", "Messages", "message-square"],
+  ["team", "Team", "users"],
+  ["directory", "Directory", "contact"],
+  ["profile", "Profile", "user"],
+];
+
+function TabBar({ active, onTab, badge }) {
+  return (
+    <div style={{ position: "sticky", bottom: 0, zIndex: 10, display: "flex", background: "rgba(255,255,255,.94)", backdropFilter: "blur(12px)", borderTop: "1px solid var(--border)", padding: "8px 6px 26px" }}>
+      {TABS.map(([id, label, icon]) => {
+        const on = active === id;
+        return (
+          <button key={id} onClick={() => onTab(id)} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, border: "none", background: "transparent", cursor: "pointer", padding: "4px 0", position: "relative" }}>
+            <span style={{ position: "relative" }}>
+              <MI name={icon} size={23} color={on ? "var(--primary)" : "var(--status-neutral)"} strokeWidth={on ? 2.4 : 2} />
+              {id === "messages" && badge > 0 && <span style={{ position: "absolute", top: -4, right: -7, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{badge}</span>}
+            </span>
+            <span style={{ fontSize: 10.5, fontWeight: 600, color: on ? "var(--primary)" : "var(--status-neutral)" }}>{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function MobileApp() {
+  const [tab, setTab] = useState("dashboard");
+  const [pending, setPending] = useState(PENDING_SEED);
+  const [census, setCensus] = useState(3);
+  const [working, setWorking] = useState(true);
+
+  const accept = (id) => { setPending(pending.filter((p) => p.id !== id)); setCensus((c) => c + 1); };
+  const decline = (id) => setPending(pending.filter((p) => p.id !== id));
+
+  let screen;
+  if (tab === "dashboard") screen = <DashboardScreen pending={pending} onAccept={accept} onDecline={decline} working={working} setWorking={setWorking} census={census} />;
+  else if (tab === "messages") screen = <MessagesScreen convos={CONVOS} />;
+  else if (tab === "team") screen = <TeamScreen providers={PROVIDERS} />;
+  else if (tab === "directory") screen = <DirectoryScreen providers={PROVIDERS} />;
+  else screen = <ProfileScreen />;
+
+  return (
+    <IOSDevice>
+      <div style={{ minHeight: "100%", display: "flex", flexDirection: "column", background: "#F2F4F8" }}>
+        <div style={{ flex: 1 }}>{screen}</div>
+        <TabBar active={tab} onTab={setTab} badge={2} />
+      </div>
+    </IOSDevice>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<MobileApp />);
+</script>
+</body>
+</html>

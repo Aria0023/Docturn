@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<!-- @dsCard group="Brand" name="Use Cases (SysML)" subtitle="Actor catalog, use-case diagram, and detailed UC specifications" viewport="1120x640" -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn — Use Cases (SysML)</title>
+<link rel="stylesheet" href="docturn-spec.css">
+</head>
+<body>
+
+<nav class="docnav">
+  <div class="docnav-in">
+    <span class="dn-brand"><span class="dn-g">D</span>DocTurn SE Pack</span>
+    <a class="dn" href="DocTurn Final Design Spec.html">Design Specification</a>
+    <a class="dn active" href="DocTurn Use Cases (SysML).html">Use Cases (SysML)</a>
+    <a class="dn" href="DocTurn Function List.html">Function List</a>
+    <a class="dn" href="DocTurn System Requirements.html">System Requirements</a>
+    <a class="dn" href="DocTurn Configurability &amp; Adaptive Behavior.html">Configurability</a>
+    <a class="dn" href="DocTurn Traceability &amp; Gap Analysis.html">Gap Analysis</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="brand">
+      <span class="glyph">D</span>
+      <div><div class="nm">DocTurn</div><div class="tag">Use Cases · SysML / UML behavioral model</div></div>
+    </div>
+    <h1>Use-case model — actors, system boundary, and the behaviors they invoke.</h1>
+    <p class="lede">A SysML-style behavioral view of the full DocTurn target. Five human actors and four external system actors interact with 31 use cases grouped into seven functional packages. Each use case below carries actors, pre/postconditions, the main success scenario, and notable alternate/exception flows — and traces to the requirements in the companion document.</p>
+    <div class="doc-meta">
+      <span>Document <b>DT-UC-001</b></span>
+      <span>Notation <b>SysML use-case diagram</b></span>
+      <span>Actors <b>5 human · 4 system</b></span>
+      <span>Use cases <b>31</b></span>
+    </div>
+  </div>
+</header>
+
+<!-- ACTOR CATALOG -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">1</span> Actor catalog</div>
+    <h2>Who and what interacts with the system</h2>
+    <div class="grid g3">
+      <div class="card pad"><h4>Primary (human) actors</h4>
+        <table style="font-size:12.5px">
+          <tbody>
+            <tr><td><b>Director</b></td><td>Hospital admin — providers, rotation, overrides, incidents</td></tr>
+            <tr><td><b>ER Director</b></td><td>Manages ER physicians; superset of ER Doctor</td></tr>
+            <tr><td><b>ER Doctor</b></td><td>Patient intake, assignment creation</td></tr>
+            <tr><td><b>Hospitalist</b></td><td>Accept/decline, census, messaging</td></tr>
+            <tr><td><b>Developer</b></td><td>Cross-tenant platform operator, CMS</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card pad"><h4>Secondary (system) actors</h4>
+        <table style="font-size:12.5px">
+          <tbody>
+            <tr><td><b>OpenAI</b></td><td>Note extraction + NL command processing</td></tr>
+            <tr><td><b>Twilio</b></td><td>SMS notifications + MFA OTP</td></tr>
+            <tr><td><b>Firebase FCM</b></td><td>Mobile push delivery</td></tr>
+            <tr><td><b>Amion</b></td><td>On-call / shift schedule sync</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card pad"><h4>Reading the diagram</h4>
+        <ul class="tight">
+          <li><b>Stick figures</b> are actors; the dashed frame is the system boundary.</li>
+          <li><b>Pills</b> inside are use cases, grouped into packages.</li>
+          <li>Dashed pills are <b>system-actor</b>-facing (machine-to-machine).</li>
+          <li>Each use case has a <code>UC-NN</code> id used throughout the pack.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- USE CASE DIAGRAM -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">2</span> Use-case diagram</div>
+    <h2>System boundary — DocTurn platform</h2>
+    <p class="sub">Human actors on the left and right; external system actors associate with the integration-facing use cases (dashed).</p>
+    <div class="card pad">
+      <div class="uc-diagram">
+        <!-- LEFT ACTORS -->
+        <div class="actor-col">
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2"><circle cx="15" cy="7" r="6"/><line x1="15" y1="13" x2="15" y2="30"/><line x1="4" y1="20" x2="26" y2="20"/><line x1="15" y1="30" x2="6" y2="44"/><line x1="15" y1="30" x2="24" y2="44"/></svg><div class="an">ER Doctor</div><div class="ar">er_doctor</div></div>
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2"><circle cx="15" cy="7" r="6"/><line x1="15" y1="13" x2="15" y2="30"/><line x1="4" y1="20" x2="26" y2="20"/><line x1="15" y1="30" x2="6" y2="44"/><line x1="15" y1="30" x2="24" y2="44"/></svg><div class="an">ER Director</div><div class="ar">er_director</div></div>
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2"><circle cx="15" cy="7" r="6"/><line x1="15" y1="13" x2="15" y2="30"/><line x1="4" y1="20" x2="26" y2="20"/><line x1="15" y1="30" x2="6" y2="44"/><line x1="15" y1="30" x2="24" y2="44"/></svg><div class="an">Hospitalist</div><div class="ar">hospitalist</div></div>
+        </div>
+        <!-- BOUNDARY -->
+        <div class="system-boundary">
+          <div class="sb-title">« system » DocTurn Platform</div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--primary)"></span>Access &amp; Identity</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-01</span>Authenticate</span>
+              <span class="uc"><span class="uid">UC-02</span>Complete MFA</span>
+              <span class="uc"><span class="uid">UC-03</span>Register (request access)</span>
+              <span class="uc"><span class="uid">UC-04</span>Manage own profile / shift</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--accepted)"></span>Intake &amp; Assignment</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-05</span>Register patient (intake)</span>
+              <span class="uc ext"><span class="uid">UC-06</span>Extract note with AI</span>
+              <span class="uc"><span class="uid">UC-07</span>Create assignment</span>
+              <span class="uc"><span class="uid">UC-08</span>Accept / decline assignment</span>
+              <span class="uc"><span class="uid">UC-09</span>Auto-expire &amp; reroute</span>
+              <span class="uc"><span class="uid">UC-10</span>Reassign / cancel</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--sky)"></span>Communication</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-11</span>Send secure message</span>
+              <span class="uc"><span class="uid">UC-12</span>Manage conversation</span>
+              <span class="uc"><span class="uid">UC-13</span>View presence &amp; receipts</span>
+              <span class="uc"><span class="uid">UC-14</span>Broadcast emergency</span>
+              <span class="uc ext"><span class="uid">UC-15</span>Deliver push / SMS</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--pending)"></span>Administration</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-16</span>Manage providers</span>
+              <span class="uc"><span class="uid">UC-17</span>Configure rotation</span>
+              <span class="uc"><span class="uid">UC-18</span>Approve registration</span>
+              <span class="uc"><span class="uid">UC-19</span>Manage resources / beds</span>
+              <span class="uc ext"><span class="uid">UC-20</span>Sync on-call schedule</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--violet)"></span>Platform &amp; Compliance</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-21</span>Administer organizations</span>
+              <span class="uc"><span class="uid">UC-22</span>Impersonate (audited)</span>
+              <span class="uc"><span class="uid">UC-23</span>Edit CMS pages</span>
+              <span class="uc"><span class="uid">UC-24</span>Review audit / incidents</span>
+              <span class="uc ext"><span class="uid">UC-25</span>Run AI diagnostics</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--teal)"></span>Mobile</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-26</span>Onboard device (QR)</span>
+              <span class="uc"><span class="uid">UC-27</span>Register push token</span>
+              <span class="uc"><span class="uid">UC-28</span>Act on assignment (mobile)</span>
+            </div>
+          </div>
+          <div class="uc-pkg">
+            <div class="pkg-h"><span class="dot" style="color:var(--indigo)"></span>Configuration</div>
+            <div class="uc-row">
+              <span class="uc"><span class="uid">UC-29</span>Adjust settings (tweak)</span>
+              <span class="uc"><span class="uid">UC-30</span>Manage feature flags</span>
+              <span class="uc"><span class="uid">UC-31</span>Review &amp; apply suggestion</span>
+            </div>
+          </div>
+        </div>
+        <!-- RIGHT ACTORS -->
+        <div class="actor-col">
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2"><circle cx="15" cy="7" r="6"/><line x1="15" y1="13" x2="15" y2="30"/><line x1="4" y1="20" x2="26" y2="20"/><line x1="15" y1="30" x2="6" y2="44"/><line x1="15" y1="30" x2="24" y2="44"/></svg><div class="an">Director</div><div class="ar">director</div></div>
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2"><circle cx="15" cy="7" r="6"/><line x1="15" y1="13" x2="15" y2="30"/><line x1="4" y1="20" x2="26" y2="20"/><line x1="15" y1="30" x2="6" y2="44"/><line x1="15" y1="30" x2="24" y2="44"/></svg><div class="an">Developer</div><div class="ar">developer</div></div>
+          <div class="actor"><svg class="stick" viewBox="0 0 30 46" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2"><rect x="4" y="3" width="22" height="16" rx="2"/><line x1="15" y1="19" x2="15" y2="32"/><line x1="8" y1="32" x2="22" y2="32"/><line x1="8" y1="40" x2="22" y2="40"/></svg><div class="an">External Systems</div><div class="ar">OpenAI · Twilio<br>Firebase · Amion</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- UC SPECS: key flows -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">3</span> Use-case specifications</div>
+    <h2>Detailed flows — the operational core</h2>
+    <p class="sub">Full specs for the highest-value use cases. Remaining use cases follow the same template; the summary index at the end lists all 28 with their actors and trace.</p>
+
+    <div class="grid" style="gap:18px">
+      <!-- UC-01 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-01</span><span class="uname">Authenticate</span><span class="badge b-must" style="margin-left:auto">Must</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>Any human actor (primary), Twilio (secondary, for SMS OTP path)</div>
+          <div class="lbl">Precondition</div><div>Account exists and is approved within an organization.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Actor submits org code, username, password.</li><li class="flowstep">System validates credentials (scrypt/bcrypt) scoped to the org.</li><li class="flowstep">If <code>twoFactorEnabled</code> → respond <code>202 { twoFactorRequired }</code> and set <code>pendingMfa</code> (→ UC-02).</li><li class="flowstep">Else establish session, return sanitized user, route to role dashboard.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>Bad credentials → <code>401</code>, inline error, append <code>audit_logs</code> (auth.login.fail).</li><li>Unknown org code → generic <code>401</code> (no enumeration).</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Authenticated session with 15-min rolling lifetime, or MFA pending.</div>
+          <div class="lbl">Traces to</div><div><code>FR-AUTH-01/02</code>, <code>SEC-01</code></div>
+        </div>
+      </div>
+
+      <!-- UC-07 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-07</span><span class="uname">Create assignment</span><span class="badge b-must" style="margin-left:auto">Must</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>ER Doctor / ER Director (primary)</div>
+          <div class="lbl">Precondition</div><div>Patient record exists (<code>waiting</code>); caller authenticated, same org.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Caller chooses mode: <code>round_robin</code> or <code>manual</code>.</li><li class="flowstep">Round-robin → <code>rotation.selectNext()</code> picks lowest-census eligible provider (cap relief if none); manual → caller supplies <code>hospitalistId</code>.</li><li class="flowstep">System inserts <code>assignment</code> (<code>pending</code>, <code>expires_at = now + org.timeout</code>).</li><li class="flowstep">Notification cascade fires: WS → push → SMS (→ UC-15).</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>No eligible provider after cap relief → patient stays <code>waiting</code>, emit <code>assignment.unrouted</code>.</li><li>Manual target over cap → allowed (explicit override), audited.</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Exactly one <code>pending</code> assignment targeting one provider; org rotation cursor advanced.</div>
+          <div class="lbl">Traces to</div><div><code>FR-ASG-01/02/03</code>, <code>PR-02</code>, <code>SEC-07</code></div>
+        </div>
+      </div>
+
+      <!-- UC-08 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-08</span><span class="uname">Accept / decline assignment</span><span class="badge b-must" style="margin-left:auto">Must</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>Hospitalist (primary, own assignment only)</div>
+          <div class="lbl">Precondition</div><div>A <code>pending</code> assignment targets the caller.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep"><b>Accept</b> → status <code>accepted</code>, set <code>patient.assigned_hospitalist_id</code>, patient <code>assigned</code>, <code>census++</code>, stamp <code>resolved_at</code>.</li><li class="flowstep"><b>Decline</b> → status <code>rejected</code>, stamp <code>resolved_at</code>, immediately reroute to next eligible (→ UC-09 logic).</li><li class="flowstep">Emit <code>ASSIGNMENT_UPDATED</code> org-scoped.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>Assignment already resolved → <code>409</code>.</li><li>Caller is not the target → <code>403</code>.</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Census changes only on accept; a decline yields exactly one new pending row when a provider is eligible.</div>
+          <div class="lbl">Traces to</div><div><code>FR-ASG-04/05</code>, <code>RR-01</code></div>
+        </div>
+      </div>
+
+      <!-- UC-09 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-09</span><span class="uname">Auto-expire &amp; reroute</span><span class="badge b-must" style="margin-left:auto">Must</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>System (time-triggered) — no human initiator</div>
+          <div class="lbl">Precondition</div><div>One or more <code>pending</code> assignments with <code>expires_at ≤ now</code>.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Interval (~15s) lists expired pending rows, capped at 50 per tick.</li><li class="flowstep">Each is marked <code>expired</code> (<code>resolved_at</code> stamped).</li><li class="flowstep"><code>rotation.selectNext()</code> creates a new <code>pending</code> row for the next eligible provider; notify.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>No eligible provider → patient remains <code>waiting</code>, <code>assignment.unrouted</code> emitted; UI shows "awaiting capacity".</li></ul></div>
+          <div class="lbl">Postcondition</div><div>No expired-pending row remains unresolved; history preserved.</div>
+          <div class="lbl">Traces to</div><div><code>FR-ASG-06</code>, <code>RR-02</code>, <code>PR-03</code></div>
+        </div>
+      </div>
+
+      <!-- UC-11 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-11</span><span class="uname">Send secure message</span><span class="badge b-must" style="margin-left:auto">Must</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>Any authenticated participant (primary)</div>
+          <div class="lbl">Precondition</div><div>Caller is a participant of the conversation (direct/group/emergency).</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Caller posts content to a conversation.</li><li class="flowstep">System inserts <code>messages</code> row + a <code>message_delivery_status</code> row per participant (delivered = now for connected users).</li><li class="flowstep">Emit <code>MESSAGE_RECEIVED</code> to participants only; recipients <code>mark-read</code> turns ticks blue.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>Non-participant attempts read/send → <code>403</code> (never delivered).</li><li>Delete → soft-delete + <code>audit_logs</code> row.</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Message persisted with per-recipient delivery/read state; no leak to non-participants.</div>
+          <div class="lbl">Traces to</div><div><code>FR-MSG-01/02/03</code>, <code>SEC-04</code></div>
+        </div>
+      </div>
+
+      <!-- UC-22 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-22</span><span class="uname">Impersonate (audited)</span><span class="badge b-should" style="margin-left:auto">Should</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>Developer (primary, cross-tenant)</div>
+          <div class="lbl">Precondition</div><div>Caller holds <code>developer</code> role.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Developer selects an org + target user.</li><li class="flowstep">System writes a full audit entry (<code>phi_access_logs</code> + <code>audit_logs</code>) <b>before</b> swapping session context.</li><li class="flowstep">Session now scoped to the target org/user; banner indicates impersonation.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>Non-developer → <code>403</code>; suspicious attempt → <code>logSecurityIncident()</code>.</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Impersonation session active and fully attributable in the audit trail.</div>
+          <div class="lbl">Traces to</div><div><code>FR-DEV-02</code>, <code>SEC-03</code>, <code>SEC-06</code></div>
+        </div>
+      </div>
+
+      <!-- UC-29 -->
+      <div class="card ucspec">
+        <div class="uchead"><span class="uid">UC-29</span><span class="uname">Adjust settings (tweak)</span><span class="badge b-should" style="margin-left:auto">Should</span></div>
+        <div class="ucbody">
+          <div class="lbl">Actors</div><div>Director (org policy); any user (own preferences)</div>
+          <div class="lbl">Precondition</div><div>Authenticated; the setting key exists in the typed config schema.</div>
+          <div class="lbl">Main flow</div><div><ol><li class="flowstep">Actor opens Settings and changes a tweak (e.g. assignment timeout, default routing mode).</li><li class="flowstep">System validates the value against its type + bounded range (Zod).</li><li class="flowstep">Persist to <code>org_settings</code> (policy) or <code>user_preferences</code> (preference); append <code>audit_logs</code> (old→new).</li><li class="flowstep">Config cache invalidated; the next decision in the relevant service reads the new value — no redeploy.</li></ol></div>
+          <div class="lbl">Alt / exception</div><div><ul><li>Non-director edits org policy → <code>403</code>.</li><li>Out-of-range value → <code>400</code>, current value retained.</li></ul></div>
+          <div class="lbl">Postcondition</div><div>Behavior reflects the tweak on the next action; the change is attributable and reversible.</div>
+          <div class="lbl">Traces to</div><div><code>FR-CFG-01/02/03</code>, <code>F17.1 / F17.3</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FULL INDEX -->
+<section>
+  <div class="wrap">
+    <div class="kicker"><span class="secid">4</span> Use-case index</div>
+    <h2>All 31 use cases — actors, package, priority</h2>
+    <div class="card tbl-card">
+      <table>
+        <thead><tr><th>ID</th><th>Use case</th><th>Package</th><th>Primary actor(s)</th><th>Priority</th></tr></thead>
+        <tbody>
+          <tr><td class="req-id">UC-01</td><td>Authenticate</td><td>Access &amp; Identity</td><td>All roles</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-02</td><td>Complete MFA</td><td>Access &amp; Identity</td><td>All roles</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-03</td><td>Register (request access)</td><td>Access &amp; Identity</td><td>Prospective user</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-04</td><td>Manage own profile / shift toggle</td><td>Access &amp; Identity</td><td>Hospitalist, all</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-05</td><td>Register patient (intake)</td><td>Intake &amp; Assignment</td><td>ER Doctor, ER Director</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-06</td><td>Extract note with AI</td><td>Intake &amp; Assignment</td><td>ER Doctor · OpenAI</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-07</td><td>Create assignment</td><td>Intake &amp; Assignment</td><td>ER Doctor, ER Director</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-08</td><td>Accept / decline assignment</td><td>Intake &amp; Assignment</td><td>Hospitalist</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-09</td><td>Auto-expire &amp; reroute</td><td>Intake &amp; Assignment</td><td>System</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-10</td><td>Reassign / cancel</td><td>Intake &amp; Assignment</td><td>Director, ER Director</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-11</td><td>Send secure message</td><td>Communication</td><td>All roles</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-12</td><td>Manage conversation (direct/group)</td><td>Communication</td><td>All roles</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-13</td><td>View presence &amp; receipts</td><td>Communication</td><td>All roles</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-14</td><td>Broadcast emergency</td><td>Communication</td><td>Director</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-15</td><td>Deliver push / SMS</td><td>Communication</td><td>System · Twilio · Firebase</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-16</td><td>Manage providers</td><td>Administration</td><td>Director, ER Director</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-17</td><td>Configure rotation</td><td>Administration</td><td>Director</td><td><span class="badge b-must">Must</span></td></tr>
+          <tr><td class="req-id">UC-18</td><td>Approve registration</td><td>Administration</td><td>Director</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-19</td><td>Manage resources / beds / equipment</td><td>Administration</td><td>Director</td><td><span class="badge b-could">Could</span></td></tr>
+          <tr><td class="req-id">UC-20</td><td>Sync on-call schedule</td><td>Administration</td><td>System · Amion</td><td><span class="badge b-could">Could</span></td></tr>
+          <tr><td class="req-id">UC-21</td><td>Administer organizations</td><td>Platform &amp; Compliance</td><td>Developer</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-22</td><td>Impersonate (audited)</td><td>Platform &amp; Compliance</td><td>Developer</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-23</td><td>Edit CMS pages</td><td>Platform &amp; Compliance</td><td>Developer</td><td><span class="badge b-could">Could</span></td></tr>
+          <tr><td class="req-id">UC-24</td><td>Review audit / incidents</td><td>Platform &amp; Compliance</td><td>Director, Developer</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-25</td><td>Run AI diagnostics</td><td>Platform &amp; Compliance</td><td>Developer · OpenAI</td><td><span class="badge b-could">Could</span></td></tr>
+          <tr><td class="req-id">UC-26</td><td>Onboard device (QR)</td><td>Mobile</td><td>All roles</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-27</td><td>Register push token</td><td>Mobile</td><td>All roles · Firebase</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-28</td><td>Act on assignment (mobile)</td><td>Mobile</td><td>Hospitalist</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-29</td><td>Adjust settings (tweak)</td><td>Configuration</td><td>Director, all (own prefs)</td><td><span class="badge b-should">Should</span></td></tr>
+          <tr><td class="req-id">UC-30</td><td>Manage feature flags</td><td>Configuration</td><td>Developer, Director</td><td><span class="badge b-could">Could</span></td></tr>
+          <tr><td class="req-id">UC-31</td><td>Review &amp; apply adaptive suggestion</td><td>Configuration</td><td>Director</td><td><span class="badge b-could">Could</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <b>DT-UC-001</b> — DocTurn Use-Case Model (SysML). Traces forward to <a href="DocTurn System Requirements.html">System Requirements</a> and decomposes into the <a href="DocTurn Function List.html">Function List</a>. Behavioral source: <code>docturn.pdf</code> §1, §8 and the workflow specs.
+  </div>
+</footer>
+
+</body>
+</html>

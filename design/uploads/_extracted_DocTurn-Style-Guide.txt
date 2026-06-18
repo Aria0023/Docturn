@@ -1,0 +1,402 @@
+DocTurn
+Brand & Design Style Guide
+Visual & UI System Reference
+Document type Design / brand style guide (grounded in the live codebase)
+Version 1.0
+Date June 05, 2026
+Source of truth index.css, tailwind.config.ts, shadcn/ui, manifest.json
+Scope Color, typography, spacing, components, motion, voice, a11y
+This guide documents the visual and interface system that gives DocTurn a consistent, calm, and
+trustworthy feel across the web app, the marketing landing experience, and the mobile app. Every token
+below is taken directly from the running codebase, so designers and engineers share one source of truth.
+
+-- 1 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 2
+Contents
+2	Contents
+4	1. Brand Foundations
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.1 Brand personality
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.2 Two surfaces, one system
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4	1.3 The app mark
+6	2. Color System
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.1 Brand & primary
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.2 Semantic UI tokens
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6	2.3 Healthcare palette
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.4 Status color language
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7	2.5 Usage rules
+8	3. Typography
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8	3.1 Font family
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8	3.2 Type scale
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8	3.3 Weights & hierarchy
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8	3.4 Headings in practice
+9	4. Spacing, Radius & Layout
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	4.1 Spacing scale
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	4.2 Corner radius
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9	4.3 Elevation
+10	5. Iconography & Imagery
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10	5.1 Icon system
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10	5.2 Imagery & illustration
+11	6. Components
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11	6.1 Buttons
+
+-- 2 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 3
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11	6.2 Badges
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11	6.3 Cards
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11	6.4 Forms & inputs
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12	6.5 Feedback
+13	7. Motion & Animation
+14	8. Voice & Tone
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14	8.1 Principles
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14	8.2 Microcopy examples
+15	9. Accessibility
+16	10. Implementation Reference
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16	10.1 Defining a color token
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16	10.2 Golden rules
+
+-- 3 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 4
+1. Brand Foundations
+DocTurn (marketed as DoctorHeidi) is a multi-tenant, HIPAA-oriented platform that coordinates patient
+assignment and secure messaging inside hospitals. The design system has to do two jobs at once: feel
+reassuring and human on the public marketing surface, and feel fast, dense, and unambiguous inside the
+clinical product where seconds matter.
+1.1 Brand personality
+• Trustworthy — clinical-grade software handling PHI. Clean surfaces, generous whitespace, no visual
+noise.
+• Calm under pressure — used in fast-moving ER and hospitalist workflows. Color is used sparingly and
+meaningfully, never decoratively in the product UI.
+• Modern & approachable — the landing experience leans on soft sky gradients and friendly rounded
+shapes (the Heidi-inspired aesthetic).
+• Precise — status, urgency, and ownership are always communicated with a consistent, learnable color
+language.
+1.2 Two surfaces, one system
+The same color tokens, type scale, and components power both surfaces — only the density and the
+amount of decoration change.
+Surface Feel Visual treatment
+Marketing / landing Warm, inviting, aspirational Sky→white→rose gradient backgrounds, large display
+headings, animated accents, rounded-2xl cards, glow
+and float motion.
+Clinical product Efficient, legible, low-noise White backgrounds, compact spacing, semantic status
+colors, rounded-md controls, motion limited to feedback
+and loading.
+Mobile app Focused, touch-first Same tokens, larger touch targets, portrait-first layouts,
+the blue brand mark on a maskable icon.
+1.3 The app mark
+The identity is a simple wordmark plus a rounded-square “D” glyph. On the landing page the glyph sits in a
+sky-gradient tile; as a PWA icon it is a white “D” on the solid brand blue with a 45px corner radius (a
+maskable icon, so it survives platform masking on Android/iOS).
+• Wordmark: DocTurn, bold, set in the system sans typeface.
+• Glyph: single capital D, bold, white, centered.
+• PWA brand blue: #2563EB (manifest theme_color and icon fill).
+• Clear space: keep at least the height of the “D” glyph clear on all sides.
+
+-- 4 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 5
+• Don't: recolor the glyph arbitrarily, stretch the wordmark, or place it on a busy photo without a solid or
+gradient backing.
+
+-- 5 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 6
+2. Color System
+Color is defined as HSL CSS variables in client/src/index.css and mapped to Tailwind tokens in
+tailwind.config.ts. The product runs in light mode only (color-scheme: light); there is
+intentionally no dark theme. Always reference the semantic token (e.g. bg-primary), not a raw hex value,
+so the system stays themeable.
+2.1 Brand & primary
+Blue is the primary action color across the product. The marketing surface extends it into a lighter “sky”
+family for gradients and friendly accents.
+Aa Primary hsl(221 83% 53%) Primary buttons, links, active state, focus
+ring
+Aa Brand blue #2563EB PWA theme/icon, brand mark, primary CTA
+on marketing
+Aa Sky 400 #38BDF8 Gradient start, soft accents (landing)
+Aa Sky 500 #0EA5E9 Gradient mid, CTA gradients (landing)
+Aa Sky 700 #0369A1 Gradient end, wordmark gradient (landing)
+2.2 Semantic UI tokens
+These tokens drive every shadcn/ui component. Foreground pairs are designed for accessible contrast on
+their matching background.
+Aa background / card hsl(0 0% 100%) Page, card and popover surfaces
+Aa foreground hsl(222 84% 5%) Primary text on light surfaces
+Aa secondary / muted /
+accent hsl(210 40% 96%) Subtle fills, hover backgrounds, chips
+Aa muted-foreground hsl(215 16% 47%) Secondary / helper text, captions
+Aa border / input hsl(214 32% 91%) Dividers, control borders, input outlines
+Aa destructive hsl(0 84% 60%) Delete actions, error states
+2.3 Healthcare palette
+A purpose-built clinical palette is exposed as utility classes (.bg-medical-*, .text-medical-*) for
+domain semantics that go beyond the base UI tokens.
+
+-- 6 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 7
+Aa medical-primary hsl(210 100% 50%) Primary clinical accent
+Aa medical-secondary hsl(159 100% 35%) Secondary clinical accent
+Aa medical-accent hsl(45 100% 51%) Highlight / attention
+Aa medical-emergency hsl(0 84% 60%) Emergencies, critical alerts
+Aa medical-success hsl(142 76% 36%) Accepted / confirmed states
+Aa medical-warning hsl(38 92% 50%) Pending / needs-attention
+2.4 Status color language
+Assignment and presence states use a consistent, learnable mapping. Keep these meanings fixed
+everywhere they appear — cards, badges, dots, stats.
+Aa Pending amber Awaiting response, expiring soon
+Aa Accepted / Online emerald / green Provider accepted, available
+Aa Active / Sent blue In-flight assignment, just sent
+Aa Rejected / Critical red Declined, cancelled, error
+Aa Offline / Neutral slate Inactive, expired, disabled
+2.5 Usage rules
+• Lead with neutrals. In the product, the vast majority of any screen is white plus foreground text; color
+marks only what needs attention.
+• One primary action per view — render it with bg-primary; everything else is secondary, outline, or
+ghost.
+• Never encode meaning by color alone — always pair status color with an icon and/or label for
+accessibility.
+• Reserve red strictly for destructive or critical states; reserve amber for pending/attention. Don't repurpose
+them decoratively.
+• Gradients belong to the marketing surface, not to dense product screens.
+
+-- 7 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 8
+3. Typography
+DocTurn uses the platform system sans-serif stack (Tailwind's default font-sans) — no custom web font
+is loaded. This keeps the UI fast, native-feeling on every device, and free of layout shift. The body element
+sets font-sans antialiased.
+3.1 Font family
+font-sans: ui-sans-serif, system-ui, -apple-system,
+"Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+"Apple Color Emoji", "Segoe UI Emoji"
+font-mono: ui-monospace, SFMono-Regular, Menlo, monospace
+3.2 Type scale
+Sizes follow the Tailwind scale. Display sizes are used on the landing page; the product UI stays in the
+sm–2xl range for density.
+Token Size Typical use
+text-xs 12px Badges, captions, dense stats, helper labels
+text-sm 14px Default UI text, buttons, table cells, inputs
+text-base 16px Body copy, paragraph text
+text-lg 18px Card titles, section subheads
+text-xl / 2xl 20–24px Page and panel headings (product)
+text-4xl 36px Secondary marketing headings
+text-5xl / 6xl 48–60px Landing hero headline (responsive)
+3.3 Weights & hierarchy
+• font-bold (700) — headings, hero copy, card titles, numeric emphasis in stats.
+• font-semibold (600) — badges, sub-labels, emphasized inline text.
+• font-medium (500) — buttons and interactive labels (the shadcn button default).
+• font-normal (400) — body and paragraph text.
+• Hero headlines use leading-tight; body text uses comfortable default leading for readability.
+3.4 Headings in practice
+• Page heading: text-2xl font-bold text-foreground.
+• Section heading: text-lg font-bold.
+• Marketing hero: text-5xl md:text-6xl font-bold text-slate-900 leading-tight.
+• Body / muted: text-sm text-muted-foreground for secondary copy.
+
+-- 8 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 9
+4. Spacing, Radius & Layout
+4.1 Spacing scale
+Spacing uses the Tailwind 4px base scale. Compose padding and gaps from these steps rather than
+arbitrary values to keep rhythm consistent.
+Step Value Common use
+1 / 1.5 4 / 6px Icon gaps, tight chip padding
+2 / 3 8 / 12px Button padding, small gaps, badge padding
+4 16px Default card padding, form field gaps
+5 / 6 20 / 24px Card and panel padding
+8 32px Section padding, large CTA padding
+12 / 16 48 / 64px Landing section vertical rhythm
+4.2 Corner radius
+Radius is driven by a single base token --radius: 0.5rem (8px), with derived steps. Pills (badges,
+avatars, status dots) use full rounding.
+Token Computed Use
+sm radius − 4px = 4px Small inner elements
+md radius − 2px = 6px Buttons, inputs (default control radius)
+lg radius = 8px Cards, popovers, dialogs
+xl / 2xl 12 / 16px Marketing cards, hero panels
+full 9999px Badges, avatars, status dots, pills
+4.3 Elevation
+Shadows stay soft and are used to lift interactive surfaces, not to decorate. Depth increases on hover for
+clickable cards.
+• shadow-sm — resting buttons and small cards.
+• shadow-md / shadow-lg — primary CTAs, raised panels.
+• shadow-xl / 2xl — marketing hero cards, modals, hover-lifted cards.
+• Brand glow: shadow-sky-500/30 on the primary landing CTA (paired with the pulse-glow animation).
+
+-- 9 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 10
+5. Iconography & Imagery
+5.1 Icon system
+• UI icons come from lucide-react — a single, consistent line-icon set.
+• Brand / company logos use react-icons/si (Simple Icons).
+• Default icon size inside buttons is size-4 (16px); icons are non-interactive and shrink-protected by the
+button variant styles.
+• Match icon color to its context — inherit currentColor so icons follow text and status color
+automatically.
+• Use icons to reinforce meaning (status, actions), never as the sole carrier of meaning.
+5.2 Imagery & illustration
+• Marketing surface favors soft gradient panels and clean product mockups over stock photography.
+• Keep imagery light and airy to match the sky/white/rose palette; avoid heavy, dark, or high-noise images.
+• Never place PHI (real patient data) in marketing imagery — use realistic but synthetic examples (e.g.
+initials like “SC”).
+
+-- 10 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 11
+6. Components
+Components are built on shadcn/ui (Radix primitives + Tailwind + class-variance-authority). Prefer these
+shared variants over bespoke one-off styling so the system stays coherent.
+6.1 Buttons
+Six variants and four sizes. Base: rounded-md text-sm font-medium with a focus-visible ring. One
+primary (default) button per view.
+Variant Style When to use
+default bg-primary, white text The single primary action
+destructive bg-destructive, white text Delete / irreversible action
+outline border + transparent bg Secondary action
+secondary bg-secondary (light grey) Tertiary / supporting action
+ghost transparent, hover fill Toolbar / inline actions
+link text-primary, underline on hover Navigational text action
+Size Dimensions Use
+sm h-9, px-3 Compact toolbars, dense tables
+default h-10, px-4 py-2 Standard buttons
+lg h-11, px-8 Hero / primary CTAs
+icon h-10 w-10 Icon-only buttons
+6.2 Badges
+Pill-shaped status and category labels: rounded-full px-2.5 py-0.5 text-xs font-semibold.
+Variants: default (brand), secondary (neutral), destructive (critical), outline (low-emphasis). Map badge color
+to the status language in §2.4.
+6.3 Cards
+• Product cards: white surface, rounded-lg, border, soft shadow, p-4–p-6 padding.
+• Marketing cards: rounded-2xl, gradient or tinted backgrounds, shadow-xl, and hover-lift on
+interactive cards.
+• Group a clear title (bold), supporting content, and at most one primary action per card.
+6.4 Forms & inputs
+• Inputs use the input border token, rounded-md, and a focus ring matching --ring.
+• Build forms with the shadcn Form wrapper over react-hook-form, validated with the Zod insert schemas.
+
+-- 11 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 12
+• Always show clear labels and inline validation; error text uses the destructive color.
+• SelectItem must always have a non-empty value.
+6.5 Feedback
+• Use the toast system (useToast) for transient confirmations and errors.
+• Show loading/skeleton states for queries (isLoading) and pending mutations (isPending) — never
+leave a blank screen.
+• Use the shimmer animation for skeleton placeholders.
+
+-- 12 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 13
+7. Motion & Animation
+Motion is purposeful: it guides attention, confirms actions, and adds polish on the marketing surface. In the
+product it is limited to feedback, loading, and subtle state transitions. All custom keyframes live in
+index.css.
+Animation Duration / easing Purpose
+fade-in-up 0.6s ease-out Entrance for sections/cards (with stagger delays)
+bounce-in 0.6s ease-out Playful entrance for emphasized elements
+hover-lift 0.3s ease Lift + shadow on interactive cards
+pulse-glow 2s infinite Draw attention to the primary CTA
+float 6s infinite Gentle floating accent on marketing
+animate-gradient 8s infinite Slow background gradient shift
+shimmer 1.5s infinite Loading / skeleton placeholders
+status-pulse 1.5s infinite Pulsing presence/status dot
+wiggle 0.5s Icon hover delight
+accordion up/down 0.2s ease-out Expand/collapse panels
+Stagger entrance animations with the .delay-100…600 utilities. Keep motion subtle and brief in the
+product; honor reduced-motion preferences for users who set them.
+
+-- 13 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 14
+8. Voice & Tone
+DocTurn talks like a calm, competent colleague. The product is used by busy clinicians, so copy is clear,
+brief, and free of jargon — favor plain, everyday language.
+8.1 Principles
+• Clear over clever — say exactly what an action does. “Send assignment”, not “Submit”.
+• Brief — short labels and sentences; clinicians scan, they don't read.
+• Calm & respectful — no alarmist language; urgency is shown with color and status, not exclamation
+marks.
+• Action-oriented — buttons start with a verb (Accept, Decline, Reassign, Message).
+• Privacy-aware — never expose more PHI than necessary in copy, tooltips, or examples.
+8.2 Microcopy examples
+Context Prefer Avoid
+Primary CTA Get started free Submit
+Assignment sent Assignment sent to Dr. Chen Operation successful
+Error Couldn't send — try again Error 500
+Empty state No pending assignments Nothing here
+Destructive confirm Delete this conversation? Are you sure?
+
+-- 14 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 15
+9. Accessibility
+Accessibility is part of the design system, not an afterthought — this is clinical software used under pressure
+on varied devices.
+• Visible focus — a global :focus-visible rule draws a 2px primary-color outline with a 2px offset on
+every focusable element. Never remove it.
+• High-contrast support — a prefers-contrast: high media query darkens borders and inputs for
+users who need stronger separation.
+• Color is never the only signal — pair every status color with an icon and/or text label.
+• Contrast — foreground/background token pairs are chosen for legible contrast; keep text on tinted fills
+dark enough to read.
+• Touch targets — interactive controls are at least ~40px tall (h-10); give comfortable spacing on mobile.
+• Light scheme — the app declares color-scheme: light; design for light backgrounds only.
+• Semantics — use real headings, labels, and ARIA from the Radix primitives rather than styling generic
+elements.
+
+-- 15 of 16 --
+
+DocTurn — Brand & Design Style Guide v1.0
+Generated June 05, 2026 Page 16
+10. Implementation Reference
+Where the system lives, so design and code stay in sync.
+Concern Location
+Color tokens & medical palette client/src/index.css (:root CSS variables)
+Custom animations & utilities client/src/index.css (@layer utilities)
+Token → Tailwind mapping tailwind.config.ts (theme.extend.colors / borderRadius)
+Component variants client/src/components/ui/* (shadcn, cva)
+Brand / PWA identity manifest.json (name, theme_color, icons)
+Marketing aesthetic client/src/pages/doctorheidi-landing.tsx
+Class composition helper client/src/lib/utils.ts (cn)
+10.1 Defining a color token
+/* client/src/index.css */
+:root {
+--primary: 221.2 83.2% 53.3%; /* HSL channels, no hsl() */
+--primary-foreground: 210 40% 98%;
+--radius: 0.5rem;
+--medical-success: 142 76% 36%;
+}
+Tailwind then exposes the token as a utility:
+// tailwind.config.ts
+colors: { primary: { DEFAULT: "var(--primary)",
+foreground: "var(--primary-foreground)" } }
+// usage in JSX
+<Button className="bg-primary text-primary-foreground">Send</Button>
+10.2 Golden rules
+• Reference semantic tokens, not raw hex, in components.
+• Reuse shadcn variants before writing custom component styles.
+• Keep red = destructive/critical and amber = pending everywhere.
+• Light mode only — don't add dark: variants.
+• Pair color with icon/label; preserve focus outlines.
+
+-- 16 of 16 --
+
