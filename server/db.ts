@@ -281,4 +281,113 @@ CREATE TABLE IF NOT EXISTS mfa_backup_codes (
   code_hash TEXT NOT NULL,
   used_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS care_team_members (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  owner_user_id INTEGER NOT NULL REFERENCES users(id),
+  member_user_id INTEGER NOT NULL REFERENCES users(id),
+  on_call BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS care_team_owner_member_uniq ON care_team_members(owner_user_id, member_user_id);
+
+CREATE TABLE IF NOT EXISTS patient_consults (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  patient_id INTEGER NOT NULL REFERENCES patients(id),
+  specialty TEXT NOT NULL,
+  consultant_user_id INTEGER REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'requested',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS pending_registrations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  username TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  requested_role TEXT NOT NULL DEFAULT 'hospitalist',
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS landing_page_settings (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER REFERENCES organizations(id),
+  hero_title TEXT NOT NULL DEFAULT 'DocTurn',
+  hero_subtitle TEXT NOT NULL DEFAULT '',
+  body JSONB,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS contact_page_settings (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER REFERENCES organizations(id),
+  email TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  body JSONB,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS departments (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  bed_capacity INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS beds (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  department_id INTEGER REFERENCES departments(id),
+  label TEXT NOT NULL,
+  occupied BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS equipment (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'available'
+);
+
+CREATE TABLE IF NOT EXISTS emergency_broadcasts (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  sender_id INTEGER NOT NULL REFERENCES users(id),
+  message TEXT NOT NULL,
+  severity TEXT NOT NULL DEFAULT 'urgent',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS broadcast_acknowledgments (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  broadcast_id INTEGER NOT NULL REFERENCES emergency_broadcasts(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  acknowledged_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS device_tokens (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  token TEXT NOT NULL,
+  platform TEXT NOT NULL DEFAULT 'ios',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS device_tokens_token_uniq ON device_tokens(token);
+
+CREATE TABLE IF NOT EXISTS sms_history (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER REFERENCES organizations(id),
+  user_id INTEGER REFERENCES users(id),
+  to_phone TEXT NOT NULL,
+  body TEXT NOT NULL,
+  carrier TEXT NOT NULL DEFAULT 'console',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 `;

@@ -97,6 +97,19 @@ export function registerAuthRoutes(app: Express) {
     }
     const org = await storage().getOrganizationByCode(parsed.data.orgCode);
     if (!org) return res.status(404).json({ error: "organization_not_found" });
+    const existing = await storage().getUserByUsername(
+      org.id,
+      parsed.data.username,
+    );
+    if (existing) return res.status(409).json({ error: "username_taken" });
+    await storage().createPendingRegistration({
+      organizationId: org.id,
+      username: parsed.data.username,
+      passwordHash: await hashPassword(parsed.data.password),
+      displayName: parsed.data.displayName,
+      requestedRole: "hospitalist",
+      status: "pending",
+    });
     await appendAudit({
       organizationId: org.id,
       userId: null,
@@ -106,9 +119,57 @@ export function registerAuthRoutes(app: Express) {
       details: { username: parsed.data.username },
       riskLevel: "low",
     });
-    // Pending-registration queue persistence lands in M11; the contract is 201.
+    // Self-registration requires a director's sign-off before it becomes a user.
     return res.status(201).json({ pending: true });
   });
+
+  // Director-approval queue.
+  app.get(
+    "/api/registrations",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = req.user as unknown as User;
+      res.json(await storage().listPendingRegistrations(me.organizationId));
+    },
+  );
+
+  app.post(
+    "/api/registrations/:id/approve",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = req.user as unknown as User;
+      const id = Number(req.params.id);
+      const reg = await storage().getPendingRegistration(me.organizationId, id);
+      if (!reg || reg.status !== "pending") {
+        return res.status(404).json({ error: "not_found" });
+      }
+      const user = await storage().createUser({
+        organizationId: reg.organizationId,
+        username: reg.username,
+        passwordHash: reg.passwordHash,
+        role: reg.requestedRole,
+        displayName: reg.displayName,
+        credential: null,
+        phone: null,
+        twoFactorEnabled: false,
+      });
+      await storage().updatePendingRegistration(me.organizationId, id, {
+        status: "approved",
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "registration.approve",
+        resourceType: "user",
+        resourceId: user.id,
+        details: { username: reg.username },
+        riskLevel: "medium",
+      });
+      res.status(201).json({ userId: user.id });
+    },
+  );
 
   app.post("/api/login", (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);

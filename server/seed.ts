@@ -1,6 +1,6 @@
 import { hashPassword } from "./auth.js";
 import { getHandle } from "./db.js";
-import { DatabaseStorage, setStorage, type IStorage } from "./storage.js";
+import { DatabaseStorage, setStorage } from "./storage.js";
 
 const DEV_PASSWORD = "docturn";
 
@@ -8,6 +8,7 @@ interface SeedResult {
   orgId: number;
   userIds: Record<string, number>;
   hospitalistIds: Record<string, number>;
+  patientIds: Record<string, number>;
 }
 
 /**
@@ -15,7 +16,7 @@ interface SeedResult {
  * harness. One org (MERCY), one user per role, providers with varied census/cap,
  * and a couple of pending assignments so dashboards aren't empty.
  */
-export async function seed(storage: IStorage): Promise<SeedResult> {
+export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   const org = await storage.createOrganization({
     name: "Mercy General Hospital",
     code: "MERCY",
@@ -55,6 +56,9 @@ export async function seed(storage: IStorage): Promise<SeedResult> {
   const patel = await mkUser("patel", "hospitalist", "Dr. Priya Patel", "MD");
   const lopez = await mkUser("lopez", "hospitalist", "Dr. Luis Lopez", "DO");
   const liu = await mkUser("liu", "hospitalist", "Dr. Mei Liu", "MD");
+  // A midlevel (NP): an ordinary user with role hospitalist + credential NP, but
+  // NO rotation profile — they receive/accept via a care-team unit, not rotation.
+  const wu = await mkUser("wu", "hospitalist", "Jordan Wu, PA-C", "PA");
 
   const hospitalistIds: Record<string, number> = {};
   async function mkProvider(
@@ -110,7 +114,33 @@ export async function seed(storage: IStorage): Promise<SeedResult> {
     expiresAt: new Date(Date.now() + 10 * 60_000),
   });
 
-  return { orgId: org.id, userIds, hospitalistIds };
+  // v2 seed: Wu (PA) is on Chen's on-call unit; a Cardiology consult on p1; a dept.
+  await storage.addCareTeamMember({
+    organizationId: org.id,
+    ownerUserId: chen.id,
+    memberUserId: wu.id,
+    onCall: true,
+  });
+  await storage.createConsult({
+    organizationId: org.id,
+    patientId: p1.id,
+    specialty: "Cardiology",
+    consultantUserId: null,
+    status: "requested",
+  });
+  await storage.createDepartment({
+    organizationId: org.id,
+    code: "MED",
+    name: "Internal Medicine",
+    bedCapacity: 24,
+  });
+
+  return {
+    orgId: org.id,
+    userIds,
+    hospitalistIds,
+    patientIds: { sc: p1.id },
+  };
 }
 
 // CLI entrypoint: wipe-and-reseed the persistent dev database.

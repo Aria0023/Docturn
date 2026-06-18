@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
+import { censusOverrideSchema } from "@shared/schema";
 import { hashPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -213,6 +214,43 @@ export function registerProviderRoutes(app: Express) {
         riskLevel: "medium",
       });
       res.status(204).end();
+    },
+  );
+
+  // v2: director census override — an audited manual correction (not an
+  // automatic path). Clamped to [0, patient_cap]; reason required.
+  app.patch(
+    "/api/hospitalists/:id/census",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = censusOverrideSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const clamped = Math.max(
+        0,
+        Math.min(parsed.data.currentPatientCount, h.patientCap),
+      );
+      const updated = await storage().updateHospitalist(me.organizationId, id, {
+        currentPatientCount: clamped,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.census_override",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: {
+          from: h.currentPatientCount,
+          to: clamped,
+          reason: parsed.data.reason,
+        },
+        riskLevel: "medium",
+      });
+      res.json(updated);
     },
   );
 

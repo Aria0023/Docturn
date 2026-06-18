@@ -76,11 +76,59 @@ export class MockAIExtractor implements AIExtractor {
   }
 }
 
+/**
+ * Live extractor (gpt-4o). PHI is truncated in the prompt; on any failure it
+ * falls back to the deterministic mock so intake never blocks.
+ */
+export class OpenAIExtractor implements AIExtractor {
+  private fallback = new MockAIExtractor();
+  async extract(note: string): Promise<ExtractedPatient> {
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content:
+                "Extract {initials, roomNumber, issueSummary, specialty} as JSON from an ER intake note. Use initials only — never full names.",
+            },
+            { role: "user", content: note.slice(0, 1000) },
+          ],
+        }),
+      });
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
+      return {
+        initials: String(parsed.initials ?? "XX").toUpperCase().slice(0, 4),
+        roomNumber: String(parsed.roomNumber ?? ""),
+        issueSummary: String(parsed.issueSummary ?? note.slice(0, 80)),
+        specialty: String(parsed.specialty ?? "General"),
+      };
+    } catch (err) {
+      console.error("[ai] extraction failed; falling back to mock", err);
+      return this.fallback.extract(note);
+    }
+  }
+}
+
 let _extractor: AIExtractor | null = null;
 export function getExtractor(): AIExtractor {
   if (_extractor) return _extractor;
-  // env-gated live extractor lands in M10; default to the deterministic stub.
-  _extractor = new MockAIExtractor();
+  // Live only when a key is present AND the stub isn't forced (CI sets nothing).
+  if (process.env.OPENAI_API_KEY && process.env.USE_STUB_AI !== "true") {
+    _extractor = new OpenAIExtractor();
+  } else {
+    _extractor = new MockAIExtractor();
+  }
   return _extractor;
 }
 export function setExtractor(e: AIExtractor) {

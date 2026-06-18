@@ -45,7 +45,10 @@ export const CONVERSATION_TYPE = ["direct", "group", "emergency"] as const;
 export const SHIFT_TYPE = ["day", "night", "swing"] as const;
 export const RISK_LEVEL = ["low", "medium", "high"] as const;
 export const SETTING_SCOPE = ["org", "user"] as const;
-export const CREDENTIAL = ["MD", "DO", "NP", "PA"] as const;
+export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
+export const CONSULT_STATUS = ["requested", "active", "closed"] as const;
+export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
+export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Core tables — almost every table carries organization_id (the tenant boundary).
@@ -319,6 +322,180 @@ export const mfaBackupCodes = pgTable("mfa_backup_codes", {
   usedAt: timestamp("used_at"),
 });
 
+/* ── v2: care teams & patient board ────────────────────────────────────────── */
+
+export const careTeamMembers = pgTable(
+  "care_team_members",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    ownerUserId: integer("owner_user_id")
+      .notNull()
+      .references(() => users.id),
+    memberUserId: integer("member_user_id")
+      .notNull()
+      .references(() => users.id),
+    onCall: boolean("on_call").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    link: uniqueIndex("care_team_owner_member_uniq").on(
+      t.ownerUserId,
+      t.memberUserId,
+    ),
+  }),
+);
+
+export const patientConsults = pgTable("patient_consults", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  patientId: integer("patient_id")
+    .notNull()
+    .references(() => patients.id),
+  specialty: text("specialty").notNull(),
+  consultantUserId: integer("consultant_user_id").references(() => users.id),
+  status: text("status", { enum: CONSULT_STATUS })
+    .notNull()
+    .default("requested"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/* ── M11: registration & developer tooling ─────────────────────────────────── */
+
+export const pendingRegistrations = pgTable("pending_registrations", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  username: text("username").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  displayName: text("display_name").notNull(),
+  requestedRole: text("requested_role", { enum: ROLES })
+    .notNull()
+    .default("hospitalist"),
+  status: text("status", { enum: REGISTRATION_STATUS })
+    .notNull()
+    .default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const landingPageSettings = pgTable("landing_page_settings", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").references(() => organizations.id),
+  heroTitle: text("hero_title").notNull().default("DocTurn"),
+  heroSubtitle: text("hero_subtitle").notNull().default(""),
+  body: jsonb("body").$type<Record<string, unknown>>(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const contactPageSettings = pgTable("contact_page_settings", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").references(() => organizations.id),
+  email: text("email").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  body: jsonb("body").$type<Record<string, unknown>>(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/* ── M12: resources, scheduling & broadcasts ───────────────────────────────── */
+
+export const departments = pgTable("departments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  bedCapacity: integer("bed_capacity").notNull().default(0),
+});
+
+export const beds = pgTable("beds", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  departmentId: integer("department_id").references(() => departments.id),
+  label: text("label").notNull(),
+  occupied: boolean("occupied").notNull().default(false),
+});
+
+export const equipment = pgTable("equipment", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  name: text("name").notNull(),
+  status: text("status", { enum: ["available", "in_use", "maintenance"] })
+    .notNull()
+    .default("available"),
+});
+
+export const emergencyBroadcasts = pgTable("emergency_broadcasts", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  senderId: integer("sender_id")
+    .notNull()
+    .references(() => users.id),
+  message: text("message").notNull(),
+  severity: text("severity", { enum: BROADCAST_SEVERITY })
+    .notNull()
+    .default("urgent"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const broadcastAcknowledgments = pgTable("broadcast_acknowledgments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  broadcastId: integer("broadcast_id")
+    .notNull()
+    .references(() => emergencyBroadcasts.id),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  acknowledgedAt: timestamp("acknowledged_at").notNull().defaultNow(),
+});
+
+/* ── M13: mobile / push ────────────────────────────────────────────────────── */
+
+export const deviceTokens = pgTable(
+  "device_tokens",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    token: text("token").notNull(),
+    platform: text("platform", { enum: ["ios", "android", "web"] })
+      .notNull()
+      .default("ios"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    tokenUniq: uniqueIndex("device_tokens_token_uniq").on(t.token),
+  }),
+);
+
+export const smsHistory = pgTable("sms_history", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").references(() => organizations.id),
+  userId: integer("user_id").references(() => users.id),
+  toPhone: text("to_phone").notNull(),
+  body: text("body").notNull(),
+  carrier: text("carrier").notNull().default("console"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Relations
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -390,6 +567,17 @@ export const insertMessageSchema = createInsertSchema(messages).omit({
   createdAt: true,
   deletedAt: true,
 });
+
+export type CareTeamMember = typeof careTeamMembers.$inferSelect;
+export type PatientConsult = typeof patientConsults.$inferSelect;
+export type PendingRegistration = typeof pendingRegistrations.$inferSelect;
+export type Department = typeof departments.$inferSelect;
+export type Bed = typeof beds.$inferSelect;
+export type Equipment = typeof equipment.$inferSelect;
+export type EmergencyBroadcast = typeof emergencyBroadcasts.$inferSelect;
+export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
+export type DeviceToken = typeof deviceTokens.$inferSelect;
+export type SmsHistory = typeof smsHistory.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -472,6 +660,60 @@ export const sendMessageSchema = z.object({
 export const markReadSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),
 });
+
+export const mfaVerifySchema = z.object({ code: z.string().min(4).max(10) });
+export const completeLoginSchema = z.object({ code: z.string().min(4).max(12) });
+
+export const addCareTeamMemberSchema = z.object({
+  memberUserId: z.number().int().positive(),
+});
+export const toggleOnCallSchema = z.object({ onCall: z.boolean() });
+
+export const createConsultSchema = z.object({
+  specialty: z.string().min(1),
+  consultantUserId: z.number().int().positive().optional(),
+});
+export const updateConsultSchema = z.object({
+  status: z.enum(CONSULT_STATUS).optional(),
+  consultantUserId: z.number().int().positive().optional(),
+});
+
+export const censusOverrideSchema = z.object({
+  currentPatientCount: z.number().int().min(0),
+  reason: z.string().min(1),
+});
+
+export const createBroadcastSchema = z.object({
+  message: z.string().min(1),
+  severity: z.enum(BROADCAST_SEVERITY).default("urgent"),
+});
+
+export const devCreateUserSchema = z.object({
+  organizationId: z.number().int().positive(),
+  role: z.enum(ROLES),
+  displayName: z.string().min(1),
+  username: z.string().min(3),
+  phone: z.string().optional(),
+  credential: z.enum(CREDENTIAL).optional(),
+  specialty: z.string().optional(),
+  patientCap: z.number().int().min(1).max(50).optional(),
+  shiftType: z.enum(SHIFT_TYPE).optional(),
+});
+
+export const deviceTokenSchema = z.object({
+  token: z.string().min(1),
+  platform: z.enum(["ios", "android", "web"]).default("ios"),
+});
+
+export const notificationProfileSchema = z.object({
+  mode: z.enum(["push", "push_sms", "push_sms_voice"]).default("push"),
+  smsCarrier: z
+    .enum(["twilio", "sns", "pinpoint", "messagebird", "vonage", "console"])
+    .default("console"),
+  ackTimeoutSec: z.number().int().min(10).max(3600).default(90),
+  escalationTimeoutSec: z.number().int().min(10).max(7200).default(180),
+});
+export type NotificationProfile = z.infer<typeof notificationProfileSchema>;
 
 export const orgConfigSchema = z
   .object({

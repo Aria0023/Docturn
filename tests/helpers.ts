@@ -2,19 +2,21 @@ import supertest from "supertest";
 import type { Express } from "express";
 import { createApp } from "../server/app.js";
 import { createTestDb, type DbHandle } from "../server/db.js";
-import { DatabaseStorage, setStorage, type IStorage } from "../server/storage.js";
+import { DatabaseStorage, setStorage } from "../server/storage.js";
 import { seed, DEV_PASSWORD } from "../server/seed.js";
 import {
   configureNotifications,
   NoopPush,
   NoopWs,
-  ConsoleSms,
+  _resetAcks,
 } from "../server/services/notifications.js";
+import { ConsoleSms } from "../server/services/sms.js";
+import { _resetConfigCache } from "../server/config.js";
 
 export interface TestContext {
   app: Express;
   handle: DbHandle;
-  storage: IStorage;
+  storage: DatabaseStorage;
   seedResult: Awaited<ReturnType<typeof seed>>;
   ws: NoopWs;
   push: NoopPush;
@@ -26,11 +28,14 @@ export async function createTestApp(): Promise<TestContext> {
   const handle = await createTestDb();
   const storage = new DatabaseStorage(handle.db);
   setStorage(storage);
+  _resetAcks();
+  _resetConfigCache();
 
   const ws = new NoopWs();
   const push = new NoopPush();
   const sms = new ConsoleSms();
-  configureNotifications({ ws, push, sms });
+  // Route every carrier to the same inspectable stub in tests.
+  configureNotifications({ ws, push, smsFor: () => sms });
 
   const seedResult = await seed(storage);
   const app = createApp({ sessionSecret: "test-secret", rateLimiting: false });

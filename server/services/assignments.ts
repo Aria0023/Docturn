@@ -1,8 +1,11 @@
 import type { Assignment, Hospitalist } from "@shared/schema";
-import type { IStorage } from "../storage.js";
+import type { DatabaseStorage } from "../storage.js";
 import { appendAudit } from "../audit.js";
 import { notifyAssignment } from "./notifications.js";
 import { selectNext } from "./rotation.js";
+
+// Assignment routing always uses the full storage surface (unit fan-out etc.).
+type IStorage = DatabaseStorage;
 
 /**
  * The assignment state machine. Census moves ONLY on accept (++) and
@@ -25,8 +28,8 @@ async function targetUserIds(
   orgId: number,
   hospitalist: Hospitalist,
 ): Promise<number[]> {
-  // v1: the attending only. (v2 care-team fan-out extends this set.)
-  return [hospitalist.userId];
+  // v2 fan-out: the attending AND every on-call unit member.
+  return storage.unitUserIds(orgId, hospitalist.userId);
 }
 
 /** Create the patient's first routing request. */

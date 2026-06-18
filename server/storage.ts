@@ -4,25 +4,50 @@ import { getDb } from "./db.js";
 import {
   assignments,
   auditLogs,
+  beds,
+  broadcastAcknowledgments,
+  careTeamMembers,
+  contactPageSettings,
   conversations,
+  departments,
+  deviceTokens,
+  emergencyBroadcasts,
+  equipment,
   featureFlags,
   hospitalists,
+  landingPageSettings,
+  mfaBackupCodes,
+  mfaCredentials,
   messageDeliveryStatus,
   messages,
   orgSettings,
   organizations,
+  patientConsults,
   patients,
+  pendingRegistrations,
   phiAccessLogs,
+  smsHistory,
+  suggestions,
   userPreferences,
   users,
   type Assignment,
   type AuditLog,
+  type Bed,
+  type BroadcastAck,
+  type CareTeamMember,
   type Conversation,
+  type Department,
+  type DeviceToken,
+  type EmergencyBroadcast,
+  type Equipment,
+  type FeatureFlag,
   type Hospitalist,
   type InsertHospitalist,
   type Message,
   type MessageDeliveryStatus,
   type Organization,
+  type PatientConsult,
+  type PendingRegistration,
   type Patient,
   type User,
 } from "@shared/schema";
@@ -578,14 +603,496 @@ export class DatabaseStorage implements IStorage {
       .where(eq(phiAccessLogs.organizationId, orgId));
     return rows.length;
   }
+
+  // ── users (extended) ─────────────────────────────────────────────────────────
+  async updateUser(id: number, patch: Partial<User>) {
+    const [row] = await this.db
+      .update(users)
+      .set(patch)
+      .where(eq(users.id, id))
+      .returning();
+    return row;
+  }
+  async listOrganizations() {
+    return this.db.select().from(organizations).orderBy(asc(organizations.id));
+  }
+
+  // ── MFA ──────────────────────────────────────────────────────────────────────
+  async getMfaCredential(userId: number) {
+    const [row] = await this.db
+      .select()
+      .from(mfaCredentials)
+      .where(eq(mfaCredentials.userId, userId));
+    return row;
+  }
+  async upsertMfaCredential(userId: number, secret: string) {
+    await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, userId));
+    const [row] = await this.db
+      .insert(mfaCredentials)
+      .values({ userId, secret, activated: false })
+      .returning();
+    return row!;
+  }
+  async activateMfaCredential(userId: number) {
+    await this.db
+      .update(mfaCredentials)
+      .set({ activated: true })
+      .where(eq(mfaCredentials.userId, userId));
+  }
+  async replaceBackupCodes(userId: number, hashes: string[]) {
+    await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, userId));
+    if (hashes.length === 0) return;
+    await this.db
+      .insert(mfaBackupCodes)
+      .values(hashes.map((codeHash) => ({ userId, codeHash })));
+  }
+  async consumeBackupCode(userId: number, codeHash: string): Promise<boolean> {
+    const [row] = await this.db
+      .select()
+      .from(mfaBackupCodes)
+      .where(
+        and(
+          eq(mfaBackupCodes.userId, userId),
+          eq(mfaBackupCodes.codeHash, codeHash),
+          isNull(mfaBackupCodes.usedAt),
+        ),
+      );
+    if (!row) return false;
+    await this.db
+      .update(mfaBackupCodes)
+      .set({ usedAt: new Date() })
+      .where(eq(mfaBackupCodes.id, row.id));
+    return true;
+  }
+
+  // ── care teams ─────────────────────────────────────────────────────────────────
+  async listCareTeamOwnedBy(orgId: number, ownerUserId: number) {
+    return this.db
+      .select()
+      .from(careTeamMembers)
+      .where(
+        and(
+          eq(careTeamMembers.organizationId, orgId),
+          eq(careTeamMembers.ownerUserId, ownerUserId),
+        ),
+      );
+  }
+  async getCareTeamMember(
+    orgId: number,
+    ownerUserId: number,
+    memberUserId: number,
+  ) {
+    const [row] = await this.db
+      .select()
+      .from(careTeamMembers)
+      .where(
+        and(
+          eq(careTeamMembers.organizationId, orgId),
+          eq(careTeamMembers.ownerUserId, ownerUserId),
+          eq(careTeamMembers.memberUserId, memberUserId),
+        ),
+      );
+    return row;
+  }
+  async addCareTeamMember(row: Omit<CareTeamMember, "id" | "createdAt">) {
+    const [created] = await this.db
+      .insert(careTeamMembers)
+      .values(row)
+      .returning();
+    return created!;
+  }
+  async updateCareTeamMember(
+    orgId: number,
+    ownerUserId: number,
+    memberUserId: number,
+    patch: Partial<CareTeamMember>,
+  ) {
+    const [row] = await this.db
+      .update(careTeamMembers)
+      .set(patch)
+      .where(
+        and(
+          eq(careTeamMembers.organizationId, orgId),
+          eq(careTeamMembers.ownerUserId, ownerUserId),
+          eq(careTeamMembers.memberUserId, memberUserId),
+        ),
+      )
+      .returning();
+    return row;
+  }
+  async deleteCareTeamMember(
+    orgId: number,
+    ownerUserId: number,
+    memberUserId: number,
+  ) {
+    await this.db
+      .delete(careTeamMembers)
+      .where(
+        and(
+          eq(careTeamMembers.organizationId, orgId),
+          eq(careTeamMembers.ownerUserId, ownerUserId),
+          eq(careTeamMembers.memberUserId, memberUserId),
+        ),
+      );
+  }
+  /** The on-call unit user ids for an attending: {owner} ∪ on-call members. */
+  async unitUserIds(orgId: number, ownerUserId: number): Promise<number[]> {
+    const members = await this.listCareTeamOwnedBy(orgId, ownerUserId);
+    return [
+      ownerUserId,
+      ...members.filter((m) => m.onCall).map((m) => m.memberUserId),
+    ];
+  }
+
+  // ── consults ─────────────────────────────────────────────────────────────────
+  async listConsultsForPatient(orgId: number, patientId: number) {
+    return this.db
+      .select()
+      .from(patientConsults)
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          eq(patientConsults.patientId, patientId),
+        ),
+      );
+  }
+  async listActiveConsults(orgId: number) {
+    return this.db
+      .select()
+      .from(patientConsults)
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          inArray(patientConsults.status, ["requested", "active"]),
+        ),
+      );
+  }
+  async createConsult(row: Omit<PatientConsult, "id" | "createdAt">) {
+    const [created] = await this.db
+      .insert(patientConsults)
+      .values(row)
+      .returning();
+    return created!;
+  }
+  async getConsult(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(patientConsults)
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          eq(patientConsults.id, id),
+        ),
+      );
+    return row;
+  }
+  async updateConsult(orgId: number, id: number, patch: Partial<PatientConsult>) {
+    const [row] = await this.db
+      .update(patientConsults)
+      .set(patch)
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          eq(patientConsults.id, id),
+        ),
+      )
+      .returning();
+    return row;
+  }
+  /** All non-terminal assignments for the org's patients (board "responsible"). */
+  async latestAssignmentByPatient(orgId: number) {
+    const rows = await this.listAssignments(orgId); // already newest-first
+    const map = new Map<number, Assignment>();
+    for (const a of rows) if (!map.has(a.patientId)) map.set(a.patientId, a);
+    return map;
+  }
+
+  // ── registrations ────────────────────────────────────────────────────────────
+  async createPendingRegistration(
+    row: Omit<PendingRegistration, "id" | "createdAt">,
+  ) {
+    const [created] = await this.db
+      .insert(pendingRegistrations)
+      .values(row)
+      .returning();
+    return created!;
+  }
+  async listPendingRegistrations(orgId: number) {
+    return this.db
+      .select()
+      .from(pendingRegistrations)
+      .where(
+        and(
+          eq(pendingRegistrations.organizationId, orgId),
+          eq(pendingRegistrations.status, "pending"),
+        ),
+      );
+  }
+  async getPendingRegistration(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(pendingRegistrations)
+      .where(
+        and(
+          eq(pendingRegistrations.organizationId, orgId),
+          eq(pendingRegistrations.id, id),
+        ),
+      );
+    return row;
+  }
+  async updatePendingRegistration(
+    orgId: number,
+    id: number,
+    patch: Partial<PendingRegistration>,
+  ) {
+    const [row] = await this.db
+      .update(pendingRegistrations)
+      .set(patch)
+      .where(
+        and(
+          eq(pendingRegistrations.organizationId, orgId),
+          eq(pendingRegistrations.id, id),
+        ),
+      )
+      .returning();
+    return row;
+  }
+
+  // ── resources ──────────────────────────────────────────────────────────────────
+  async listDepartments(orgId: number): Promise<Department[]> {
+    return this.db
+      .select()
+      .from(departments)
+      .where(eq(departments.organizationId, orgId));
+  }
+  async createDepartment(row: Omit<Department, "id">) {
+    const [created] = await this.db.insert(departments).values(row).returning();
+    return created!;
+  }
+  async listBeds(orgId: number): Promise<Bed[]> {
+    return this.db.select().from(beds).where(eq(beds.organizationId, orgId));
+  }
+  async createBed(row: Omit<Bed, "id">) {
+    const [created] = await this.db.insert(beds).values(row).returning();
+    return created!;
+  }
+  async listEquipment(orgId: number): Promise<Equipment[]> {
+    return this.db
+      .select()
+      .from(equipment)
+      .where(eq(equipment.organizationId, orgId));
+  }
+
+  // ── broadcasts ───────────────────────────────────────────────────────────────
+  async createBroadcast(row: Omit<EmergencyBroadcast, "id" | "createdAt">) {
+    const [created] = await this.db
+      .insert(emergencyBroadcasts)
+      .values(row)
+      .returning();
+    return created!;
+  }
+  async getBroadcast(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(emergencyBroadcasts)
+      .where(
+        and(
+          eq(emergencyBroadcasts.organizationId, orgId),
+          eq(emergencyBroadcasts.id, id),
+        ),
+      );
+    return row;
+  }
+  async listBroadcasts(orgId: number) {
+    return this.db
+      .select()
+      .from(emergencyBroadcasts)
+      .where(eq(emergencyBroadcasts.organizationId, orgId))
+      .orderBy(desc(emergencyBroadcasts.createdAt));
+  }
+  async ackBroadcast(
+    row: Omit<BroadcastAck, "id" | "acknowledgedAt">,
+  ): Promise<void> {
+    await this.db.insert(broadcastAcknowledgments).values(row);
+  }
+  async listBroadcastAcks(orgId: number, broadcastId: number) {
+    return this.db
+      .select()
+      .from(broadcastAcknowledgments)
+      .where(
+        and(
+          eq(broadcastAcknowledgments.organizationId, orgId),
+          eq(broadcastAcknowledgments.broadcastId, broadcastId),
+        ),
+      );
+  }
+
+  // ── device tokens & sms ──────────────────────────────────────────────────────
+  async upsertDeviceToken(row: Omit<DeviceToken, "id" | "createdAt">) {
+    await this.db
+      .insert(deviceTokens)
+      .values(row)
+      .onConflictDoUpdate({
+        target: deviceTokens.token,
+        set: { userId: row.userId, platform: row.platform },
+      });
+  }
+  async deleteDeviceToken(userId: number, token: string) {
+    await this.db
+      .delete(deviceTokens)
+      .where(
+        and(eq(deviceTokens.userId, userId), eq(deviceTokens.token, token)),
+      );
+  }
+  async listDeviceTokens(userId: number) {
+    return this.db
+      .select()
+      .from(deviceTokens)
+      .where(eq(deviceTokens.userId, userId));
+  }
+  async appendSmsHistory(row: {
+    organizationId: number | null;
+    userId: number | null;
+    toPhone: string;
+    body: string;
+    carrier: string;
+  }) {
+    await this.db.insert(smsHistory).values(row);
+  }
+  async listSmsHistory(orgId: number) {
+    return this.db
+      .select()
+      .from(smsHistory)
+      .where(eq(smsHistory.organizationId, orgId))
+      .orderBy(desc(smsHistory.createdAt));
+  }
+
+  // ── feature flags (C2) ───────────────────────────────────────────────────────
+  async listFeatureFlags(orgId: number): Promise<FeatureFlag[]> {
+    return this.db
+      .select()
+      .from(featureFlags)
+      .where(eq(featureFlags.organizationId, orgId));
+  }
+  async setFeatureFlag(
+    orgId: number,
+    flag: string,
+    enabled: boolean,
+    variant?: string | null,
+  ) {
+    await this.db
+      .insert(featureFlags)
+      .values({ organizationId: orgId, flag, enabled, variant: variant ?? null })
+      .onConflictDoUpdate({
+        target: [featureFlags.organizationId, featureFlags.flag],
+        set: { enabled, variant: variant ?? null },
+      });
+  }
+
+  // ── suggestions (C3) ─────────────────────────────────────────────────────────
+  async createSuggestion(row: {
+    organizationId: number;
+    scope: "org" | "user";
+    key: string;
+    proposedValue: unknown;
+    evidence: string;
+  }) {
+    await this.db
+      .insert(suggestions)
+      .values({ ...row, status: "pending" });
+  }
+  async listSuggestions(orgId: number) {
+    return this.db
+      .select()
+      .from(suggestions)
+      .where(eq(suggestions.organizationId, orgId))
+      .orderBy(desc(suggestions.createdAt));
+  }
+  async getSuggestion(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(suggestions)
+      .where(
+        and(eq(suggestions.organizationId, orgId), eq(suggestions.id, id)),
+      );
+    return row;
+  }
+  async setSuggestionStatus(
+    orgId: number,
+    id: number,
+    status: "accepted" | "dismissed",
+  ) {
+    await this.db
+      .update(suggestions)
+      .set({ status })
+      .where(
+        and(eq(suggestions.organizationId, orgId), eq(suggestions.id, id)),
+      );
+  }
+  async hasPendingSuggestion(orgId: number, key: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: suggestions.id })
+      .from(suggestions)
+      .where(
+        and(
+          eq(suggestions.organizationId, orgId),
+          eq(suggestions.key, key),
+          eq(suggestions.status, "pending"),
+        ),
+      )
+      .limit(1);
+    return !!row;
+  }
+
+  // ── CMS ────────────────────────────────────────────────────────────────────────
+  async getCms(key: "landing" | "contact", orgId: number | null) {
+    if (key === "landing") {
+      const [row] = await this.db
+        .select()
+        .from(landingPageSettings)
+        .where(
+          orgId == null
+            ? isNull(landingPageSettings.organizationId)
+            : eq(landingPageSettings.organizationId, orgId),
+        );
+      return row ?? null;
+    }
+    const [row] = await this.db
+      .select()
+      .from(contactPageSettings)
+      .where(
+        orgId == null
+          ? isNull(contactPageSettings.organizationId)
+          : eq(contactPageSettings.organizationId, orgId),
+      );
+    return row ?? null;
+  }
+  async setCms(
+    key: "landing" | "contact",
+    orgId: number | null,
+    value: Record<string, unknown>,
+  ) {
+    const table = key === "landing" ? landingPageSettings : contactPageSettings;
+    const existing = await this.getCms(key, orgId);
+    if (existing) {
+      await this.db
+        .update(table)
+        .set({ ...value, updatedAt: new Date() } as never)
+        .where(eq(table.id, existing.id));
+    } else {
+      await this.db
+        .insert(table)
+        .values({ organizationId: orgId, ...value } as never);
+    }
+  }
 }
 
 /** Default singleton bound to the process database. Tests construct their own. */
-let _storage: IStorage | null = null;
-export function storage(): IStorage {
+let _storage: DatabaseStorage | null = null;
+export function storage(): DatabaseStorage {
   if (!_storage) _storage = new DatabaseStorage();
   return _storage;
 }
-export function setStorage(s: IStorage) {
+export function setStorage(s: DatabaseStorage) {
   _storage = s;
 }

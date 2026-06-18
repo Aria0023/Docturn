@@ -97,9 +97,15 @@ export function registerAssignmentRoutes(app: Express) {
       const id = Number(req.params.id);
       const a = await storage().getAssignment(me.organizationId, id);
       if (!a) return res.status(404).json({ error: "not_found" });
-      // Must be the targeted provider (or a unit member in v2).
-      const h = await storage().getHospitalistByUser(me.organizationId, me.id);
-      if (me.role !== "developer" && (!h || h.id !== a.hospitalistId)) {
+      // v2: the targeted attending OR any on-call member of their unit may accept.
+      const attending = await storage().getHospitalist(
+        me.organizationId,
+        a.hospitalistId,
+      );
+      const unit = attending
+        ? await storage().unitUserIds(me.organizationId, attending.userId)
+        : [];
+      if (me.role !== "developer" && !unit.includes(me.id)) {
         return res.status(403).json({ error: "forbidden" });
       }
       try {
