@@ -64,8 +64,13 @@ export class MockAIExtractor implements AIExtractor {
       }
     }
 
-    const firstSentence = text.split(/[.\n]/)[0]?.trim() ?? text;
-    const issueSummary = firstSentence.slice(0, 160);
+    // Summary = first line, or first sentence break that isn't an initial's
+    // period (e.g. don't cut "J.D." in half). Capped to keep it one-line.
+    const firstLine = text.split(/\n/)[0]?.trim() ?? text;
+    const sentenceEnd = firstLine.search(/[.!?](?:\s|$)/);
+    const issueSummary = (
+      sentenceEnd > 20 ? firstLine.slice(0, sentenceEnd) : firstLine
+    ).slice(0, 160);
 
     return { initials, roomNumber: room, issueSummary, specialty };
   }

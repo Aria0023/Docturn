@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import session from "express-session";
 import passport from "passport";
@@ -87,6 +90,16 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   registerRoutes(app);
+
+  // Serve the built SPA (client/dist) when present, with history fallback so
+  // client-side routes resolve. API/WS routes are registered above and win.
+  const clientDist = fileURLToPath(new URL("../client/dist", import.meta.url));
+  if (existsSync(clientDist)) {
+    app.use(express.static(clientDist));
+    app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
+      res.sendFile(join(clientDist, "index.html"));
+    });
+  }
 
   // Consistent error shape.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {

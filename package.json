@@ -9,7 +9,9 @@
   },
   "scripts": {
     "dev": "tsx watch server/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm run build:client && tsc -p tsconfig.json",
+    "build:client": "npm --prefix client install && npm --prefix client run build",
     "start": "node dist/server/index.js",
     "seed": "tsx server/seed.ts",
     "db:push": "drizzle-kit push",

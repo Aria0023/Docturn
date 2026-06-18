@@ -24,14 +24,31 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | M3 | Patient intake + AI extraction (stub) | ✅ |
 | M4 | Assignments, round-robin + cap relief, expiry, state machine ⭐ | ✅ |
 | M5 | Secure messaging (conversations, send, read receipts, soft-delete) | ✅ |
+| M6 | WebSocket realtime: presence, heartbeat, tenant-scoped fan-out | ✅ |
+| M7 | React web client (login, role dashboards, messaging, directory, settings) | ✅ |
 | C1 | Runtime settings (`org_settings` / `user_preferences`) | ✅ (routes) |
 
-Remaining per `design/design_handoff_docturn/14_BUILD_PLAN.md`: **M6** WebSocket realtime,
-**M7** React web client, **M8** hardening, **M9–M14** MFA / live integrations / dev console /
-scheduling / mobile / compliance closeout, and **C2–C3** flags + adaptive suggestions. The design
-system and high-fidelity UI kits the client is recreated from live in [`design/`](design/).
+Remaining per `design/design_handoff_docturn/14_BUILD_PLAN.md`: **M8** hardening, **M9–M14** MFA /
+live integrations / dev console / scheduling / mobile / compliance closeout, and **C2–C3** flags +
+adaptive suggestions. The design system and high-fidelity UI kits live in [`design/`](design/).
 
-`npm test` is green (17 tests across auth, the assignment state machine, and messaging).
+`npm test` is green (21 tests across auth, the assignment state machine, messaging, and realtime
+WebSocket delivery).
+
+## Web client
+
+A React 18 + Vite + Tailwind SPA in [`client/`](client/), wired to the API with TanStack Query
+(query keys = endpoint paths) and a `WebSocketProvider` that invalidates queries on realtime events.
+Routing is `wouter`; theme tokens map to `design/colors_and_type.css`. Screens: login, role-aware
+dashboards (hospitalist accept/decline + on-shift toggle, ER intake with AI extraction + routing,
+director provider/rotation controls), messaging with read receipts, directory, and settings.
+
+```bash
+npm run dev            # API on :3000
+npm run dev:client     # Vite dev server on :5173, proxying /api + /ws to :3000
+# or, single-origin: build the SPA and let Express serve it
+npm run build:client && npm run dev   # open http://localhost:3000
+```
 
 ## Architecture
 
