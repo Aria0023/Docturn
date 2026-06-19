@@ -1,19 +1,32 @@
 import { useState } from "react";
-import { Activity } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, Field, Icon } from "@/components/kit";
+
+const DEMO: Array<[string, string, string]> = [
+  ["hospitalist", "chen", "Hospitalist"],
+  ["er_doctor", "er.doc", "ER physician"],
+  ["er_director", "er.director", "ER director"],
+  ["director", "director", "Hosp. director"],
+  ["developer", "dev", "Developer"],
+];
+const ROLE_ICON: Record<string, string> = {
+  hospitalist: "stethoscope",
+  er_doctor: "ambulance",
+  er_director: "siren",
+  director: "clipboard-list",
+  developer: "terminal",
+};
 
 export function Login() {
   const { refresh } = useAuth();
   const [orgCode, setOrgCode] = useState("MERCY");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("chen");
+  const [password, setPassword] = useState("docturn");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit() {
     setError(null);
     setLoading(true);
     try {
@@ -22,8 +35,6 @@ export function Login() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError("Invalid organization, username, or password.");
-      } else if (err instanceof ApiError && err.status === 202) {
-        setError("Two-factor authentication required (not yet wired in UI).");
       } else {
         setError("Something went wrong. Please try again.");
       }
@@ -33,78 +44,87 @@ export function Login() {
   }
 
   return (
-    <div className="flex min-h-full items-center justify-center p-4">
-      <Card className="w-full max-w-sm p-8">
-        <div className="mb-6 flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Activity size={20} />
+    <div style={{ display: "flex", minHeight: "100vh", background: "var(--background)" }}>
+      {/* Left: form */}
+      <div style={{ flex: "1 1 50%", display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+        <div style={{ width: "100%", maxWidth: 360 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>D</span>
+            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>DocTurn</span>
           </div>
-          <div>
-            <div className="text-xl font-bold">DocTurn</div>
-            <div className="text-xs text-muted-foreground">
-              Hospital coordination
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: "28px 0 6px" }}>Sign in</h1>
+          <p style={{ fontSize: 14, color: "var(--muted-foreground)", margin: "0 0 24px" }}>
+            Secure access to your hospital workspace.
+          </p>
+
+          <form onSubmit={(e) => { e.preventDefault(); void submit(); }} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <Field label="Organization code" icon="building-2" value={orgCode} onChange={(v) => setOrgCode(v.toUpperCase())} help="Your hospital's short code." />
+            <Field label="Username" icon="user" value={username} onChange={setUsername} />
+            <Field label="Password" icon="lock" type="password" value={password} onChange={setPassword} />
+
+            <div>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Quick demo login</label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
+                {DEMO.map(([role, uname, label]) => (
+                  <button key={role} type="button" onClick={() => { setUsername(uname); setPassword("docturn"); }}
+                    style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "11px 6px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12, fontWeight: 500,
+                      border: `1px solid ${username === uname ? "var(--primary)" : "var(--border)"}`,
+                      background: username === uname ? "#EFF6FF" : "#fff",
+                      color: username === uname ? "var(--primary)" : "var(--foreground)" }}>
+                    <Icon name={ROLE_ICON[role]} size={18} />
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {error && <p style={{ fontSize: 13, fontWeight: 500, color: "var(--destructive)", margin: 0 }}>{error}</p>}
+
+            <Button full size="lg" type="submit" disabled={loading}>
+              {loading ? "Signing in…" : "Sign in"}
+            </Button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center" }}>
+              <Icon name="shield-check" size={14} color="var(--status-accepted)" />
+              HIPAA-compliant · MFA enabled · 15-min sessions
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Right: brand panel */}
+      <div style={{ flex: "1 1 50%", background: "var(--marketing-bg)", display: "none", alignItems: "center", justifyContent: "center", padding: 48, position: "relative", overflow: "hidden" }} className="dt-brand-panel">
+        <div style={{ maxWidth: 380, position: "relative", zIndex: 2 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,.7)", padding: "5px 12px", borderRadius: "99px", fontSize: 12, fontWeight: 600, color: "var(--sky-700)" }}>
+            <Icon name="route" size={14} /> Patient assignment, automated
+          </div>
+          <h2 style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.02em", color: "#0f172a", margin: "18px 0 12px" }}>
+            Every admit reaches the right hospitalist — in seconds.
+          </h2>
+          <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.55, margin: 0 }}>
+            Round-robin routing, real-time notifications across push and SMS, and HIPAA-compliant messaging for your whole care team.
+          </p>
+          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 12 }}>
+            {([
+              ["bell-ring", "Notified instantly", "WebSocket → push → SMS cascade"],
+              ["repeat", "Fair rotation", "Lowest-census provider goes next"],
+              ["lock", "PHI stays protected", "Initials only, full audit trail"],
+            ] as const).map(([ic, t, d]) => (
+              <div key={t} style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <span style={{ width: 38, height: 38, borderRadius: 10, background: "#fff", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "var(--shadow-sm)" }}>
+                  <Icon name={ic} size={18} />
+                </span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>{t}</div>
+                  <div style={{ fontSize: 12.5, color: "#64748b" }}>{d}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-
-        <form onSubmit={submit} className="space-y-4">
-          <Field label="Organization code">
-            <Input
-              value={orgCode}
-              onChange={(e) => setOrgCode(e.target.value.toUpperCase())}
-              autoCapitalize="characters"
-              required
-            />
-          </Field>
-          <Field label="Username">
-            <Input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoFocus
-              required
-            />
-          </Field>
-          <Field label="Password">
-            <Input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </Field>
-
-          {error && (
-            <p className="text-sm font-medium text-destructive">{error}</p>
-          )}
-
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
-          </Button>
-        </form>
-
-        <p className="mt-6 text-center text-xs text-muted-foreground">
-          Demo: org <span className="font-mono">MERCY</span>, e.g.{" "}
-          <span className="font-mono">director</span> /{" "}
-          <span className="font-mono">docturn</span>
-        </p>
-      </Card>
+        <div style={{ position: "absolute", width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(56,189,248,.25), transparent 70%)", top: -80, right: -60 }} />
+        <div style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,228,230,.6), transparent 70%)", bottom: -70, left: -50 }} />
+      </div>
     </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-sm font-medium text-foreground">
-        {label}
-      </span>
-      {children}
-    </label>
   );
 }

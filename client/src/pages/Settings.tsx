@@ -19,7 +19,7 @@ export function Settings() {
   const isDirector = user?.role === "director" || user?.role === "developer";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" style={{ padding: 28, maxWidth: 1040, margin: "0 auto" }}>
       <h1 className="text-2xl font-bold">Settings</h1>
 
       <Card>

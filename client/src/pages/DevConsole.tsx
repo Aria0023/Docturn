@@ -31,7 +31,7 @@ export function DevConsole() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" style={{ padding: 28, maxWidth: 1040, margin: "0 auto" }}>
       <h1 className="text-2xl font-bold">Developer console</h1>
 
       <Card>

@@ -603,6 +603,22 @@ export class DatabaseStorage implements IStorage {
       .where(eq(phiAccessLogs.organizationId, orgId));
     return rows.length;
   }
+  async listAuditLogs(orgId: number, limit = 100) {
+    return this.db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
+  }
+  async listPhiAccess(orgId: number, limit = 50) {
+    return this.db
+      .select()
+      .from(phiAccessLogs)
+      .where(eq(phiAccessLogs.organizationId, orgId))
+      .orderBy(desc(phiAccessLogs.createdAt))
+      .limit(limit);
+  }
 
   // ── users (extended) ─────────────────────────────────────────────────────────
   async updateUser(id: number, patch: Partial<User>) {

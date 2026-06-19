@@ -3,225 +3,117 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Hospitalist, User } from "@/lib/types";
 import {
+  Avatar,
   Button,
   Card,
-  CardHeader,
-  EmptyState,
-  Input,
-  Stat,
-} from "@/components/ui";
+  Field,
+  Icon,
+  PageWrap,
+  SectionTitle,
+  StatTile,
+  StatusDot,
+} from "@/components/kit";
 
 interface OrgConfig {
   assignmentTimeoutMin: number;
-  roundRobinShiftTypes: string[];
   rotationMode: string;
 }
 
 export function DirectorDashboard() {
   const qc = useQueryClient();
-
-  const { data: hospitalists = [] } = useQuery<Hospitalist[]>({
-    queryKey: ["/api/hospitalists"],
-  });
+  const { data: hospitalists = [] } = useQuery<Hospitalist[]>({ queryKey: ["/api/hospitalists"] });
   const { data: users = [] } = useQuery<User[]>({ queryKey: ["/api/users"] });
-  const { data: config } = useQuery<OrgConfig>({
-    queryKey: ["/api/org/config"],
-  });
+  const { data: config } = useQuery<OrgConfig>({ queryKey: ["/api/org/config"] });
+  const [broadcastMsg, setBroadcastMsg] = useState("");
 
   const userById = new Map(users.map((u) => [u.id, u]));
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["/api/hospitalists"] });
 
-  const toggle = useMutation({
-    mutationFn: ({ id, working }: { id: number; working: boolean }) =>
-      api.patch(`/api/hospitalists/${id}/working-status`, { working }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/hospitalists"] }),
-  });
-  const bulk = useMutation({
-    mutationFn: (working: boolean) =>
-      api.patch(`/api/hospitalists/0/working-status`, { all: working }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/hospitalists"] }),
-  });
-  const setCap = useMutation({
-    mutationFn: ({ id, patientCap }: { id: number; patientCap: number }) =>
-      api.patch(`/api/physicians/${id}/capacity`, { patientCap }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/hospitalists"] }),
-  });
-  const resetRotation = useMutation({
-    mutationFn: () => api.post("/api/round-robin/reset"),
-  });
-  const setTimeout_ = useMutation({
-    mutationFn: (assignmentTimeoutMin: number) =>
-      api.patch("/api/org/config", { assignmentTimeoutMin }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/org/config"] }),
-  });
-
-  const [broadcastMsg, setBroadcastMsg] = useState("");
-  const broadcast = useMutation({
-    mutationFn: (severity: "urgent" | "critical") =>
-      api.post("/api/broadcasts", { message: broadcastMsg, severity }),
-    onSuccess: () => setBroadcastMsg(""),
-  });
+  const toggle = useMutation({ mutationFn: ({ id, working }: { id: number; working: boolean }) => api.patch(`/api/hospitalists/${id}/working-status`, { working }), onSuccess: invalidate });
+  const bulk = useMutation({ mutationFn: (working: boolean) => api.patch(`/api/hospitalists/0/working-status`, { all: working }), onSuccess: invalidate });
+  const setCap = useMutation({ mutationFn: ({ id, patientCap }: { id: number; patientCap: number }) => api.patch(`/api/physicians/${id}/capacity`, { patientCap }), onSuccess: invalidate });
+  const resetRotation = useMutation({ mutationFn: () => api.post("/api/round-robin/reset") });
+  const setTimeout_ = useMutation({ mutationFn: (assignmentTimeoutMin: number) => api.patch("/api/org/config", { assignmentTimeoutMin }), onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/org/config"] }) });
+  const broadcast = useMutation({ mutationFn: (severity: "urgent" | "critical") => api.post("/api/broadcasts", { message: broadcastMsg, severity }), onSuccess: () => setBroadcastMsg("") });
 
   const working = hospitalists.filter((h) => h.working).length;
-  const totalCensus = hospitalists.reduce(
-    (s, h) => s + h.currentPatientCount,
-    0,
-  );
+  const totalCensus = hospitalists.reduce((s, h) => s + h.currentPatientCount, 0);
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Director dashboard</h1>
-
-      <Card>
-        <CardHeader title="Emergency broadcast" subtitle="Org-wide, acknowledged" />
-        <div className="flex gap-2 p-6">
-          <Input
-            placeholder="Message to all staff…"
-            value={broadcastMsg}
-            onChange={(e) => setBroadcastMsg(e.target.value)}
-          />
-          <Button
-            variant="secondary"
-            disabled={!broadcastMsg}
-            onClick={() => broadcast.mutate("urgent")}
-          >
-            Urgent
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={!broadcastMsg}
-            onClick={() => broadcast.mutate("critical")}
-          >
-            Critical
-          </Button>
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-4 gap-4">
-        <Stat label="Providers" value={hospitalists.length} />
-        <Stat label="On shift" value={working} />
-        <Stat label="Total census" value={totalCensus} />
-        <Stat label="Timeout (min)" value={config?.assignmentTimeoutMin ?? "—"} />
+    <PageWrap>
+      <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
+        <StatTile label="Providers" value={hospitalists.length} icon="users" tint="blue" />
+        <StatTile label="On shift" value={working} icon="user-check" tint="emerald" />
+        <StatTile label="Total census" value={totalCensus} icon="activity" tint="slate" />
+        <StatTile label="Timeout" value={`${config?.assignmentTimeoutMin ?? "—"}m`} icon="timer" tint="amber" />
       </div>
 
-      <Card>
-        <CardHeader
-          title="Providers"
-          subtitle="Census, cap, and working status"
-          action={
-            <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => bulk.mutate(true)}>
-                All on
-              </Button>
-              <Button variant="secondary" onClick={() => bulk.mutate(false)}>
-                All off
-              </Button>
-            </div>
-          }
-        />
-        {hospitalists.length === 0 ? (
-          <EmptyState message="No providers yet." />
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <th className="px-6 py-2 font-medium">Provider</th>
-                <th className="px-6 py-2 font-medium">Specialty</th>
-                <th className="px-6 py-2 font-medium">Census / Cap</th>
-                <th className="px-6 py-2 font-medium">Shift</th>
-                <th className="px-6 py-2 font-medium">Working</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hospitalists.map((h) => (
-                <tr key={h.id} className="border-b border-border last:border-0">
-                  <td className="px-6 py-3 font-semibold">
-                    {userById.get(h.userId)?.displayName ?? `#${h.id}`}
-                  </td>
-                  <td className="px-6 py-3 text-muted-foreground">
-                    {h.specialty}
-                  </td>
-                  <td className="px-6 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono">{h.currentPatientCount}</span>
-                      <span className="text-muted-foreground">/</span>
-                      <button
-                        className="rounded border border-border px-2"
-                        onClick={() =>
-                          setCap.mutate({
-                            id: h.id,
-                            patientCap: Math.max(1, h.patientCap - 1),
-                          })
-                        }
-                      >
-                        −
-                      </button>
-                      <span className="font-mono">{h.patientCap}</span>
-                      <button
-                        className="rounded border border-border px-2"
-                        onClick={() =>
-                          setCap.mutate({
-                            id: h.id,
-                            patientCap: h.patientCap + 1,
-                          })
-                        }
-                      >
-                        +
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-6 py-3 capitalize text-muted-foreground">
-                    {h.shiftType}
-                  </td>
-                  <td className="px-6 py-3">
-                    <button
-                      onClick={() =>
-                        toggle.mutate({ id: h.id, working: !h.working })
-                      }
-                      className="relative h-6 w-11 rounded-full transition-colors"
-                      style={{
-                        background: h.working
-                          ? "var(--status-accepted)"
-                          : "var(--status-neutral-bg)",
-                      }}
-                      aria-label="toggle working"
-                    >
-                      <span
-                        className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all"
-                        style={{ left: h.working ? "22px" : "2px" }}
-                      />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
-
-      <Card>
-        <CardHeader title="Round-robin configuration" />
-        <div className="flex flex-wrap items-center gap-3 p-6">
-          <label className="text-sm font-medium">Timeout (min)</label>
-          <input
-            type="number"
-            min={1}
-            max={120}
-            defaultValue={config?.assignmentTimeoutMin}
-            className="h-9 w-24 rounded-md border border-input bg-background px-3 text-sm"
-            onBlur={(e) => setTimeout_.mutate(Number(e.target.value))}
-          />
-          <span className="text-sm text-muted-foreground">
-            Mode: <span className="font-semibold">{config?.rotationMode}</span>
-          </span>
-          <Button
-            variant="secondary"
-            className="ml-auto"
-            onClick={() => resetRotation.mutate()}
-          >
-            Reset rotation cursor
-          </Button>
+      <Card style={{ padding: 16, marginBottom: 24 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <Icon name="megaphone" size={18} color="var(--status-pending)" />
+          <div style={{ flex: 1 }}>
+            <Field value={broadcastMsg} onChange={setBroadcastMsg} placeholder="Emergency broadcast to all staff…" />
+          </div>
+          <Button variant="secondary" disabled={!broadcastMsg} onClick={() => broadcast.mutate("urgent")}>Urgent</Button>
+          <Button variant="destructive" disabled={!broadcastMsg} onClick={() => broadcast.mutate("critical")}>Critical</Button>
         </div>
       </Card>
-    </div>
+
+      <SectionTitle action={
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="outline" size="sm" onClick={() => bulk.mutate(true)}>All on</Button>
+          <Button variant="outline" size="sm" onClick={() => bulk.mutate(false)}>All off</Button>
+        </div>
+      }>Providers</SectionTitle>
+
+      <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
+        {hospitalists.map((h, i) => (
+          <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <Avatar initials={initialsOf(userById.get(h.userId)?.displayName ?? "?")} size={36} tint={h.working ? "emerald" : "slate"} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{userById.get(h.userId)?.displayName ?? `#${h.id}`}</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{h.specialty} · {h.shiftType}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>{h.currentPatientCount}</span>
+              <span style={{ color: "var(--muted-foreground)" }}>/</span>
+              <Stepper onDec={() => setCap.mutate({ id: h.id, patientCap: Math.max(1, h.patientCap - 1) })} onInc={() => setCap.mutate({ id: h.id, patientCap: h.patientCap + 1 })} value={h.patientCap} />
+            </div>
+            <button onClick={() => toggle.mutate({ id: h.id, working: !h.working })} title="Toggle working"
+              style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 500, width: 110, justifyContent: "center" }}>
+              <StatusDot status={h.working ? "online" : "offline"} />
+              {h.working ? "On shift" : "Off shift"}
+            </button>
+          </div>
+        ))}
+      </Card>
+
+      <SectionTitle>Round-robin configuration</SectionTitle>
+      <Card style={{ padding: 20, display: "flex", flexWrap: "wrap", gap: 16, alignItems: "center" }}>
+        <label style={{ fontSize: 13, fontWeight: 500 }}>Timeout (min)</label>
+        <input type="number" min={1} max={120} defaultValue={config?.assignmentTimeoutMin}
+          onBlur={(e) => setTimeout_.mutate(Number(e.target.value))}
+          style={{ height: 40, width: 90, borderRadius: "var(--radius-md)", border: "1px solid var(--input)", padding: "0 12px", fontSize: 14 }} />
+        <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Mode: <span style={{ fontWeight: 600, color: "var(--foreground)" }}>{config?.rotationMode}</span></span>
+        <div style={{ marginLeft: "auto" }}>
+          <Button variant="outline" icon="rotate-ccw" onClick={() => resetRotation.mutate()}>Reset rotation cursor</Button>
+        </div>
+      </Card>
+    </PageWrap>
   );
+}
+
+function Stepper({ value, onInc, onDec }: { value: number; onInc: () => void; onDec: () => void }) {
+  const btn = { width: 26, height: 26, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" } as const;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <button style={btn} onClick={onDec}><Icon name="minus" size={13} /></button>
+      <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600, minWidth: 16, textAlign: "center" }}>{value}</span>
+      <button style={btn} onClick={onInc}><Icon name="plus" size={13} /></button>
+    </span>
+  );
+}
+
+function initialsOf(name: string): string {
+  return name.replace(/^(Dr\.?|Mr\.?|Mrs\.?|Ms\.?)\s+/i, "").split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 }

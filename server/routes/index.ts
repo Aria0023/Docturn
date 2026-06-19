@@ -5,6 +5,7 @@ import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
 import { registerCareTeamRoutes } from "./careteam.js";
 import { registerCmsRoutes } from "./cms.js";
+import { registerComplianceRoutes } from "./compliance.js";
 import { registerConfigRoutes } from "./config.js";
 import { registerDevRoutes } from "./dev.js";
 import { registerHealthRoutes } from "./health.js";
@@ -29,6 +30,7 @@ export function registerRoutes(app: Express) {
   registerOrgRoutes(app);
   registerSettingsRoutes(app);
   registerConfigRoutes(app);
+  registerComplianceRoutes(app);
   registerCareTeamRoutes(app);
   registerBoardRoutes(app);
   registerBroadcastRoutes(app);

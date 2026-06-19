@@ -8,14 +8,16 @@ import { Messaging } from "@/pages/Messaging";
 import { Directory } from "@/pages/Directory";
 import { Settings } from "@/pages/Settings";
 import { PatientBoard } from "@/pages/PatientBoard";
-import { DevConsole } from "@/pages/DevConsole";
+import { CareTeamScreen } from "@/pages/CareTeamScreen";
+import { Broadcasts } from "@/pages/Broadcasts";
+import { Compliance } from "@/pages/Compliance";
 
 export function App() {
   const { user, loading } = useAuth();
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", fontSize: 14 }}>
         Loading…
       </div>
     );
@@ -29,12 +31,14 @@ export function App() {
         <Switch>
           <Route path="/" component={Dashboard} />
           <Route path="/board" component={PatientBoard} />
+          <Route path="/team" component={CareTeamScreen} />
+          <Route path="/broadcasts" component={Broadcasts} />
           <Route path="/messages" component={Messaging} />
           <Route path="/directory" component={Directory} />
+          <Route path="/compliance" component={Compliance} />
           <Route path="/settings" component={Settings} />
-          <Route path="/console" component={DevConsole} />
           <Route>
-            <div className="text-sm text-muted-foreground">Not found.</div>
+            <div style={{ padding: 28, color: "var(--muted-foreground)" }}>Not found.</div>
           </Route>
         </Switch>
       </AppShell>

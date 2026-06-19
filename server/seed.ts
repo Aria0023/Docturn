@@ -51,6 +51,8 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   }
 
   await mkUser("director", "director", "Dr. Dana Director");
+  await mkUser("er.director", "er_director", "Dr. Evan Marsh", "MD");
+  await mkUser("dev", "developer", "Platform Operator");
   await mkUser("er.doc", "er_doctor", "Dr. Erin Reyes", "MD");
   const chen = await mkUser("chen", "hospitalist", "Dr. Jordan Chen", "MD");
   const patel = await mkUser("patel", "hospitalist", "Dr. Priya Patel", "MD");

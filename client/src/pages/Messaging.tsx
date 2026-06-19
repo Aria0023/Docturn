@@ -87,7 +87,7 @@ export function Messaging() {
   const peers = directory.filter((d) => d.userId !== user?.id);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" style={{ padding: 28, maxWidth: 1040, margin: "0 auto" }}>
       <h1 className="text-2xl font-bold">Messages</h1>
       <Card className="flex h-[70vh] overflow-hidden">
         {/* Conversation list */}

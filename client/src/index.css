@@ -29,3 +29,31 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* Kit animations (ported from design/ui_kits/web-app) */
+@keyframes dt-pulse {
+  0% { transform: scale(1); opacity: 0.55; }
+  70% { transform: scale(2.4); opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes dt-toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dt-card-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: hsl(214 25% 86%);
+  border-radius: 99px;
+  border: 2px solid #fff;
+}
+
+/* Login brand panel: hidden on narrow screens, shown side-by-side on wide. */
+@media (min-width: 900px) {
+  .dt-brand-panel {
+    display: flex !important;
+  }
+}
