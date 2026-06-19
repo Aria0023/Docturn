@@ -10,7 +10,7 @@ export function registerBroadcastRoutes(app: Express) {
   app.post(
     "/api/broadcasts",
     requireAuth,
-    requireRole("director", "developer"),
+    requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       const parsed = createBroadcastSchema.safeParse(req.body);
@@ -59,7 +59,7 @@ export function registerBroadcastRoutes(app: Express) {
   app.get(
     "/api/broadcasts/:id",
     requireAuth,
-    requireRole("director", "developer"),
+    requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       const id = Number(req.params.id);

@@ -132,6 +132,12 @@ describe("broadcasts", () => {
     const res = await agent.post("/api/broadcasts").send({ message: "x" });
     expect(res.status).toBe(403);
   });
+
+  it("allows an ER director to create a broadcast", async () => {
+    const { agent } = await login(ctx.app, { username: "er.director" });
+    const res = await agent.post("/api/broadcasts").send({ message: "ER alert", severity: "urgent" });
+    expect(res.status).toBe(201);
+  });
 });
 
 describe("developer provisioning & cross-tenant", () => {
