@@ -96,11 +96,19 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // This guarantees pixel- and behavior-identical fidelity to the delivered
   // design. API/WS routes are registered above and win. The earlier hand-built
   // React client still lives in client/ and builds to client/dist if needed.
+  // webapp/ is the designer's kit served verbatim PLUS api-bridge.js, which
+  // wires its actions/data to the live backend. Falls back to the pristine kit,
+  // then the built React client.
+  const wiredKit = fileURLToPath(new URL("../webapp", import.meta.url));
   const kitDir = fileURLToPath(
     new URL("../design/ui_kits/web-app", import.meta.url),
   );
   const clientDist = fileURLToPath(new URL("../client/dist", import.meta.url));
-  const uiDir = existsSync(kitDir) ? kitDir : clientDist;
+  const uiDir = existsSync(wiredKit)
+    ? wiredKit
+    : existsSync(kitDir)
+      ? kitDir
+      : clientDist;
   if (existsSync(uiDir)) {
     app.use(express.static(uiDir));
     app.get(/^(?!\/api|\/ws).*/, (_req, res) => {

@@ -1,0 +1,241 @@
+/* ============================================================================
+   DocTurn — live API bridge.
+
+   Loads AFTER store.js. Replaces the prototype's in-browser mock actions with
+   calls to the real backend (/api), and hydrates live data into the EXACT same
+   state shapes the screens read — so the UI stays byte-identical while the data
+   and actions become real and multi-tenant.
+
+   Defensive by design: every call is wrapped; if the backend is unreachable or
+   a mapping fails, we fall back to the prototype's demo behavior so a screen
+   never fully breaks.
+   ============================================================================ */
+(function () {
+  "use strict";
+  if (!window.DT || !window.DT.set) return; // store.js must have loaded
+  window.DT_LIVE = true; // disables the demo admit/auto-reroute generators
+
+  var DT = window.DT;
+  var fmt = window.dtFmt;
+  var origLogin = DT.actions.login;
+
+  // Demo accounts per role (all seed passwords are "docturn").
+  var DEMO = {
+    hospitalist: "chen",
+    er_doctor: "er.doc",
+    er_director: "er.director",
+    director: "director",
+    developer: "dev",
+  };
+
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method,
+      credentials: "include",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (r) {
+      if (r.status === 204) return null;
+      return r.text().then(function (t) {
+        var d = t ? JSON.parse(t) : null;
+        if (!r.ok) throw new Error((d && d.error) || r.statusText);
+        return d;
+      });
+    });
+  }
+  var get = function (p) { return api("GET", p); };
+
+  function initials(name) {
+    try { return fmt.initialsOf(name); } catch (e) { return (name || "?").slice(0, 2).toUpperCase(); }
+  }
+  function bid(kitId) { return Number(String(kitId).replace(/^h/, "")); }
+
+  // ---- mappers: backend shape -> kit shape --------------------------------
+  function mapProviders(hosps, usersById) {
+    return (hosps || []).map(function (h) {
+      var u = usersById[h.userId] || {};
+      return {
+        id: "h" + h.id,
+        name: u.displayName || ("Provider #" + h.id),
+        avatar: initials(u.displayName || "P"),
+        specialty: h.specialty,
+        census: h.currentPatientCount,
+        cap: h.patientCap,
+        working: !!h.working,
+        shift: h.shiftType,
+        inRotation: true,
+      };
+    });
+  }
+  function mapPending(assignments, patientsById, usersById) {
+    return (assignments || []).map(function (a) {
+      var p = patientsById[a.patientId] || {};
+      var er = usersById[a.erDoctorId] || {};
+      return {
+        id: a.id,
+        initials: p.initials || "??",
+        room: p.roomNumber || "—",
+        complaint: p.issueSummary || "",
+        from: (er.displayName || "ER") + " (ER)",
+        specialty: p.specialty || "General Medicine",
+        via: a.via === "manual" ? "Manual" : "Round-robin",
+        expiresAt: a.expiresAt ? new Date(a.expiresAt).getTime() : Date.now() + 600000,
+      };
+    });
+  }
+  function mapAccepted(assignments, patientsById) {
+    return (assignments || []).map(function (a) {
+      var p = patientsById[a.patientId] || {};
+      return { id: "p" + a.id, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "" };
+    });
+  }
+  function mapBoard(rows) {
+    return (rows || []).map(function (r) {
+      return {
+        id: "b" + r.patient.id,
+        initials: r.patient.initials,
+        room: r.patient.room || "—",
+        dept: r.patient.department || "MED",
+        issue: r.patient.issue || "",
+        status: r.patient.status || r.status,
+        attending: r.responsible && r.responsible.attending
+          ? { name: r.responsible.attending.displayName, avatar: initials(r.responsible.attending.displayName) }
+          : { name: "", avatar: "" },
+        unit: (r.responsible && r.responsible.unit ? r.responsible.unit : []).map(function (u) {
+          return { avatar: initials(u.displayName), role: u.credential || "" };
+        }),
+        consultants: r.consultants || [],
+        er: r.admittedBy ? { name: r.admittedBy.displayName, avatar: initials(r.admittedBy.displayName) } : { name: "", avatar: "" },
+      };
+    });
+  }
+
+  // ---- hydrate live data into the store (best-effort, role-aware) ----------
+  function hydrate(role) {
+    return Promise.all([
+      get("/api/hospitalists").catch(function () { return null; }),
+      // directory is readable by every role and carries provider names; /api/users
+      // is director-only, so we derive names from the directory instead.
+      get("/api/physicians/directory").catch(function () { return null; }),
+      get("/api/patients").catch(function () { return null; }),
+    ]).then(function (res) {
+      var hosps = res[0], directory = res[1], patients = res[2];
+      var usersById = {};
+      (directory || []).forEach(function (d) {
+        usersById[d.userId] = { displayName: d.displayName, credential: d.credential };
+      });
+      var users = directory; // truthy gate below
+      var patientsById = {};
+      (patients || []).forEach(function (p) { patientsById[p.id] = p; });
+
+      var extra = [];
+      if (role === "hospitalist") {
+        extra.push(get("/api/assignments/pending").catch(function () { return []; }));
+        extra.push(get("/api/assignments/my").catch(function () { return []; }));
+      } else {
+        extra.push(Promise.resolve([]));
+        extra.push(Promise.resolve([]));
+      }
+      extra.push(get("/api/patient-board").catch(function () { return null; }));
+
+      return Promise.all(extra).then(function (e) {
+        var pending = e[0], mine = e[1], board = e[2];
+        DT.set(function (s) {
+          if (hosps && users) s.providers = mapProviders(hosps, usersById);
+          if (role === "hospitalist") {
+            s.pending = mapPending(pending, patientsById, usersById);
+            s.myPatients = mapAccepted(mine, patientsById);
+          }
+          if (board) s.board = mapBoard(board);
+          return s;
+        });
+      });
+    }).catch(function () { /* keep demo data on any failure */ });
+  }
+  function rehydrate() {
+    var st = DT.getState();
+    return hydrate(st.session && st.session.role);
+  }
+
+  // ---- action overrides ----------------------------------------------------
+  DT.actions.login = function (role, org, user) {
+    var username = DEMO[role] || user || "chen";
+    api("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
+      .then(function () { return get("/api/user"); })
+      .then(function (u) {
+        DT.set(function (s) {
+          s.session = { role: u.role, org: org || "MERCY", user: u.username, name: u.displayName };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
+          s.ui.nav = "dashboard";
+          s.ui.notifOpen = false;
+          return s;
+        });
+        return hydrate(u.role);
+      })
+      .catch(function () {
+        // Backend unreachable / no such account → demo login so UI still works.
+        origLogin(role, org, user);
+      });
+  };
+
+  DT.actions.accept = function (id) {
+    api("PATCH", "/api/assignments/" + id + "/accept").then(rehydrate).catch(function () {});
+    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." }; return s; });
+  };
+  DT.actions.decline = function (id) {
+    api("PATCH", "/api/assignments/" + id + "/reject").then(rehydrate).catch(function () {});
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." }; return s; });
+  };
+
+  DT.actions.sendAssignment = function (provider, fields, consults) {
+    var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
+    api("POST", "/api/patients", {
+      initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty,
+    }).then(function (p) {
+      return api("POST", "/api/assignments", { patientId: p.id, mode: mode, hospitalistId: bid(provider.id) });
+    }).then(rehydrate).catch(function () {});
+    DT.set(function (s) {
+      s.sent = [{ id: "s" + Date.now(), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
+      s.__toast = { tone: "sent", title: "Assignment sent to " + provider.name, msg: "Notified by push, SMS fallback." };
+      return s;
+    });
+  };
+
+  // director provider management
+  DT.actions.toggleWorking = function (id) {
+    var p = DT.getState().providers.find(function (x) { return x.id === id; });
+    if (p) api("PATCH", "/api/hospitalists/" + bid(id) + "/working-status", { working: !p.working }).then(rehydrate).catch(function () {});
+  };
+  DT.actions.adjustCap = function (id, d) {
+    var p = DT.getState().providers.find(function (x) { return x.id === id; });
+    if (p) api("PATCH", "/api/physicians/" + bid(id) + "/capacity", { patientCap: Math.max(1, p.cap + d) }).then(rehydrate).catch(function () {});
+  };
+  DT.actions.adjustCensus = function (id, d) {
+    var p = DT.getState().providers.find(function (x) { return x.id === id; });
+    if (p) api("PATCH", "/api/hospitalists/" + bid(id) + "/census", { currentPatientCount: Math.max(0, p.census + d), reason: "manual adjustment" }).then(rehydrate).catch(function () {});
+  };
+  DT.actions.bulkWorking = function (on) {
+    api("PATCH", "/api/hospitalists/0/working-status", { all: on }).then(rehydrate).catch(function () {});
+  };
+  DT.actions.resetRotation = function () {
+    api("POST", "/api/round-robin/reset").catch(function () {});
+    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
+  };
+  DT.actions.addProvider = function (data) {
+    var name = (data.name || "").trim();
+    if (!name) return;
+    var uname = name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 20) || ("dr" + Date.now());
+    api("POST", "/api/director/hospitalists", {
+      username: uname, password: "docturn", displayName: name,
+      specialty: data.specialty || "Hospital Medicine", patientCap: parseInt(data.cap, 10) || 12,
+      shiftType: data.shift || "day", role: "hospitalist",
+    }).then(rehydrate).catch(function () {});
+    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Provider added", msg: name + " added to the group." }; return s; });
+  };
+  DT.actions.removeProvider = function (id) {
+    api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
+    DT.set(function (s) { s.providers = s.providers.filter(function (x) { return x.id !== id; }); return s; });
+  };
+
+  console.log("[DocTurn] live API bridge active — actions wired to /api");
+})();
