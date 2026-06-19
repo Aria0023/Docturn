@@ -97,9 +97,10 @@ function curatedSearch(q: string): HospitalSuggestion[] {
 }
 
 async function npiSearch(q: string): Promise<HospitalSuggestion[]> {
+  const term = q.trim().replace(/\s+/g, " ");
   const url =
-    "https://npiregistry.cms.hhs.gov/api/?version=2.1&enumeration_type=NPI-2&limit=10" +
-    `&organization_name=${encodeURIComponent(q.trim() + "*")}`;
+    "https://npiregistry.cms.hhs.gov/api/?version=2.1&enumeration_type=NPI-2&limit=20" +
+    `&organization_name=${encodeURIComponent(term + "*")}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 4000);
   try {

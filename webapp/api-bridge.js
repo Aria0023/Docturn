@@ -181,9 +181,12 @@
   }
 
   // ---- action overrides ----------------------------------------------------
-  DT.actions.login = function (role, org, user) {
+  // Real authentication for both first login and the topbar role switcher, so
+  // the SERVER session always matches the role shown in the UI (otherwise dev
+  // endpoints 403 and CRUD operates on demo data with no real ids).
+  function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
-    api("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
+    return api("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
       .then(function () { return get("/api/user"); })
       .then(function (u) {
         DT.set(function (s) {
@@ -195,11 +198,25 @@
         });
         if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
         return hydrate(u.role);
-      })
-      .catch(function () {
-        // Backend unreachable / no such account → demo login so UI still works.
-        origLogin(role, org, user);
       });
+  }
+
+  DT.actions.login = function (role, org, user) {
+    doLogin(role, org, user).catch(function () {
+      // Backend unreachable / no such account → demo login so UI still works.
+      origLogin(role, org, user);
+    });
+  };
+
+  // The role switcher must re-authenticate as that role's demo account, not just
+  // flip the local role (which would leave the server session unchanged).
+  var origSetRole = DT.actions.setRole;
+  DT.actions.setRole = function (role) {
+    var st = DT.getState();
+    var org = (st.session && st.session.org) || "MERCY";
+    doLogin(role, org).catch(function () {
+      if (origSetRole) origSetRole(role);
+    });
   };
 
   DT.actions.accept = function (id) {
