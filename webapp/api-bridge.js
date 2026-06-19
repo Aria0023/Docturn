@@ -367,28 +367,35 @@
   };
 
   DT.actions.deleteTenant = function (o) {
-    if (!o) return;
-    function toast(title, msg) { DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; }); }
-    // Resolve the real org id by code if the row object lacks one (e.g. demo
-    // data) — this also surfaces a 403 if the session isn't a real developer.
+    if (!o) return Promise.reject(new Error("No organization selected."));
+    // Resolve the real org id by code if the row lacks one (also surfaces a 403
+    // if the session isn't a real developer).
     var resolve = o.id
       ? Promise.resolve(o.id)
       : get("/api/dev/organizations").then(function (list) {
           var m = (list || []).find(function (x) { return x.code === o.code; });
           return m ? m.id : null;
         });
-    resolve.then(function (id) {
-      if (!id) { toast("Cannot delete", "Sign in as a Developer to manage organizations."); return; }
-      return api("DELETE", "/api/dev/organizations/" + id).then(function () {
-        hydrateOrgs();
-        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Organization deleted", msg: o.name + " removed." }; return s; });
+    return resolve.then(function (id) {
+      if (!id) throw new Error("Sign in as a Developer to manage organizations.");
+      return api("DELETE", "/api/dev/organizations/" + id);
+    }).then(function () {
+      // Optimistic local removal + authoritative re-hydrate.
+      DT.set(function (s) {
+        s.orgs = (s.orgs || []).filter(function (x) { return x.code !== o.code; });
+        s.__toast = { tone: "rejected", title: "Organization deleted", msg: o.name + " removed." };
+        return s;
       });
+      hydrateOrgs();
+      return true;
     }).catch(function (e) {
       var m = String(e && e.message);
-      if (m === "org_not_empty") toast("Could not delete", "This tenant still has users — remove them first.");
-      else if (m === "forbidden") toast("Cannot delete", "Sign in as a Developer to manage organizations.");
-      else toast("Could not delete", "Delete failed — see console.");
-      console.error("[DocTurn] deleteTenant failed", e);
+      var msg = m === "org_not_empty" ? "This organization still has users — remove them first."
+        : m === "forbidden" ? "You must be signed in as a Developer."
+        : (m || "Delete failed.");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });
+      console.error("[DocTurn] deleteTenant failed:", e);
+      throw new Error(msg);
     });
   };
 
