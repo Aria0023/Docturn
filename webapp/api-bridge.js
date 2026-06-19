@@ -18,6 +18,10 @@
   var DT = window.DT;
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
+  // Safety: some screens call DT.actions.toast(); ensure it exists.
+  if (!DT.actions.toast) {
+    DT.actions.toast = function (t) { DT.set(function (s) { s.__toast = t; return s; }); };
+  }
 
   // Demo accounts per role (all seed passwords are "docturn").
   var DEMO = {
@@ -157,6 +161,25 @@
     return hydrate(st.session && st.session.role);
   }
 
+  // Developer: hydrate real organizations into the kit's org shape.
+  function hydrateOrgs() {
+    return get("/api/dev/organizations").then(function (orgs) {
+      DT.set(function (s) {
+        s.orgs = (orgs || []).map(function (o) {
+          return {
+            id: o.id, code: o.code, name: o.name,
+            city: o.city, state: o.state, timezone: o.timezone,
+            users: o.userCount || 0, assignments: 0, active: true,
+          };
+        });
+        if (s.orgs.length && !s.orgs.some(function (o) { return o.code === s.selectedOrg; })) {
+          s.selectedOrg = s.orgs[0].code;
+        }
+        return s;
+      });
+    }).catch(function () {});
+  }
+
   // ---- action overrides ----------------------------------------------------
   DT.actions.login = function (role, org, user) {
     var username = DEMO[role] || user || "chen";
@@ -170,6 +193,7 @@
           s.ui.notifOpen = false;
           return s;
         });
+        if (u.role === "developer") hydrateOrgs();
         return hydrate(u.role);
       })
       .catch(function () {
@@ -235,6 +259,31 @@
   DT.actions.removeProvider = function (id) {
     api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
     DT.set(function (s) { s.providers = s.providers.filter(function (x) { return x.id !== id; }); return s; });
+  };
+
+  // developer — organization CRUD
+  DT.actions.addTenant = function (form) {
+    api("POST", "/api/dev/organizations", {
+      name: form.name, code: form.code || undefined,
+      city: form.city, state: form.state, timezone: form.timezone,
+    }).then(function () {
+      hydrateOrgs();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Organization created", msg: form.name + " provisioned." }; return s; });
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create", msg: String(e.message) === "code_taken" ? "That code is already in use." : "Create failed." }; return s; });
+    });
+  };
+  DT.actions.deleteTenant = function (o) {
+    if (!o || !o.id) return;
+    api("DELETE", "/api/dev/organizations/" + o.id).then(function () {
+      hydrateOrgs();
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Organization deleted", msg: o.name + " removed." }; return s; });
+    }).catch(function (e) {
+      var msg = String(e.message) === "org_not_empty"
+        ? "This tenant still has users — remove them first."
+        : "Delete failed.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });
+    });
   };
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");

@@ -58,6 +58,8 @@ export const organizations = pgTable("organizations", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   code: text("code").notNull().unique(),
+  city: text("city"),
+  state: text("state"),
   timezone: text("timezone").notNull().default("America/New_York"),
   assignmentTimeoutMin: integer("assignment_timeout_min").notNull().default(10),
   roundRobinShiftTypes: jsonb("round_robin_shift_types")

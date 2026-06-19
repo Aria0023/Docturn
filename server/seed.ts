@@ -20,6 +20,8 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   const org = await storage.createOrganization({
     name: "Mercy General Hospital",
     code: "MERCY",
+    city: "Springfield",
+    state: "NY",
     timezone: "America/New_York",
     assignmentTimeoutMin: 10,
     roundRobinShiftTypes: ["day", "night"],

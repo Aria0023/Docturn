@@ -632,6 +632,28 @@ export class DatabaseStorage implements IStorage {
   async listOrganizations() {
     return this.db.select().from(organizations).orderBy(asc(organizations.id));
   }
+  async deleteOrganization(id: number) {
+    // Clear org-scoped dependents first so FK constraints don't block the
+    // delete. Callers guard that the org has no users (and therefore no
+    // user-dependent rows like patients/assignments/messages).
+    await this.db.delete(suggestions).where(eq(suggestions.organizationId, id));
+    await this.db.delete(featureFlags).where(eq(featureFlags.organizationId, id));
+    await this.db.delete(orgSettings).where(eq(orgSettings.organizationId, id));
+    await this.db.delete(equipment).where(eq(equipment.organizationId, id));
+    await this.db.delete(beds).where(eq(beds.organizationId, id));
+    await this.db.delete(departments).where(eq(departments.organizationId, id));
+    await this.db.delete(smsHistory).where(eq(smsHistory.organizationId, id));
+    await this.db.delete(phiAccessLogs).where(eq(phiAccessLogs.organizationId, id));
+    await this.db.delete(auditLogs).where(eq(auditLogs.organizationId, id));
+    await this.db.delete(organizations).where(eq(organizations.id, id));
+  }
+  async countOrgUsers(orgId: number): Promise<number> {
+    const rows = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.organizationId, orgId));
+    return rows.length;
+  }
 
   // ── MFA ──────────────────────────────────────────────────────────────────────
   async getMfaCredential(userId: number) {

@@ -166,6 +166,56 @@ describe("developer provisioning & cross-tenant", () => {
   });
 });
 
+describe("developer org management", () => {
+  async function asDeveloper() {
+    await ctx.storage.updateUser(ctx.seedResult.userIds.director!, { role: "developer" });
+    return login(ctx.app, { username: "director" });
+  }
+
+  it("creates an org with location, derives a code, and blocks duplicates", async () => {
+    const { agent } = await asDeveloper();
+    const created = await agent.post("/api/dev/organizations").send({
+      name: "Cedars-Sinai Medical Center", city: "Los Angeles", state: "CA", timezone: "America/Los_Angeles",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.code).toBeTruthy();
+    expect(created.body.city).toBe("Los Angeles");
+
+    // Duplicate code is rejected.
+    const dup = await agent.post("/api/dev/organizations").send({
+      name: "Another", code: created.body.code,
+    });
+    expect(dup.status).toBe(409);
+  });
+
+  it("lists orgs with user counts and deletes only empty ones", async () => {
+    const { agent } = await asDeveloper();
+    const created = await agent.post("/api/dev/organizations").send({ name: "Empty Clinic" });
+    const id = created.body.id;
+
+    const list = await agent.get("/api/dev/organizations");
+    const mercy = list.body.find((o: any) => o.code === "MERCY");
+    expect(mercy.userCount).toBeGreaterThan(0);
+
+    // Empty org deletes; MERCY (has users) is blocked.
+    expect((await agent.delete(`/api/dev/organizations/${id}`)).status).toBe(204);
+    const blocked = await agent.delete(`/api/dev/organizations/${mercy.id}`);
+    expect(blocked.status).toBe(409);
+  });
+
+  it("edits org parameters", async () => {
+    const { agent } = await asDeveloper();
+    const created = await agent.post("/api/dev/organizations").send({ name: "Edit Me" });
+    const patched = await agent
+      .patch(`/api/dev/organizations/${created.body.id}`)
+      .send({ name: "Edited", assignmentTimeoutMin: 20, rotationMode: "sequential" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.name).toBe("Edited");
+    expect(patched.body.assignmentTimeoutMin).toBe(20);
+    expect(patched.body.rotationMode).toBe("sequential");
+  });
+});
+
 describe("config: flags & adaptive suggestions", () => {
   it("sets a feature flag per org", async () => {
     const { agent } = await login(ctx.app, { username: "director" });

@@ -320,7 +320,49 @@ function detectLocation() {
   return { timezone: tz, city: city, offset: offset };
 }
 
-function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDiagnostics }) {
+// Web-powered hospital autocomplete (DocTurn live): type a fragment, get the
+// official name + city/state/timezone + a suggested code from /api/dev/org-lookup.
+function OrgAutocomplete({ value, onText, onPick }) {
+  const [items, setItems] = React.useState([]);
+  const [open, setOpen] = React.useState(false);
+  const timer = React.useRef(null);
+  function change(v) {
+    onText(v);
+    clearTimeout(timer.current);
+    if (!v || v.trim().length < 2) { setItems([]); setOpen(false); return; }
+    timer.current = setTimeout(function () {
+      fetch("/api/dev/org-lookup?q=" + encodeURIComponent(v), { credentials: "include" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { setItems(Array.isArray(d) ? d : []); setOpen(true); })
+        .catch(function () { setItems([]); });
+    }, 250);
+  }
+  return (
+    <div style={{ position: "relative" }}>
+      <Field label="Hospital name" icon="building-2" value={value} onChange={change}
+        placeholder="Start typing — e.g. Cedars Sinai"
+        help="Auto-completes the official name + location from the web." />
+      {open && items.length > 0 && (
+        <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0, top: 72, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-lg)", maxHeight: 240, overflowY: "auto" }}>
+          {items.map(function (it, i) {
+            return (
+              <button key={i} type="button" onClick={function () { onPick(it); setOpen(false); }}
+                style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", padding: "9px 12px", border: "none", borderTop: i ? "1px solid var(--border)" : "none", background: "#fff", cursor: "pointer" }}>
+                <Icon name="building-2" size={15} color="var(--primary)" />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{it.name}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "var(--muted-foreground)" }}>{[it.city, it.state].filter(Boolean).join(", ")}{it.code ? " · " + it.code : ""}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics }) {
   const [query, setQuery] = React.useState("");
   const [newTenant, setNewTenant] = React.useState(false);
   const detected = React.useMemo(detectLocation, []);
@@ -387,6 +429,10 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                   style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}>
                   <Icon name={o.active ? "power-off" : "power"} size={14} />
                 </button>
+                <button onClick={(e) => { e.stopPropagation(); if (onDeleteTenant) onDeleteTenant(o); }} title="Delete tenant"
+                  style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--destructive)", flex: "none" }}>
+                  <Icon name="trash-2" size={14} />
+                </button>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" />
               </div>
             ))}
@@ -431,7 +477,9 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
         <Modal title="New organization" subtitle="Provision a new hospital tenant. Data is isolated by organizationId." icon="building-2" onClose={() => setNewTenant(false)}
           children={
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <Field label="Hospital name" icon="building-2" value={tform.name} onChange={(v) => setTform({ ...tform, name: v })} placeholder="e.g. Riverside Memorial" />
+              <OrgAutocomplete value={tform.name}
+                onText={(v) => setTform({ ...tform, name: v })}
+                onPick={(it) => setTform({ ...tform, name: it.name, code: it.code || tform.code, timezone: it.timezone || tform.timezone, city: it.city, state: it.state, autoLoc: false })} />
               <div style={{ display: "flex", gap: 12 }}>
                 <div style={{ width: 150 }}><Field label="Short code" icon="hash" value={tform.code} onChange={(v) => setTform({ ...tform, code: v.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) })} placeholder="RIVER" help="A–Z, ≤6" /></div>
                 <div style={{ flex: 1 }}>

@@ -106,6 +106,8 @@ CREATE TABLE IF NOT EXISTS organizations (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   code TEXT NOT NULL UNIQUE,
+  city TEXT,
+  state TEXT,
   timezone TEXT NOT NULL DEFAULT 'America/New_York',
   assignment_timeout_min INTEGER NOT NULL DEFAULT 10,
   round_robin_shift_types JSONB NOT NULL DEFAULT '["day","night"]'::jsonb,

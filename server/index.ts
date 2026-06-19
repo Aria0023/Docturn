@@ -7,6 +7,15 @@ import { attachWebSocket } from "./ws/index.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 
+// Safety net: a single bad request must never take the whole server down.
+// Log and keep serving rather than letting an unhandled async rejection crash.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+});
+
 async function main() {
   const handle = getHandle();
   // PGlite (no DATABASE_URL) bootstraps its schema in-process so the app boots
