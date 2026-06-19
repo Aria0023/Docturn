@@ -193,7 +193,7 @@
           s.ui.notifOpen = false;
           return s;
         });
-        if (u.role === "developer") hydrateOrgs();
+        if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
         return hydrate(u.role);
       })
       .catch(function () {
@@ -259,6 +259,65 @@
   DT.actions.removeProvider = function (id) {
     api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
     DT.set(function (s) { s.providers = s.providers.filter(function (x) { return x.id !== id; }); return s; });
+  };
+
+  // Developer: hydrate real cross-tenant users into the kit's devUsers shape.
+  function hydrateDevUsers() {
+    return get("/api/dev/users").then(function (users) {
+      DT.set(function (s) {
+        s.devUsers = (users || []).map(function (u) {
+          return { id: u.id, name: u.name, role: u.role, org: u.org, specialty: u.specialty || "", scope: u.role === "developer" ? "root" : "local" };
+        });
+        return s;
+      });
+    }).catch(function () {});
+  }
+  var SHIFT_MAP = { rounding: "day", swing: "swing", nocturnist: "night", day: "day", night: "night" };
+
+  // developer — cross-tenant user provisioning
+  DT.actions.addUser = function (form) {
+    var org = (DT.getState().orgs || []).find(function (o) { return o.code === form.org; });
+    if (!org) { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Pick an organization", msg: "Choose a tenant first." }; return s; }); return; }
+    var uname = (form.email || form.name || "user").toLowerCase().split("@")[0].replace(/[^a-z0-9.]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 24) || ("u" + Date.now());
+    api("POST", "/api/dev/users", {
+      organizationId: org.id,
+      role: form.role,
+      displayName: form.name,
+      username: uname,
+      specialty: form.specialty || undefined,
+      patientCap: form.cap ? parseInt(form.cap, 10) : undefined,
+      shiftType: SHIFT_MAP[form.shift] || "day",
+    }).then(function () {
+      hydrateDevUsers(); hydrateOrgs();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "User created", msg: form.name + " added to " + form.org + "." }; return s; });
+    }).catch(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create user", msg: "Check the form and try again." }; return s; });
+    });
+  };
+  DT.actions.removeUser = function (id) {
+    api("DELETE", "/api/dev/users/" + id).then(function () {
+      hydrateDevUsers(); hydrateOrgs();
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "User removed", msg: "Account deleted." }; return s; });
+    }).catch(function (e) {
+      var msg = String(e.message) === "user_has_activity"
+        ? "This user has activity (assignments/messages) — can't delete."
+        : "Delete failed.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });
+    });
+  };
+  DT.actions.runDiagnostics = function () {
+    api("GET", "/api/dev/ai-diagnostics").then(function (d) {
+      DT.set(function (s) {
+        s.diagnostics = {
+          text: "Extractor " + (d.extractor || "?") + " · live AI " + (d.liveAi ? "enabled" : "stub (no key)") +
+            (d.sample ? " · sample → " + d.sample.initials + ", " + d.sample.specialty : ""),
+        };
+        s.__toast = { tone: "accepted", title: "Diagnostics complete", msg: "AI extractor checked." };
+        return s;
+      });
+    }).catch(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Diagnostics failed", msg: "Could not reach the extractor." }; return s; });
+    });
   };
 
   // developer — organization CRUD

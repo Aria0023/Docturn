@@ -203,6 +203,26 @@ describe("developer org management", () => {
     expect(blocked.status).toBe(409);
   });
 
+  it("lists, creates and removes cross-tenant users", async () => {
+    const { agent } = await asDeveloper();
+    const before = await agent.get("/api/dev/users");
+    expect(before.body.length).toBeGreaterThan(0);
+
+    const created = await agent.post("/api/dev/users").send({
+      organizationId: ctx.seedResult.orgId, role: "hospitalist",
+      displayName: "Dr. Lena Ortiz", username: "ortiz", specialty: "Nephrology", patientCap: 15, shiftType: "day",
+    });
+    expect(created.status).toBe(201);
+
+    // The fresh user has no activity → deletable.
+    expect((await agent.delete(`/api/dev/users/${created.body.id}`)).status).toBe(204);
+
+    // A user with activity (chen has a seeded pending assignment as target) — and
+    // the developer can't delete themselves.
+    const me = await agent.get("/api/user");
+    expect((await agent.delete(`/api/dev/users/${me.body.id}`)).status).toBe(409);
+  });
+
   it("edits org parameters", async () => {
     const { agent } = await asDeveloper();
     const created = await agent.post("/api/dev/organizations").send({ name: "Edit Me" });

@@ -148,6 +148,60 @@ export function registerDevRoutes(app: Express) {
   );
 
   // Cross-tenant user/specialist creation (v2).
+  app.get(
+    "/api/dev/users",
+    requireAuth,
+    requireRole("developer"),
+    async (_req, res) => {
+      const [allUsers, orgs, hosps] = await Promise.all([
+        storage().listAllUsers(),
+        storage().listOrganizations(),
+        storage().listAllHospitalists(),
+      ]);
+      const orgCode = new Map(orgs.map((o) => [o.id, o.code]));
+      const specByUser = new Map(hosps.map((h) => [h.userId, h.specialty]));
+      res.json(
+        allUsers.map((u) => ({
+          id: u.id,
+          name: u.displayName,
+          role: u.role,
+          org: orgCode.get(u.organizationId) ?? "—",
+          specialty: specByUser.get(u.id) ?? "",
+          credential: u.credential,
+        })),
+      );
+    },
+  );
+
+  app.delete(
+    "/api/dev/users/:id",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = Number(req.params.id);
+      if (id === me.id) return res.status(409).json({ error: "cannot_delete_self" });
+      const target = await storage().getUserById(id);
+      if (!target) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: target.organizationId,
+        userId: me.id,
+        action: "dev.user_delete",
+        resourceType: "user",
+        resourceId: id,
+        details: { username: target.username },
+        riskLevel: "high",
+      });
+      try {
+        await storage().deleteUser(id);
+      } catch (err) {
+        console.error("[dev] user delete failed", err);
+        return res.status(409).json({ error: "user_has_activity" });
+      }
+      res.status(204).end();
+    },
+  );
+
   app.post(
     "/api/dev/users",
     requireAuth,

@@ -654,6 +654,28 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.organizationId, orgId));
     return rows.length;
   }
+  /** Every user across all tenants (developer cross-tenant view). */
+  async listAllUsers(): Promise<User[]> {
+    return this.db.select().from(users).orderBy(asc(users.organizationId), asc(users.id));
+  }
+  async listAllHospitalists(): Promise<Hospitalist[]> {
+    return this.db.select().from(hospitalists);
+  }
+  /**
+   * Delete a user and their cheap dependents (provider profile, care-team links,
+   * device tokens, preferences, MFA). Throws on FK if the user authored content
+   * (assignments/messages) — callers convert that to a 409.
+   */
+  async deleteUser(id: number): Promise<void> {
+    await this.db.delete(careTeamMembers).where(eq(careTeamMembers.ownerUserId, id));
+    await this.db.delete(careTeamMembers).where(eq(careTeamMembers.memberUserId, id));
+    await this.db.delete(deviceTokens).where(eq(deviceTokens.userId, id));
+    await this.db.delete(userPreferences).where(eq(userPreferences.userId, id));
+    await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, id));
+    await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, id));
+    await this.db.delete(hospitalists).where(eq(hospitalists.userId, id));
+    await this.db.delete(users).where(eq(users.id, id));
+  }
 
   // ── MFA ──────────────────────────────────────────────────────────────────────
   async getMfaCredential(userId: number) {
