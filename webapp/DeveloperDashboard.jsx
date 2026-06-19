@@ -365,6 +365,8 @@ function OrgAutocomplete({ value, onText, onPick }) {
 function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics }) {
   const [query, setQuery] = React.useState("");
   const [newTenant, setNewTenant] = React.useState(false);
+  const [openOrg, setOpenOrg] = React.useState(null);
+  const [confirmDel, setConfirmDel] = React.useState(false);
   const detected = React.useMemo(detectLocation, []);
   const [tform, setTform] = React.useState({ name: "", code: "", timezone: detected.timezone, autoLoc: true });
   const orgs = organizations.filter((o) =>
@@ -407,7 +409,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
               <Field icon="search" value={query} onChange={setQuery} placeholder="Search by name or code…" />
             </div>
             {orgs.map((o, i) => (
-              <div key={o.code} onClick={() => onSelectOrg && onSelectOrg(o)}
+              <div key={o.code} onClick={() => setOpenOrg(o)}
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", alignItems: "center", gap: 13, padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", cursor: "pointer", transition: "background .12s" }}>
@@ -417,7 +419,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{o.name}</div>
                   <div style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", gap: 8 }}>
-                    <span className="ds-mono">{o.code}</span><span>·</span><span>{o.timezone}</span>
+                    <span className="ds-mono">{o.code}</span><span>·</span><span>{[o.city, o.state].filter(Boolean).join(", ") || o.timezone}</span>
                   </div>
                 </div>
                 <div style={{ textAlign: "right", marginRight: 4 }}>
@@ -425,14 +427,6 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                   <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>users</div>
                 </div>
                 {o.active ? <Badge status="accepted">Active</Badge> : <Badge status="offline">Suspended</Badge>}
-                <button onClick={(e) => { e.stopPropagation(); onToggleTenant(o.code); }} title={o.active ? "Suspend tenant" : "Reactivate tenant"}
-                  style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}>
-                  <Icon name={o.active ? "power-off" : "power"} size={14} />
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); if (onDeleteTenant) onDeleteTenant(o); }} title="Delete tenant"
-                  style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--destructive)", flex: "none" }}>
-                  <Icon name="trash-2" size={14} />
-                </button>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" />
               </div>
             ))}
@@ -506,7 +500,54 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
             </div>
           } />
       )}
+
+      {openOrg && (
+        <Modal title={openOrg.name} subtitle={"Organization · " + openOrg.code} icon="building-2"
+          onClose={() => { setOpenOrg(null); setConfirmDel(false); }}
+          children={
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <DetailRow label="Code" value={openOrg.code} />
+                <DetailRow label="Users" value={String(openOrg.users != null ? openOrg.users : "—")} />
+                <DetailRow label="Location" value={[openOrg.city, openOrg.state].filter(Boolean).join(", ") || "—"} />
+                <DetailRow label="Timezone" value={openOrg.timezone || "—"} />
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, marginTop: 2 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--destructive)", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".04em" }}>Danger zone</div>
+                {!confirmDel ? (
+                  <Button variant="outline" size="sm" icon="trash-2" style={{ color: "var(--destructive)", borderColor: "var(--destructive)" }} onClick={() => setConfirmDel(true)}>
+                    Delete organization
+                  </Button>
+                ) : (
+                  <div style={{ background: "var(--status-rejected-bg)", border: "1px solid var(--destructive)", borderRadius: "var(--radius-md)", padding: 14 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>Delete {openOrg.name}?</div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 2 }}>
+                      This permanently removes the organization. It must have no users. This cannot be undone.
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                      <Button variant="outline" size="sm" onClick={() => setConfirmDel(false)}>Cancel</Button>
+                      <Button variant="destructive" size="sm" icon="trash-2"
+                        onClick={() => { if (onDeleteTenant) onDeleteTenant(openOrg); setOpenOrg(null); setConfirmDel(false); }}>
+                        Yes, delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          } />
+      )}
     </PageWrap>
+  );
+}
+
+function DetailRow({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, marginTop: 2 }}>{value}</div>
+    </div>
   );
 }
 
