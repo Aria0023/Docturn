@@ -91,13 +91,20 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   registerRoutes(app);
 
-  // Serve the built SPA (client/dist) when present, with history fallback so
-  // client-side routes resolve. API/WS routes are registered above and win.
+  // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
+  // from design/ui_kits/web-app (its own components, store.js, tokens, assets).
+  // This guarantees pixel- and behavior-identical fidelity to the delivered
+  // design. API/WS routes are registered above and win. The earlier hand-built
+  // React client still lives in client/ and builds to client/dist if needed.
+  const kitDir = fileURLToPath(
+    new URL("../design/ui_kits/web-app", import.meta.url),
+  );
   const clientDist = fileURLToPath(new URL("../client/dist", import.meta.url));
-  if (existsSync(clientDist)) {
-    app.use(express.static(clientDist));
+  const uiDir = existsSync(kitDir) ? kitDir : clientDist;
+  if (existsSync(uiDir)) {
+    app.use(express.static(uiDir));
     app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
-      res.sendFile(join(clientDist, "index.html"));
+      res.sendFile(join(uiDir, "index.html"));
     });
   }
 
