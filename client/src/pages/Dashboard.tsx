@@ -1,7 +1,9 @@
 import { useAuth } from "@/lib/auth";
 import { HospitalistDashboard } from "./HospitalistDashboard";
 import { ERDashboard } from "./ERDashboard";
+import { ErDirectorDashboard } from "./ErDirectorDashboard";
 import { DirectorDashboard } from "./DirectorDashboard";
+import { DevConsole } from "./DevConsole";
 
 // Picks the right dashboard for the signed-in role.
 export function Dashboard() {
@@ -10,11 +12,13 @@ export function Dashboard() {
     case "hospitalist":
       return <HospitalistDashboard />;
     case "er_doctor":
-    case "er_director":
       return <ERDashboard />;
+    case "er_director":
+      return <ErDirectorDashboard />;
     case "director":
-    case "developer":
       return <DirectorDashboard />;
+    case "developer":
+      return <DevConsole />;
     default:
       return null;
   }

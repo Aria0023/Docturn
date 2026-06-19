@@ -892,11 +892,31 @@ export class DatabaseStorage implements IStorage {
     const [created] = await this.db.insert(beds).values(row).returning();
     return created!;
   }
+  async updateBed(orgId: number, id: number, patch: Partial<Bed>) {
+    const [row] = await this.db
+      .update(beds)
+      .set(patch)
+      .where(and(eq(beds.organizationId, orgId), eq(beds.id, id)))
+      .returning();
+    return row;
+  }
   async listEquipment(orgId: number): Promise<Equipment[]> {
     return this.db
       .select()
       .from(equipment)
       .where(eq(equipment.organizationId, orgId));
+  }
+  async createEquipment(row: Omit<Equipment, "id">) {
+    const [created] = await this.db.insert(equipment).values(row).returning();
+    return created!;
+  }
+  async updateEquipment(orgId: number, id: number, patch: Partial<Equipment>) {
+    const [row] = await this.db
+      .update(equipment)
+      .set(patch)
+      .where(and(eq(equipment.organizationId, orgId), eq(equipment.id, id)))
+      .returning();
+    return row;
   }
 
   // ── broadcasts ───────────────────────────────────────────────────────────────

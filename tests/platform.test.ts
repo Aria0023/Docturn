@@ -209,6 +209,47 @@ describe("config: flags & adaptive suggestions", () => {
   });
 });
 
+describe("resources, sms & oversight endpoints", () => {
+  it("director can list all assignments, reassign and cancel", async () => {
+    const { assignmentId } = await newPendingAssignment();
+    const { agent } = await login(ctx.app, { username: "director" });
+    const list = await agent.get("/api/assignments");
+    expect(list.status).toBe(200);
+    expect(list.body.some((a: any) => a.id === assignmentId)).toBe(true);
+
+    const reassigned = await agent.patch(`/api/assignments/${assignmentId}/reassign`).send({});
+    expect(reassigned.status).toBe(200);
+  });
+
+  it("manages beds and equipment with live metrics", async () => {
+    const { agent } = await login(ctx.app, { username: "director" });
+    const bed = await agent.post("/api/beds").send({ label: "ICU-1" });
+    expect(bed.status).toBe(201);
+    await agent.patch(`/api/beds/${bed.body.id}`).send({ occupied: true });
+    const equip = await agent.post("/api/equipment").send({ name: "Ventilator" });
+    expect(equip.status).toBe(201);
+
+    const metrics = await agent.get("/api/resources/metrics");
+    expect(metrics.body.beds.total).toBe(1);
+    expect(metrics.body.beds.occupied).toBe(1);
+    expect(metrics.body.equipment.total).toBe(1);
+  });
+
+  it("sends SMS through the carrier stub and records history", async () => {
+    const { agent } = await login(ctx.app, { username: "director" });
+    const sent = await agent.post("/api/sms/send").send({ to: "+15551112222", body: "test" });
+    expect(sent.status).toBe(201);
+    const history = await agent.get("/api/sms/history");
+    expect(history.body.some((h: any) => h.toPhone === "+15551112222")).toBe(true);
+  });
+
+  it("forbids a hospitalist from the SMS send route", async () => {
+    const { agent } = await login(ctx.app, { username: "chen" });
+    const res = await agent.post("/api/sms/send").send({ to: "+1", body: "x" });
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("mobile API", () => {
   it("exposes safe org fields publicly and compact assignments to providers", async () => {
     const pub = await supertest(ctx.app).get("/api/mobile/org/MERCY");

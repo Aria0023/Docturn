@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { Hospitalist, User } from "@/lib/types";
+import type { Assignment, Hospitalist, Patient, User } from "@/lib/types";
 import {
   Avatar,
   Button,
@@ -24,10 +24,46 @@ export function DirectorDashboard() {
   const { data: hospitalists = [] } = useQuery<Hospitalist[]>({ queryKey: ["/api/hospitalists"] });
   const { data: users = [] } = useQuery<User[]>({ queryKey: ["/api/users"] });
   const { data: config } = useQuery<OrgConfig>({ queryKey: ["/api/org/config"] });
+  const { data: assignments = [] } = useQuery<Assignment[]>({ queryKey: ["/api/assignments"] });
+  const { data: patients = [] } = useQuery<Patient[]>({ queryKey: ["/api/patients"] });
   const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [np, setNp] = useState({ username: "", displayName: "", specialty: "General" });
 
   const userById = new Map(users.map((u) => [u.id, u]));
+  const patientById = new Map(patients.map((p) => [p.id, p]));
+  const hById = new Map(hospitalists.map((h) => [h.id, h]));
+  const pendingAssignments = assignments.filter((a) => a.status === "pending");
   const invalidate = () => qc.invalidateQueries({ queryKey: ["/api/hospitalists"] });
+  const invalidateAssignments = () => {
+    qc.invalidateQueries({ queryKey: ["/api/assignments"] });
+    qc.invalidateQueries({ queryKey: ["/api/hospitalists"] });
+  };
+
+  const reassign = useMutation({
+    mutationFn: (id: number) => api.patch(`/api/assignments/${id}/reassign`, {}),
+    onSuccess: invalidateAssignments,
+  });
+  const cancel = useMutation({
+    mutationFn: (id: number) => api.patch(`/api/assignments/${id}/cancel`, {}),
+    onSuccess: invalidateAssignments,
+  });
+  const addProvider = useMutation({
+    mutationFn: () =>
+      api.post("/api/director/hospitalists", {
+        username: np.username,
+        password: "docturn",
+        displayName: np.displayName,
+        specialty: np.specialty,
+        role: "hospitalist",
+      }),
+    onSuccess: () => {
+      setShowAdd(false);
+      setNp({ username: "", displayName: "", specialty: "General" });
+      qc.invalidateQueries({ queryKey: ["/api/hospitalists"] });
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+  });
 
   const toggle = useMutation({ mutationFn: ({ id, working }: { id: number; working: boolean }) => api.patch(`/api/hospitalists/${id}/working-status`, { working }), onSuccess: invalidate });
   const bulk = useMutation({ mutationFn: (working: boolean) => api.patch(`/api/hospitalists/0/working-status`, { all: working }), onSuccess: invalidate });
@@ -59,12 +95,47 @@ export function DirectorDashboard() {
         </div>
       </Card>
 
+      {pendingAssignments.length > 0 && (
+        <>
+          <SectionTitle>Pending assignments</SectionTitle>
+          <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
+            {pendingAssignments.map((a, i) => {
+              const p = patientById.get(a.patientId);
+              const h = hById.get(a.hospitalistId);
+              return (
+                <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                  <Avatar initials={p?.initials ?? "??"} size={34} tint="amber" />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p?.initials}{p?.roomNumber ? ` · Room ${p.roomNumber}` : ""}</div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
+                      → {userById.get(h?.userId ?? -1)?.displayName ?? `provider #${a.hospitalistId}`} · {a.via.replace("_", " ")}
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" icon="route" onClick={() => reassign.mutate(a.id)}>Reassign</Button>
+                  <Button variant="ghost" size="sm" icon="x" onClick={() => cancel.mutate(a.id)} style={{ color: "var(--destructive)" }}>Cancel</Button>
+                </div>
+              );
+            })}
+          </Card>
+        </>
+      )}
+
       <SectionTitle action={
         <div style={{ display: "flex", gap: 8 }}>
+          <Button variant="outline" size="sm" icon="user-plus" onClick={() => setShowAdd((v) => !v)}>Add provider</Button>
           <Button variant="outline" size="sm" onClick={() => bulk.mutate(true)}>All on</Button>
           <Button variant="outline" size="sm" onClick={() => bulk.mutate(false)}>All off</Button>
         </div>
       }>Providers</SectionTitle>
+
+      {showAdd && (
+        <Card style={{ padding: 16, marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 140 }}><Field label="Username" value={np.username} onChange={(v) => setNp({ ...np, username: v })} /></div>
+          <div style={{ flex: 1, minWidth: 140 }}><Field label="Display name" value={np.displayName} onChange={(v) => setNp({ ...np, displayName: v })} /></div>
+          <div style={{ flex: 1, minWidth: 140 }}><Field label="Specialty" value={np.specialty} onChange={(v) => setNp({ ...np, specialty: v })} /></div>
+          <Button disabled={!np.username || !np.displayName || addProvider.isPending} onClick={() => addProvider.mutate()}>Create</Button>
+        </Card>
+      )}
 
       <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
         {hospitalists.map((h, i) => (

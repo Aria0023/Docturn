@@ -25,13 +25,25 @@ export function Login() {
   const [password, setPassword] = useState("docturn");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  // Second-factor step state.
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
+  const [smsSent, setSmsSent] = useState(false);
 
   async function submit() {
     setError(null);
     setLoading(true);
     try {
-      await api.post("/api/login", { orgCode, username, password });
-      await refresh();
+      const res = await api.post<{ twoFactorRequired?: boolean }>("/api/login", {
+        orgCode,
+        username,
+        password,
+      });
+      if (res?.twoFactorRequired) {
+        setMfaRequired(true); // hold for the second factor
+      } else {
+        await refresh();
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError("Invalid organization, username, or password.");
@@ -40,6 +52,28 @@ export function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function completeMfa() {
+    setError(null);
+    setLoading(true);
+    try {
+      await api.post("/api/2fa/complete-login", { code: mfaCode });
+      await refresh();
+    } catch {
+      setError("Invalid or expired code. Try again, or use a backup code.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function requestSms() {
+    try {
+      await api.post("/api/2fa/request-sms");
+      setSmsSent(true);
+    } catch {
+      setError("Couldn't send an SMS code.");
     }
   }
 
@@ -52,11 +86,32 @@ export function Login() {
             <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>D</span>
             <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>DocTurn</span>
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: "28px 0 6px" }}>Sign in</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 700, margin: "28px 0 6px" }}>
+            {mfaRequired ? "Two-factor authentication" : "Sign in"}
+          </h1>
           <p style={{ fontSize: 14, color: "var(--muted-foreground)", margin: "0 0 24px" }}>
-            Secure access to your hospital workspace.
+            {mfaRequired
+              ? "Enter the 6-digit code from your authenticator app, an SMS code, or a backup code."
+              : "Secure access to your hospital workspace."}
           </p>
 
+          {mfaRequired ? (
+            <form onSubmit={(e) => { e.preventDefault(); void completeMfa(); }} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <Field label="Verification code" icon="shield-check" value={mfaCode} onChange={setMfaCode} placeholder="123456" />
+              {error && <p style={{ fontSize: 13, fontWeight: 500, color: "var(--destructive)", margin: 0 }}>{error}</p>}
+              <Button full size="lg" type="submit" disabled={loading || !mfaCode}>
+                {loading ? "Verifying…" : "Verify & continue"}
+              </Button>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
+                <button type="button" onClick={requestSms} style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", fontWeight: 500 }}>
+                  {smsSent ? "SMS code sent ✓" : "Send me an SMS code"}
+                </button>
+                <button type="button" onClick={() => { setMfaRequired(false); setMfaCode(""); setError(null); }} style={{ background: "none", border: "none", color: "var(--muted-foreground)", cursor: "pointer" }}>
+                  Back
+                </button>
+              </div>
+            </form>
+          ) : (
           <form onSubmit={(e) => { e.preventDefault(); void submit(); }} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <Field label="Organization code" icon="building-2" value={orgCode} onChange={(v) => setOrgCode(v.toUpperCase())} help="Your hospital's short code." />
             <Field label="Username" icon="user" value={username} onChange={setUsername} />
@@ -89,6 +144,7 @@ export function Login() {
               HIPAA-compliant · MFA enabled · 15-min sessions
             </div>
           </form>
+          )}
         </div>
       </div>
 

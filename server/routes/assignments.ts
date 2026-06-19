@@ -58,6 +58,18 @@ export function registerAssignmentRoutes(app: Express) {
     },
   );
 
+  // Org-wide assignment list for oversight roles (reassign/cancel UI).
+  app.get(
+    "/api/assignments",
+    requireAuth,
+    requireRole("director", "er_director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await logPhiAccess(req, "assignments");
+      res.json(await storage().listAssignments(me.organizationId));
+    },
+  );
+
   app.get(
     "/api/assignments/pending",
     requireAuth,

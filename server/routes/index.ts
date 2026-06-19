@@ -17,6 +17,7 @@ import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
 import { registerResourceRoutes } from "./resources.js";
 import { registerSettingsRoutes } from "./settings.js";
+import { registerSmsRoutes } from "./sms.js";
 
 /** Mount every REST route onto the app. */
 export function registerRoutes(app: Express) {
@@ -35,6 +36,7 @@ export function registerRoutes(app: Express) {
   registerBoardRoutes(app);
   registerBroadcastRoutes(app);
   registerResourceRoutes(app);
+  registerSmsRoutes(app);
   registerDevRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);

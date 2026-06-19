@@ -50,6 +50,32 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // Edit / rename a tenant.
+  app.patch(
+    "/api/dev/organizations/:id",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = Number(req.params.id);
+      const patch: Record<string, unknown> = {};
+      if (typeof req.body?.name === "string") patch.name = req.body.name;
+      if (typeof req.body?.timezone === "string") patch.timezone = req.body.timezone;
+      const updated = await storage().updateOrganization(id, patch);
+      if (!updated) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.org_update",
+        resourceType: "organization",
+        resourceId: id,
+        details: patch,
+        riskLevel: "medium",
+      });
+      res.json(updated);
+    },
+  );
+
   // Cross-tenant user/specialist creation (v2).
   app.post(
     "/api/dev/users",
