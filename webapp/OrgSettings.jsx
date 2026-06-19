@@ -138,7 +138,52 @@ function OrgSettings() {
           </div>
         </Card>
       </div>
+
+      {/* Danger zone — platform operators only, bottom of settings (standard
+          pattern: type the org name to confirm an irreversible delete). */}
+      {st.session && st.session.role === "developer" && (
+        <OrgDangerZone org={org} onDelete={() => { a.deleteTenant(org); a.setNav("dashboard"); }} />
+      )}
     </PageWrap>
+  );
+}
+
+function OrgDangerZone({ org, onDelete }) {
+  const [confirm, setConfirm] = React.useState(false);
+  const [typed, setTyped] = React.useState("");
+  const match = typed.trim() === org.name;
+  return (
+    <Card style={{ padding: 18, marginTop: 18, border: "1px solid var(--destructive)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Icon name="alert-triangle" size={18} color="var(--destructive)" />
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: "var(--destructive)" }}>Danger zone</h3>
+      </div>
+      <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "0 0 12px" }}>
+        Deleting an organization is permanent and cannot be undone. The organization must have no users.
+      </p>
+      {!confirm ? (
+        <Button variant="outline" size="sm" icon="trash-2"
+          style={{ color: "var(--destructive)", borderColor: "var(--destructive)" }}
+          onClick={() => setConfirm(true)}>
+          Delete this organization
+        </Button>
+      ) : (
+        <div style={{ background: "var(--status-rejected-bg)", border: "1px solid var(--destructive)", borderRadius: "var(--radius-md)", padding: 14 }}>
+          <div style={{ fontSize: 13, marginBottom: 8 }}>
+            Type <b>{org.name}</b> to confirm deletion.
+          </div>
+          <Field value={typed} onChange={setTyped} placeholder={org.name} icon="building-2" />
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <Button variant="outline" size="sm" onClick={() => { setConfirm(false); setTyped(""); }}>Cancel</Button>
+            <Button variant="destructive" size="sm" icon="trash-2"
+              style={{ opacity: match ? 1 : 0.5, pointerEvents: match ? "auto" : "none" }}
+              onClick={() => { if (match) onDelete(); }}>
+              Permanently delete
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

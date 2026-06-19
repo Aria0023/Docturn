@@ -349,6 +349,23 @@
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create", msg: String(e.message) === "code_taken" ? "That code is already in use." : "Create failed." }; return s; });
     });
   };
+  // Persist org settings edits (name/code/timezone/city/state) from OrgSettings.
+  var origUpdateOrg = DT.actions.updateOrg;
+  DT.actions.updateOrg = function (code, patch) {
+    if (origUpdateOrg) origUpdateOrg(code, patch); // snappy local update
+    var orgs = DT.getState().orgs || [];
+    var o = orgs.find(function (x) { return x.code === code; });
+    var resolve = o && o.id
+      ? Promise.resolve(o.id)
+      : get("/api/dev/organizations").then(function (l) {
+          var m = (l || []).find(function (x) { return x.code === code; });
+          return m ? m.id : null;
+        });
+    resolve.then(function (id) {
+      if (id) return api("PATCH", "/api/dev/organizations/" + id, patch).then(hydrateOrgs);
+    }).catch(function (e) { console.error("[DocTurn] updateOrg failed", e); });
+  };
+
   DT.actions.deleteTenant = function (o) {
     if (!o) return;
     function toast(title, msg) { DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; }); }
