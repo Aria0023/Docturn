@@ -58,16 +58,29 @@
     });
   }
 
+  // Which role/org to (re)authenticate as: a confirmed prior login if we have
+  // one, otherwise the role the UI is currently showing — so even a session that
+  // never really logged in (demo fallback after a transient server hiccup) can
+  // be promoted to a real session on demand.
+  function authHint() {
+    if (lastAuth) return lastAuth;
+    var sess = (DT.getState && DT.getState().session) || null;
+    if (sess && sess.role) return { role: sess.role, org: sess.org || "MERCY" };
+    return null;
+  }
+
   // Self-healing wrapper: on a 401 (no/expired session), re-authenticate as the
-  // active role once and retry — so a session that died mid-use doesn't surface
-  // as a dead "unauthorized" button. Never recurses on the login call itself.
+  // active role once and retry — so a session that died mid-use, or never
+  // established, doesn't surface as a dead "unauthorized" button. Never recurses
+  // on the login call itself.
   function api(method, path, body) {
     return rawApi(method, path, body).catch(function (e) {
       var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
-      if (is401 && lastAuth && path !== "/api/login") {
+      var hint = authHint();
+      if (is401 && hint && path !== "/api/login") {
         return rawApi("POST", "/api/login", {
-          orgCode: lastAuth.org, username: DEMO[lastAuth.role] || "chen", password: "docturn",
-        }).then(function () { return rawApi(method, path, body); });
+          orgCode: hint.org, username: DEMO[hint.role] || "chen", password: "docturn",
+        }).then(function () { lastAuth = hint; return rawApi(method, path, body); });
       }
       throw e;
     });
@@ -422,17 +435,18 @@
 
   DT.actions.deleteTenant = function (o) {
     if (!o) return Promise.reject(new Error("No organization selected."));
-    // Resolve the real org id by code if the row lacks one (also surfaces a 403
-    // if the session isn't a real developer).
-    var resolve = o.id
-      ? Promise.resolve(o.id)
-      : get("/api/dev/organizations").then(function (list) {
-          var m = (list || []).find(function (x) { return x.code === o.code; });
-          return m ? m.id : null;
-        });
-    return resolve.then(function (id) {
-      if (!id) throw new Error("Sign in as a Developer to manage organizations.");
-      return api("DELETE", "/api/dev/organizations/" + id);
+    // Always resolve against the authoritative backend list by CODE (get()
+    // self-heals a missing session). Never trust a local id — in demo mode the
+    // ids are fabricated and could collide with real ones.
+    return get("/api/dev/organizations").then(function (list) {
+      var m = (list || []).find(function (x) { return String(x.code).toUpperCase() === String(o.code).toUpperCase(); });
+      if (!m) {
+        // The selected row was demo data (it doesn't exist on the server). We're
+        // now signed in for real — swap the UI to the real org list and explain.
+        hydrateOrgs();
+        throw new Error("That was demo data — your real organizations are now loaded. Pick one to delete.");
+      }
+      return api("DELETE", "/api/dev/organizations/" + m.id);
     }).then(function () {
       // Optimistic local removal + authoritative re-hydrate.
       DT.set(function (s) {

@@ -39,6 +39,38 @@ export function getHandle(): DbHandle {
   return handle;
 }
 
+/** Drop the cached handle so the next getHandle() rebuilds it (used in recovery). */
+export function resetHandle(): void {
+  handle = null;
+}
+
+/**
+ * Open the database and apply the schema, self-healing a corrupted on-disk
+ * PGlite store. A hard kill of the dev server can leave ./.pglite in a state
+ * where PGlite's WASM aborts on init ("_pg_initdb"), which previously made the
+ * server fail to boot entirely. For the in-process dev database we recover by
+ * deleting the directory and recreating it; the caller reseeds. Real Postgres
+ * (DATABASE_URL) is never auto-wiped.
+ */
+export async function initDbWithRecovery(): Promise<{ handle: DbHandle; recovered: boolean }> {
+  const dir = process.env.DATABASE_URL ? undefined : (process.env.PGLITE_DIR ?? "./.pglite");
+  try {
+    const h = getHandle();
+    await h.ensureSchema();
+    return { handle: h, recovered: false };
+  } catch (err) {
+    if (!dir) throw err; // real Postgres — don't touch the user's data
+    console.error("[db] PGlite failed to open — recovering by recreating " + dir + ":", err);
+    try { await handle?.close(); } catch { /* the corrupt handle may throw on close */ }
+    resetHandle();
+    const { rm } = await import("node:fs/promises");
+    await rm(dir, { recursive: true, force: true });
+    const h = getHandle();
+    await h.ensureSchema();
+    return { handle: h, recovered: true };
+  }
+}
+
 export interface CreateDbOptions {
   databaseUrl?: string;
   /** PGlite data directory. Omit for an in-memory database (tests). */

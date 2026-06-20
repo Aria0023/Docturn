@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
-import { getHandle } from "./db.js";
+import { initDbWithRecovery } from "./db.js";
+import { DatabaseStorage, setStorage } from "./storage.js";
+import { seed } from "./seed.js";
 import { startExpiryLoop } from "./services/expiry.js";
 import { attachWebSocket } from "./ws/index.js";
 
@@ -17,10 +19,23 @@ process.on("uncaughtException", (err) => {
 });
 
 async function main() {
-  const handle = getHandle();
   // PGlite (no DATABASE_URL) bootstraps its schema in-process so the app boots
   // with zero secrets. Real Postgres is provisioned via `npm run db:push`.
-  await handle.ensureSchema();
+  // initDbWithRecovery self-heals a corrupted on-disk PGlite store (e.g. after a
+  // hard kill) so the server always boots instead of dying on init.
+  const { handle, recovered } = await initDbWithRecovery();
+  if (recovered) {
+    // The corrupt store was recreated empty — restore the demo data so logins
+    // work again without a manual `npm run seed`.
+    const storage = new DatabaseStorage(handle.db);
+    setStorage(storage);
+    try {
+      await seed(storage);
+      console.log("[db] recovered from a corrupted database and reseeded demo data.");
+    } catch (e) {
+      console.error("[db] recovery reseed failed (run `npm run seed`):", e);
+    }
+  }
 
   const app = createApp({ trustProxy: process.env.NODE_ENV === "production" });
 
