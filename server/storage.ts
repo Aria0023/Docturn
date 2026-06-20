@@ -26,6 +26,7 @@ import {
   patients,
   pendingRegistrations,
   phiAccessLogs,
+  securityIncidents,
   smsHistory,
   suggestions,
   userPreferences,
@@ -633,9 +634,43 @@ export class DatabaseStorage implements IStorage {
     return this.db.select().from(organizations).orderBy(asc(organizations.id));
   }
   async deleteOrganization(id: number) {
-    // Clear org-scoped dependents first so FK constraints don't block the
-    // delete. Callers guard that the org has no users (and therefore no
-    // user-dependent rows like patients/assignments/messages).
+    // Full cascade: remove every org-scoped row (and the user-dependent rows
+    // those imply) in FK-safe order — children before parents — then the users
+    // and finally the org itself. This lets a developer delete an entire tenant
+    // from the Danger Zone, matching how platforms (GitHub/Stripe) delete orgs.
+    const orgUsers = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.organizationId, id));
+    const userIds = orgUsers.map((u) => u.id);
+    const orgMessages = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(eq(messages.organizationId, id));
+    const messageIds = orgMessages.map((m) => m.id);
+
+    // leaf rows that point at messages / broadcasts / assignments
+    if (messageIds.length) {
+      await this.db.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, messageIds));
+    }
+    await this.db.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
+    await this.db.delete(assignments).where(eq(assignments.organizationId, id));
+    await this.db.delete(patientConsults).where(eq(patientConsults.organizationId, id));
+    await this.db.delete(messages).where(eq(messages.organizationId, id));
+    await this.db.delete(conversations).where(eq(conversations.organizationId, id));
+    await this.db.delete(emergencyBroadcasts).where(eq(emergencyBroadcasts.organizationId, id));
+    // patients reference hospitalists + users(er_doctor); delete before both
+    await this.db.delete(patients).where(eq(patients.organizationId, id));
+    await this.db.delete(hospitalists).where(eq(hospitalists.organizationId, id));
+    await this.db.delete(careTeamMembers).where(eq(careTeamMembers.organizationId, id));
+    await this.db.delete(deviceTokens).where(eq(deviceTokens.organizationId, id));
+    await this.db.delete(userPreferences).where(eq(userPreferences.organizationId, id));
+    // user-keyed rows with no org column
+    if (userIds.length) {
+      await this.db.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
+      await this.db.delete(mfaCredentials).where(inArray(mfaCredentials.userId, userIds));
+    }
+    // org-scoped config / logs (some reference users via updated_by / user_id)
     await this.db.delete(suggestions).where(eq(suggestions.organizationId, id));
     await this.db.delete(featureFlags).where(eq(featureFlags.organizationId, id));
     await this.db.delete(orgSettings).where(eq(orgSettings.organizationId, id));
@@ -644,7 +679,13 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(departments).where(eq(departments.organizationId, id));
     await this.db.delete(smsHistory).where(eq(smsHistory.organizationId, id));
     await this.db.delete(phiAccessLogs).where(eq(phiAccessLogs.organizationId, id));
+    await this.db.delete(securityIncidents).where(eq(securityIncidents.organizationId, id));
     await this.db.delete(auditLogs).where(eq(auditLogs.organizationId, id));
+    await this.db.delete(pendingRegistrations).where(eq(pendingRegistrations.organizationId, id));
+    await this.db.delete(landingPageSettings).where(eq(landingPageSettings.organizationId, id));
+    await this.db.delete(contactPageSettings).where(eq(contactPageSettings.organizationId, id));
+    // now the users, then the org
+    await this.db.delete(users).where(eq(users.organizationId, id));
     await this.db.delete(organizations).where(eq(organizations.id, id));
   }
   async countOrgUsers(orgId: number): Promise<number> {

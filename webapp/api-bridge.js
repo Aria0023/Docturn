@@ -32,6 +32,13 @@
     developer: "dev",
   };
 
+  // The developer account lives in its own platform org, not a clinical tenant,
+  // so resolve the right org code by role.
+  var PLATFORM_ORG = "DOCTURN";
+  function orgForRole(role, fallback) {
+    return role === "developer" ? PLATFORM_ORG : (fallback || "MERCY");
+  }
+
   // Remember the active role/org so we can transparently re-authenticate if the
   // server session goes away (15-min idle expiry, OR a dev-server restart that
   // wipes the in-memory session store). Set on every successful doLogin.
@@ -65,7 +72,7 @@
   function authHint() {
     if (lastAuth) return lastAuth;
     var sess = (DT.getState && DT.getState().session) || null;
-    if (sess && sess.role) return { role: sess.role, org: sess.org || "MERCY" };
+    if (sess && sess.role) return { role: sess.role, org: orgForRole(sess.role, sess.org) };
     return null;
   }
 
@@ -203,7 +210,9 @@
   function hydrateOrgs() {
     return get("/api/dev/organizations").then(function (orgs) {
       DT.set(function (s) {
-        s.orgs = (orgs || []).map(function (o) {
+        s.orgs = (orgs || []).filter(function (o) {
+          return String(o.code).toUpperCase() !== PLATFORM_ORG; // platform org isn't a tenant
+        }).map(function (o) {
           return {
             id: o.id, code: o.code, name: o.name,
             city: o.city, state: o.state, timezone: o.timezone,
@@ -224,12 +233,13 @@
   // endpoints 403 and CRUD operates on demo data with no real ids).
   function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
-    return rawApi("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
+    var orgCode = orgForRole(role, org);
+    return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
       .then(function () { return get("/api/user"); })
       .then(function (u) {
-        lastAuth = { role: u.role, org: org || "MERCY" }; // enable self-healing re-auth
+        lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
         DT.set(function (s) {
-          s.session = { role: u.role, org: org || "MERCY", user: u.username, name: u.displayName };
+          s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
           s.ui.nav = "dashboard";
           s.ui.notifOpen = false;
@@ -446,7 +456,9 @@
         hydrateOrgs();
         throw new Error("That was demo data — your real organizations are now loaded. Pick one to delete.");
       }
-      return api("DELETE", "/api/dev/organizations/" + m.id);
+      // force=true cascades the org's users + all tenant data (Danger Zone has
+      // already required typing the org name to confirm).
+      return api("DELETE", "/api/dev/organizations/" + m.id + "?force=true");
     }).then(function () {
       // Optimistic local removal + authoritative re-hydrate.
       DT.set(function (s) {
@@ -458,7 +470,8 @@
       return true;
     }).catch(function (e) {
       var m = String(e && e.message);
-      var msg = m === "org_not_empty" ? "This organization still has users — remove them first."
+      var msg = m === "cannot_delete_own_org" ? "You can't delete the organization your own account belongs to."
+        : m === "org_not_empty" ? "This organization still has users — remove them first."
         : m === "forbidden" ? "You must be signed in as a Developer."
         : (m || "Delete failed.");
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });

@@ -3,7 +3,7 @@ import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
 import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
-import { seed } from "./seed.js";
+import { ensurePlatform, seed } from "./seed.js";
 import { startExpiryLoop } from "./services/expiry.js";
 import { attachWebSocket } from "./ws/index.js";
 
@@ -35,6 +35,17 @@ async function main() {
     } catch (e) {
       console.error("[db] recovery reseed failed (run `npm run seed`):", e);
     }
+  }
+
+  // Guarantee the platform org + developer account exist on every boot
+  // (idempotent), so developer sign-in works even on a database seeded under the
+  // older layout where `dev` lived inside a tenant.
+  try {
+    const storage = new DatabaseStorage(handle.db);
+    setStorage(storage);
+    await ensurePlatform(storage);
+  } catch (e) {
+    console.error("[db] could not ensure platform org:", e);
   }
 
   const app = createApp({ trustProxy: process.env.NODE_ENV === "production" });

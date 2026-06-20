@@ -86,8 +86,16 @@ export function registerDevRoutes(app: Express) {
       const id = Number(req.params.id);
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
+      // Never let a developer delete the org their own account lives in — it
+      // would destroy the session they're acting with.
+      if (id === me.organizationId) {
+        return res.status(409).json({ error: "cannot_delete_own_org" });
+      }
+      // `force` (Danger Zone, type-to-confirm) cascades users + all tenant data.
+      // Without it, deleting a non-empty org is refused.
+      const force = req.query.force === "true" || req.body?.force === true;
       const userCount = await storage().countOrgUsers(id);
-      if (userCount > 0) {
+      if (userCount > 0 && !force) {
         return res
           .status(409)
           .json({ error: "org_not_empty", users: userCount });

@@ -124,7 +124,8 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
   rec(`LOGIN as ${role}`, st.session && st.session.role === role, "session=" + JSON.stringify(st.session));
   if (role === "developer") {
     const mercy = (st.orgs || []).find((o) => o.code === "MERCY");
-    rec("developer: orgs hydrated from backend", !!mercy && mercy.users === 9, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
+    const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
+    rec("developer: orgs hydrated from backend (Mercy=8, platform hidden)", !!mercy && mercy.users === 8 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }
   if (role === "hospitalist") rec("hospitalist: providers hydrated", (st.providers || []).length >= 4, "providers=" + (st.providers || []).length);
   for (const navId of NAV[role]) { DT.actions.setNav(navId); await flush(); await clickEveryButton(role, navId); }
@@ -140,14 +141,27 @@ let delOk = false, delErr = "";
 try { await DT.actions.deleteTenant(harn || { code: "HARN" }); delOk = true; } catch (e) { delErr = e.message; }
 await flush();
 rec("deleteTenant removes empty org", delOk && !(DT.getState().orgs || []).find((o) => o.code === "HARN"), delErr && "threw: " + delErr);
-let mercyErr = "";
-try { await DT.actions.deleteTenant({ code: "MERCY" }); } catch (e) { mercyErr = e.message; }
-rec("deleteTenant blocks org with users", /still has users/i.test(mercyErr), "msg=" + mercyErr);
+// force-cascade: a tenant WITH users can be fully deleted from the Danger Zone
+DT.actions.addTenant({ name: "Populated Clinic", code: "POPUL", city: "Y", state: "CA", timezone: "America/Los_Angeles" });
+await flush(); await flush();
+const popul = (DT.getState().orgs || []).find((o) => o.code === "POPUL");
+DT.actions.addUser({ org: "POPUL", role: "hospitalist", name: "Dr. Test Person", email: "test@popul.org", specialty: "General", cap: "10", shift: "rounding" });
+await flush(); await flush();
+let cascadeOk = false, cascadeErr = "";
+try { await DT.actions.deleteTenant(popul || { code: "POPUL" }); cascadeOk = true; } catch (e) { cascadeErr = e.message; }
+await flush();
+rec("deleteTenant force-cascades a populated tenant", cascadeOk && !(DT.getState().orgs || []).find((o) => o.code === "POPUL"), cascadeErr && "threw: " + cascadeErr);
+// self-protection: the developer cannot delete their own (platform) org
+let ownErr = "";
+try { await DT.actions.deleteTenant({ code: "DOCTURN" }); } catch (e) { ownErr = e.message; }
+rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr), "msg=" + ownErr);
 
 // clinical flow: ER doctor sends -> hospitalist receives -> accept
-await DT.actions.login("er_doctor", "MERCY"); await flush();
+await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 const provs = DT.sortedProviders();
 const target = provs.find((p) => /Chen/i.test(p.name)) || provs[0];
+rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.stringify(provs.map((p) => p.name)));
+if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
 await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
@@ -156,6 +170,7 @@ rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + J
 if (got) {
   DT.actions.accept(got.id); await flush(); await flush();
   rec("hospitalist: accept removes it from pending", !(DT.getState().pending || []).find((p) => p.initials === "ZZ"));
+}
 }
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)

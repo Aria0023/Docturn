@@ -4,8 +4,13 @@ import { DatabaseStorage, setStorage } from "./storage.js";
 
 const DEV_PASSWORD = "docturn";
 
+// The platform/developer tenant. Kept separate from clinical tenants so the
+// developer can delete any hospital org without destroying their own account.
+const PLATFORM_ORG = { name: "DocTurn Platform", code: "DOCTURN" };
+
 interface SeedResult {
   orgId: number;
+  platformOrgId: number;
   userIds: Record<string, number>;
   hospitalistIds: Record<string, number>;
   patientIds: Record<string, number>;
@@ -32,6 +37,13 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   const passwordHash = await hashPassword(DEV_PASSWORD);
   const userIds: Record<string, number> = {};
 
+  // Platform org + developer account (separate from the clinical tenant).
+  // Idempotent so reseeding a DB that still has the platform org doesn't collide.
+  await ensurePlatform(storage);
+  const platform = (await storage.getOrganizationByCode(PLATFORM_ORG.code))!;
+  const devUser = (await storage.getUserByUsername(platform.id, "dev"))!;
+  userIds["dev"] = devUser.id;
+
   async function mkUser(
     username: string,
     role: string,
@@ -54,7 +66,6 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
 
   await mkUser("director", "director", "Dr. Dana Director");
   await mkUser("er.director", "er_director", "Dr. Evan Marsh", "MD");
-  await mkUser("dev", "developer", "Platform Operator");
   await mkUser("er.doc", "er_doctor", "Dr. Erin Reyes", "MD");
   const chen = await mkUser("chen", "hospitalist", "Dr. Jordan Chen", "MD");
   const patel = await mkUser("patel", "hospitalist", "Dr. Priya Patel", "MD");
@@ -141,18 +152,18 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
 
   return {
     orgId: org.id,
+    platformOrgId: platform.id,
     userIds,
     hospitalistIds,
     patientIds: { sc: p1.id },
   };
 }
 
-// The full demo roster — used to top up databases seeded before new accounts
-// (e.g. dev, er.director) were added, without wiping data.
+// The clinical demo roster (MERCY). The developer (`dev`) is provisioned
+// separately in the platform org — see ensurePlatform().
 const DEMO_USERS: Array<{ username: string; role: string; displayName: string; credential?: string }> = [
   { username: "director", role: "director", displayName: "Dr. Dana Director" },
   { username: "er.director", role: "er_director", displayName: "Dr. Evan Marsh", credential: "MD" },
-  { username: "dev", role: "developer", displayName: "Platform Operator" },
   { username: "er.doc", role: "er_doctor", displayName: "Dr. Erin Reyes", credential: "MD" },
   { username: "chen", role: "hospitalist", displayName: "Dr. Jordan Chen", credential: "MD" },
   { username: "patel", role: "hospitalist", displayName: "Dr. Priya Patel", credential: "MD" },
@@ -203,6 +214,47 @@ async function ensureDemoUsers(
   return added;
 }
 
+/**
+ * Ensure the platform org + developer account exist (separate from clinical
+ * tenants). Returns true if it created anything. Idempotent: safe to run on
+ * databases seeded before the platform org existed (it migrates the legacy
+ * in-tenant `dev` account out into the platform org).
+ */
+export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean> {
+  let changed = false;
+  let platform = await storage.getOrganizationByCode(PLATFORM_ORG.code);
+  if (!platform) {
+    platform = await storage.createOrganization({
+      name: PLATFORM_ORG.name,
+      code: PLATFORM_ORG.code,
+      city: null,
+      state: null,
+      timezone: "America/New_York",
+      assignmentTimeoutMin: 10,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+    changed = true;
+  }
+  const dev = await storage.getUserByUsername(platform.id, "dev");
+  if (!dev) {
+    const passwordHash = await hashPassword(DEV_PASSWORD);
+    await storage.createUser({
+      organizationId: platform.id,
+      username: "dev",
+      passwordHash,
+      role: "developer" as never,
+      displayName: "Platform Operator",
+      credential: null as never,
+      phone: null,
+      twoFactorEnabled: false,
+    });
+    changed = true;
+  }
+  return changed;
+}
+
 // CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
 // backslashes so this also fires on Windows (the naive `file://${argv[1]}`
 // string compare fails on Windows paths, silently skipping the seed).
@@ -218,18 +270,23 @@ if (isMain) {
     try {
       const existing = await storage.getOrganizationByCode("MERCY");
       if (existing) {
-        // Already seeded: top up any demo accounts added since (e.g. dev,
-        // er.director) so logging in as every role works — no wipe needed.
+        // Already seeded: top up any missing demo accounts and ensure the
+        // platform org + developer account exist (migrating a legacy in-tenant
+        // dev account out) — no wipe needed.
         const added = await ensureDemoUsers(storage, existing.id);
+        const platformChanged = await ensurePlatform(storage);
+        const msgs: string[] = [];
+        if (added > 0) msgs.push(`added ${added} missing demo account(s)`);
+        if (platformChanged) msgs.push("provisioned the platform org + developer account");
         console.log(
-          added > 0
-            ? `Database already seeded — added ${added} missing demo account(s) (incl. dev/er.director). Password: "${DEV_PASSWORD}".`
-            : 'Database already seeded and all demo accounts present — nothing to do.',
+          msgs.length
+            ? `Database already seeded — ${msgs.join(" and ")}. Password: "${DEV_PASSWORD}".`
+            : "Database already seeded and all accounts present — nothing to do.",
         );
       } else {
         const result = await seed(storage);
         console.log(
-          `Seeded org MERCY (#${result.orgId}) with ${Object.keys(result.userIds).length} users. Dev password: "${DEV_PASSWORD}".`,
+          `Seeded org MERCY (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
         );
       }
     } catch (err) {
