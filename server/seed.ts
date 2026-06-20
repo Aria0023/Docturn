@@ -147,6 +147,62 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   };
 }
 
+// The full demo roster — used to top up databases seeded before new accounts
+// (e.g. dev, er.director) were added, without wiping data.
+const DEMO_USERS: Array<{ username: string; role: string; displayName: string; credential?: string }> = [
+  { username: "director", role: "director", displayName: "Dr. Dana Director" },
+  { username: "er.director", role: "er_director", displayName: "Dr. Evan Marsh", credential: "MD" },
+  { username: "dev", role: "developer", displayName: "Platform Operator" },
+  { username: "er.doc", role: "er_doctor", displayName: "Dr. Erin Reyes", credential: "MD" },
+  { username: "chen", role: "hospitalist", displayName: "Dr. Jordan Chen", credential: "MD" },
+  { username: "patel", role: "hospitalist", displayName: "Dr. Priya Patel", credential: "MD" },
+  { username: "lopez", role: "hospitalist", displayName: "Dr. Luis Lopez", credential: "DO" },
+  { username: "liu", role: "hospitalist", displayName: "Dr. Mei Liu", credential: "MD" },
+  { username: "wu", role: "hospitalist", displayName: "Jordan Wu, PA-C", credential: "PA" },
+];
+
+/** Create any missing demo accounts in an already-seeded org. Returns count added. */
+async function ensureDemoUsers(
+  storage: DatabaseStorage,
+  orgId: number,
+): Promise<number> {
+  const passwordHash = await hashPassword(DEV_PASSWORD);
+  let added = 0;
+  for (const u of DEMO_USERS) {
+    const existing = await storage.getUserByUsername(orgId, u.username);
+    if (existing) continue;
+    const created = await storage.createUser({
+      organizationId: orgId,
+      username: u.username,
+      passwordHash,
+      role: u.role as never,
+      displayName: u.displayName,
+      credential: (u.credential ?? null) as never,
+      phone: null,
+      twoFactorEnabled: false,
+    });
+    // Clinical accounts need a provider profile to appear in rotation/dashboards.
+    if (u.role === "hospitalist") {
+      const prof = await storage.getHospitalistByUser(orgId, created.id);
+      if (!prof) {
+        const all = await storage.listHospitalists(orgId);
+        await storage.createHospitalist({
+          organizationId: orgId,
+          userId: created.id,
+          specialty: "General",
+          currentPatientCount: 0,
+          patientCap: 12,
+          rotationOrder: all.length,
+          working: false,
+          shiftType: "day",
+        });
+      }
+    }
+    added++;
+  }
+  return added;
+}
+
 // CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
 // backslashes so this also fires on Windows (the naive `file://${argv[1]}`
 // string compare fails on Windows paths, silently skipping the seed).
@@ -160,12 +216,15 @@ if (isMain) {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
     try {
-      // Idempotent: if the demo org already exists, skip cleanly rather than
-      // failing on the unique-code constraint.
       const existing = await storage.getOrganizationByCode("MERCY");
       if (existing) {
+        // Already seeded: top up any demo accounts added since (e.g. dev,
+        // er.director) so logging in as every role works — no wipe needed.
+        const added = await ensureDemoUsers(storage, existing.id);
         console.log(
-          'Database already seeded (org MERCY exists) — nothing to do. To reseed from scratch, delete the ".pglite" folder and run "npm run seed" again.',
+          added > 0
+            ? `Database already seeded — added ${added} missing demo account(s) (incl. dev/er.director). Password: "${DEV_PASSWORD}".`
+            : 'Database already seeded and all demo accounts present — nothing to do.',
         );
       } else {
         const result = await seed(storage);

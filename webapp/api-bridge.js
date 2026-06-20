@@ -201,10 +201,30 @@
       });
   }
 
+  // Distinguish "backend unreachable" (fetch rejects with a TypeError) from
+  // "backend rejected the credentials" (HTTP 4xx → Error from api()). For the
+  // former we silently fall back to the demo UI; for the latter we keep the user
+  // on the login screen and tell them WHY — almost always a missing demo account
+  // (DB seeded before that role existed), fixed by re-running `npm run seed`.
+  function isNetworkError(e) {
+    return e instanceof TypeError || /Failed to fetch|NetworkError|ECONNREFUSED/i.test(String(e && e.message));
+  }
+
   DT.actions.login = function (role, org, user) {
-    doLogin(role, org, user).catch(function () {
-      // Backend unreachable / no such account → demo login so UI still works.
-      origLogin(role, org, user);
+    doLogin(role, org, user).catch(function (e) {
+      if (isNetworkError(e)) {
+        // Server down → demo login so the UI is still explorable offline.
+        origLogin(role, org, user);
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
+        return;
+      }
+      // Server reachable but login failed (bad/missing account).
+      DT.set(function (s) {
+        s.loginError = "Sign-in failed for this role. Run \"npm run seed\" to (re)create demo accounts, then try again.";
+        s.__toast = { tone: "rejected", title: "Sign-in failed", msg: "Run \"npm run seed\" to create the demo accounts." };
+        return s;
+      });
+      console.error("[DocTurn] login failed (account missing?):", e);
     });
   };
 
@@ -214,8 +234,13 @@
   DT.actions.setRole = function (role) {
     var st = DT.getState();
     var org = (st.session && st.session.org) || "MERCY";
-    doLogin(role, org).catch(function () {
-      if (origSetRole) origSetRole(role);
+    doLogin(role, org).catch(function (e) {
+      if (isNetworkError(e)) {
+        if (origSetRole) origSetRole(role);
+        return;
+      }
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: "That role's account is missing — run \"npm run seed\"." }; return s; });
+      console.error("[DocTurn] setRole failed:", e);
     });
   };
 
