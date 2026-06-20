@@ -32,7 +32,12 @@
     developer: "dev",
   };
 
-  function api(method, path, body) {
+  // Remember the active role/org so we can transparently re-authenticate if the
+  // server session goes away (15-min idle expiry, OR a dev-server restart that
+  // wipes the in-memory session store). Set on every successful doLogin.
+  var lastAuth = null;
+
+  function rawApi(method, path, body) {
     return fetch(path, {
       method: method,
       credentials: "include",
@@ -41,10 +46,30 @@
     }).then(function (r) {
       if (r.status === 204) return null;
       return r.text().then(function (t) {
-        var d = t ? JSON.parse(t) : null;
-        if (!r.ok) throw new Error((d && d.error) || r.statusText);
+        var d = null;
+        if (t) { try { d = JSON.parse(t); } catch (e) { d = { error: t.slice(0, 120) }; } }
+        if (!r.ok) {
+          var err = new Error((d && d.error) || r.statusText || ("HTTP " + r.status));
+          err.status = r.status;
+          throw err;
+        }
         return d;
       });
+    });
+  }
+
+  // Self-healing wrapper: on a 401 (no/expired session), re-authenticate as the
+  // active role once and retry — so a session that died mid-use doesn't surface
+  // as a dead "unauthorized" button. Never recurses on the login call itself.
+  function api(method, path, body) {
+    return rawApi(method, path, body).catch(function (e) {
+      var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
+      if (is401 && lastAuth && path !== "/api/login") {
+        return rawApi("POST", "/api/login", {
+          orgCode: lastAuth.org, username: DEMO[lastAuth.role] || "chen", password: "docturn",
+        }).then(function () { return rawApi(method, path, body); });
+      }
+      throw e;
     });
   }
   var get = function (p) { return api("GET", p); };
@@ -186,9 +211,10 @@
   // endpoints 403 and CRUD operates on demo data with no real ids).
   function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
-    return api("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
+    return rawApi("POST", "/api/login", { orgCode: org || "MERCY", username: username, password: "docturn" })
       .then(function () { return get("/api/user"); })
       .then(function (u) {
+        lastAuth = { role: u.role, org: org || "MERCY" }; // enable self-healing re-auth
         DT.set(function (s) {
           s.session = { role: u.role, org: org || "MERCY", user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
@@ -207,7 +233,10 @@
   // on the login screen and tell them WHY — almost always a missing demo account
   // (DB seeded before that role existed), fixed by re-running `npm run seed`.
   function isNetworkError(e) {
-    return e instanceof TypeError || /Failed to fetch|NetworkError|ECONNREFUSED/i.test(String(e && e.message));
+    // A real fetch transport failure (server down/unreachable). Match by message
+    // because `instanceof TypeError` is unreliable across realms.
+    return (e && e.name === "TypeError") ||
+      /Failed to fetch|fetch failed|NetworkError|ECONNREFUSED|ERR_NETWORK|load failed/i.test(String(e && e.message));
   }
 
   DT.actions.login = function (role, org, user) {

@@ -57,6 +57,8 @@ window.fetch = async (url, opts = {}) => {
   if (sc && sc.length) cookie = sc.map((c) => c.split(";")[0]).join("; ");
   return res;
 };
+// test hook: drop the session cookie to simulate a 15-min expiry / server restart
+window.__wipeSession = () => { cookie = ""; };
 
 // ---- load the app exactly as index.html does ------------------------------
 const runInWindow = (code, name) => vm.runInContext(code, ctx, { filename: name });
@@ -155,6 +157,20 @@ if (got) {
   DT.actions.accept(got.id); await flush(); await flush();
   rec("hospitalist: accept removes it from pending", !(DT.getState().pending || []).find((p) => p.initials === "ZZ"));
 }
+
+// session recovery: simulate the session dying mid-use (expiry / server restart)
+// then perform a dev action — the bridge should re-auth and succeed, not 401.
+await DT.actions.login("developer", "MERCY"); await flush();
+window.__wipeSession();
+let recovered = false, recErr = "";
+DT.actions.addTenant({ name: "Recovery Org", code: "RECOV", city: "X", state: "CA", timezone: "America/Los_Angeles" });
+await flush(); await flush();
+const recov = (DT.getState().orgs || []).find((o) => o.code === "RECOV");
+if (recov) {
+  try { await DT.actions.deleteTenant(recov); recovered = true; } catch (e) { recErr = e.message; }
+  await flush();
+}
+rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.getState().orgs || []).find((o) => o.code === "RECOV"), recErr || (recov ? "" : "addTenant failed after wipe"));
 
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");

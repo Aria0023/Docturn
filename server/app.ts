@@ -69,7 +69,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  if (opts.rateLimiting !== false) {
+  // Rate limiting is on by default; set RATE_LIMIT=off to disable (useful for
+  // local dev, the headless UI smoke test, and load testing).
+  if (opts.rateLimiting !== false && process.env.RATE_LIMIT !== "off") {
     // Tiered limits: stricter on auth, looser on general traffic.
     const authLimiter = rateLimit({
       windowMs: 15 * 60 * 1000,
