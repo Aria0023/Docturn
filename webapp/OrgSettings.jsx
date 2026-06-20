@@ -38,7 +38,7 @@ function OrgSettings() {
     { key: "twilio", name: "Twilio", desc: "SMS notifications & 2FA", icon: "message-circle" },
     { key: "firebase", name: "Firebase", desc: "Push notifications (FCM)", icon: "bell" },
     { key: "openai", name: "OpenAI", desc: "AI intake extraction", icon: "sparkles" },
-    { key: "amion", name: "Amion", desc: "Provider schedule sync", icon: "calendar-sync" },
+    { key: "amion", name: "Amion", desc: "Provider schedule sync", icon: "calendar-clock" },
   ];
 
   return (
@@ -105,7 +105,7 @@ function OrgSettings() {
           <FlagRow icon="bell" title="Push notifications" desc="Firebase Cloud Messaging." on={s.flags.push} onToggle={() => a.toggleFlag("push")} />
           <FlagRow icon="sparkles" title="AI intake assistant" desc="OpenAI free-text extraction." on={s.flags.ai} onToggle={() => a.toggleFlag("ai")} />
           <FlagRow icon="megaphone" title="Emergency broadcasts" desc="Org-wide urgent messaging." on={s.flags.broadcasts} onToggle={() => a.toggleFlag("broadcasts")} />
-          <FlagRow icon="calendar-sync" title="Amion schedule sync" desc="External on-call import." on={s.flags.amion} onToggle={() => a.toggleFlag("amion")} last />
+          <FlagRow icon="calendar-clock" title="Amion schedule sync" desc="External on-call import." on={s.flags.amion} onToggle={() => a.toggleFlag("amion")} last />
         </Card>
 
         {/* Integrations */}
