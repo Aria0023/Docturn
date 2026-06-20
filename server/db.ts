@@ -54,13 +54,34 @@ export function resetHandle(): void {
  */
 export async function initDbWithRecovery(): Promise<{ handle: DbHandle; recovered: boolean }> {
   const dir = process.env.DATABASE_URL ? undefined : (process.env.PGLITE_DIR ?? "./.pglite");
+
+  // Force Drizzle to resolve every schema-defined column on the core tables. A
+  // store created by an older schema (data present, columns missing) opens fine
+  // but throws "column ... does not exist" on these selects — which previously
+  // surfaced as a 500 on login. Running it here lets recovery catch schema drift
+  // the same way it catches a corrupt/uninitialized store. Uses a dummy org id
+  // so it works even on an empty database.
+  async function probeSchema(h: DbHandle): Promise<void> {
+    const { DatabaseStorage } = await import("./storage.js");
+    const s = new DatabaseStorage(h.db);
+    await s.listOrganizations();
+    await s.listUsers(0);
+    await s.listHospitalists(0);
+    await s.listPatients(0);
+    await s.listAssignments(0);
+    await s.listDepartments(0);
+    await s.listBeds(0);
+    await s.listEquipment(0);
+  }
+
   try {
     const h = getHandle();
     await h.ensureSchema();
+    await probeSchema(h);
     return { handle: h, recovered: false };
   } catch (err) {
     if (!dir) throw err; // real Postgres — don't touch the user's data
-    console.error("[db] PGlite failed to open — recovering by recreating " + dir + ":", err);
+    console.error("[db] dev database is corrupt or schema-stale — recovering by recreating " + dir + ":", err);
     try { await handle?.close(); } catch { /* the corrupt handle may throw on close */ }
     resetHandle();
     const { rm } = await import("node:fs/promises");
