@@ -58,6 +58,34 @@
 <script type="text/babel" data-presets="react">
 const { useState, useEffect } = React;
 
+// Catch a render error in any one screen so it shows a recoverable message
+// instead of blanking the whole app. (One bad component shouldn't take the
+// page down — and a stale saved session shouldn't either.)
+class ErrorBoundary extends React.Component {
+  constructor(p) { super(p); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err) { console.error("[DocTurn] screen error:", err); }
+  render() {
+    if (this.state.err) {
+      return (
+        <div style={{ padding: 40, maxWidth: 560, margin: "40px auto", fontFamily: "var(--font-sans)" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Something went wrong on this screen</div>
+          <div style={{ fontSize: 13.5, color: "var(--muted-foreground)", lineHeight: 1.6, marginBottom: 18 }}>
+            {String(this.state.err && this.state.err.message || this.state.err)}
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => { this.setState({ err: null }); try { window.DT.actions.setNav("dashboard"); } catch (e) {} }}
+              style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Back to dashboard</button>
+            <button onClick={() => { try { localStorage.clear(); } catch (e) {} location.reload(); }}
+              style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Reset & sign out</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const ROLE_META = {
   hospitalist: { title: "Census & assignments", subtitle: "Accept incoming hand‑offs and manage your patients" },
   er_doctor:   { title: "Patient intake", subtitle: "Admit a patient and route to a hospitalist" },
@@ -269,7 +297,7 @@ function App() {
           onBell={() => a.toggleNotif()}
           onLock={() => setLocked(true)}
           right={<RoleSwitcher role={role} onChange={a.setRole} />} />
-        <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}>{screen}</main>
+        <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />

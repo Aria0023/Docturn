@@ -134,7 +134,7 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   const [extracted, setExtracted] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "" });
   const [mode, setMode] = React.useState("quick"); // quick | manual
-  const [manual, setManual] = React.useState(providers[0].id);
+  const [manual, setManual] = React.useState(""); // selected provider id (empty until chosen)
   const [consults, setConsults] = React.useState([]);
   const [consultMembers, setConsultMembers] = React.useState({});
   const [consultChannels, setConsultChannels] = React.useState({});
@@ -164,10 +164,16 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   const removeConsultMember = (s, id) => setConsultMembers((cm) => Object.assign({}, cm, { [s]: (cm[s] || []).filter((x) => x.id !== id) }));
   const toggleChannel = (s, ch) => setConsultChannels((cc) => Object.assign({}, cc, { [s]: Object.assign({}, chOf(s), { [ch]: !chOf(s)[ch] }) }));
 
-  const canSend = fields.initials && fields.room;
+  // Providers may be empty on a cold load (before the rotation pool hydrates),
+  // so derive defensively and never index into an empty array.
+  const list = providers || [];
+  const nextUp = list[0];
+  const manualId = manual || (nextUp && nextUp.id);
+
+  const canSend = (fields.initials && fields.room) && !!nextUp;
   const doSend = () => {
     if (!canSend) return;
-    onSend(mode === "quick" ? providers[0] : providers.find((p) => p.id === manual), fields, consults);
+    onSend(mode === "quick" ? nextUp : list.find((p) => p.id === manualId), fields, consults);
     reset();
   };
 
@@ -176,6 +182,22 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   const grouped = {};
   sent.forEach((s, idx) => { (grouped[s.day] = grouped[s.day] || []).push({ ...s, idx }); });
   const dayKeys = [...dayOrder.filter((d) => grouped[d]), ...Object.keys(grouped).filter((d) => !dayOrder.includes(d))];
+
+  if (!nextUp) {
+    return (
+      <PageWrap>
+        <Card style={{ padding: 24 }}>
+          <SectionTitle>Route assignment</SectionTitle>
+          <div style={{ display: "flex", gap: 11, alignItems: "flex-start", marginTop: 8 }}>
+            <Icon name="users-round" size={18} color="var(--muted-foreground)" style={{ marginTop: 1 }} />
+            <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+              No hospitalist providers are available yet. Once providers are added to the rotation (or imported from a schedule sync), you can route patients here.
+            </div>
+          </div>
+        </Card>
+      </PageWrap>
+    );
+  }
 
   return (
     <PageWrap>
@@ -222,7 +244,7 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
               <Icon name="route" size={18} color="var(--primary)" />
               <div style={{ fontSize: 13, color: "#1e3a8a", lineHeight: 1.5 }}>
                 Routes to the <b>lowest‑census</b> eligible hospitalist on shift. Next up:{" "}
-                <b>{providers[0].name}</b> ({providers[0].census}/{providers[0].cap}).
+                <b>{nextUp.name}</b> ({nextUp.census}/{nextUp.cap}).
               </div>
             </div>
           ) : (
@@ -230,7 +252,7 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
               {providers.map((p) => (
                 <button key={p.id} onClick={() => setManual(p.id)}
                   style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: "var(--radius-md)", cursor: "pointer", textAlign: "left",
-                    border: `1px solid ${manual === p.id ? "var(--primary)" : "var(--border)"}`, background: manual === p.id ? "#EFF6FF" : "#fff" }}>
+                    border: `1px solid ${manualId === p.id ? "var(--primary)" : "var(--border)"}`, background: manualId === p.id ? "#EFF6FF" : "#fff" }}>
                   <Avatar initials={p.avatar} size={32} tint={p.working ? "emerald" : "slate"} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</div>
