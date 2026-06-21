@@ -37,15 +37,21 @@ async function main() {
     }
   }
 
-  // Guarantee the platform org + developer account exist on every boot
-  // (idempotent), so developer sign-in works even on a database seeded under the
-  // older layout where `dev` lived inside a tenant.
+  // Make the demo usable out of the box — including a brand-new cloud deploy
+  // with an empty database: seed the demo org + accounts if they're missing,
+  // otherwise just ensure the platform org/developer exist. Idempotent.
   try {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
-    await ensurePlatform(storage);
+    const existing = await storage.getOrganizationByCode("MERCY");
+    if (!existing) {
+      await seed(storage);
+      console.log("[db] empty database — seeded demo data (org MERCY + platform).");
+    } else {
+      await ensurePlatform(storage);
+    }
   } catch (e) {
-    console.error("[db] could not ensure platform org:", e);
+    console.error("[db] seed/ensure failed:", e);
   }
 
   const app = createApp({ trustProxy: process.env.NODE_ENV === "production" });

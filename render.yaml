@@ -1,0 +1,23 @@
+# Render Blueprint — one public URL for the DocTurn demo.
+# In Render: New → Blueprint → pick this repo/branch. It builds and starts a
+# free web service. The app self-seeds an in-process database on first boot,
+# so there are no secrets or external database to configure for the demo.
+#
+# Demo logins (org code MERCY, password "docturn"): chen / er.doc / director /
+# er.director ; developer is user "dev" on org code DOCTURN (the app picks the
+# right org automatically when you choose a role on the sign-in screen).
+services:
+  - type: web
+    name: docturn-demo
+    runtime: node
+    plan: free
+    branch: claude/sleepy-davinci-kmin7n
+    buildCommand: npm install
+    startCommand: npm run serve
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Loosen the auth rate limiter for a shared demo (role switching logs in).
+      - key: RATE_LIMIT
+        value: "off"
+      # No DATABASE_URL → in-process PGlite, auto-seeded on boot (demo only).

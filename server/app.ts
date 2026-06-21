@@ -101,16 +101,18 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // webapp/ is the designer's kit served verbatim PLUS api-bridge.js, which
   // wires its actions/data to the live backend. Falls back to the pristine kit,
   // then the built React client.
+  // Resolve the wired kit whether we run from source (tsx) or compiled (dist):
+  // try paths relative to this module AND relative to the project cwd.
   const wiredKit = fileURLToPath(new URL("../webapp", import.meta.url));
-  const kitDir = fileURLToPath(
-    new URL("../design/ui_kits/web-app", import.meta.url),
-  );
-  const clientDist = fileURLToPath(new URL("../client/dist", import.meta.url));
-  const uiDir = existsSync(wiredKit)
-    ? wiredKit
-    : existsSync(kitDir)
-      ? kitDir
-      : clientDist;
+  const candidates = [
+    wiredKit,
+    join(process.cwd(), "webapp"),
+    fileURLToPath(new URL("../design/ui_kits/web-app", import.meta.url)),
+    join(process.cwd(), "design/ui_kits/web-app"),
+    fileURLToPath(new URL("../client/dist", import.meta.url)),
+    join(process.cwd(), "client/dist"),
+  ];
+  const uiDir = candidates.find((d) => existsSync(d)) || wiredKit;
   if (existsSync(uiDir)) {
     // No-cache for the kit: it's plain <script> files with no content hashing,
     // so a browser that caches api-bridge.js/*.jsx would keep running stale
