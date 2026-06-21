@@ -32,7 +32,7 @@ function ShiftSelect({ shifts, value, onChange }) {
   );
 }
 
-function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule }) {
+function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions }) {
   const [dragId, setDragId] = React.useState(null);
   const [overId, setOverId] = React.useState(null);
   const [capInput, setCapInput] = React.useState("12");
@@ -44,6 +44,15 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
   const totalCap = providers.reduce((a, p) => a + p.cap, 0);
   const allOn = providers.length > 0 && working.length === providers.length;
   const allOff = working.length === 0;
+
+  // Who's actually next: lowest census in rotation (or first in order if sequential).
+  const rotMode = (settings && settings.rotationMode) || "lowest_census";
+  const nextProvider = rotMode === "lowest_census"
+    ? rotation.reduce((b, p) => (!b || p.census < b.census ? p : b), null)
+    : (rotation[0] || null);
+
+  // Rolling admissions count since the director's last reset (log keeps all).
+  const admSinceReset = (admissions || []).filter((a) => a.at >= (admissionsResetAt || 0)).length;
 
   const handleDrop = (targetId) => { if (dragId && dragId !== targetId) onReorder(dragId, targetId); setDragId(null); setOverId(null); };
 
@@ -70,6 +79,19 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
           <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows the live on-call grid. Toggles below override locally for this shift.</div>
         </div>
         <Button size="sm" variant="outline" icon="settings" onClick={onOpenSchedule}>Manage sync</Button>
+      </Card>
+
+      {/* Admissions counter — rolling count since last reset; full history in the log */}
+      <Card style={{ padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DCFCE7", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="scroll-text" size={17} color="var(--status-accepted)" /></span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Admissions since last reset: <span style={{ fontVariantNumeric: "tabular-nums" }}>{admSinceReset}</span></div>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Every admission routed to a team is kept in the log. Reset clears this daily count only.</div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {onOpenAdmissions && <Button size="sm" variant="outline" icon="scroll-text" onClick={onOpenAdmissions}>View log</Button>}
+          {onResetAdmissions && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={onResetAdmissions}>Reset 24h</Button>}
+        </div>
       </Card>
 
       {/* Bulk controls bar */}
@@ -153,7 +175,7 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
               <Icon name="route" size={18} color="var(--primary)" />
               <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin config</h3>
             </div>
-            <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 10)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-route after this." />
+            <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 15)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-page the next provider after this." />
             <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>Auto-reassign on expiry</div>
               <button onClick={onToggleAutoReassign}
@@ -168,27 +190,53 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
           </Card>
 
           <Card style={{ padding: 18 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 4px" }}>Rotation order</h3>
-            <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 12px" }}>On-shift providers in rotation. Drag to reorder; toggle a provider off rotation in their row at left.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {rotation.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "6px 2px" }}>No providers in rotation.</div>}
-              {rotation.map((p, i) => (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <Icon name="route" size={18} color="var(--primary)" />
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin rotation</h3>
+              <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotMode === "lowest_census" ? "Lowest census first" : "Sequential"}</span>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 12px" }}>Who gets the next admission, and the order behind them. Drag to reorder; the next provider is highlighted.</p>
+
+            {/* Next-up hero */}
+            {nextProvider ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: "var(--radius-md)", background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)", marginBottom: 14 }}>
+                <Avatar initials={nextProvider.avatar} size={42} tint="emerald" />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                    <Badge status="sent">Next up</Badge>
+                    <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider.name}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap}</div>
+                </div>
+                <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onResetRotation}>Reset</Button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "10px 2px", marginBottom: 8 }}>No providers in rotation.</div>
+            )}
+
+            {/* Ordered list (FYI) — drag to reorder */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {rotation.map((p, i) => {
+                const isNext = nextProvider && p.id === nextProvider.id;
+                return (
                 <div key={p.id}
                   draggable
                   onDragStart={() => setDragId(p.id)}
                   onDragEnd={() => { setDragId(null); setOverId(null); }}
                   onDragOver={(e) => { e.preventDefault(); if (overId !== p.id) setOverId(p.id); }}
                   onDrop={(e) => { e.preventDefault(); handleDrop(p.id); }}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", border: `1px solid ${overId === p.id && dragId !== p.id ? "var(--primary)" : "var(--border)"}`, borderRadius: "var(--radius-md)",
-                    background: dragId === p.id ? "var(--secondary)" : (i === 0 ? "#EFF6FF" : "#fff"),
+                  title="Drag to reorder"
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", border: `1px solid ${overId === p.id && dragId !== p.id ? "var(--primary)" : (isNext ? "#BFDBFE" : "var(--border)")}`, borderRadius: "var(--radius-md)",
+                    background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "#fff"),
                     opacity: dragId === p.id ? 0.5 : 1, cursor: "grab", transition: "border-color .12s, background .12s" }}>
                   <Icon name="grip-vertical" size={15} color="var(--muted-foreground)" />
-                  <span style={{ width: 20, height: 20, borderRadius: 99, background: i === 0 ? "var(--primary)" : "var(--secondary)", color: i === 0 ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{i + 1}</span>
-                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                  <span style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{i + 1}</span>
+                  <Avatar initials={p.avatar} size={26} tint={isNext ? "emerald" : "slate"} />
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                   <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums" }}>{p.census}/{p.cap}</span>
-                  {i === 0 && <Badge status="sent">Next up</Badge>}
+                  {isNext && <Icon name="arrow-up" size={13} color="var(--primary)" title="Next to receive" />}
                 </div>
-              ))}
+              ); })}
             </div>
             {working.length > rotation.length && (
               <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border)", fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6 }}>

@@ -45,6 +45,15 @@ export function resetHandle(): void {
 }
 
 /**
+ * Point the global handle at a specific database. Used by tests so getDb() (e.g.
+ * the health endpoint) hits the isolated in-memory test DB instead of the shared
+ * on-disk ./.pglite, which parallel test workers would otherwise contend on.
+ */
+export function setHandle(h: DbHandle): void {
+  handle = h;
+}
+
+/**
  * Open the database and apply the schema, self-healing a corrupted on-disk
  * PGlite store. A hard kill of the dev server can leave ./.pglite in a state
  * where PGlite's WASM aborts on init ("_pg_initdb"), which previously made the

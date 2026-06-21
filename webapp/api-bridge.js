@@ -318,6 +318,8 @@
     }).then(rehydrate).catch(function () {});
     DT.set(function (s) {
       s.sent = [{ id: "s" + Date.now(), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
+      // append to the admissions log (every admission given to a team)
+      s.admissions = [{ id: "ad" + Date.now(), at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
       s.__toast = { tone: "sent", title: "Assignment sent to " + provider.name, msg: "Notified by push, SMS fallback." };
       return s;
     });

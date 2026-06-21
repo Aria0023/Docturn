@@ -41,6 +41,7 @@
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
 <script type="text/babel" src="ErDoctorDashboard.jsx"></script>
 <script type="text/babel" src="DirectorDashboard.jsx"></script>
+<script type="text/babel" src="AdmissionsLog.jsx"></script>
 <script type="text/babel" src="ErDirectorDashboard.jsx"></script>
 <script type="text/babel" src="Messaging.jsx"></script>
 <script type="text/babel" src="Directory.jsx"></script>
@@ -126,6 +127,7 @@ const NAV = {
   director: [
     { id: "dashboard",  label: "Overview",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "admissions", label: "Admissions log", icon: "scroll-text" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "access",     label: "Access & people", icon: "users-round" },
@@ -146,6 +148,7 @@ const NAV = {
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
+  admissions: ["Admissions log", "Every patient routed to a team — full history"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
   directory:  ["Care team", "On‑call and availability"],
@@ -263,6 +266,7 @@ function App() {
   if (nav === "messages") screen = <Messaging />;
   else if (nav === "directory") screen = <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} />;
   else if (nav === "team") screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} />;
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
@@ -280,7 +284,7 @@ function App() {
   else if (role === "er_doctor") screen = <ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} />;
   else if (role === "er_director") screen = <ErDirectorDashboard erPhysicians={st.erPhysicians} shifts={st.shifts} sent={st.sent} board={st.board} diversion={st.diversion} avgAcceptSec={st.avgAcceptSec} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} onToggleDiversion={a.toggleDiversion} onBroadcasts={() => a.setNav("broadcasts")} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} />;
-  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} />;
+  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} />;
 
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;

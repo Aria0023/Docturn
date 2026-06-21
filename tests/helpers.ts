@@ -1,7 +1,7 @@
 import supertest from "supertest";
 import type { Express } from "express";
 import { createApp } from "../server/app.js";
-import { createTestDb, type DbHandle } from "../server/db.js";
+import { createTestDb, setHandle, type DbHandle } from "../server/db.js";
 import { DatabaseStorage, setStorage } from "../server/storage.js";
 import { seed, DEV_PASSWORD } from "../server/seed.js";
 import {
@@ -26,6 +26,7 @@ export interface TestContext {
 /** Build a fresh in-process app + database + seed for one test file. */
 export async function createTestApp(): Promise<TestContext> {
   const handle = await createTestDb();
+  setHandle(handle); // make getDb() (e.g. /api/health) use this isolated DB
   const storage = new DatabaseStorage(handle.db);
   setStorage(storage);
   _resetAcks();

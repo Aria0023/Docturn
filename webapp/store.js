@@ -140,6 +140,17 @@
         { id: uid("s"), initials: "LP", provider: "Dr. Omar Haddad", complaint: "GI bleed, melena",           consultants: ["GI"],          time: "Yesterday · 16:32", day: "Yesterday", status: "rejected" },
       ],
 
+      // Full, append-only log of every admission routed to a team. The main
+      // dashboard shows a rolling count since `admissionsResetAt`, which the
+      // hospitalist director can reset on command; this log keeps everything.
+      admissions: [
+        { id: uid("ad"), at: now() - 35 * 60000,    initials: "MJ", room: "402", provider: "Dr. Amir Patel",  specialty: "Cardiology",  via: "Round-robin", status: "accepted" },
+        { id: uid("ad"), at: now() - 95 * 60000,    initials: "RV", room: "318", provider: "Dr. Maria Lopez", specialty: "Pulmonology", via: "Manual",      status: "sent" },
+        { id: uid("ad"), at: now() - 5 * 3600000,   initials: "DK", room: "210", provider: "Dr. Sarah Chen",  specialty: "Neurology",   via: "Round-robin", status: "accepted" },
+        { id: uid("ad"), at: now() - 26 * 3600000,  initials: "LP", room: "115", provider: "Dr. Omar Haddad", specialty: "GI",          via: "Manual",      status: "accepted" },
+      ],
+      admissionsResetAt: 0,
+
       team: [
         { id: "m1", name: "Jordan Wu, PA-C", avatar: "JW", role: "PA", specialty: "Hospital Medicine", onCall: true },
         { id: "m2", name: "Nina Roy, NP",    avatar: "NR", role: "NP", specialty: "Cardiology",        onCall: false },
@@ -445,7 +456,10 @@
         s.sent = [entry].concat(s.sent);
         // create a board row (routing) + a pending request for the receiving hospitalist view
         s.board = [{ id: uid("b"), initials: fields.initials, room: fields.room || "—", dept: "MED", issue: fields.complaint || "—", status: "pending", attending: { name: "", avatar: "" }, unit: [], consultants: consults || [], er: { name: s.me.name, avatar: "Er" } }].concat(s.board);
-        s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", via: provider.id === (nextUp() || {}).id ? "Round-robin" : "Manual", expiresAt: now() + s.settings.timeout * 60000 }]);
+        var via = provider.id === (nextUp() || {}).id ? "Round-robin" : "Manual";
+        s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", via: via, expiresAt: now() + s.settings.timeout * 60000 }]);
+        // append to the admissions log (every admission given to a team)
+        s.admissions = [{ id: uid("ad"), at: now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", via: via, status: "sent" }].concat(s.admissions || []);
         s.lastAdmitAt = now();
         pushAudit(s, { action: "create_assignment", resource: "assignment " + entry.id, risk: "low" });
         pushPhi(s, { patient: fields.initials, access: "view", fields: "initials, room, issue", purpose: "Admission intake" });
@@ -512,6 +526,16 @@
     },
     renameShift: function (sid, label) { set(function (s) { s.shifts = s.shifts.map(function (x) { return x.id === sid ? Object.assign({}, x, { label: label }) : x; }); return s; }); },
     resetRotation: function () { set(function (s) { s.rotationCursor = 0; pushAudit(s, { action: "reset_rotation_index", resource: "rotation", risk: "low" }); s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin will start from the top." }; return s; }); },
+    // Director command: reset the dashboard's rolling 24h admissions counter.
+    // The admissions log is untouched — only the "since reset" window moves.
+    resetAdmissions24h: function () {
+      set(function (s) {
+        s.admissionsResetAt = now();
+        pushAudit(s, { action: "reset_admissions_counter", resource: "admissions (24h)", risk: "low" });
+        s.__toast = { tone: "accepted", title: "24h admissions reset", msg: "Daily count cleared. Full history stays in the admissions log." };
+        return s;
+      });
+    },
 
     /* ER director — ER physician staffing + diversion */
     toggleErPhysician: function (id) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { working: !p.working }) : p; }); return s; }); },

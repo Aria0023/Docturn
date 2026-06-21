@@ -72,7 +72,7 @@ const JSX_FILES = [
   "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
   "HospitalistDashboard.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
-  "PatientBoard.jsx", "DeveloperDashboard.jsx", "Compliance.jsx", "Broadcasts.jsx",
+  "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
 ];
 const html = read("index.html");
@@ -186,6 +186,7 @@ rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.s
 if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
+rec("admission logged on send", (DT.getState().admissions || []).some((a) => a.initials === "ZZ"), "admissions=" + (DT.getState().admissions || []).length);
 await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
 const got = (DT.getState().pending || []).find((p) => p.initials === "ZZ");
 rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + JSON.stringify((DT.getState().pending || []).map((p) => p.initials)));
@@ -229,6 +230,14 @@ rec("importShiftTypes adds detected intervals (dedup)", afterShifts.some((t) => 
 
 // default assignment timeout is 15
 rec("default assignment timeout is 15 min", DT.getState().settings.timeout === 15, "timeout=" + DT.getState().settings.timeout);
+
+// director 24h admissions reset: count since reset drops to 0, log is retained
+const logBefore = (DT.getState().admissions || []).length;
+DT.actions.resetAdmissions24h();
+await flush();
+const resetAt = DT.getState().admissionsResetAt;
+const sinceReset = (DT.getState().admissions || []).filter((a) => a.at >= resetAt).length;
+rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.getState().admissions || []).length === logBefore, "since=" + sinceReset + " log=" + (DT.getState().admissions || []).length);
 
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
