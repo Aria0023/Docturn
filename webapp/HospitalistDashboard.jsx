@@ -21,6 +21,8 @@ function shiftStart() {
   return d.getTime() >= s.getTime() ? s.getTime() : s.getTime() - 86400000;
 }
 function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hhmm(at) : new Date(at).toTimeString().slice(0, 5); }
+// "Dr. Jordan Chen" -> "Chen"; "Jordan Wu, PA-C" -> "Wu"
+function shortName(name) { return String(name || "").split(",")[0].replace(/^Dr\.\s*/i, "").trim().split(/\s+/).slice(-1)[0] || name; }
 
 function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory }) {
   // Accepted during THIS shift (since 7am); resets each morning.
@@ -43,12 +45,31 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
         <StatTile label="Current census" value={shiftAdmits.length} icon="users" tint="blue" />
       </div>
 
-      {/* Slim round-robin indicator */}
+      {/* Compact round-robin strip — small colored circles in order (next + you highlighted) */}
       {ordered.length > 0 && (
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "7px 13px", marginBottom: 20, borderRadius: "var(--radius-full)",
-          background: myPos === 0 ? "var(--status-active-bg)" : "var(--secondary)", border: "1px solid " + (myPos === 0 ? "var(--status-active)" : "var(--border)") }}>
-          <Icon name="route" size={14} color={myPos === 0 ? "var(--status-active)" : "var(--muted-foreground)"} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: myPos === 0 ? "var(--status-active)" : "var(--foreground)" }}>Round-robin: {rrLabel}</span>
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
+            <Icon name="route" size={13} color="var(--muted-foreground)" />
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Round-robin</span>
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: myPos === 0 ? "var(--status-accepted)" : "var(--muted-foreground)" }}>· {rrLabel}</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 9, maxHeight: 116, overflow: "hidden" }}>
+            {ordered.map((p, i) => {
+              const isNext = i === 0;
+              const isMe = meName && p.name === meName;
+              const ring = isNext ? "var(--status-accepted)" : (isMe ? "var(--primary)" : "transparent");
+              return (
+                <div key={p.id} title={p.name + " · census " + p.census + "/" + p.cap} style={{ width: 48, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+                  <div style={{ position: "relative", padding: 2 }}>
+                    <span style={{ position: "absolute", inset: 0, borderRadius: 99, border: "2px solid " + ring }} />
+                    <Avatar initials={p.avatar} size={30} tint={isMe ? "blue" : (isNext ? "emerald" : "slate")} />
+                    <span style={{ position: "absolute", top: -3, left: -3, width: 15, height: 15, borderRadius: 99, background: isNext ? "var(--status-accepted)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #fff" }}>{i + 1}</span>
+                  </div>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: isMe ? "var(--primary)" : "var(--foreground)", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isMe ? "You" : shortName(p.name)}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
