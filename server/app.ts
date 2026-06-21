@@ -112,8 +112,20 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       ? kitDir
       : clientDist;
   if (existsSync(uiDir)) {
-    app.use(express.static(uiDir));
+    // No-cache for the kit: it's plain <script> files with no content hashing,
+    // so a browser that caches api-bridge.js/*.jsx would keep running stale
+    // client code after a pull. Always revalidate (dev tool; assets are local).
+    app.use(
+      express.static(uiDir, {
+        etag: true,
+        lastModified: true,
+        setHeaders: (res) => {
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        },
+      }),
+    );
     app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
       res.sendFile(join(uiDir, "index.html"));
     });
   }
