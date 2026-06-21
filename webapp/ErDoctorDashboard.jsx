@@ -129,7 +129,10 @@ function ReassignSelect({ providers, onPick }) {
   );
 }
 
-function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
+// Intake + routing panel — the ER physician's primary action (write the note,
+// extract, route, send). Self-contained (no PageWrap) so it can be a draggable
+// dashboard widget.
+function IntakeRoutingPanel({ providers, onSend }) {
   const [note, setNote] = React.useState("");
   const [extracted, setExtracted] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "" });
@@ -178,32 +181,22 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
     reset();
   };
 
-  // Group recently-sent by day (2-day retention), preserving original index for reassign.
-  const dayOrder = ["Today", "Yesterday"];
-  const grouped = {};
-  sent.forEach((s, idx) => { (grouped[s.day] = grouped[s.day] || []).push({ ...s, idx }); });
-  const dayKeys = [...dayOrder.filter((d) => grouped[d]), ...Object.keys(grouped).filter((d) => !dayOrder.includes(d))];
-
   if (!nextUp) {
     return (
-      <PageWrap>
-        <Card style={{ padding: 24 }}>
-          <SectionTitle>Route assignment</SectionTitle>
-          <div style={{ display: "flex", gap: 11, alignItems: "flex-start", marginTop: 8 }}>
-            <Icon name="users-round" size={18} color="var(--muted-foreground)" style={{ marginTop: 1 }} />
-            <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-              No hospitalist providers are available yet. Once providers are added to the rotation (or imported from a schedule sync), you can route patients here.
-            </div>
+      <Card style={{ padding: 24 }}>
+        <SectionTitle>Route assignment</SectionTitle>
+        <div style={{ display: "flex", gap: 11, alignItems: "flex-start", marginTop: 8 }}>
+          <Icon name="users-round" size={18} color="var(--muted-foreground)" style={{ marginTop: 1 }} />
+          <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+            No hospitalist providers are available yet. Once providers are added to the rotation (or imported from a schedule sync), you can route patients here.
           </div>
-        </Card>
-      </PageWrap>
+        </div>
+      </Card>
     );
   }
 
   return (
-    <PageWrap>
-      {/* Intake & routing — the ER physician's primary action, first so the page
-          matches its title ("Patient intake"): write the note, route it, send. */}
+    <React.Fragment>
       <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 18, alignItems: "start" }}>
         {/* Intake */}
         <Card style={{ padding: 18 }}>
@@ -309,41 +302,7 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
           </div>
         </Card>
       </div>
-
-      {/* Patient board — the running log of what you've routed and its status.
-          (The hospital-wide census lives in the director portals.) */}
-      <div style={{ marginTop: 26 }}>
-        <SectionTitle action={<span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-foreground)", fontWeight: 500 }}><Icon name="history" size={13} /> Kept 2 days · accepted included</span>}>
-          Patient board
-        </SectionTitle>
-        {sent.length === 0 && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients yet — admit one above to route it to a hospitalist.</Card>}
-        {dayKeys.map((day) => (
-          <div key={day} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", margin: "0 2px 8px" }}>{day}</div>
-            <Card style={{ padding: 0, overflow: "visible" }}>
-              {grouped[day].map((s, i) => (
-                <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-                  <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {s.initials} → {s.provider}</div>
-                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span>{s.complaint || "—"} · {s.time}</span>
-                      {(s.consultants || []).map((c) => (
-                        <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--foreground)", fontSize: 11, fontWeight: 600 }}>
-                          <Icon name="stethoscope" size={10} /> {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
-                  <Badge status={s.status}>{STATUS[s.status].label}</Badge>
-                </div>
-              ))}
-            </Card>
-          </div>
-        ))}
-      </div>
-    </PageWrap>
+    </React.Fragment>
   );
 
   function tabStyle(active) {
@@ -354,4 +313,58 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   }
 }
 
-Object.assign(window, { ErDoctorDashboard });
+// Patient board panel — the running log of patients this ER provider routed and
+// their acceptance status. Self-contained (no PageWrap) for use as a widget.
+function RoutedBoardPanel({ sent, providers, onReassign }) {
+  const dayOrder = ["Today", "Yesterday"];
+  const grouped = {};
+  (sent || []).forEach((s, idx) => { (grouped[s.day] = grouped[s.day] || []).push({ ...s, idx }); });
+  const dayKeys = [...dayOrder.filter((d) => grouped[d]), ...Object.keys(grouped).filter((d) => !dayOrder.includes(d))];
+  return (
+    <div>
+      <SectionTitle action={<span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-foreground)", fontWeight: 500 }}><Icon name="history" size={13} /> Kept 2 days · accepted included</span>}>
+        Patient board
+      </SectionTitle>
+      {(!sent || sent.length === 0) && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients yet — admit one above to route it to a hospitalist.</Card>}
+      {dayKeys.map((day) => (
+        <div key={day} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", margin: "0 2px 8px" }}>{day}</div>
+          <Card style={{ padding: 0, overflow: "visible" }}>
+            {grouped[day].map((s, i) => (
+              <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {s.initials} → {s.provider}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span>{s.complaint || "—"} · {s.time}</span>
+                    {(s.consultants || []).map((c) => (
+                      <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--foreground)", fontSize: 11, fontWeight: 600 }}>
+                        <Icon name="stethoscope" size={10} /> {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
+                <Badge status={s.status}>{STATUS[s.status].label}</Badge>
+              </div>
+            ))}
+          </Card>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Thin wrapper — the two panels stacked in a page frame (non-customizable use).
+function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
+  return (
+    <PageWrap>
+      <IntakeRoutingPanel providers={providers} onSend={onSend} />
+      <div style={{ marginTop: 26 }}>
+        <RoutedBoardPanel sent={sent} providers={providers} onReassign={onReassign} />
+      </div>
+    </PageWrap>
+  );
+}
+
+Object.assign(window, { ErDoctorDashboard, IntakeRoutingPanel, RoutedBoardPanel });

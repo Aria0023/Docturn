@@ -44,6 +44,7 @@
 <script type="text/babel" src="DirectorDashboard.jsx"></script>
 <script type="text/babel" src="AdmissionsLog.jsx"></script>
 <script type="text/babel" src="ErDirectorDashboard.jsx"></script>
+<script type="text/babel" src="CustomizableDashboard.jsx"></script>
 <script type="text/babel" src="Messaging.jsx"></script>
 <script type="text/babel" src="Directory.jsx"></script>
 <script type="text/babel" src="CareTeam.jsx"></script>
@@ -295,8 +296,19 @@ function App() {
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} />;
-  else if (role === "er_doctor") screen = <ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} />;
-  else if (role === "er_director") screen = <React.Fragment><ErDirectorDashboard erPhysicians={st.erPhysicians} shifts={st.shifts} sent={st.sent} board={st.board} diversion={st.diversion} avgAcceptSec={st.avgAcceptSec} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} onToggleDiversion={a.toggleDiversion} onBroadcasts={() => a.setNav("broadcasts")} /><div style={{ padding: "0 24px 8px" }}><SectionTitle>Patient intake &amp; routing</SectionTitle></div><ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} /></React.Fragment>;
+  else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} /> },
+    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
+  ]} />;
+  else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
+    { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.diversion} onToggleDiversion={a.toggleDiversion} /> },
+    { id: "stats", label: "Throughput stats", icon: "activity", node: <ErStatsPanel erPhysicians={st.erPhysicians} sent={st.sent} board={st.board} avgAcceptSec={st.avgAcceptSec} /> },
+    { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel erPhysicians={st.erPhysicians} shifts={st.shifts} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} /> },
+    { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
+    { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} /> },
+    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
+  ]} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
   else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} />;
 

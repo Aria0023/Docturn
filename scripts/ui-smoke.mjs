@@ -74,6 +74,7 @@ const JSX_FILES = [
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
   "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
+  "CustomizableDashboard.jsx",
 ];
 const html = read("index.html");
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);
@@ -241,7 +242,10 @@ await DT.actions.importProviders("MERCY", [{ name: "Roupen Guedikian", group: "N
 await flush(); await flush();
 await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 {
-  const imported = DT.sortedProviders().find((p) => /Guedikian/.test(p.name));
+  // Provider hydration after import/login is async; poll briefly so the test
+  // isn't racing the rehydrate (the app creates the user synchronously server-side).
+  let imported = null;
+  for (let i = 0; i < 10 && !imported; i++) { imported = DT.sortedProviders().find((p) => /Guedikian/.test(p.name)); if (!imported) await flush(); }
   let ok = false, detail = "imported=" + !!imported;
   if (imported) {
     DT.actions.sendAssignment(imported, { initials: "AM", room: "Bay 2", complaint: "Amion route test", specialty: "Cardiology" }, []);
@@ -336,6 +340,27 @@ await flush();
 const resetAt = DT.getState().admissionsResetAt;
 const sinceReset = (DT.getState().admissions || []).filter((a) => a.at >= resetAt).length;
 rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.getState().admissions || []).length === logBefore, "since=" + sinceReset + " log=" + (DT.getState().admissions || []).length);
+
+// Customizable dashboards: reorder, remove, and re-add panels (per role).
+{
+  const ids = ["diversion", "stats", "roster", "recent", "ops", "intake", "board"];
+  const def = DT.dashLayout("er_director", ids);
+  const orderOk = def.order.length === ids.length && def.hidden.length === 0;
+  // reorder: move "board" to the front
+  DT.actions.setDashOrder("er_director", ["board"].concat(ids.filter((x) => x !== "board"))); await flush();
+  const reordered = DT.dashLayout("er_director", ids).order[0] === "board";
+  // remove + re-add
+  DT.actions.toggleDashWidget("er_director", "ops"); await flush();
+  const removed = DT.dashLayout("er_director", ids).hidden.indexOf("ops") >= 0;
+  DT.actions.toggleDashWidget("er_director", "ops"); await flush();
+  const readded = DT.dashLayout("er_director", ids).hidden.indexOf("ops") < 0;
+  // reset
+  DT.actions.resetDashLayout("er_director"); await flush();
+  const afterReset = DT.dashLayout("er_director", ids);
+  const resetOk = afterReset.order[0] === "diversion" && afterReset.hidden.length === 0;
+  rec("dashboard is customizable (reorder / remove / add / reset)", orderOk && reordered && removed && readded && resetOk,
+    "orderOk=" + orderOk + " reordered=" + reordered + " removed=" + removed + " readded=" + readded + " reset=" + resetOk);
+}
 
 // ER director patient board is modular: defaults to working tiles only, the
 // census/FHIR sections stay off, and a toggle persists.

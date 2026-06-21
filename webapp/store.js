@@ -123,6 +123,10 @@
       // board sections on/off — the FHIR-dependent ones stay off until the EHR
       // census is wired up.
       boardModules: {},
+      // Per-role dashboard layout: { order: [widgetId…], hidden: [widgetId…] }.
+      // Drives the customizable ER / ER-director dashboards (drag to reorder,
+      // remove, re-add). Empty = default order, nothing hidden.
+      dashLayout: {},
       // Per-organization on-call schedule source. Every tenant keeps its
       // schedule somewhere different — a scheduling vendor (Amion/QGenda), an
       // uploaded Word/PDF, or a web page — so the source is modular and keyed by
@@ -397,6 +401,16 @@
       : { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
     var ov = (state.boardModules && state.boardModules[role]) || {};
     return Object.assign({}, base, ov);
+  }
+
+  // Resolve a role's dashboard layout against the widgets it currently offers:
+  // honor the saved order, append any newly-added widgets, and report hidden.
+  function dashLayoutFor(role, allIds) {
+    var saved = (state.dashLayout && state.dashLayout[role]) || {};
+    var hidden = (saved.hidden || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    var order = (saved.order || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    allIds.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
+    return { order: order, hidden: hidden };
   }
 
   /* ---- audit / notify helpers ------------------------------------------- */
@@ -815,6 +829,34 @@
       });
     },
 
+    /* dashboard layout — per role: reorder, remove, re-add panels */
+    setDashOrder: function (role, order) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.dashLayout && s.dashLayout[role]) || {});
+        cur.order = order.slice();
+        s.dashLayout = Object.assign({}, s.dashLayout, (function () { var o = {}; o[role] = cur; return o; })());
+        return s;
+      });
+    },
+    toggleDashWidget: function (role, id) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.dashLayout && s.dashLayout[role]) || {});
+        var hidden = (cur.hidden || []).slice();
+        var i = hidden.indexOf(id);
+        if (i >= 0) hidden.splice(i, 1); else hidden.push(id);
+        cur.hidden = hidden;
+        s.dashLayout = Object.assign({}, s.dashLayout, (function () { var o = {}; o[role] = cur; return o; })());
+        return s;
+      });
+    },
+    resetDashLayout: function (role) {
+      set(function (s) {
+        var n = Object.assign({}, s.dashLayout); delete n[role];
+        s.dashLayout = n;
+        return s;
+      });
+    },
+
     /* patient-board modules — per role, toggle a section on/off */
     setBoardModule: function (role, key, on) {
       set(function (s) {
@@ -957,7 +999,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
