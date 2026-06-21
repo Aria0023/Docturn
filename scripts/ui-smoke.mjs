@@ -110,8 +110,8 @@ const NAV = {
   developer: ["dashboard", "roles", "compliance", "appearance", "settings"],
   director: ["dashboard", "board", "broadcasts", "messages", "access", "directory", "compliance", "appearance", "settings"],
   er_director: ["dashboard", "board", "broadcasts", "messages", "access", "directory", "compliance", "appearance", "settings"],
-  er_doctor: ["dashboard", "board", "team", "messages", "directory", "compliance"],
-  hospitalist: ["dashboard", "board", "team", "messages", "directory", "compliance"],
+  er_doctor: ["dashboard", "team", "messages", "directory", "compliance"],
+  hospitalist: ["dashboard", "team", "messages", "directory", "compliance"],
 };
 
 await flush();

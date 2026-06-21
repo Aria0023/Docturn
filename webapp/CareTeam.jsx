@@ -16,10 +16,12 @@ function RolePill({ role }) {
     background: { blue: "#DBEAFE", emerald: "var(--status-accepted-bg)", amber: "var(--status-pending-bg)", slate: "var(--status-neutral-bg)" }[r.tint], color: r.fg }}>{r.label}</span>;
 }
 
-function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall }) {
+function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, providers = [], consultants = [], onMessage }) {
   const [adding, setAdding] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const onCall = team.filter((m) => m.onCall);
+  // Doctors on service (rounding), and the consult specialties currently active.
+  const doctors = (providers || []).slice().sort((a, b) => (b.working === a.working) ? 0 : (b.working ? 1 : -1));
   const pool = candidates.filter((c) =>
     !team.some((t) => t.id === c.id) &&
     (c.name.toLowerCase().includes(query.toLowerCase()) || c.specialty.toLowerCase().includes(query.toLowerCase())));
@@ -76,6 +78,44 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall }) {
             </>
           )}
         </div>
+      </Card>
+
+      {/* Doctors on service */}
+      <SectionTitle>Doctors on service</SectionTitle>
+      <Card style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
+        {doctors.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No hospitalists on service.</div>}
+        {doctors.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <div style={{ position: "relative", flex: "none" }}>
+              <Avatar initials={p.avatar} size={36} tint={p.working ? "emerald" : "slate"} />
+              <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.specialty} · {p.working ? "on shift" : "off shift"}</div>
+            </div>
+            <span style={{ fontSize: 12.5, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="users" size={13} />{p.census}/{p.cap}</span>
+            {onMessage && <Button size="icon" variant="outline" icon="message-square" onClick={() => onMessage({ name: p.name, role: p.specialty, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" })} />}
+          </div>
+        ))}
+      </Card>
+
+      {/* Active consultants (specialties consulting on current patients) */}
+      <SectionTitle>Active consultants</SectionTitle>
+      <Card style={{ padding: consultants.length ? 14 : 0, marginBottom: 24 }}>
+        {consultants.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No active consults right now.</div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
+            {consultants.map((c) => (
+              <span key={c.spec} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-full)", background: "var(--secondary)", border: "1px solid var(--border)" }}>
+                <Icon name="stethoscope" size={14} color="var(--primary)" />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{c.spec}</span>
+                <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{c.count} patient{c.count === 1 ? "" : "s"}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </Card>
 
       {/* Team management */}

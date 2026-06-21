@@ -99,7 +99,6 @@ const ROLE_META = {
 const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
-    { id: "board",     label: "Patient board", icon: "layout-list" },
     { id: "team",      label: "My care team", icon: "users-round" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
@@ -107,7 +106,6 @@ const NAV = {
   ],
   er_doctor: [
     { id: "dashboard", label: "Intake",    icon: "clipboard-plus" },
-    { id: "board",     label: "Patient board", icon: "layout-list" },
     { id: "team",      label: "My care team", icon: "users-round" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
@@ -262,12 +260,19 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+
   let screen;
   if (nav === "messages") screen = <Messaging />;
   else if (nav === "directory") screen = <Directory providers={sortedProviders} onMessage={message} />;
-  else if (nav === "board") screen = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+  else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} />;
-  else if (nav === "team") screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} />;
+  else if (nav === "team") {
+    const consultCounts = {};
+    (st.board || []).forEach((b) => (b.consultants || []).forEach((c) => { const k = (typeof c === "string") ? c : (c.specialty || c.name); if (k) consultCounts[k] = (consultCounts[k] || 0) + 1; }));
+    const consultantsList = Object.keys(consultCounts).map((spec) => ({ spec, count: consultCounts[spec] }));
+    screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
+  }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
   else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
@@ -280,8 +285,8 @@ function App() {
   }
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
   else if (nav === "settings") screen = <OrgSettings />;
-  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myPatients={st.myPatients} acceptedToday={st.acceptedToday} onAccept={a.accept} onDecline={a.decline} unit={st.team.filter((m) => m.onCall)} onOpenTeam={() => a.setNav("team")} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} />;
-  else if (role === "er_doctor") screen = <ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} />;
+  else if (role === "hospitalist") screen = <React.Fragment><HospitalistDashboard pending={st.pending} myPatients={st.myPatients} acceptedToday={st.acceptedToday} onAccept={a.accept} onDecline={a.decline} unit={st.team.filter((m) => m.onCall)} onOpenTeam={() => a.setNav("team")} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} /><div style={{ padding: "0 24px 8px" }}><SectionTitle>Patient board</SectionTitle></div>{boardEl}</React.Fragment>;
+  else if (role === "er_doctor") screen = <React.Fragment><ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} /><div style={{ padding: "0 24px 8px" }}><SectionTitle>Patient board</SectionTitle></div>{boardEl}</React.Fragment>;
   else if (role === "er_director") screen = <ErDirectorDashboard erPhysicians={st.erPhysicians} shifts={st.shifts} sent={st.sent} board={st.board} diversion={st.diversion} avgAcceptSec={st.avgAcceptSec} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} onToggleDiversion={a.toggleDiversion} onBroadcasts={() => a.setNav("broadcasts")} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} />;
   else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} />;

@@ -33,7 +33,11 @@ function Messaging() {
   const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft); setDraft(""); };
   const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); };
 
-  const startable = st.providers.filter((p) => !convos.some((c) => c.name === p.name));
+  // Mirror the Directory exactly: you can start a message with anyone in the
+  // provider directory (filtered by the same search box). Picking someone you
+  // already have a thread with just reopens it (startConversation dedupes).
+  const startable = (st.providers || []).filter((p) =>
+    p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
     <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
@@ -50,7 +54,7 @@ function Messaging() {
         {composing && (
           <div style={{ borderBottom: "1px solid var(--border)", background: "var(--secondary)", maxHeight: 260, overflowY: "auto" }}>
             <div style={{ padding: "10px 16px 4px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>Start a conversation</div>
-            {startable.length === 0 && <div style={{ padding: "8px 16px 14px", fontSize: 12.5, color: "var(--muted-foreground)" }}>You already have a thread with everyone on shift.</div>}
+            {startable.length === 0 && <div style={{ padding: "8px 16px 14px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No one in the directory matches that search.</div>}
             {startable.map((p) => (
               <button key={p.id} onClick={() => startWith(p)}
                 onMouseEnter={(e) => e.currentTarget.style.background = "#fff"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
