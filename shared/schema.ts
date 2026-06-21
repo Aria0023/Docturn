@@ -122,6 +122,8 @@ export const patients = pgTable("patients", {
   issueSummary: text("issue_summary").notNull().default(""),
   specialty: text("specialty"),
   department: text("department"),
+  // ESI triage level 1–5 (1 = resuscitation, 5 = non-urgent); null = unset.
+  acuity: integer("acuity"),
   status: text("status", { enum: PATIENT_STATUS }).notNull().default("waiting"),
   erDoctorId: integer("er_doctor_id").references(() => users.id),
   assignedHospitalistId: integer("assigned_hospitalist_id").references(
@@ -640,6 +642,7 @@ export const createPatientSchema = z.object({
   issueSummary: z.string().default(""),
   specialty: z.string().optional(),
   department: z.string().optional(),
+  acuity: z.number().int().min(1).max(5).optional(),
 });
 
 export const createAssignmentSchema = z.object({

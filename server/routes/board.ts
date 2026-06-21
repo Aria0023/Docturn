@@ -83,6 +83,7 @@ export function registerBoardRoutes(app: Express) {
             room: p.roomNumber,
             department: p.department,
             issue: p.issueSummary,
+            acuity: p.acuity,
             status: p.status,
           },
           responsible,

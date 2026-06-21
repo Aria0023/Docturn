@@ -211,6 +211,7 @@ CREATE TABLE IF NOT EXISTS patients (
   issue_summary TEXT NOT NULL DEFAULT '',
   specialty TEXT,
   department TEXT,
+  acuity INTEGER,
   status TEXT NOT NULL DEFAULT 'waiting',
   er_doctor_id INTEGER REFERENCES users(id),
   assigned_hospitalist_id INTEGER REFERENCES hospitalists(id),

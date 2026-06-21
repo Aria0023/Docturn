@@ -34,6 +34,7 @@ export function registerPatientRoutes(app: Express) {
         issueSummary: parsed.data.issueSummary,
         specialty: parsed.data.specialty ?? null,
         department: parsed.data.department ?? null,
+        acuity: parsed.data.acuity ?? null,
         status: "waiting",
         erDoctorId: me.id,
         assignedHospitalistId: null,

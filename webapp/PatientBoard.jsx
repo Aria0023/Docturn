@@ -282,8 +282,9 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               <div style={{ width: 150, flex: "none", display: "flex", alignItems: "center", gap: 11 }}>
                 <Avatar initials={p.initials} size={36} tint={p.status === "pending" ? "amber" : "slate"} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                     {p.initials}
+                    {p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}
                     {p.synced && <Icon name="cloud" size={12} color="var(--status-accepted)" title="Synced from EHR" />}
                   </div>
                   <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 3 }}>

@@ -387,6 +387,30 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
     DT.getState().scheduleSources.MERCY === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
 }
 
+// Triage acuity: AI suggests an ESI level from the note; it carries onto the
+// routed admission so the hospitalist queue can prioritize by urgency.
+{
+  const a1 = DT.extractIntake("tupac shakur 77M in room hall5 here for GSW");
+  const a2 = DT.extractIntake("bob parker 60M chest pain, room 5");
+  const a3 = DT.extractIntake("med refill follow-up, room 12");
+  rec("triage: AI suggests ESI from the note (GSW=1, chest pain=2, refill=5)",
+    a1.acuity === 1 && a2.acuity === 2 && a3.acuity === 5,
+    "acuity=" + a1.acuity + "/" + a2.acuity + "/" + a3.acuity);
+}
+await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+{
+  const prov = DT.sortedProviders()[0];
+  let ok = false, detail = "no provider";
+  if (prov) {
+    DT.actions.sendAssignment(prov, { initials: "AZ", room: "9", complaint: "GSW", specialty: "Cardiology", acuity: 1 }, []);
+    await flush(); await flush();
+    const adm = (DT.getState().admissions || []).find((a) => a.initials === "AZ");
+    ok = !!adm && adm.acuity === 1;
+    detail = "adm=" + JSON.stringify(adm && { i: adm.initials, a: adm.acuity });
+  }
+  rec("triage: acuity carries onto the routed admission", ok, detail);
+}
+
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
 let pass = 0, fail = 0;

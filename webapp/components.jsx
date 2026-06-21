@@ -182,7 +182,27 @@ function EditableText({ value, onSave, placeholder, mono, size = 14, weight = 60
   );
 }
 
-Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText });
+// ESI triage levels (1 = resuscitation … 5 = non-urgent) — colors + labels.
+const ESI = {
+  1: { name: "Resuscitation", bg: "#FEE2E2", fg: "#B91C1C", dot: "#DC2626" },
+  2: { name: "Emergent",      bg: "#FFEDD5", fg: "#C2410C", dot: "#EA580C" },
+  3: { name: "Urgent",        bg: "#FEF9C3", fg: "#A16207", dot: "#CA8A04" },
+  4: { name: "Less urgent",   bg: "#DCFCE7", fg: "#15803D", dot: "#16A34A" },
+  5: { name: "Non-urgent",    bg: "#DBEAFE", fg: "#1D4ED8", dot: "#2563EB" },
+};
+function AcuityChip({ level, showName, size }) {
+  const n = Number(level);
+  if (!ESI[n]) return null;
+  const e = ESI[n];
+  const fs = size === "sm" ? 11 : 12;
+  return (
+    <span title={"ESI " + n + " · " + e.name} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: size === "sm" ? "1px 8px" : "2px 9px", borderRadius: "var(--radius-full)", background: e.bg, color: e.fg, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", lineHeight: 1.5 }}>
+      <span style={{ width: 6, height: 6, borderRadius: 99, background: e.dot, flex: "none" }} />ESI {n}{showName ? " · " + e.name : ""}
+    </span>
+  );
+}
+
+Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI });
 
 function StatTile({ label, value, icon, tint = "blue" }) {
   const tints = { blue: "var(--primary)", emerald: "var(--status-accepted)", amber: "var(--status-pending)", slate: "var(--status-neutral)" };

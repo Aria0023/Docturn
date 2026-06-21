@@ -29,6 +29,11 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
   const since = shiftStart();
   const shiftAdmits = (myAdmissions || []).filter((a) => a.at >= since).sort((a, b) => b.at - a.at);
 
+  // Sort incoming requests by acuity (ESI 1 = most urgent first), then by how
+  // soon each expires — so when several land at once the sickest is on top.
+  const sortedPending = (pending || []).slice().sort((a, b) =>
+    ((a.acuity || 3) - (b.acuity || 3)) || ((a.expiresAt || 0) - (b.expiresAt || 0)));
+
   // Slim round-robin position: where this hospitalist stands among everyone rounding.
   const rot = (providers || []).filter((p) => p.working && p.inRotation);
   const ordered = rotationMode === "sequential" ? rot.slice() : rot.slice().sort((a, b) => a.census - b.census);
@@ -74,6 +79,11 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
       )}
 
       <SectionTitle action={<Badge status="pending">{pending.length} awaiting</Badge>}>Incoming assignment requests</SectionTitle>
+      {pending.length > 1 && (
+        <div style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "-6px 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+          <Icon name="arrow-down-narrow-wide" size={13} /> Sorted by triage acuity — most urgent first
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 28 }}>
         {pending.length === 0 && (
           <Card style={{ padding: 36, textAlign: "center" }}>
@@ -82,13 +92,14 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
             <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 2 }}>You're all caught up.</div>
           </Card>
         )}
-        {pending.map((p) => (
+        {sortedPending.map((p) => (
           <Card key={p.id} style={{ padding: 16 }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <Avatar initials={p.initials} size={42} tint="amber" />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap" }}>Patient {p.initials}</span>
+                  {p.acuity ? <AcuityChip level={p.acuity} /> : null}
                   <span style={{ fontSize: 12.5, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>· Room {p.room}</span>
                   {p.expiresAt ? <ExpiryBadge expiresAt={p.expiresAt} /> : <Badge status="pending">Pending</Badge>}
                 </div>

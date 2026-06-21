@@ -135,7 +135,7 @@ function ReassignSelect({ providers, onPick }) {
 function IntakeRoutingPanel({ providers, onSend }) {
   const [note, setNote] = React.useState("");
   const [extracted, setExtracted] = React.useState(false);
-  const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "" });
+  const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
   const [mode, setMode] = React.useState("quick"); // quick | manual
   const [manual, setManual] = React.useState(""); // selected provider id (empty until chosen)
   const [consults, setConsults] = React.useState([]);
@@ -146,15 +146,15 @@ function IntakeRoutingPanel({ providers, onSend }) {
   const runExtract = () => {
     const r = window.extractIntake(note);
     if (r.empty) {
-      setFields({ initials: "SC", room: "412", complaint: "Chest pain, SOB on exertion", specialty: "Cardiology" });
+      setFields({ initials: "SC", room: "412", complaint: "Chest pain, SOB on exertion", specialty: "Cardiology", acuity: 2 });
       setConsults(["Cardiology"]);
     } else {
-      setFields({ initials: r.initials, room: r.room, complaint: r.complaint, specialty: r.specialty });
+      setFields({ initials: r.initials, room: r.room, complaint: r.complaint, specialty: r.specialty, acuity: r.acuity || 3 });
       setConsults(r.consults);
     }
     setExtracted(true);
   };
-  const reset = () => { setNote(""); setExtracted(false); setConsults([]); setConsultMembers({}); setConsultChannels({}); setFields({ initials: "", room: "", complaint: "", specialty: "" }); };
+  const reset = () => { setNote(""); setExtracted(false); setConsults([]); setConsultMembers({}); setConsultChannels({}); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
   const toggleConsult = (s) => setConsults((c) => {
     if (c.includes(s)) {
       setConsultMembers((cm) => { const n = Object.assign({}, cm); delete n[s]; return n; });
@@ -220,6 +220,29 @@ function IntakeRoutingPanel({ providers, onSend }) {
               <Field label="Room / location" icon="door-open" value={fields.room} onChange={(v) => setFields({ ...fields, room: v })} placeholder="e.g. 412, Hall, Bay A, Disaster" />
             </div>
             <Field label="Chief complaint" icon="clipboard-list" value={fields.complaint} onChange={(v) => setFields({ ...fields, complaint: v })} placeholder="Reason for admission" />
+            {/* Triage / acuity (ESI 1–5) — sets urgency so multiple admissions
+                are prioritized. AI suggests; the physician confirms. */}
+            <div>
+              <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
+                <Icon name="activity" size={14} color="var(--muted-foreground)" />Triage level (ESI)
+                {extracted && <span style={{ fontSize: 11, color: "var(--status-accepted)", fontWeight: 600 }}>· AI-suggested</span>}
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[1, 2, 3, 4, 5].map((n) => {
+                  const on = fields.acuity === n;
+                  const e = window.ESI[n];
+                  return (
+                    <button key={n} type="button" onClick={() => setFields({ ...fields, acuity: n })}
+                      title={"ESI " + n + " · " + e.name}
+                      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "7px 4px", borderRadius: "var(--radius-md)", cursor: "pointer", fontFamily: "var(--font-sans)",
+                        border: `1px solid ${on ? e.dot : "var(--border)"}`, background: on ? e.bg : "#fff", color: on ? e.fg : "var(--muted-foreground)" }}>
+                      <span style={{ fontSize: 14, fontWeight: 800 }}>{n}</span>
+                      <span style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.1, textAlign: "center" }}>{e.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </Card>
 
@@ -334,7 +357,7 @@ function RoutedBoardPanel({ sent, providers, onReassign }) {
               <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
                 <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {s.initials} → {s.provider}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {s.initials} → {s.provider}{s.acuity ? <AcuityChip level={s.acuity} size="sm" /> : null}</div>
                   <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{s.complaint || "—"} · {s.time}</span>
                     {(s.consultants || []).map((c) => (

@@ -55,9 +55,23 @@
     [/sepsis|septic|infection|cellulitis|abscess|febrile/i, "Infectious Disease"],
     [/stroke|seizure|altered mental|neuro|headache/i, "Neurology"],
   ];
+  // Suggest an ESI triage level (1 = resuscitation … 5 = non-urgent) from the
+  // free-text note via keyword rules. This is a deterministic suggestion the ER
+  // physician confirms — NOT a predictive model. Defaults to 3 (urgent).
+  function suggestAcuity(text) {
+    var t = " " + String(text || "").toLowerCase() + " ";
+    var has = function (re) { return re.test(t); };
+    if (has(/\b(gsw|gunshot|stab|cardiac arrest|\bcode\b|cpr|unresponsive|no pulse|pulseless|apneic|anaphylaxis|stemi|major trauma|septic shock|respiratory failure|active seizure|status epilepticus|intubat)/)) return 1;
+    if (has(/\b(chest pain|stroke|\bcva\b|facial droop|sob\b|shortness of breath|hypox|altered mental|\bams\b|\bdka\b|overdose|\bod\b|sepsis|syncope|suicidal|severe|hemorrhage|\bgi bleed\b|melena|\brvr\b|\bpe\b)/)) return 2;
+    if (has(/\b(abdominal pain|abd pain|fever|fracture|\bfx\b|pneumonia|dehydration|vomiting|moderate|copd|cellulitis|pancreatitis|\baki\b)/)) return 3;
+    if (has(/\b(laceration|sprain|\buti\b|minor|rash|earache|sore throat)/)) return 4;
+    if (has(/\b(med refill|medication refill|suture removal|prescription|recheck|follow.?up|cold\b)/)) return 5;
+    return 3;
+  }
+
   function extractIntake(note) {
     var text = (note || "").trim();
-    if (!text) return { initials: "", room: "", complaint: "", specialty: "", consults: [], empty: true };
+    if (!text) return { initials: "", room: "", complaint: "", specialty: "", consults: [], acuity: 3, empty: true };
     var initials = "";
     // Leading name (handles lowercase too): the words at the start — after an
     // optional "patient/pt/name" — when they look like a name (prefixed, or
@@ -98,7 +112,7 @@
     if (complaint.length > 90) complaint = complaint.slice(0, 88) + "…";
     var specialty = "Hospital Medicine", consults = [];
     for (var i = 0; i < SPECIALTY_KEYS.length; i++) { if (SPECIALTY_KEYS[i][0].test(text)) { specialty = SPECIALTY_KEYS[i][1]; consults = [specialty]; break; } }
-    return { initials: initials || "", room: room, complaint: complaint || text.slice(0, 80), specialty: specialty, consults: consults, empty: false };
+    return { initials: initials || "", room: room, complaint: complaint || text.slice(0, 80), specialty: specialty, consults: consults, acuity: suggestAcuity(text), empty: false };
   }
 
   /* ---- incoming-admit generator (for live "real" feel) ------------------- */
@@ -164,8 +178,8 @@
       fhir: { connected: false, lastSync: null, source: "Epic FHIR", endpoint: "fhir.mayo.org/api/r4" },
 
       pending: [
-        { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain, 2-day onset", from: "Dr. Reyes (ER)", specialty: "General Medicine", via: "Round-robin", expiresAt: t0 + 272000, acceptedToday: false },
-        { id: "a2", initials: "TK", room: "205", complaint: "Diabetic ketoacidosis", from: "Dr. Osei (ER)", specialty: "Endocrinology", via: "Manual", expiresAt: t0 + 430000, acceptedToday: false },
+        { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain, 2-day onset", from: "Dr. Reyes (ER)", specialty: "General Medicine", acuity: 3, via: "Round-robin", expiresAt: t0 + 272000, acceptedToday: false },
+        { id: "a2", initials: "TK", room: "205", complaint: "Diabetic ketoacidosis", from: "Dr. Osei (ER)", specialty: "Endocrinology", acuity: 2, via: "Manual", expiresAt: t0 + 430000, acceptedToday: false },
       ],
       myPatients: [
         { id: "p1", initials: "DW", room: "410", complaint: "CHF exacerbation" },
@@ -451,7 +465,7 @@
       if (t - state.lastAdmitAt > 45000 && state.pending.length < 4 && Math.random() < 0.5) {
         var tmpl = ADMIT_POOL[Math.floor(Math.random() * ADMIT_POOL.length)];
         if (!state.pending.some(function (p) { return p.initials === tmpl.initials; })) {
-          state.pending = [{ id: uid("a"), initials: tmpl.initials, room: tmpl.room, complaint: tmpl.complaint, specialty: tmpl.specialty, from: tmpl.from, via: "Round-robin", expiresAt: t + state.settings.timeout * 60000 }].concat(state.pending);
+          state.pending = [{ id: uid("a"), initials: tmpl.initials, room: tmpl.room, complaint: tmpl.complaint, specialty: tmpl.specialty, acuity: suggestAcuity(tmpl.complaint), from: tmpl.from, via: "Round-robin", expiresAt: t + state.settings.timeout * 60000 }].concat(state.pending);
           state.lastAdmitAt = t;
           changed = true;
           pushNotif(state, { icon: "route", title: "New assignment routed", body: "Patient " + tmpl.initials + " → you · round-robin" });
@@ -525,14 +539,15 @@
     /* ER */
     sendAssignment: function (provider, fields, consults) {
       set(function (s) {
-        var entry = { id: uid("s"), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], time: "Today · " + clockLabel(), day: "Today", status: "sent" };
+        var acuity = fields.acuity || 3;
+        var entry = { id: uid("s"), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: acuity, time: "Today · " + clockLabel(), day: "Today", status: "sent" };
         s.sent = [entry].concat(s.sent);
         // create a board row (routing) + a pending request for the receiving hospitalist view
-        s.board = [{ id: uid("b"), initials: fields.initials, room: fields.room || "—", dept: "MED", issue: fields.complaint || "—", status: "pending", attending: { name: "", avatar: "" }, unit: [], consultants: consults || [], er: { name: s.me.name, avatar: "Er" } }].concat(s.board);
+        s.board = [{ id: uid("b"), initials: fields.initials, room: fields.room || "—", dept: "MED", issue: fields.complaint || "—", acuity: acuity, status: "pending", attending: { name: "", avatar: "" }, unit: [], consultants: consults || [], er: { name: s.me.name, avatar: "Er" } }].concat(s.board);
         var via = provider.id === (nextUp() || {}).id ? "Round-robin" : "Manual";
-        s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", via: via, expiresAt: now() + s.settings.timeout * 60000 }]);
+        s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, expiresAt: now() + s.settings.timeout * 60000 }]);
         // append to the admissions log (every admission given to a team)
-        s.admissions = [{ id: uid("ad"), at: now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", via: via, status: "sent" }].concat(s.admissions || []);
+        s.admissions = [{ id: uid("ad"), at: now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, status: "sent" }].concat(s.admissions || []);
         s.lastAdmitAt = now();
         pushAudit(s, { action: "create_assignment", resource: "assignment " + entry.id, risk: "low" });
         pushPhi(s, { patient: fields.initials, access: "view", fields: "initials, room, issue", purpose: "Admission intake" });

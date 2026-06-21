@@ -114,6 +114,7 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     issueSummary: "Chest pain, possible cardiac event",
     specialty: "Cardiology",
     department: "Emergency",
+    acuity: 2,
     status: "waiting",
     erDoctorId: erDocId,
     assignedHospitalistId: null,

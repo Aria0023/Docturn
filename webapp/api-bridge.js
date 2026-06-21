@@ -131,6 +131,7 @@
         complaint: p.issueSummary || "",
         from: (er.displayName || "ER") + " (ER)",
         specialty: p.specialty || "General Medicine",
+        acuity: p.acuity || null,
         via: a.via === "manual" ? "Manual" : "Round-robin",
         expiresAt: a.expiresAt ? new Date(a.expiresAt).getTime() : Date.now() + 600000,
       };
@@ -150,6 +151,7 @@
         room: r.patient.room || "—",
         dept: r.patient.department || "MED",
         issue: r.patient.issue || "",
+        acuity: r.patient.acuity || null,
         status: r.patient.status || r.status,
         attending: r.responsible && r.responsible.attending
           ? { name: r.responsible.attending.displayName, avatar: initials(r.responsible.attending.displayName) }
@@ -324,13 +326,14 @@
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
     api("POST", "/api/patients", {
       initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty,
+      acuity: fields.acuity || undefined,
     }).then(function (p) {
       return api("POST", "/api/assignments", { patientId: p.id, mode: mode, hospitalistId: bid(provider.id) });
     }).then(rehydrate).catch(function () {});
     DT.set(function (s) {
-      s.sent = [{ id: "s" + Date.now(), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
+      s.sent = [{ id: "s" + Date.now(), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
       // append to the admissions log (every admission given to a team)
-      s.admissions = [{ id: "ad" + Date.now(), at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
+      s.admissions = [{ id: "ad" + Date.now(), at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
       s.__toast = { tone: "sent", title: "Assignment sent to " + provider.name, msg: "Notified by push, SMS fallback." };
       return s;
     });
