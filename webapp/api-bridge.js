@@ -290,6 +290,7 @@
   DT.actions.setRole = function (role) {
     var st = DT.getState();
     var org = (st.session && st.session.org) || "MERCY";
+    if (st.impersonating) DT.set(function (s) { s.impersonating = null; return s; }); // leaving the impersonated portal
     doLogin(role, org).catch(function (e) {
       if (isNetworkError(e)) {
         if (origSetRole) origSetRole(role);
@@ -430,7 +431,7 @@
     return get("/api/dev/users").then(function (users) {
       DT.set(function (s) {
         s.devUsers = (users || []).map(function (u) {
-          return { id: u.id, name: u.name, role: u.role, org: u.org, specialty: u.specialty || "", scope: u.role === "developer" ? "root" : "local" };
+          return { id: u.id, name: u.name, role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "", scope: u.role === "developer" ? "root" : "local" };
         });
         return s;
       });
@@ -449,6 +450,7 @@
       displayName: form.name,
       username: uname,
       specialty: form.specialty || undefined,
+      credential: form.credential || undefined,
       patientCap: form.cap ? parseInt(form.cap, 10) : undefined,
       shiftType: SHIFT_MAP[form.shift] || "day",
     }).then(function () {
@@ -469,6 +471,31 @@
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });
     });
   };
+  // developer ROOT access — open any user's portal (audited session swap) to
+  // see exactly what they see and fix things in place.
+  DT.actions.impersonate = function (user) {
+    if (!user || user.id == null) return;
+    if (user.role === "developer") { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Can't impersonate", msg: "Pick a non-developer account." }; return s; }); return; }
+    return api("POST", "/api/dev/impersonate", { userId: Number(user.id) })
+      .then(function () { return get("/api/user"); })
+      .then(function (u) {
+        DT.set(function (s) {
+          s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
+          s.impersonating = { name: u.displayName, role: u.role, org: user.org || s.selectedOrg };
+          s.ui.nav = "dashboard"; s.ui.notifOpen = false;
+          return s;
+        });
+        return hydrate(u.role);
+      })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open portal", msg: "Impersonation failed." }; return s; }); });
+  };
+  DT.actions.stopImpersonating = function () {
+    return doLogin("developer").then(function () {
+      DT.set(function (s) { s.impersonating = null; return s; });
+    });
+  };
+
   DT.actions.runDiagnostics = function () {
     api("GET", "/api/dev/ai-diagnostics").then(function (d) {
       DT.set(function (s) {

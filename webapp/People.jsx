@@ -5,11 +5,18 @@
 
 const PEOPLE_ROLES = [
   ["hospitalist", "Hospitalist", "stethoscope"],
+  ["consultant", "Consultant (PA/NP)", "user-round"],
   ["er_doctor", "ER physician", "ambulance"],
   ["er_director", "ER director", "siren"],
   ["director", "Hospitalist director", "clipboard-list"],
 ];
 const PEOPLE_ROLE_LABEL = Object.fromEntries(PEOPLE_ROLES.map((r) => [r[0], r[1]]));
+
+// Midlevels (PA/NP/RN) are real users with a clinical role + a credential; we
+// surface them as their own "consultant" category so directors can add and see
+// them apart from the attending physicians.
+const MIDLEVEL_CREDS = { PA: 1, NP: 1, RN: 1 };
+function personCategory(u) { return MIDLEVEL_CREDS[u.credential] ? "consultant" : u.role; }
 
 function peopleInitials(name) {
   return name.replace(/\(root\)/i, "").replace(/^Dr\.?\s*/, "").trim().split(/[\s,]+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -37,17 +44,22 @@ function PeopleManager({ scopeOrg, domainRoles }) {
   const [open, setOpen] = React.useState(false);
   const [roleFilter, setRoleFilter] = React.useState("ALL");
   const [collapsed, setCollapsed] = React.useState({});
-  const [form, setForm] = React.useState({ name: "", email: "", role: allowed[0], specialty: "Hospital Medicine", org: scopeOrg, scope: "local" });
+  const [form, setForm] = React.useState({ name: "", email: "", role: allowed[0], specialty: "Hospital Medicine", credential: "NP", org: scopeOrg, scope: "local" });
   const set = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }));
 
-  const users = st.devUsers.filter((u) => u.org === scopeOrg && allowed.includes(u.role) && (roleFilter === "ALL" || u.role === roleFilter));
+  const users = st.devUsers.filter((u) => u.org === scopeOrg && allowed.includes(personCategory(u)) && (roleFilter === "ALL" || personCategory(u) === roleFilter));
   const byRole = {};
-  users.forEach((u) => { (byRole[u.role] = byRole[u.role] || []).push(u); });
+  users.forEach((u) => { const c = personCategory(u); (byRole[c] = byRole[c] || []).push(u); });
   const orderedRoles = domainList.map((r) => r[0]).filter((rid) => byRole[rid]);
 
   const submit = () => {
     if (!form.name.trim()) { a.toast({ tone: "rejected", title: "Name required", msg: "Enter the person's full name." }); return; }
-    a.addUser(Object.assign({}, form, { org: scopeOrg }));
+    // A consultant is a midlevel: a clinical (hospitalist) account distinguished
+    // by its PA/NP credential rather than a separate role.
+    const payload = form.role === "consultant"
+      ? Object.assign({}, form, { role: "hospitalist", credential: form.credential, specialty: form.specialty || form.credential })
+      : Object.assign({}, form, { credential: "" });
+    a.addUser(Object.assign({}, payload, { org: scopeOrg }));
     setForm((f) => Object.assign({}, f, { name: "", email: "" }));
     setOpen(false);
   };
@@ -66,7 +78,7 @@ function PeopleManager({ scopeOrg, domainRoles }) {
       {/* stat row — calm: neutral tiles, single accent dot */}
       <div style={{ display: "flex", gap: 12, margin: "16px 0" }}>
         {domainList.map(([rid, label, icon]) => {
-          const n = st.devUsers.filter((u) => u.org === scopeOrg && u.role === rid).length;
+          const n = st.devUsers.filter((u) => u.org === scopeOrg && personCategory(u) === rid).length;
           return (
             <Card key={rid} style={{ padding: 14, flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -105,6 +117,15 @@ function PeopleManager({ scopeOrg, domainRoles }) {
           {form.role === "hospitalist" && (
             <div style={{ marginBottom: 16 }}><Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => set("specialty", v)} placeholder="e.g. Cardiology" /></div>
           )}
+          {form.role === "consultant" && (
+            <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end" }}>
+              <div style={{ width: 160 }}>
+                <DSelect label="Credential" icon="badge-check" value={form.credential} onChange={(v) => set("credential", v)}
+                  options={[{ value: "NP", label: "NP — Nurse Practitioner" }, { value: "PA", label: "PA — Physician Assistant" }, { value: "RN", label: "RN — Registered Nurse" }]} />
+              </div>
+              <div style={{ flex: 1 }}><Field label="Specialty / service" icon="stethoscope" value={form.specialty} onChange={(v) => set("specialty", v)} placeholder="e.g. Hospital Medicine" /></div>
+            </div>
+          )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
             <Button size="sm" icon="check" onClick={submit}>Add person</Button>
@@ -141,7 +162,7 @@ function PeopleManager({ scopeOrg, domainRoles }) {
                   <Avatar initials={peopleInitials(u.name)} size={34} tint="slate" />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{u.specialty || PEOPLE_ROLE_LABEL[u.role]}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{u.credential ? u.credential + (u.specialty ? " · " + u.specialty : "") : (u.specialty || PEOPLE_ROLE_LABEL[u.role])}</div>
                   </div>
                   <button onClick={() => a.removeUser(u.id)} title="Remove"
                     onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}

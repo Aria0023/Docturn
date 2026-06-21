@@ -104,7 +104,7 @@ function RoleColorEditor({ roleColors, onSetRoleColor }) {
   );
 }
 
-function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onRemoveUser }) {
+function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onRemoveUser, onImpersonate }) {
   const [open, setOpen] = React.useState(false);
   const [orgFilter, setOrgFilter] = React.useState("ALL");
   const [roleFilter, setRoleFilter] = React.useState("ALL");
@@ -137,6 +137,9 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
         </div>
       </div>
       <RoleChip role={u.role} color={roleColors[u.role]} scope={u.scope} />
+      {onImpersonate && u.role !== "developer" && <button onClick={() => onImpersonate(u)} title={"Open " + u.name + "'s portal (root access)"}
+        onMouseEnter={(e) => e.currentTarget.style.color = "var(--primary)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)", flex: "none" }}><Icon name="log-in" size={13} />Open portal</button>}
       {onRemoveUser && <button onClick={() => onRemoveUser(u.id)} title="Remove user"
         onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
         style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>}
@@ -362,7 +365,7 @@ function OrgAutocomplete({ value, onText, onPick }) {
   );
 }
 
-function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics }) {
+function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics, onImpersonate }) {
   const [query, setQuery] = React.useState("");
   const [newTenant, setNewTenant] = React.useState(false);
   const detected = React.useMemo(detectLocation, []);
@@ -462,7 +465,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
       </div>
 
       {/* Organizations & user management */}
-      <AddUserPanel organizations={organizations} devUsers={devUsers} roleColors={roleColors} onAddUser={onAddUser} onRemoveUser={onRemoveUser} />
+      <AddUserPanel organizations={organizations} devUsers={devUsers} roleColors={roleColors} onAddUser={onAddUser} onRemoveUser={onRemoveUser} onImpersonate={onImpersonate} />
 
       {/* System logs now live in the consolidated Compliance menu */}
       {newTenant && (

@@ -85,7 +85,11 @@
     // Bay 3, "disc 44", Disaster. Capture after the keyword up to punctuation
     // or a clinical phrase, so multi-word designations ("disc 44") are kept.
     var room = "";
-    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9][A-Za-z0-9\/\- ]*?)(?=\s*(?:[,.;]|\bwith\b|\bw\/|\bpresent|\bcomplain|\bc\/o\b|\bhx\b|\bfor\b|$))/i);
+    // Capture the room token after a keyword, then absorb only a genuine
+    // continuation — a number ("disc 44", "hall 5"), a slashed pair ("A/B"), or
+    // a lone unit letter ("Bay A"). Plain words ("here", "for", "with") are NOT
+    // continuations, so an un-delimited "hall5 here for GSW" stops at "hall5".
+    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9/\-]+(?:\s+(?:[0-9]+[A-Za-z]?|[A-Za-z]\/[A-Za-z]|[A-Z](?![A-Za-z])))?)/i);
     if (rm) room = rm[1].trim();
     if (!room) { var spot = text.match(/\b(hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
     if (!room) room = (text.match(/\b([0-9]{3}[A-Za-z]?)\b/) || [])[1] || "";
@@ -119,11 +123,14 @@
       // board sections on/off — the FHIR-dependent ones stay off until the EHR
       // census is wired up.
       boardModules: {},
-      // Per-organization on-call schedule source. Every tenant can use a
-      // different scheduling vendor (Amion, QGenda, …) — keyed by org code so it
-      // survives the developer org re-hydrate (which rebuilds the orgs array).
-      scheduleSources: { MAYO: "amion", STJUDE: "qgenda", CLEVE: "amion", MERCY: "amion", PINE: "none" },
+      // Per-organization on-call schedule source. Every tenant keeps its
+      // schedule somewhere different — a scheduling vendor (Amion/QGenda), an
+      // uploaded Word/PDF, or a web page — so the source is modular and keyed by
+      // org code (this survives the developer org re-hydrate). Only the Amion
+      // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
+      scheduleSources: { CEDARS: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", MERCY: "none", PINE: "none" },
       session: null, // { role, org, user, name }
+      impersonating: null, // { name, role, org } when a developer is viewing a user's portal
       ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
       me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
 
@@ -233,6 +240,7 @@
         er_director: "#DC2626",
         director:    "#7C3AED",
         developer:   "#0F766E",
+        consultant:  "#0891B2",
       },
       devUsers: [
         { id: uid("u"), name: "Dr. Lena Ortiz", role: "hospitalist", org: "MAYO", specialty: "Nephrology" },

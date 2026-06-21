@@ -292,6 +292,33 @@ DT.actions.setRole("developer");
 await flush(); await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
+// Developer ROOT access: open any user's portal (impersonation) and return.
+await DT.actions.login("developer", "MERCY"); await flush(); await flush();
+{
+  const target = (DT.getState().devUsers || []).find((u) => u.role === "hospitalist" && u.org === "MERCY")
+              || (DT.getState().devUsers || []).find((u) => u.role !== "developer");
+  let ok = false, detail = "no target user";
+  if (target) {
+    await DT.actions.impersonate(target); await flush(); await flush();
+    const s1 = DT.getState();
+    const into = !!s1.impersonating && s1.session && s1.session.role === target.role;
+    await DT.actions.stopImpersonating(); await flush(); await flush();
+    const s2 = DT.getState();
+    ok = into && !s2.impersonating && (s2.session || {}).role === "developer";
+    detail = "into=" + JSON.stringify(s1.impersonating) + " back=" + ((s2.session || {}).role);
+  }
+  rec("developer root access: impersonate a user's portal and return", ok, detail);
+}
+
+// ER/Hospitalist directors can add midlevels (PA/NP) as credentialed consultants.
+await DT.actions.login("developer", "MERCY"); await flush();
+{
+  await DT.actions.addUser({ org: "MERCY", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
+  await flush(); await flush(); await flush();
+  const np = (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
+  rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP", "np=" + JSON.stringify(np && { n: np.name, c: np.credential }));
+}
+
 // Amion → shift types: importing detected intervals adds matching shift types
 const beforeShifts = (DT.getState().settings.shiftTypes || []).length;
 await DT.actions.importShiftTypes([{ name: "Night X-cover", time: "23:00–07:00" }, { name: "Swing", time: "13:00–23:00" }]);

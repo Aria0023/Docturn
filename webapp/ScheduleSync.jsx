@@ -26,9 +26,6 @@ const SS_ROWS = [
   { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
   { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
   { slot: "West Night2", hrs: "11p-7a", prov: "Shergill, Jasper", grp: "ISP Hospitalist", secure: true },
-  { slot: "11 PM Triage", hrs: "11p-7a", prov: "Guedikian, Roupen", grp: "Nocturnist", secure: true },
-  { slot: "11 PM X-Cover", hrs: "11p-7a", prov: "Tran, Ann", grp: "ISP Hospitalist", secure: true },
-  { slot: "11 PM Admit", hrs: "11p-7a", prov: "Chen, David", grp: "Nocturnist", secure: true },
 ];
 const SS_MAP = [
   { code: "7a–7p",  shift: "Day call",      tint: "amber" },
@@ -43,17 +40,23 @@ function ssInit(prov) { const [last, first] = prov.split(", "); return ((first |
 // Amion hours → DocTurn shift type.
 const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
-// On-call schedule vendors. Each organization picks its own — different
-// hospitals use different scheduling systems, so the source is org-scoped.
+// On-call schedule sources. Each organization picks its own — different
+// hospitals keep their schedule in different places, so the source is
+// org-scoped AND modular by KIND: a scheduling vendor (API/sign-in capture),
+// an uploaded document (Word/PDF), or a published web page. Only the Amion
+// demo carries a real captured grid; the others ingest the org's own data.
 const SS_SOURCES = {
-  amion:  { label: "Amion",          blurb: "amion.com on-call grid",        loginUrl: "https://www.amion.com",     api: "https://www.amion.com/api" },
-  qgenda: { label: "QGenda",         blurb: "QGenda provider schedules",     loginUrl: "https://app.qgenda.com",    api: "https://api.qgenda.com/v2" },
-  tangier:{ label: "Tangier / Spok", blurb: "Tangier (Spok) on-call",        loginUrl: "https://www.tangieronline.com", api: "" },
-  shiftadmin: { label: "ShiftAdmin", blurb: "ShiftAdmin scheduling",         loginUrl: "https://www.shiftadmin.com", api: "" },
-  custom: { label: "Custom / other", blurb: "Custom endpoint or sign-in capture", loginUrl: "",                     api: "" },
-  none:   { label: "Not configured", blurb: "No schedule source set for this organization", loginUrl: "",          api: "" },
+  amion:      { label: "Amion",          kind: "vendor", demo: true, blurb: "amion.com on-call grid",         loginUrl: "https://www.amion.com",         api: "https://www.amion.com/api" },
+  qgenda:     { label: "QGenda",         kind: "vendor", blurb: "QGenda provider schedules",                  loginUrl: "https://app.qgenda.com",        api: "https://api.qgenda.com/v2" },
+  tangier:    { label: "Tangier / Spok", kind: "vendor", blurb: "Tangier (Spok) on-call",                     loginUrl: "https://www.tangieronline.com", api: "" },
+  shiftadmin: { label: "ShiftAdmin",     kind: "vendor", blurb: "ShiftAdmin scheduling",                      loginUrl: "https://www.shiftadmin.com",    api: "" },
+  word:       { label: "Word document",  kind: "doc",  accept: ".doc,.docx", icon: "file-text", blurb: "Upload a .doc/.docx schedule" },
+  pdf:        { label: "PDF document",   kind: "doc",  accept: ".pdf",       icon: "file-type-2", blurb: "Upload a PDF schedule" },
+  online:     { label: "Online page",    kind: "url",  icon: "globe", blurb: "Parse a published web schedule" },
+  custom:     { label: "Custom / other", kind: "vendor", blurb: "Custom endpoint or sign-in capture",         loginUrl: "",                              api: "" },
+  none:       { label: "Not configured", kind: "none", blurb: "No schedule source set for this organization", loginUrl: "", api: "" },
 };
-const SS_SOURCE_KEYS = ["amion", "qgenda", "tangier", "shiftadmin", "custom"];
+const SS_SOURCE_KEYS = ["amion", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
 
 // Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
 function ss24(tok) {
@@ -165,6 +168,10 @@ function ScheduleSync({ org }) {
   const [username, setUsername] = React.useState("tarzana.isp");
   const [password, setPassword] = React.useState("••••••••••");
   const [schedKey, setSchedKey] = React.useState("!299a6dc6iJRQ");
+  // Document / online-page ingestion (non-vendor sources).
+  const [fileName, setFileName] = React.useState("");
+  const [pageUrl, setPageUrl] = React.useState("");
+  const connLabel = src.kind === "doc" ? "Document" : src.kind === "url" ? "Web page" : (mode === "api" ? "API" : "Capture");
 
   // Switching the org's source resets the live connection and points the
   // sign-in/API fields at the new vendor's defaults.
@@ -190,7 +197,7 @@ function ScheduleSync({ org }) {
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, whiteSpace: "nowrap" }}>On-call schedule sync</h3>
             <Badge variant="secondary">{src.label}</Badge>
-            {connected && <span style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {mode === "api" ? "API" : "Capture"}</Badge></span>}
+            {connected && <span style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {connLabel}</Badge></span>}
           </div>
           <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>Each organization uses its own scheduling system — pick <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgCode}</b>'s source, then import its on-call grid to drive DocTurn's rotation pool.</p>
         </div>
@@ -218,7 +225,7 @@ function ScheduleSync({ org }) {
         </div>
       )}
 
-      {!connected && !notConfigured && (
+      {!connected && !notConfigured && src.kind === "vendor" && (
         <React.Fragment>
           {/* mode selector */}
           <div style={{ display: "flex", gap: 10, margin: "14px 0 6px" }}>
@@ -254,8 +261,43 @@ function ScheduleSync({ org }) {
         </React.Fragment>
       )}
 
+      {/* Document upload (Word / PDF) — many orgs keep the schedule in a file. */}
+      {!connected && !notConfigured && src.kind === "doc" && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+            <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
+            <span>Upload <b style={{ color: "var(--foreground)" }}>{orgCode}</b>'s {src.label.toLowerCase()}. DocTurn reads the on-call table out of the file and lists the providers to add — nothing leaves the server unencrypted.</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Schedule file</label>
+              <label style={{ display: "flex", alignItems: "center", gap: 9, height: 40, padding: "0 12px", border: "1px dashed var(--input)", borderRadius: "var(--radius-md)", background: "#fff", cursor: "pointer" }}>
+                <Icon name={src.icon || "file-text"} size={16} color="var(--muted-foreground)" />
+                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: fileName ? "var(--foreground)" : "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName || ("Choose a " + src.label + " (" + (src.accept || "") + ")")}</span>
+                <input type="file" accept={src.accept} style={{ display: "none" }} onChange={(e) => setFileName((e.target.files && e.target.files[0] && e.target.files[0].name) || "")} />
+              </label>
+            </div>
+            <Button icon="upload" onClick={run} disabled={busy}>{busy ? "Parsing…" : "Upload & parse"}</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Online page — fetch & parse a published web schedule. */}
+      {!connected && !notConfigured && src.kind === "url" && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+            <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
+            <span>Paste <b style={{ color: "var(--foreground)" }}>{orgCode}</b>'s published schedule page. DocTurn fetches it server-side and parses the on-call grid off the page.</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
+            <div style={{ flex: 1, minWidth: 0 }}><Field label="Schedule URL" icon="link" value={pageUrl} onChange={setPageUrl} placeholder="https://…/oncall" /></div>
+            <Button icon="globe" onClick={run} disabled={busy}>{busy ? "Fetching…" : "Fetch & parse"}</Button>
+          </div>
+        </div>
+      )}
+
       {/* capture / sync result */}
-      {connected && revealed && (
+      {connected && revealed && src.demo && (
         <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(0,260px) 1fr", gap: 16, alignItems: "start" }}>
           {/* captured raw page */}
           <div>
@@ -373,6 +415,40 @@ function ScheduleSync({ org }) {
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 11.5, color: "var(--muted-foreground)" }}>
               <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · credentials encrypted at rest · every capture written to the audit log.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Non-Amion sources: connected, but no demo grid is wired — show an
+          honest parsed-result panel plus the same re-sync controls. */}
+      {connected && revealed && !src.demo && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--status-accepted-bg)", border: "1px solid var(--status-accepted)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--foreground)", lineHeight: 1.5 }}>
+            <Icon name="circle-check-big" size={15} color="var(--status-accepted)" style={{ marginTop: 1, flex: "none" }} />
+            <span>Connected to <b>{src.label}</b> for <b>{orgCode}</b> via {connLabel.toLowerCase()}. DocTurn will parse this source and list its providers here to add to the rotation pool.</span>
+          </div>
+          <div style={{ border: "1px dashed var(--border)", borderRadius: "var(--radius-md)", padding: 22, textAlign: "center", color: "var(--muted-foreground)" }}>
+            <Icon name="users-round" size={20} color="var(--muted-foreground)" />
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)", marginTop: 8 }}>No providers parsed yet</div>
+            <div style={{ fontSize: 12.5, marginTop: 4 }}>Wire a live {src.label} feed{src.kind === "doc" ? " (or upload the real schedule)" : ""} to import this organization's people automatically.</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 13, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--muted-foreground)" }}>
+              <Icon name="clock" size={14} />Re-sync every
+              <select value={interval} onChange={(e) => setIntervalVal(e.target.value)} style={{ fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600, padding: "5px 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", cursor: "pointer" }}>
+                <option value="5m">5 min</option>
+                <option value="15m">15 min</option>
+                <option value="30m">30 min</option>
+                <option value="1h">1 hour</option>
+                <option value="2h">2 hours</option>
+                <option value="6h">6 hours</option>
+                <option value="12h">Twice a day</option>
+                <option value="24h">Once a day</option>
+                <option value="manual">Manual only</option>
+              </select>
+            </div>
+            <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· Last sync <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{lastSync}</b></span>
+            <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
           </div>
         </div>
       )}
