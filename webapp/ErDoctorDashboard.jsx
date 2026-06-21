@@ -202,42 +202,8 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
 
   return (
     <PageWrap>
-      {/* Patient board — every patient YOU'VE routed, where it went and whether
-          it's been accepted. (The hospital-wide census lives in the director
-          portals; an ER physician tracks their own hand-offs here.) */}
-      <div style={{ marginBottom: 24 }}>
-        <SectionTitle action={<span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-foreground)", fontWeight: 500 }}><Icon name="history" size={13} /> Kept 2 days · accepted included</span>}>
-          Patient board
-        </SectionTitle>
-        {sent.length === 0 && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients yet — admit one below to route it to a hospitalist.</Card>}
-        {dayKeys.map((day) => (
-          <div key={day} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", margin: "0 2px 8px" }}>{day}</div>
-            <Card style={{ padding: 0, overflow: "visible" }}>
-              {grouped[day].map((s, i) => (
-                <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-                  <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {s.initials} → {s.provider}</div>
-                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span>{s.complaint || "—"} · {s.time}</span>
-                      {(s.consultants || []).map((c) => (
-                        <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--foreground)", fontSize: 11, fontWeight: 600 }}>
-                          <Icon name="stethoscope" size={10} /> {c}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
-                  <Badge status={s.status}>{STATUS[s.status].label}</Badge>
-                </div>
-              ))}
-            </Card>
-          </div>
-        ))}
-      </div>
-
-      {/* Intake & routing */}
+      {/* Intake & routing — the ER physician's primary action, first so the page
+          matches its title ("Patient intake"): write the note, route it, send. */}
       <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 18, alignItems: "start" }}>
         {/* Intake */}
         <Card style={{ padding: 18 }}>
@@ -344,6 +310,39 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
         </Card>
       </div>
 
+      {/* Patient board — the running log of what you've routed and its status.
+          (The hospital-wide census lives in the director portals.) */}
+      <div style={{ marginTop: 26 }}>
+        <SectionTitle action={<span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-foreground)", fontWeight: 500 }}><Icon name="history" size={13} /> Kept 2 days · accepted included</span>}>
+          Patient board
+        </SectionTitle>
+        {sent.length === 0 && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients yet — admit one above to route it to a hospitalist.</Card>}
+        {dayKeys.map((day) => (
+          <div key={day} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", margin: "0 2px 8px" }}>{day}</div>
+            <Card style={{ padding: 0, overflow: "visible" }}>
+              {grouped[day].map((s, i) => (
+                <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                  <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {s.initials} → {s.provider}</div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>{s.complaint || "—"} · {s.time}</span>
+                      {(s.consultants || []).map((c) => (
+                        <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--foreground)", fontSize: 11, fontWeight: 600 }}>
+                          <Icon name="stethoscope" size={10} /> {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
+                  <Badge status={s.status}>{STATUS[s.status].label}</Badge>
+                </div>
+              ))}
+            </Card>
+          </div>
+        ))}
+      </div>
     </PageWrap>
   );
 
