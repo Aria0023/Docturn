@@ -209,22 +209,22 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
             value={note} onChange={setNote} help="No real PHI — synthetic examples only (e.g. initials)." />
           <div style={{ display: "flex", gap: 8, margin: "12px 0 4px" }}>
             <Button variant="secondary" size="sm" icon="sparkles" onClick={runExtract}>Extract with AI</Button>
-            {extracted && <Button variant="ghost" size="sm" icon="rotate-ccw" onClick={reset}>Clear</Button>}
+            {(extracted || fields.initials || fields.room || fields.complaint) && <Button variant="ghost" size="sm" icon="rotate-ccw" onClick={reset}>Clear</Button>}
           </div>
 
-          {extracted && (
-            <div style={{ marginTop: 14, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Patient details — always editable; AI extract just fills them in. */}
+          <div style={{ marginTop: 14, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 14 }}>
+            {extracted && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--status-accepted)", fontWeight: 600 }}>
-                <Icon name="sparkles" size={13} /> Extracted from note · review before sending
+                <Icon name="sparkles" size={13} /> Extracted from note · review &amp; edit before sending
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Field label="Patient initials" icon="user" value={fields.initials} onChange={(v) => setFields({ ...fields, initials: v })} />
-                <Field label="Room" icon="door-open" value={fields.room} onChange={(v) => setFields({ ...fields, room: v })} />
-              </div>
-              <Field label="Chief complaint" icon="clipboard-list" value={fields.complaint} onChange={(v) => setFields({ ...fields, complaint: v })} />
-              <Field label="Suggested specialty" icon="stethoscope" value={fields.specialty} onChange={(v) => setFields({ ...fields, specialty: v })} help="AI suggestion — editable." />
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="Patient initials" icon="user" value={fields.initials} onChange={(v) => setFields({ ...fields, initials: v.toUpperCase().slice(0, 3) })} placeholder="e.g. JS" />
+              <Field label="Room / location" icon="door-open" value={fields.room} onChange={(v) => setFields({ ...fields, room: v })} placeholder="e.g. 412, Hall, Bay A, Disaster" />
             </div>
-          )}
+            <Field label="Chief complaint" icon="clipboard-list" value={fields.complaint} onChange={(v) => setFields({ ...fields, complaint: v })} placeholder="Reason for admission" />
+          </div>
         </Card>
 
         {/* Routing */}

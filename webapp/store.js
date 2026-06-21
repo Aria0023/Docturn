@@ -59,21 +59,32 @@
     var text = (note || "").trim();
     if (!text) return { initials: "", room: "", complaint: "", specialty: "", consults: [], empty: true };
     var initials = "";
-    var im = text.match(/\b(?:patient|pt\.?)\s+([A-Z]\.?\s?[A-Z])\b/i);
-    if (im) { initials = im[1].replace(/[.\s]/g, "").toUpperCase().slice(0, 2); }
-    if (!initials) { var im2 = text.match(/\b([A-Z]{2})\b/); if (im2) initials = im2[1]; }
+    // 1) a full name after "patient/pt/name": "patient John Smith" -> JS
+    var nm = text.match(/\b(?:patient|pt\.?|name)\s*:?\s+([A-Z][a-z]+)\s+([A-Z][a-z]+)/i);
+    if (nm) { initials = (nm[1][0] + nm[2][0]).toUpperCase(); }
+    // 2) explicit initials after patient/pt: "patient J.S." / "pt JS"
+    if (!initials) { var im = text.match(/\b(?:patient|pt\.?)\s+([A-Z]\.?\s?[A-Z])\b/i); if (im) initials = im[1].replace(/[.\s]/g, "").toUpperCase().slice(0, 2); }
+    // 3) any two-word capitalized name, skipping common non-name words
     if (!initials) {
-      var caps = (text.match(/\b[A-Z][a-z]+\b/g) || []);
+      var STOP = { Patient: 1, Pt: 1, Room: 1, Rm: 1, Bed: 1, Bay: 1, Hall: 1, Hallway: 1, The: 1, Mr: 1, Mrs: 1, Ms: 1, Dr: 1, Male: 1, Female: 1, ER: 1, ED: 1, Disaster: 1 };
+      var caps = (text.match(/\b[A-Z][a-z]+\b/g) || []).filter(function (w) { return !STOP[w]; });
       if (caps.length >= 2) initials = (caps[0][0] + caps[1][0]).toUpperCase();
+      else if (caps.length === 1) initials = caps[0].slice(0, 2).toUpperCase();
     }
-    var rm = text.match(/\b(?:room|rm\.?|bed)\s*#?\s*([0-9]{1,4}[A-Za-z]?)\b/i);
-    var room = rm ? rm[1] : (text.match(/\b([0-9]{3})\b/) || [])[1] || "";
-    var complaint = text.split(/[.\n;]/)[0].trim().replace(/^\s*(patient|pt\.?)\s+[A-Z.\s]+\s*(with|w\/|presenting with|presents with)?\s*/i, "");
+    // 4) standalone explicit initials like "JS" / "J.S."
+    if (!initials) { var im2 = text.match(/\b([A-Z])\.?\s?([A-Z])\b/); if (im2) initials = (im2[1] + im2[2]).toUpperCase(); }
+    // Room/location — accepts any designation: 412, A/B, Hall, Bay 3, Disaster.
+    var room = "";
+    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9][A-Za-z0-9\/\-]{0,11})/i);
+    if (rm) room = rm[1];
+    if (!room) { var spot = text.match(/\b(hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
+    if (!room) room = (text.match(/\b([0-9]{3}[A-Za-z]?)\b/) || [])[1] || "";
+    var complaint = text.split(/[.\n;]/)[0].trim().replace(/^\s*(patient|pt\.?)\s+[A-Z][A-Za-z.\s]*?\s*(with|w\/|presenting with|presents with)\s*/i, "");
     complaint = complaint.charAt(0).toUpperCase() + complaint.slice(1);
     if (complaint.length > 90) complaint = complaint.slice(0, 88) + "…";
     var specialty = "Hospital Medicine", consults = [];
     for (var i = 0; i < SPECIALTY_KEYS.length; i++) { if (SPECIALTY_KEYS[i][0].test(text)) { specialty = SPECIALTY_KEYS[i][1]; consults = [specialty]; break; } }
-    return { initials: initials || "—", room: room, complaint: complaint || text.slice(0, 80), specialty: specialty, consults: consults, empty: false };
+    return { initials: initials || "", room: room, complaint: complaint || text.slice(0, 80), specialty: specialty, consults: consults, empty: false };
   }
 
   /* ---- incoming-admit generator (for live "real" feel) ------------------- */
