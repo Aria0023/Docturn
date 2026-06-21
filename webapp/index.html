@@ -39,6 +39,7 @@
 <script type="text/babel" src="LockScreen.jsx"></script>
 <script type="text/babel" src="AppShell.jsx"></script>
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
+<script type="text/babel" src="HospitalistHistory.jsx"></script>
 <script type="text/babel" src="ErDoctorDashboard.jsx"></script>
 <script type="text/babel" src="DirectorDashboard.jsx"></script>
 <script type="text/babel" src="AdmissionsLog.jsx"></script>
@@ -99,6 +100,7 @@ const ROLE_META = {
 const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "history",   label: "History", icon: "history" },
     { id: "team",      label: "My care team", icon: "users-round" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
@@ -147,6 +149,7 @@ const NAV = {
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
   admissions: ["Admissions log", "Every patient routed to a team — full history"],
+  history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
   directory:  ["Care team", "On‑call and availability"],
@@ -267,6 +270,7 @@ function App() {
   else if (nav === "directory") screen = <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} />;
+  else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};
     (st.board || []).forEach((b) => (b.consultants || []).forEach((c) => { const k = (typeof c === "string") ? c : (c.specialty || c.name); if (k) consultCounts[k] = (consultCounts[k] || 0) + 1; }));
@@ -285,7 +289,7 @@ function App() {
   }
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
   else if (nav === "settings") screen = <OrgSettings />;
-  else if (role === "hospitalist") screen = <React.Fragment><HospitalistDashboard pending={st.pending} myPatients={st.myPatients} acceptedToday={st.acceptedToday} onAccept={a.accept} onDecline={a.decline} unit={st.team.filter((m) => m.onCall)} onOpenTeam={() => a.setNav("team")} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} /><div style={{ padding: "0 24px 8px" }}><SectionTitle>Patient board</SectionTitle></div>{boardEl}</React.Fragment>;
+  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} />;
   else if (role === "er_doctor") screen = <React.Fragment><ErDoctorDashboard providers={sortedProviders} sent={st.sent} onSend={a.sendAssignment} onReassign={a.reassignSent} /><div style={{ padding: "0 24px 8px" }}><SectionTitle>Patient board</SectionTitle></div>{boardEl}</React.Fragment>;
   else if (role === "er_director") screen = <ErDirectorDashboard erPhysicians={st.erPhysicians} shifts={st.shifts} sent={st.sent} board={st.board} diversion={st.diversion} avgAcceptSec={st.avgAcceptSec} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} onToggleDiversion={a.toggleDiversion} onBroadcasts={() => a.setNav("broadcasts")} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} />;

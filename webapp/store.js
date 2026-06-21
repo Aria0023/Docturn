@@ -132,6 +132,15 @@
         { id: "p3", initials: "SC", room: "412", complaint: "Chest pain — observation" },
       ],
       acceptedToday: 7,
+      // Timestamped log of THIS hospitalist's accepted admissions. The dashboard
+      // shows the current shift (since 7am); the History tab keeps 3+ days.
+      myAdmissions: [
+        { id: uid("ma"), at: now() - 40 * 60000,    initials: "DW", room: "410", complaint: "CHF exacerbation" },
+        { id: uid("ma"), at: now() - 3 * 3600000,   initials: "BG", room: "402", complaint: "Community-acquired pneumonia" },
+        { id: uid("ma"), at: now() - 26 * 3600000,  initials: "MR", room: "318", complaint: "Sepsis, source unclear" },
+        { id: uid("ma"), at: now() - 31 * 3600000,  initials: "JT", room: "221", complaint: "AKI on CKD" },
+        { id: uid("ma"), at: now() - 50 * 3600000,  initials: "TK", room: "205", complaint: "Diabetic ketoacidosis" },
+      ],
 
       sent: [
         { id: uid("s"), initials: "MJ", provider: "Dr. Amir Patel",  complaint: "NSTEMI, troponin trending", consultants: ["Cardiology"],  time: "Today · 08:41",     day: "Today",     status: "accepted" },
@@ -428,6 +437,7 @@
         var p = s.pending.find(function (x) { return x.id === id; }); if (!p) return s;
         s.pending = s.pending.filter(function (x) { return x.id !== id; });
         s.myPatients = [{ id: "n" + id, initials: p.initials, room: p.room, complaint: p.complaint }].concat(s.myPatients);
+        s.myAdmissions = [{ id: "ma" + id, at: now(), initials: p.initials, room: p.room, complaint: p.complaint }].concat(s.myAdmissions || []);
         s.acceptedToday = (s.acceptedToday || 0) + 1;
         // reflect on the board
         var bd = s.board.find(function (b) { return b.initials === p.initials; });

@@ -1,4 +1,6 @@
-/* DocTurn web-app UI kit — Hospitalist dashboard (census + accept/decline) */
+/* DocTurn web-app UI kit — Hospitalist dashboard.
+   Focused on incoming assignment requests for the current shift (resets 7am),
+   with a slim round-robin position indicator. Full history lives in its own tab. */
 
 function ExpiryBadge({ expiresAt }) {
   useClock();
@@ -12,81 +14,42 @@ function ExpiryBadge({ expiresAt }) {
   );
 }
 
-function HospitalistDashboard({ pending, onAccept, onDecline, myPatients, acceptedToday = 0, unit = [], onOpenTeam, onMessage, providers = [], meName, rotationMode = "lowest_census" }) {
-  // Where this hospitalist stands in the round-robin among everyone rounding.
+// Start of the current 7a–7p shift day: 7am today, or 7am yesterday if before 7am.
+function shiftStart() {
+  const d = new Date();
+  const s = new Date(d); s.setHours(7, 0, 0, 0);
+  return d.getTime() >= s.getTime() ? s.getTime() : s.getTime() - 86400000;
+}
+function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hhmm(at) : new Date(at).toTimeString().slice(0, 5); }
+
+function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory }) {
+  // Accepted during THIS shift (since 7am); resets each morning.
+  const since = shiftStart();
+  const shiftAdmits = (myAdmissions || []).filter((a) => a.at >= since).sort((a, b) => b.at - a.at);
+
+  // Slim round-robin position: where this hospitalist stands among everyone rounding.
   const rot = (providers || []).filter((p) => p.working && p.inRotation);
-  const ordered = rotationMode === "sequential"
-    ? rot.slice()
-    : rot.slice().sort((a, b) => a.census - b.census);
-  const myPos = ordered.findIndex((p) => meName && p.name === meName); // 0-based; -1 if not in pool
+  const ordered = rotationMode === "sequential" ? rot.slice() : rot.slice().sort((a, b) => a.census - b.census);
+  const myPos = ordered.findIndex((p) => meName && p.name === meName);
+  const rrLabel = myPos === 0 ? "You're next up"
+    : myPos > 0 ? "#" + (myPos + 1) + " of " + ordered.length + " · " + myPos + " ahead of you"
+    : "Not in rotation";
 
   return (
     <PageWrap>
-      <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
-        <StatTile label="Current census" value={myPatients.length} icon="users" tint="blue" />
-        <StatTile label="Patient cap" value={"" + myPatients.length + "/12"} icon="gauge" tint="slate" />
-        <StatTile label="Pending" value={pending.length} icon="clock" tint="amber" />
-        <StatTile label="Accepted today" value={acceptedToday} icon="check-circle-2" tint="emerald" />
+      <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
+        <StatTile label="Pending requests" value={pending.length} icon="inbox" tint="amber" />
+        <StatTile label="Accepted this shift" value={shiftAdmits.length} icon="check-circle-2" tint="emerald" />
+        <StatTile label="Current census" value={shiftAdmits.length} icon="users" tint="blue" />
       </div>
 
-      {/* On-call unit banner — requests reach everyone linked here */}
-      <div onClick={onOpenTeam} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 14px", marginBottom: 18, borderRadius: "var(--radius-md)", background: "#EFF6FF", border: "1px solid #BFDBFE", cursor: onOpenTeam ? "pointer" : "default" }}>
-        <Icon name="link" size={16} color="var(--primary)" />
-        {unit.length === 0 ? (
-          <span style={{ fontSize: 13, color: "#1E3A5F" }}>You're taking requests solo. <span style={{ fontWeight: 600, textDecoration: "underline" }}>Add a midlevel or partner</span> to share your on-call load.</span>
-        ) : (
-          <>
-            <span style={{ fontSize: 13, color: "#1E3A5F", whiteSpace: "nowrap" }}>Requests are shared with your on-call unit:</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {unit.map((m) => (
-                <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-full)", padding: "2px 8px 2px 3px" }}>
-                  <Avatar initials={m.avatar} size={18} tint={(window.TEAM_ROLE[m.role] || {}).tint || "slate"} />
-                  <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>{m.name.split(",")[0]}</span>
-                  <RolePill role={m.role} />
-                </span>
-              ))}
-            </div>
-            <Icon name="chevron-right" size={15} color="var(--muted-foreground)" style={{ marginLeft: "auto" }} />
-          </>
-        )}
-      </div>
-
-      {/* Where you stand in the round-robin — read-only FYI for the hospitalist */}
+      {/* Slim round-robin indicator */}
       {ordered.length > 0 && (
-        <Card style={{ padding: 18, marginBottom: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <Icon name="route" size={18} color="var(--primary)" />
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Your round-robin standing</h3>
-            <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotationMode === "sequential" ? "Sequential order" : "Lowest census first"}</span>
-          </div>
-          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "0 0 12px" }}>
-            {myPos === 0
-              ? "You're next up — the next admission routes to you."
-              : myPos > 0
-                ? "You're #" + (myPos + 1) + " of " + ordered.length + " rounding · " + myPos + " ahead of you."
-                : "You're not in the rotation pool right now."}
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {ordered.map((p, i) => {
-              const isNext = i === 0;
-              const isMe = meName && p.name === meName;
-              return (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 11px", borderRadius: "var(--radius-md)",
-                  border: "1px solid " + (isMe ? "var(--primary)" : (isNext ? "#BFDBFE" : "var(--border)")),
-                  background: isMe ? "#EFF6FF" : (isNext ? "#F5F9FF" : "#fff") }}>
-                  <span style={{ width: 22, height: 22, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{i + 1}</span>
-                  <Avatar initials={p.avatar} size={28} tint={isMe ? "blue" : (isNext ? "emerald" : "slate")} />
-                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {p.name}{isMe && <span style={{ marginLeft: 7 }}><Badge status="active">You</Badge></span>}
-                  </span>
-                  <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{p.specialty}</span>
-                  <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums", width: 52, textAlign: "right" }}>{p.census}/{p.cap}</span>
-                  {isNext && <Badge status="sent">Next</Badge>}
-                </div>
-              );
-            })}
-          </div>
-        </Card>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "7px 13px", marginBottom: 20, borderRadius: "var(--radius-full)",
+          background: myPos === 0 ? "var(--status-active-bg)" : "var(--secondary)", border: "1px solid " + (myPos === 0 ? "var(--status-active)" : "var(--border)") }}>
+          <Icon name="route" size={14} color={myPos === 0 ? "var(--status-active)" : "var(--muted-foreground)"} />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: myPos === 0 ? "var(--status-active)" : "var(--foreground)" }}>Round-robin: {rrLabel}</span>
+        </div>
       )}
 
       <SectionTitle action={<Badge status="pending">{pending.length} awaiting</Badge>}>Incoming assignment requests</SectionTitle>
@@ -124,17 +87,23 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myPatients, accept
         ))}
       </div>
 
-      <SectionTitle>My patients</SectionTitle>
+      <SectionTitle action={onOpenHistory && <Button size="sm" variant="ghost" icon="history" onClick={onOpenHistory}>3-day history</Button>}>
+        Accepted this shift
+      </SectionTitle>
+      <div style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "-6px 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+        <Icon name="clock" size={13} /> Shift list (7am–7pm) · resets at 7am · older admissions move to the history tab
+      </div>
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        {myPatients.map((p, i) => (
+        {shiftAdmits.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Nothing accepted yet this shift.</div>}
+        {shiftAdmits.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <Avatar initials={p.initials} size={34} tint="blue" />
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
               <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.complaint}</div>
             </div>
-            <Badge status="accepted">Accepted</Badge>
-            <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: `Patient ${p.initials} \u00b7 care`, role: `Room ${p.room}`, avatar: p.initials, tint: "blue" })}>Message</Button>
+            <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>
+            <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
           </div>
         ))}
       </Card>
