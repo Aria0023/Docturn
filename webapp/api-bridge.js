@@ -33,10 +33,14 @@
   };
 
   // The developer account lives in its own platform org, not a clinical tenant,
-  // so resolve the right org code by role.
+  // so resolve the right org code by role. Clinical roles must NEVER inherit the
+  // platform org (e.g. when switching role from Developer) — their demo accounts
+  // live in the MERCY tenant.
   var PLATFORM_ORG = "DOCTURN";
   function orgForRole(role, fallback) {
-    return role === "developer" ? PLATFORM_ORG : (fallback || "MERCY");
+    if (role === "developer") return PLATFORM_ORG;
+    if (!fallback || fallback === PLATFORM_ORG) return "MERCY";
+    return fallback;
   }
 
   // Remember the active role/org so we can transparently re-authenticate if the

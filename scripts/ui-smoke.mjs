@@ -209,6 +209,17 @@ if (recov) {
 }
 rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.getState().orgs || []).find((o) => o.code === "RECOV"), recErr || (recov ? "" : "addTenant failed after wipe"));
 
+// role switcher: switching FROM developer (platform org) to a clinical role must
+// authenticate into the clinical tenant, not the platform org.
+await DT.actions.login("developer", "MERCY"); await flush(); await flush();
+DT.actions.setRole("hospitalist");
+await flush(); await flush();
+const swSess = DT.getState().session || {};
+rec("role switch developer→hospitalist works", swSess.role === "hospitalist" && (DT.getState().providers || []).length >= 4, "session=" + JSON.stringify(swSess));
+DT.actions.setRole("developer");
+await flush(); await flush();
+rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
+
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
 let pass = 0, fail = 0;
