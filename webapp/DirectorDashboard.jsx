@@ -50,6 +50,9 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
   const nextProvider = rotMode === "lowest_census"
     ? rotation.reduce((b, p) => (!b || p.census < b.census ? p : b), null)
     : (rotation[0] || null);
+  // Rotation position per provider (1-based), so each row shows its place in line.
+  const rotIndex = {};
+  rotation.forEach((p, i) => { rotIndex[p.id] = i + 1; });
 
   // Rolling admissions count since the director's last reset (log keeps all).
   const admSinceReset = (admissions || []).filter((a) => a.at >= (admissionsResetAt || 0)).length;
@@ -113,7 +116,23 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
         </div>
       </Card>
 
-      {/* Provider management grouped by shift — full width, compact rows */}
+      {/* Next up — who receives the next admission (lowest census / first in order) */}
+      {nextProvider && (
+        <Card style={{ padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)" }}>
+          <Avatar initials={nextProvider.avatar} size={40} tint="emerald" />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+              <Badge status="sent">Next up</Badge>
+              <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider.name}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap} · {rotMode === "lowest_census" ? "lowest census first" : "sequential"}</div>
+          </div>
+          <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onResetRotation}>Reset rotation</Button>
+        </Card>
+      )}
+
+      {/* Provider management grouped by shift — each in-rotation row is also its
+          rotation-order item (drag handle + position + next-up highlight). */}
       <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 18 }}>
         {shifts.map((shift) => {
           const group = providers.filter((p) => p.shift === shift.id);
@@ -132,10 +151,33 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
               </div>
               <Card style={{ padding: 0, overflow: "hidden" }}>
                 {group.length === 0 && <div style={{ padding: "14px 16px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No providers on this shift.</div>}
-                {group.map((p, i) => (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                {group.map((p, i) => {
+                  const inRot = p.working && p.inRotation;
+                  const isNext = nextProvider && p.id === nextProvider.id;
+                  return (
+                  <div key={p.id}
+                    draggable={inRot}
+                    onDragStart={inRot ? () => setDragId(p.id) : undefined}
+                    onDragEnd={inRot ? () => { setDragId(null); setOverId(null); } : undefined}
+                    onDragOver={inRot ? (e) => { e.preventDefault(); if (overId !== p.id) setOverId(p.id); } : undefined}
+                    onDrop={inRot ? (e) => { e.preventDefault(); handleDrop(p.id); } : undefined}
+                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none",
+                      background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "transparent"),
+                      borderLeft: isNext ? "3px solid var(--primary)" : "3px solid transparent",
+                      opacity: dragId === p.id ? 0.5 : 1, cursor: inRot ? "grab" : "default", transition: "background .12s, opacity .12s" }}>
+                    {/* rotation order indicator */}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, width: 40, flex: "none" }}>
+                      {inRot ? (
+                        <React.Fragment>
+                          <Icon name="grip-vertical" size={14} color="var(--muted-foreground)" />
+                          <span style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{rotIndex[p.id]}</span>
+                        </React.Fragment>
+                      ) : (
+                        <span title="Off rotation" style={{ color: "var(--muted-foreground)", fontSize: 13, paddingLeft: 6 }}>—</span>
+                      )}
+                    </span>
                     <Avatar initials={p.avatar} size={34} tint={p.working ? "emerald" : "slate"} />
-                    <div style={{ width: 188, flex: "none", minWidth: 0 }}>
+                    <div style={{ width: 170, flex: "none", minWidth: 0 }}>
                       <EditableText value={p.name} onSave={(val) => onUpdateProvider(p.id, { name: val })} size={13.5} weight={600} />
                       <div><EditableText value={p.specialty} onSave={(val) => onUpdateProvider(p.id, { specialty: val })} size={12} weight={400} color="var(--muted-foreground)" placeholder="Add specialty" /></div>
                     </div>
@@ -161,22 +203,25 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
                         style={{ width: 28, height: 28, flex: "none", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={15} /></button>
                     </div>
                   </div>
-                ))}
+                ); })}
               </Card>
             </div>
           );
         })}
       </div>
 
-      {/* Round-robin config + drag-and-drop order */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
-          <Card style={{ padding: 18 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <Icon name="route" size={18} color="var(--primary)" />
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin config</h3>
-            </div>
-            <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 15)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-page the next provider after this." />
-            <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      {/* Round-robin config (the order itself lives in the provider rows above) */}
+      <Card style={{ padding: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <Icon name="route" size={18} color="var(--primary)" />
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin config</h3>
+          <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotMode === "lowest_census" ? "Lowest census first" : "Sequential"} · {rotation.length} in rotation</span>
+        </div>
+        <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 14px" }}>The rotation order is the numbered list in the provider rows above — drag any in-rotation row to reorder; the next provider is highlighted.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
+          <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 15)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-page the next provider after this." />
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <div style={{ fontSize: 13, fontWeight: 500 }}>Auto-reassign on expiry</div>
               <button onClick={onToggleAutoReassign}
                 style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative",
@@ -184,68 +229,16 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
                 <span style={{ position: "absolute", top: 3, left: (settings && settings.autoReassign) ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
               </button>
             </div>
-            <div style={{ marginTop: 16 }}>
-              <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={onResetRotation}>Reset rotation index</Button>
-            </div>
-          </Card>
-
-          <Card style={{ padding: 18 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              <Icon name="route" size={18} color="var(--primary)" />
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin rotation</h3>
-              <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotMode === "lowest_census" ? "Lowest census first" : "Sequential"}</span>
-            </div>
-            <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 12px" }}>Who gets the next admission, and the order behind them. Drag to reorder; the next provider is highlighted.</p>
-
-            {/* Next-up hero */}
-            {nextProvider ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: "var(--radius-md)", background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)", marginBottom: 14 }}>
-                <Avatar initials={nextProvider.avatar} size={42} tint="emerald" />
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                    <Badge status="sent">Next up</Badge>
-                    <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider.name}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap}</div>
-                </div>
-                <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onResetRotation}>Reset</Button>
-              </div>
-            ) : (
-              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "10px 2px", marginBottom: 8 }}>No providers in rotation.</div>
-            )}
-
-            {/* Ordered list (FYI) — drag to reorder */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              {rotation.map((p, i) => {
-                const isNext = nextProvider && p.id === nextProvider.id;
-                return (
-                <div key={p.id}
-                  draggable
-                  onDragStart={() => setDragId(p.id)}
-                  onDragEnd={() => { setDragId(null); setOverId(null); }}
-                  onDragOver={(e) => { e.preventDefault(); if (overId !== p.id) setOverId(p.id); }}
-                  onDrop={(e) => { e.preventDefault(); handleDrop(p.id); }}
-                  title="Drag to reorder"
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 11px", border: `1px solid ${overId === p.id && dragId !== p.id ? "var(--primary)" : (isNext ? "#BFDBFE" : "var(--border)")}`, borderRadius: "var(--radius-md)",
-                    background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "#fff"),
-                    opacity: dragId === p.id ? 0.5 : 1, cursor: "grab", transition: "border-color .12s, background .12s" }}>
-                  <Icon name="grip-vertical" size={15} color="var(--muted-foreground)" />
-                  <span style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{i + 1}</span>
-                  <Avatar initials={p.avatar} size={26} tint={isNext ? "emerald" : "slate"} />
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-                  <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums" }}>{p.census}/{p.cap}</span>
-                  {isNext && <Icon name="arrow-up" size={13} color="var(--primary)" title="Next to receive" />}
-                </div>
-              ); })}
-            </div>
-            {working.length > rotation.length && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border)", fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="route-off" size={13} />
-                {working.length - rotation.length} on shift but off rotation
-              </div>
-            )}
-          </Card>
-      </div>
+            <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={onResetRotation}>Reset rotation index</Button>
+          </div>
+        </div>
+        {working.length > rotation.length && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px dashed var(--border)", fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6 }}>
+            <Icon name="route-off" size={13} />
+            {working.length - rotation.length} on shift but off rotation
+          </div>
+        )}
+      </Card>
       {adding && (
         <Modal title="Add provider" subtitle="They join the rotation on the selected shift." icon="user-plus" onClose={() => setAdding(false)}
           children={
