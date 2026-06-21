@@ -88,7 +88,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const flush = async () => { await sleep(40); await sleep(40); };
 const DT = window.DT;
 const results = [];
-const rec = (label, ok, detail = "") => results.push({ label, ok, detail });
+const rec = (label, ok, detail = "") => { results.push({ label, ok, detail }); if (process.env.UI_PROGRESS) console.log((ok ? "ok  " : "ERR ") + label); };
 
 // Buttons that change session/identity — skipped so the sweep doesn't flood
 // /api/login (role switcher) or log itself out mid-test.
@@ -155,6 +155,28 @@ rec("deleteTenant force-cascades a populated tenant", cascadeOk && !(DT.getState
 let ownErr = "";
 try { await DT.actions.deleteTenant({ code: "DOCTURN" }); } catch (e) { ownErr = e.message; }
 rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr), "msg=" + ownErr);
+
+// Amion-style import: parsed providers become real users in the org
+DT.actions.addTenant({ name: "Amion Clinic", code: "AMION", city: "Z", state: "CA", timezone: "America/Los_Angeles" });
+await flush(); await flush();
+const roster = [
+  { name: "Roupen Guedikian", group: "Nocturnist", shift: "night" },
+  { name: "Ann Tran", group: "ISP Hospitalist", shift: "night" },
+  { name: "David Chen", group: "Nocturnist", shift: "night" },
+];
+let impRes = null, impErr = "";
+try { impRes = await DT.actions.importProviders("AMION", roster); } catch (e) { impErr = e.message; }
+await flush(); await flush();
+const amionUsers = (DT.getState().devUsers || []).filter((u) => u.org === "AMION");
+rec("importProviders adds parsed providers as users", impRes && impRes.added === 3 && amionUsers.length >= 3, impErr || ("added=" + (impRes && impRes.added) + " amionUsers=" + amionUsers.length));
+// re-import the same roster → all skipped (no duplicates)
+let dupRes = null;
+try { dupRes = await DT.actions.importProviders("AMION", roster); } catch (e) { /* ignore */ }
+await flush();
+rec("importProviders skips duplicates on re-sync", dupRes && dupRes.added === 0 && dupRes.skipped === 3, "res=" + JSON.stringify(dupRes));
+// cleanup
+try { await DT.actions.deleteTenant({ code: "AMION" }); } catch (e) { /* ignore */ }
+await flush();
 
 // clinical flow: ER doctor sends -> hospitalist receives -> accept
 await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();

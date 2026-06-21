@@ -697,6 +697,26 @@
         return s;
       });
     },
+    // Import providers parsed from an external schedule (Amion) as real users.
+    // Demo base: adds them to the local devUsers list; the live bridge overrides
+    // this to actually provision them in the org via the backend.
+    importProviders: function (orgCode, providers) {
+      set(function (s) {
+        var added = 0;
+        (providers || []).forEach(function (p) {
+          var exists = (s.devUsers || []).some(function (u) { return u.name === p.name && u.org === orgCode; });
+          if (exists) return;
+          s.devUsers = [{ id: uid("u"), name: p.name, role: "hospitalist", org: orgCode, specialty: p.group || "", scope: "local" }].concat(s.devUsers || []);
+          added++;
+        });
+        if (added) s.orgs = (s.orgs || []).map(function (o) { return o.code === orgCode ? Object.assign({}, o, { users: o.users + added }) : o; });
+        s.__toast = added
+          ? { tone: "accepted", title: "Imported " + added + " provider(s)", msg: "Added to " + orgCode + " as users." }
+          : { tone: "rejected", title: "Nothing to import", msg: "Those providers already exist." };
+        return s;
+      });
+      return Promise.resolve({ added: (providers || []).length, skipped: 0 });
+    },
     setRoleColor: function (role, color) { set(function (s) { s.roleColors = Object.assign({}, s.roleColors, (function () { var o = {}; o[role] = color; return o; })()); pushAudit(s, { action: "customize_role_color", resource: role, risk: "low" }); return s; }); },
     runDiagnostics: function () {
       set(function (s) {

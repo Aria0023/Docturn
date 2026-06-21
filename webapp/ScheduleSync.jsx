@@ -40,6 +40,24 @@ const SS_MAP = [
 function ssName(prov) { const [last, first] = prov.split(", "); return (first || "") + " " + last; }
 function ssInit(prov) { const [last, first] = prov.split(", "); return ((first || " ")[0] + last[0]).toUpperCase(); }
 
+// Amion hours → DocTurn shift type.
+const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
+
+// Collapse the per-slot schedule into the DISTINCT people on it — one card per
+// provider (a name appearing in several slots is one person to add as a user).
+function ssUniqueProviders(rows) {
+  const byName = new Map();
+  rows.forEach((r) => {
+    const name = ssName(r.prov);
+    if (!byName.has(name)) {
+      byName.set(name, { name, raw: r.prov, group: r.grp, secure: r.secure, shift: SS_SHIFT[r.hrs] || "day", slots: [r.slot] });
+    } else {
+      byName.get(name).slots.push(r.slot);
+    }
+  });
+  return [...byName.values()];
+}
+
 function SSModeTab({ active, icon, label, sub, onClick }) {
   return (
     <button onClick={onClick} style={{ flex: 1, textAlign: "left", display: "flex", gap: 11, alignItems: "flex-start", padding: "12px 13px", borderRadius: "var(--radius-md)", cursor: "pointer",
@@ -60,13 +78,35 @@ function ShiftChip({ shift, tint }) {
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: "var(--radius-full)", background: c[0], color: c[1], whiteSpace: "nowrap" }}><span style={{ width: 6, height: 6, borderRadius: 99, background: c[1], flex: "none" }} />{shift}</span>;
 }
 
-function ScheduleSync() {
+function ScheduleSync({ org }) {
+  const a = useActions();
   const [connected, setConnected] = React.useState(false);
   const [mode, setMode] = React.useState("capture"); // default to the no-API path
   const [busy, setBusy] = React.useState(false);
   const [revealed, setRevealed] = React.useState(false); // capture preview shown
   const [lastSync, setLastSync] = React.useState("just now");
   const [interval, setIntervalVal] = React.useState("15m");
+  const [added, setAdded] = React.useState({});      // provider name → true once imported
+  const [adding, setAdding] = React.useState({});    // provider name → true while importing
+  const [bulk, setBulk] = React.useState(false);     // "Add all" in flight
+
+  const orgCode = (org && org.code) || (useStore().selectedOrg) || "MERCY";
+  const people = React.useMemo(() => ssUniqueProviders(SS_ROWS), []);
+  const remaining = people.filter((p) => !added[p.name]);
+
+  const importOne = (p) => {
+    setAdding((m) => ({ ...m, [p.name]: true }));
+    Promise.resolve(a.importProviders(orgCode, [{ name: p.name, group: p.group, shift: p.shift }]))
+      .then(() => { setAdded((m) => ({ ...m, [p.name]: true })); })
+      .finally(() => { setAdding((m) => { const n = { ...m }; delete n[p.name]; return n; }); });
+  };
+  const importAll = () => {
+    if (!remaining.length) return;
+    setBulk(true);
+    Promise.resolve(a.importProviders(orgCode, remaining.map((p) => ({ name: p.name, group: p.group, shift: p.shift }))))
+      .then(() => { setAdded((m) => { const n = { ...m }; remaining.forEach((p) => { n[p.name] = true; }); return n; }); })
+      .finally(() => setBulk(false));
+  };
 
   // API fields
   const [token, setToken] = React.useState("");
@@ -186,34 +226,42 @@ function ScheduleSync() {
             </div>
           </div>
 
-          {/* parsed result */}
+          {/* parsed result → people you can add as users */}
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
-              <Icon name="check-check" size={14} color="var(--status-accepted)" />
-              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Parsed → on-call today</span>
-              <Badge status="accepted">{SS_ROWS.length} assignments</Badge>
-              <Badge status="pending" icon="user-plus">{SS_ROWS.filter((r) => !r.secure).length} to invite</Badge>
+              <Icon name="users-round" size={14} color="var(--status-accepted)" />
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Providers found → add as users</span>
+              <Badge status="accepted">{people.length} people</Badge>
+              {remaining.length > 0 && (
+                <span style={{ marginLeft: "auto" }}>
+                  <Button size="sm" icon="user-plus" onClick={importAll}>{bulk ? "Adding…" : "Add all (" + remaining.length + ")"}</Button>
+                </span>
+              )}
             </div>
+            <p style={{ fontSize: 11.5, color: "var(--muted-foreground)", margin: "0 0 8px", lineHeight: 1.45 }}>
+              Each distinct person on the schedule, ready to add to <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgCode}</b> as a hospitalist user. Shift slots aren't imported — just the people.
+            </p>
             <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", maxHeight: 360, overflowY: "auto" }}>
-              {SS_ROWS.map((r, i) => {
-                const [shift, tint] = SS_HRS[r.hrs];
+              {people.map((p, i) => {
+                const isAdded = !!added[p.name];
+                const isAdding = !!adding[p.name];
                 return (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 13px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-                    <Avatar initials={ssInit(r.prov)} size={30} tint={r.secure ? "emerald" : "amber"} />
+                  <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 13px", borderTop: i ? "1px solid var(--border)" : "none", opacity: isAdded ? 0.6 : 1 }}>
+                    <Avatar initials={ssInit(p.raw)} size={30} tint={isAdded ? "emerald" : "slate"} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ssName(r.prov)}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.slot} · {r.grp}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.group} · {p.slots.length} slot{p.slots.length > 1 ? "s" : ""}</div>
                     </div>
-                    {r.secure
-                      ? <span title="Ready for secure messages" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-accepted)", flex: "none" }}><Icon name="message-square" size={12} />App</span>
-                      : <span title="Not on secure messaging — will be invited" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-pending)", flex: "none" }}><Icon name="mail" size={12} />Invite</span>}
-                    <ShiftChip shift={shift} tint={tint} />
+                    <ShiftChip shift={p.shift === "day" ? "Day" : p.shift === "swing" ? "Swing" : "Night"} tint={p.shift === "day" ? "amber" : p.shift === "swing" ? "blue" : "slate"} />
+                    {isAdded
+                      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "var(--status-accepted)", flex: "none" }}><Icon name="check" size={13} />Added</span>
+                      : <Button size="sm" variant="outline" icon="user-plus" onClick={() => importOne(p)} disabled={isAdding}>{isAdding ? "Adding…" : "Add"}</Button>}
                   </div>
                 );
               })}
             </div>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 9, fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
-              <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />Providers marked <b style={{ color: "var(--status-pending)", fontWeight: 600 }}>Invite</b> show "Not ready to receive secure messages" in Amion — DocTurn auto-sends an enrollment invite and falls back to SMS until they're on the app.
+              <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />Added providers become hospitalist users in this organization and appear in the rotation pool. Re-running a sync won't create duplicates.
             </div>
 
             {/* controls */}

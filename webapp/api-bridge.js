@@ -355,6 +355,60 @@
     DT.set(function (s) { s.providers = s.providers.filter(function (x) { return x.id !== id; }); return s; });
   };
 
+  // Import providers parsed from an external schedule (Amion) as real users.
+  // Role-aware: a developer provisions into the named org via /api/dev/users;
+  // a director provisions into their own org via /api/director/hospitalists.
+  // Each provider is created sequentially; existing ones (409) are skipped.
+  function unameFor(name) {
+    return (name || "user").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 24) || ("u" + Date.now());
+  }
+  DT.actions.importProviders = function (orgCode, providers) {
+    var role = (DT.getState().session || {}).role;
+    var list = providers || [];
+    function createInOrg(orgId, p) {
+      return api("POST", "/api/dev/users", {
+        organizationId: orgId, role: "hospitalist", displayName: p.name,
+        username: unameFor(p.name), specialty: p.group || undefined,
+        patientCap: 12, shiftType: p.shift || "day",
+      });
+    }
+    function createOwn(p) {
+      return api("POST", "/api/director/hospitalists", {
+        username: unameFor(p.name), password: "docturn", displayName: p.name,
+        specialty: p.group || "Hospital Medicine", patientCap: 12,
+        shiftType: p.shift || "day", role: "hospitalist",
+      });
+    }
+    function runSeq(make) {
+      var added = 0, skipped = 0;
+      return list.reduce(function (pr, p) {
+        return pr.then(function () {
+          return make(p).then(function () { added++; }, function () { skipped++; });
+        });
+      }, Promise.resolve()).then(function () { return { added: added, skipped: skipped }; });
+    }
+    var chain = role === "developer"
+      ? get("/api/dev/organizations").then(function (orgs) {
+          var o = (orgs || []).find(function (x) { return String(x.code).toUpperCase() === String(orgCode).toUpperCase(); });
+          if (!o) throw new Error("Organization not found.");
+          return runSeq(function (p) { return createInOrg(o.id, p); });
+        })
+      : runSeq(createOwn);
+    return chain.then(function (res) {
+      hydrateDevUsers(); hydrateOrgs(); rehydrate();
+      DT.set(function (s) {
+        s.__toast = res.added
+          ? { tone: "accepted", title: "Imported " + res.added + " provider(s)", msg: (res.skipped ? res.skipped + " already existed · " : "") + "added to " + orgCode + "." }
+          : { tone: "rejected", title: "Nothing imported", msg: "All selected providers already exist." };
+        return s;
+      });
+      return res;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Import failed", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+
   // Developer: hydrate real cross-tenant users into the kit's devUsers shape.
   function hydrateDevUsers() {
     return get("/api/dev/users").then(function (users) {

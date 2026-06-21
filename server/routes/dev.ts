@@ -219,49 +219,58 @@ export function registerDevRoutes(app: Express) {
       const parsed = devCreateUserSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const d = parsed.data;
-      const org = await storage().getOrganization(d.organizationId);
-      if (!org) return res.status(404).json({ error: "organization_not_found" });
+      try {
+        const org = await storage().getOrganization(d.organizationId);
+        if (!org) return res.status(404).json({ error: "organization_not_found" });
 
-      // Audit the cross-tenant write before performing it.
-      await appendAudit({
-        organizationId: d.organizationId,
-        userId: me.id,
-        action: "dev.user_create",
-        resourceType: "user",
-        resourceId: null,
-        details: { role: d.role, displayName: d.displayName },
-        riskLevel: "medium",
-      });
+        // Username must be unique within the org — return a clean 409 instead of
+        // letting the DB unique constraint throw (which would otherwise hang the
+        // request, since an unhandled async error never sends a response).
+        const dup = await storage().getUserByUsername(d.organizationId, d.username);
+        if (dup) return res.status(409).json({ error: "username_taken" });
 
-      // Temporary credential issued out-of-band; here we set a random hash.
-      const tempHash = await hashPassword(
-        Math.random().toString(36).slice(2),
-      );
-      const user = await storage().createUser({
-        organizationId: d.organizationId,
-        username: d.username,
-        passwordHash: tempHash,
-        role: d.role,
-        displayName: d.displayName,
-        credential: d.credential ?? null,
-        phone: d.phone ?? null,
-        twoFactorEnabled: false,
-      });
-
-      if (d.role === "hospitalist") {
-        const existing = await storage().listHospitalists(d.organizationId);
-        await storage().createHospitalist({
+        // Audit the cross-tenant write before performing it.
+        await appendAudit({
           organizationId: d.organizationId,
-          userId: user.id,
-          specialty: d.specialty ?? "General",
-          currentPatientCount: 0,
-          patientCap: d.patientCap ?? 12,
-          rotationOrder: existing.length,
-          working: false,
-          shiftType: d.shiftType ?? "day",
+          userId: me.id,
+          action: "dev.user_create",
+          resourceType: "user",
+          resourceId: null,
+          details: { role: d.role, displayName: d.displayName },
+          riskLevel: "medium",
         });
+
+        // Temporary credential issued out-of-band; here we set a random hash.
+        const tempHash = await hashPassword(Math.random().toString(36).slice(2));
+        const user = await storage().createUser({
+          organizationId: d.organizationId,
+          username: d.username,
+          passwordHash: tempHash,
+          role: d.role,
+          displayName: d.displayName,
+          credential: d.credential ?? null,
+          phone: d.phone ?? null,
+          twoFactorEnabled: false,
+        });
+
+        if (d.role === "hospitalist") {
+          const existing = await storage().listHospitalists(d.organizationId);
+          await storage().createHospitalist({
+            organizationId: d.organizationId,
+            userId: user.id,
+            specialty: d.specialty ?? "General",
+            currentPatientCount: 0,
+            patientCap: d.patientCap ?? 12,
+            rotationOrder: existing.length,
+            working: false,
+            shiftType: d.shiftType ?? "day",
+          });
+        }
+        res.status(201).json(toSafeUser(user));
+      } catch (err) {
+        console.error("[dev] create user failed", err);
+        if (!res.headersSent) res.status(500).json({ error: "create_failed" });
       }
-      res.status(201).json(toSafeUser(user));
     },
   );
 

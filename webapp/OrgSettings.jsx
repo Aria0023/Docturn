@@ -54,7 +54,7 @@ function OrgSettings() {
         {!org.active && <Badge status="offline">Suspended</Badge>}
       </div>
 
-      <ScheduleSync />
+      <ScheduleSync org={org} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
         {/* Assignment & round-robin rules */}
