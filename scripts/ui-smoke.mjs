@@ -220,6 +220,16 @@ DT.actions.setRole("developer");
 await flush(); await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
+// Amion → shift types: importing detected intervals adds matching shift types
+const beforeShifts = (DT.getState().settings.shiftTypes || []).length;
+await DT.actions.importShiftTypes([{ name: "Night X-cover", time: "23:00–07:00" }, { name: "Swing", time: "13:00–23:00" }]);
+await flush();
+const afterShifts = DT.getState().settings.shiftTypes || [];
+rec("importShiftTypes adds detected intervals (dedup)", afterShifts.some((t) => t.time === "23:00–07:00") && afterShifts.length === beforeShifts + 1, "before=" + beforeShifts + " after=" + afterShifts.length);
+
+// default assignment timeout is 15
+rec("default assignment timeout is 15 min", DT.getState().settings.timeout === 15, "timeout=" + DT.getState().settings.timeout);
+
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
 let pass = 0, fail = 0;

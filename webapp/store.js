@@ -216,7 +216,7 @@
         { id: uid("bc"), title: "Mass casualty drill at 15:00", sev: "warning", at: t0 - 10800000, acked: 22, total: 24, ackReq: true },
       ],
 
-      settings: { timeout: 10, autoReassign: true, onCallOnly: false, activeOnly: true,
+      settings: { timeout: 15, autoReassign: true, onCallOnly: false, activeOnly: true,
         flags: { sms: true, push: true, ai: true, broadcasts: true, amion: false },
         shiftTypes: [
           { id: "rounding",   name: "Rounding",   time: "07:00–19:00", color: "var(--status-active)" },
@@ -742,6 +742,29 @@
         s.settings.shiftTypes = s.settings.shiftTypes.concat([{ id: uid("st"), name: "Custom shift " + n, time: "08:00–20:00", color: "var(--primary)" }]);
         return s;
       });
+    },
+    // Agentically add shift types detected from an external schedule (Amion):
+    // any time interval the schedule uses that the org doesn't already have
+    // becomes a shift type. Returns count added. Dedupes by time range.
+    importShiftTypes: function (types) {
+      var added = 0;
+      set(function (s) {
+        var have = {};
+        s.settings.shiftTypes.forEach(function (x) { have[x.time] = true; have[(x.name || "").toLowerCase()] = true; });
+        var fresh = (types || []).filter(function (t) {
+          if (have[t.time] || have[(t.name || "").toLowerCase()]) return false;
+          have[t.time] = true; have[(t.name || "").toLowerCase()] = true; added++;
+          return true;
+        }).map(function (t) {
+          return { id: uid("st"), name: t.name, time: t.time, color: t.color || "var(--primary)" };
+        });
+        s.settings.shiftTypes = s.settings.shiftTypes.concat(fresh);
+        s.__toast = added
+          ? { tone: "accepted", title: "Added " + added + " shift type(s)", msg: "Detected from the schedule's time intervals." }
+          : { tone: "rejected", title: "No new shift types", msg: "All detected intervals already exist." };
+        return s;
+      });
+      return Promise.resolve({ added: added });
     },
     resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
 

@@ -43,6 +43,27 @@ function ssInit(prov) { const [last, first] = prov.split(", "); return ((first |
 // Amion hours → DocTurn shift type.
 const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
+// Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
+function ss24(tok) {
+  const m = String(tok).match(/^(\d+)([ap])$/i);
+  if (!m) return "00:00";
+  let h = parseInt(m[1], 10) % 12;
+  if (m[2].toLowerCase() === "p") h += 12;
+  return String(h).padStart(2, "0") + ":00";
+}
+function ssRange(hrs) { const p = String(hrs).split("-"); return ss24(p[0]) + "–" + ss24(p[1]); }
+
+// Distinct shift types implied by the schedule's time intervals — so the org's
+// shift types can be created agentically to match what Amion actually uses.
+function ssShiftTypes(rows) {
+  const seen = new Map();
+  rows.forEach((r) => {
+    if (seen.has(r.hrs)) return;
+    seen.set(r.hrs, { code: r.hrs, name: (SS_HRS[r.hrs] || [r.hrs])[0], time: ssRange(r.hrs) });
+  });
+  return [...seen.values()];
+}
+
 // Collapse the per-slot schedule into the DISTINCT people on it — one card per
 // provider (a name appearing in several slots is one person to add as a user).
 function ssUniqueProviders(rows) {
@@ -90,9 +111,21 @@ function ScheduleSync({ org }) {
   const [adding, setAdding] = React.useState({});    // provider name → true while importing
   const [bulk, setBulk] = React.useState(false);     // "Add all" in flight
 
+  const [shiftsAdded, setShiftsAdded] = React.useState(false);
+  const [shiftsBusy, setShiftsBusy] = React.useState(false);
+
   const orgCode = (org && org.code) || (useStore().selectedOrg) || "MERCY";
   const people = React.useMemo(() => ssUniqueProviders(SS_ROWS), []);
   const remaining = people.filter((p) => !added[p.name]);
+  const shiftTypes = React.useMemo(() => ssShiftTypes(SS_ROWS), []);
+
+  const importShifts = () => {
+    if (!a.importShiftTypes) return;
+    setShiftsBusy(true);
+    Promise.resolve(a.importShiftTypes(shiftTypes.map((t) => ({ name: t.name, time: t.time }))))
+      .then(() => setShiftsAdded(true))
+      .finally(() => setShiftsBusy(false));
+  };
 
   const importOne = (p) => {
     setAdding((m) => ({ ...m, [p.name]: true }));
@@ -213,15 +246,24 @@ function ScheduleSync({ org }) {
             </div>
             {/* hours → shift mapping */}
             <div style={{ marginTop: 11 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)", marginBottom: 7 }}>Hours → shift</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Shift types detected</span>
+                {shiftsAdded
+                  ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-accepted)" }}><Icon name="check" size={12} />Added</span>
+                  : <Button size="sm" variant="outline" icon="plus" onClick={importShifts} disabled={shiftsBusy}>{shiftsBusy ? "Adding…" : "Add to org (" + shiftTypes.length + ")"}</Button>}
+              </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {SS_MAP.map((m) => (
-                  <div key={m.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                    <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, background: "var(--secondary)", padding: "1px 6px", borderRadius: 5, minWidth: 46, textAlign: "center" }}>{m.code}</code>
+                {shiftTypes.map((t) => (
+                  <div key={t.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                    <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, background: "var(--secondary)", padding: "1px 6px", borderRadius: 5, minWidth: 46, textAlign: "center" }}>{t.code}</code>
                     <Icon name="arrow-right" size={12} color="var(--muted-foreground)" />
-                    <ShiftChip shift={m.shift} tint={m.tint} />
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{t.name}</span>
+                    <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, color: "var(--muted-foreground)" }}>{t.time}</span>
                   </div>
                 ))}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 6, lineHeight: 1.4 }}>
+                Created automatically from the schedule's actual time intervals — so the org's shift types match Amion.
               </div>
             </div>
           </div>
@@ -269,7 +311,15 @@ function ScheduleSync({ org }) {
               <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--muted-foreground)" }}>
                 <Icon name="clock" size={14} />Re-sync every
                 <select value={interval} onChange={(e) => setIntervalVal(e.target.value)} style={{ fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600, padding: "5px 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", cursor: "pointer" }}>
-                  <option value="5m">5 min</option><option value="15m">15 min</option><option value="1h">1 hour</option><option value="manual">Manual only</option>
+                  <option value="5m">5 min</option>
+                  <option value="15m">15 min</option>
+                  <option value="30m">30 min</option>
+                  <option value="1h">1 hour</option>
+                  <option value="2h">2 hours</option>
+                  <option value="6h">6 hours</option>
+                  <option value="12h">Twice a day</option>
+                  <option value="24h">Once a day</option>
+                  <option value="manual">Manual only</option>
                 </select>
               </div>
               <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· Last sync <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{lastSync}</b></span>

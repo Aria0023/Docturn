@@ -63,7 +63,7 @@ function OrgSettings() {
             <Icon name="route" size={18} color="var(--primary)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Assignment &amp; rotation</h3>
           </div>
-          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-route after this." />
+          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation. Default 15." />
           <div style={{ marginTop: 14 }}>
             <FlagRow icon="phone-call" title="On-call providers only" desc="Restrict rotation to on-call hospitalists." on={s.onCallOnly} onToggle={() => a.setSetting("onCallOnly", !s.onCallOnly)} />
             <FlagRow icon="activity" title="Active (on-shift) only" desc="Skip providers not working today." on={s.activeOnly} onToggle={() => a.setSetting("activeOnly", !s.activeOnly)} last />

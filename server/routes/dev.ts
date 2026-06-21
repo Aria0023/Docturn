@@ -57,7 +57,7 @@ export function registerDevRoutes(app: Express) {
         city: b.city ?? null,
         state: b.state ?? null,
         timezone: b.timezone || "America/New_York",
-        assignmentTimeoutMin: Number(b.assignmentTimeoutMin) || 10,
+        assignmentTimeoutMin: Number(b.assignmentTimeoutMin) || 15,
         roundRobinShiftTypes: Array.isArray(b.roundRobinShiftTypes)
           ? b.roundRobinShiftTypes
           : ["day", "night"],
