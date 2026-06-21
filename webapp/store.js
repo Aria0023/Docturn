@@ -59,19 +59,27 @@
     var text = (note || "").trim();
     if (!text) return { initials: "", room: "", complaint: "", specialty: "", consults: [], empty: true };
     var initials = "";
-    // 1) a full name after "patient/pt/name": "patient John Smith" -> JS
-    var nm = text.match(/\b(?:patient|pt\.?|name)\s*:?\s+([A-Z][a-z]+)\s+([A-Z][a-z]+)/i);
-    if (nm) { initials = (nm[1][0] + nm[2][0]).toUpperCase(); }
-    // 2) explicit initials after patient/pt: "patient J.S." / "pt JS"
-    if (!initials) { var im = text.match(/\b(?:patient|pt\.?)\s+([A-Z]\.?\s?[A-Z])\b/i); if (im) initials = im[1].replace(/[.\s]/g, "").toUpperCase().slice(0, 2); }
-    // 3) any two-word capitalized name, skipping common non-name words
+    // Leading name (handles lowercase too): the words at the start — after an
+    // optional "patient/pt/name" — when they look like a name (prefixed, or
+    // followed by an age/sex like "55M", or "presents/complains").
+    var lead = text.replace(/^\s*(?:patient|pt\.?|name)\s*:?\s*/i, "");
+    var prefixed = /^\s*(?:patient|pt\.?|name)\b/i.test(text);
+    var nameM = lead.match(/^([A-Za-z][A-Za-z'\-]*)\s+([A-Za-z][A-Za-z'\-]*)\b/);
+    if (nameM) {
+      var after = lead.slice(nameM[0].length);
+      var looksName = prefixed
+        || /^\s*,?\s*\d{1,3}\s*[MFmf]\b/.test(after)
+        || /^\s*(presents|presenting|complains|c\/o)\b/i.test(after);
+      if (looksName) initials = (nameM[1][0] + nameM[2][0]).toUpperCase();
+    }
+    // Capitalized two-word name anywhere (skip common non-name words).
     if (!initials) {
-      var STOP = { Patient: 1, Pt: 1, Room: 1, Rm: 1, Bed: 1, Bay: 1, Hall: 1, Hallway: 1, The: 1, Mr: 1, Mrs: 1, Ms: 1, Dr: 1, Male: 1, Female: 1, ER: 1, ED: 1, Disaster: 1 };
+      var STOP = { Patient: 1, Pt: 1, Room: 1, Rm: 1, Bed: 1, Bay: 1, Hall: 1, Hallway: 1, The: 1, Mr: 1, Mrs: 1, Ms: 1, Dr: 1, Male: 1, Female: 1, ER: 1, ED: 1, Disaster: 1, With: 1, Chest: 1 };
       var caps = (text.match(/\b[A-Z][a-z]+\b/g) || []).filter(function (w) { return !STOP[w]; });
       if (caps.length >= 2) initials = (caps[0][0] + caps[1][0]).toUpperCase();
-      else if (caps.length === 1) initials = caps[0].slice(0, 2).toUpperCase();
     }
-    // 4) standalone explicit initials like "JS" / "J.S."
+    // Explicit initials: "patient J.S." / standalone "JS" / "J.S."
+    if (!initials) { var im = text.match(/\b(?:patient|pt\.?)\s+([A-Z])\.?\s?([A-Z])\b/i); if (im) initials = (im[1] + im[2]).toUpperCase(); }
     if (!initials) { var im2 = text.match(/\b([A-Z])\.?\s?([A-Z])\b/); if (im2) initials = (im2[1] + im2[2]).toUpperCase(); }
     // Room/location — accepts any designation: 412, A/B, Hall, Bay 3, Disaster.
     var room = "";

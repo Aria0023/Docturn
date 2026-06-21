@@ -169,11 +169,12 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   const list = providers || [];
   const nextUp = list[0];
   const manualId = manual || (nextUp && nextUp.id);
+  const target = mode === "quick" ? nextUp : (list.find((p) => p.id === manualId) || nextUp);
 
-  const canSend = (fields.initials && fields.room) && !!nextUp;
+  const canSend = !!(fields.initials && fields.room && target);
   const doSend = () => {
     if (!canSend) return;
-    onSend(mode === "quick" ? nextUp : list.find((p) => p.id === manualId), fields, consults);
+    onSend(target, fields, consults);
     reset();
   };
 
