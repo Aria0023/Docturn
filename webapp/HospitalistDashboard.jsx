@@ -12,7 +12,14 @@ function ExpiryBadge({ expiresAt }) {
   );
 }
 
-function HospitalistDashboard({ pending, onAccept, onDecline, myPatients, acceptedToday = 0, unit = [], onOpenTeam, onMessage }) {
+function HospitalistDashboard({ pending, onAccept, onDecline, myPatients, acceptedToday = 0, unit = [], onOpenTeam, onMessage, providers = [], meName, rotationMode = "lowest_census" }) {
+  // Where this hospitalist stands in the round-robin among everyone rounding.
+  const rot = (providers || []).filter((p) => p.working && p.inRotation);
+  const ordered = rotationMode === "sequential"
+    ? rot.slice()
+    : rot.slice().sort((a, b) => a.census - b.census);
+  const myPos = ordered.findIndex((p) => meName && p.name === meName); // 0-based; -1 if not in pool
+
   return (
     <PageWrap>
       <div style={{ display: "flex", gap: 14, marginBottom: 24 }}>
@@ -43,6 +50,44 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myPatients, accept
           </>
         )}
       </div>
+
+      {/* Where you stand in the round-robin — read-only FYI for the hospitalist */}
+      {ordered.length > 0 && (
+        <Card style={{ padding: 18, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Icon name="route" size={18} color="var(--primary)" />
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Your round-robin standing</h3>
+            <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotationMode === "sequential" ? "Sequential order" : "Lowest census first"}</span>
+          </div>
+          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "0 0 12px" }}>
+            {myPos === 0
+              ? "You're next up — the next admission routes to you."
+              : myPos > 0
+                ? "You're #" + (myPos + 1) + " of " + ordered.length + " rounding · " + myPos + " ahead of you."
+                : "You're not in the rotation pool right now."}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {ordered.map((p, i) => {
+              const isNext = i === 0;
+              const isMe = meName && p.name === meName;
+              return (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 11px", borderRadius: "var(--radius-md)",
+                  border: "1px solid " + (isMe ? "var(--primary)" : (isNext ? "#BFDBFE" : "var(--border)")),
+                  background: isMe ? "#EFF6FF" : (isNext ? "#F5F9FF" : "#fff") }}>
+                  <span style={{ width: 22, height: 22, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{i + 1}</span>
+                  <Avatar initials={p.avatar} size={28} tint={isMe ? "blue" : (isNext ? "emerald" : "slate")} />
+                  <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.name}{isMe && <span style={{ marginLeft: 7 }}><Badge status="active">You</Badge></span>}
+                  </span>
+                  <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{p.specialty}</span>
+                  <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums", width: 52, textAlign: "right" }}>{p.census}/{p.cap}</span>
+                  {isNext && <Badge status="sent">Next</Badge>}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       <SectionTitle action={<Badge status="pending">{pending.length} awaiting</Badge>}>Incoming assignment requests</SectionTitle>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 28 }}>
