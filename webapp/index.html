@@ -116,7 +116,6 @@ const NAV = {
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
-    { id: "access",     label: "Access & people", icon: "users-round" },
     { id: "directory",  label: "Directory",  icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
     { id: "appearance", label: "Appearance", icon: "palette" },
@@ -128,7 +127,6 @@ const NAV = {
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
-    { id: "access",     label: "Access & people", icon: "users-round" },
     { id: "directory",  label: "Directory",  icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
     { id: "appearance", label: "Appearance", icon: "palette" },
@@ -150,7 +148,7 @@ const TOP = {
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
-  directory:  ["Care team", "On‑call and availability"],
+  directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
@@ -261,11 +259,20 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+
+  // Roles that also manage org people/roles — their Directory tab folds in the
+  // Access & people surfaces (People + Roles & permissions) as sub-tabs.
+  const dirDomain = (role === "er_director")
+    ? { roles: ["er_doctor", "er_director"], portals: ["er_physician", "er_director"] }
+    : { roles: ["hospitalist", "director"], portals: ["hospitalist", "hosp_director"] };
+  const canManagePeople = role === "director" || role === "er_director";
 
   let screen;
   if (nav === "messages") screen = <Messaging />;
-  else if (nav === "directory") screen = <Directory providers={sortedProviders} onMessage={message} />;
+  else if (nav === "directory") screen = canManagePeople
+    ? <DirectoryHub providers={sortedProviders} onMessage={message} scopeOrg={st.selectedOrg} domainRoles={dirDomain.roles} domainPortals={dirDomain.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />
+    : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;

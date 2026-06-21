@@ -35,4 +35,36 @@ function Directory({ providers, onMessage }) {
   );
 }
 
-Object.assign(window, { Directory });
+// Directory + Access & people, combined. For directors/ER directors the
+// Directory tab carries People and Roles & permissions as sub-tabs so there's
+// a single place for "everyone in the org" — provider directory and the access
+// management that used to live under its own nav item.
+function DirectoryHub({ providers, onMessage, scopeOrg, domainRoles, domainPortals, roles, onCreate, onUpdate, onDelete }) {
+  const [tab, setTab] = React.useState("directory");
+  const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"], ["roles", "Roles & permissions", "shield-half"]];
+  return (
+    <React.Fragment>
+      <div style={{ padding: "22px 28px 0", maxWidth: "var(--content-max, 1040px)", margin: "0 auto" }}>
+        <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+          {tabs.map(([id, label, icon]) => {
+            const on = tab === id;
+            return (
+              <button key={id} onClick={() => setTab(id)}
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)",
+                  background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                <Icon name={icon} size={15} />{label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {tab === "directory"
+        ? <Directory providers={providers} onMessage={onMessage} />
+        : tab === "people"
+          ? <PeopleManager scopeOrg={scopeOrg} domainRoles={domainRoles} />
+          : <RoleManagement roles={roles} onCreate={onCreate} onUpdate={onUpdate} onDelete={onDelete} domainPortals={domainPortals} />}
+    </React.Fragment>
+  );
+}
+
+Object.assign(window, { Directory, DirectoryHub });

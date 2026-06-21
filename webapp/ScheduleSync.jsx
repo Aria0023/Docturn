@@ -43,6 +43,18 @@ function ssInit(prov) { const [last, first] = prov.split(", "); return ((first |
 // Amion hours → DocTurn shift type.
 const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
+// On-call schedule vendors. Each organization picks its own — different
+// hospitals use different scheduling systems, so the source is org-scoped.
+const SS_SOURCES = {
+  amion:  { label: "Amion",          blurb: "amion.com on-call grid",        loginUrl: "https://www.amion.com",     api: "https://www.amion.com/api" },
+  qgenda: { label: "QGenda",         blurb: "QGenda provider schedules",     loginUrl: "https://app.qgenda.com",    api: "https://api.qgenda.com/v2" },
+  tangier:{ label: "Tangier / Spok", blurb: "Tangier (Spok) on-call",        loginUrl: "https://www.tangieronline.com", api: "" },
+  shiftadmin: { label: "ShiftAdmin", blurb: "ShiftAdmin scheduling",         loginUrl: "https://www.shiftadmin.com", api: "" },
+  custom: { label: "Custom / other", blurb: "Custom endpoint or sign-in capture", loginUrl: "",                     api: "" },
+  none:   { label: "Not configured", blurb: "No schedule source set for this organization", loginUrl: "",          api: "" },
+};
+const SS_SOURCE_KEYS = ["amion", "qgenda", "tangier", "shiftadmin", "custom"];
+
 // Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
 function ss24(tok) {
   const m = String(tok).match(/^(\d+)([ap])$/i);
@@ -101,6 +113,7 @@ function ShiftChip({ shift, tint }) {
 
 function ScheduleSync({ org }) {
   const a = useActions();
+  const st = useStore();
   const [connected, setConnected] = React.useState(false);
   const [mode, setMode] = React.useState("capture"); // default to the no-API path
   const [busy, setBusy] = React.useState(false);
@@ -114,7 +127,10 @@ function ScheduleSync({ org }) {
   const [shiftsAdded, setShiftsAdded] = React.useState(false);
   const [shiftsBusy, setShiftsBusy] = React.useState(false);
 
-  const orgCode = (org && org.code) || (useStore().selectedOrg) || "MERCY";
+  const orgCode = (org && org.code) || st.selectedOrg || "MERCY";
+  const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
+  const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
+  const notConfigured = srcKey === "none";
   const people = React.useMemo(() => ssUniqueProviders(SS_ROWS), []);
   const remaining = people.filter((p) => !added[p.name]);
   const shiftTypes = React.useMemo(() => ssShiftTypes(SS_ROWS), []);
@@ -150,6 +166,14 @@ function ScheduleSync({ org }) {
   const [password, setPassword] = React.useState("••••••••••");
   const [schedKey, setSchedKey] = React.useState("!299a6dc6iJRQ");
 
+  // Switching the org's source resets the live connection and points the
+  // sign-in/API fields at the new vendor's defaults.
+  React.useEffect(() => {
+    setConnected(false); setRevealed(false);
+    if (src.api) setBaseUrl(src.api);
+    if (src.loginUrl) setLoginUrl(src.loginUrl);
+  }, [srcKey]);
+
   const run = () => {
     setBusy(true);
     setTimeout(() => { setBusy(false); setConnected(true); setRevealed(true); setLastSync("just now"); }, 1200);
@@ -165,15 +189,36 @@ function ScheduleSync({ org }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, whiteSpace: "nowrap" }}>On-call schedule sync</h3>
-            <Badge variant="secondary">Amion</Badge>
+            <Badge variant="secondary">{src.label}</Badge>
             {connected && <span style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {mode === "api" ? "API" : "Capture"}</Badge></span>}
           </div>
-          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>Import the live on-call grid to drive DocTurn's rotation pool. Manual overrides always win at game time.</p>
+          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>Each organization uses its own scheduling system — pick <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgCode}</b>'s source, then import its on-call grid to drive DocTurn's rotation pool.</p>
         </div>
-        {connected && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={syncNow}>{busy ? "Syncing…" : "Sync now"}</Button>}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
+          <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</span>
+          <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+            <select value={srcKey} onChange={(e) => a.setScheduleSource(orgCode, e.target.value)}
+              style={{ appearance: "none", WebkitAppearance: "none", height: 30, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+              {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}</option>)}
+              <option value="none">Not configured</option>
+            </select>
+            <Icon name="chevron-down" size={12} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
+          </div>
+          {connected && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={syncNow}>{busy ? "Syncing…" : "Sync now"}</Button>}
+        </div>
       </div>
 
-      {!connected && (
+      {notConfigured && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, padding: "16px 18px", borderRadius: "var(--radius-md)", background: "var(--secondary)", border: "1px dashed var(--border)" }}>
+          <Icon name="calendar-off" size={20} color="var(--muted-foreground)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600 }}>No schedule source for {orgCode}</div>
+            <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Choose this organization's scheduling system above (Amion, QGenda, …) to import its on-call grid.</div>
+          </div>
+        </div>
+      )}
+
+      {!connected && !notConfigured && (
         <React.Fragment>
           {/* mode selector */}
           <div style={{ display: "flex", gap: 10, margin: "14px 0 6px" }}>
@@ -193,11 +238,11 @@ function ScheduleSync({ org }) {
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
                 <Icon name="info" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
-                <span>No public API? DocTurn signs in to Amion inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. Credentials are <b>encrypted (AES-256) at rest</b>, used only to fetch the schedule, and every capture is written to the audit log.</span>
+                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. Credentials are <b>encrypted (AES-256) at rest</b>, used only to fetch the schedule, and every capture is written to the audit log.</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <Field label="Sign-in URL" icon="link" value={loginUrl} onChange={setLoginUrl} />
-                <Field label="Schedule key / org password" icon="hash" value={schedKey} onChange={setSchedKey} help="Amion's interactive-schedule password." />
+                <Field label="Schedule key / org password" icon="hash" value={schedKey} onChange={setSchedKey} help={src.label + "'s interactive-schedule password."} />
                 <Field label="Username" icon="user" value={username} onChange={setUsername} />
                 <Field label="Password" icon="lock" value={password} onChange={setPassword} type="password" />
               </div>

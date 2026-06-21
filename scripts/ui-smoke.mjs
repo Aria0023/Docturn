@@ -121,8 +121,8 @@ async function clickEveryButton(roleLabel, screen) {
 
 const NAV = {
   developer: ["dashboard", "roles", "compliance", "appearance", "settings"],
-  director: ["dashboard", "board", "broadcasts", "messages", "access", "directory", "compliance", "appearance", "settings"],
-  er_director: ["dashboard", "board", "broadcasts", "messages", "access", "directory", "compliance", "appearance", "settings"],
+  director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
+  er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_doctor: ["dashboard", "messages", "directory", "compliance"],
   hospitalist: ["dashboard", "history", "messages", "directory", "compliance"],
 };
@@ -309,6 +309,31 @@ await flush();
 const resetAt = DT.getState().admissionsResetAt;
 const sinceReset = (DT.getState().admissions || []).filter((a) => a.at >= resetAt).length;
 rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.getState().admissions || []).length === logBefore, "since=" + sinceReset + " log=" + (DT.getState().admissions || []).length);
+
+// ER director patient board is modular: defaults to working tiles only, the
+// census/FHIR sections stay off, and a toggle persists.
+{
+  const def = DT.boardModules("er_director");
+  const dirDef = DT.boardModules("director");
+  rec("ER director board defaults: admissions/accepted on, census/FHIR off",
+    def.admissions && def.accepted && !def.census && !def.dataSource && dirDef.census,
+    "er_director=" + JSON.stringify(def));
+  DT.actions.setBoardModule("er_director", "census", true);
+  await flush();
+  rec("board module toggle persists", DT.boardModules("er_director").census === true);
+  DT.actions.setBoardModule("er_director", "census", false); await flush();
+}
+
+// Per-organization schedule source: each org keeps its own, and it's settable.
+{
+  const sources = DT.getState().scheduleSources || {};
+  const distinct = new Set(Object.values(sources)).size;
+  rec("schedule source is per-organization (distinct sources seeded)",
+    sources.MAYO && sources.STJUDE && distinct >= 2, "sources=" + JSON.stringify(sources));
+  DT.actions.setScheduleSource("MERCY", "qgenda"); await flush();
+  rec("setScheduleSource updates that org only",
+    DT.getState().scheduleSources.MERCY === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
+}
 
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");

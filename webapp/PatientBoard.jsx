@@ -121,10 +121,56 @@ function AddAdmissionModal({ providers, onClose, onAdd }) {
   );
 }
 
-function PatientBoard({ patients, role, providers = [], fhir, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir }) {
+// The board's optional sections. The census table and the tiles/banner that
+// summarize it need a live EHR feed, so they carry a "needs EHR/FHIR" note and
+// can be switched off until that's wired up.
+const BOARD_MODULES = [
+  ["admissions",  "Admissions tile", null],
+  ["accepted",    "Accepted tile", null],
+  ["awaiting",    "Awaiting-acceptance tile", "Needs live census (EHR/FHIR)"],
+  ["consultants", "With-consultants tile", "Needs live census (EHR/FHIR)"],
+  ["dataSource",  "EHR / FHIR data-source bar", "Needs EHR/FHIR"],
+  ["census",      "Patient census table", "Needs live census (EHR/FHIR)"],
+];
+
+function BoardCustomize({ modules, onSetModule, onClose }) {
+  return (
+    <React.Fragment>
+      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 300, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+        <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Customize board</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Show only the sections you use today.</div>
+        </div>
+        <div style={{ padding: 6 }}>
+          {BOARD_MODULES.map(([key, label, note]) => {
+            const on = !!modules[key];
+            return (
+              <button key={key} onClick={() => onSetModule(key, !on)}
+                style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", fontFamily: "var(--font-sans)" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                <span style={{ width: 18, height: 18, flex: "none", borderRadius: 5, border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--primary)" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {on && <Icon name="check" size={13} color="#fff" />}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>{label}</span>
+                  {note && <span style={{ display: "block", fontSize: 11, color: "var(--status-pending)", marginTop: 1 }}>{note}</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir }) {
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");
   const [adding, setAdding] = React.useState(false);
+  const [customizing, setCustomizing] = React.useState(false);
+  const M = modules || { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
   const DEPTS = ["ALL", "ER", "ICU", "MED", "TELE"];
   const canEdit = (role === "director" || role === "er_director") && onUpdate;
 
@@ -143,17 +189,39 @@ function PatientBoard({ patients, role, providers = [], fhir, onReassign, onUpda
     <span style={{ width: w, flex: grow ? grow + " 1 0" : (w ? "none" : 1), fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>{children}</span>
   );
 
+  const tiles = [
+    ["admissions",  "Admissions", patients.length, "layout-list", "blue"],
+    ["accepted",    "Accepted", accepted, "check-circle-2", "emerald"],
+    ["awaiting",    "Awaiting acceptance", awaiting, "clock", "amber"],
+    ["consultants", "With consultants", withConsult, "users-round", "slate"],
+  ].filter((t) => M[t[0]]);
+
   return (
     <BoardWrap>
-      <DataSourceBanner fhir={fhir} canEdit={canEdit} onConnect={onConnectFhir} onDisconnect={onDisconnectFhir} onSync={onSyncFhir} />
+      {canCustomize && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12, position: "relative" }}>
+          <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => setCustomizing((v) => !v)}>Customize board</Button>
+          {customizing && <BoardCustomize modules={M} onSetModule={onSetModule} onClose={() => setCustomizing(false)} />}
+        </div>
+      )}
 
-      <div style={{ display: "flex", gap: 14, marginBottom: 22 }}>
-        <StatTile label="Admissions" value={patients.length} icon="layout-list" tint="blue" />
-        <StatTile label="Accepted" value={accepted} icon="check-circle-2" tint="emerald" />
-        <StatTile label="Awaiting acceptance" value={awaiting} icon="clock" tint="amber" />
-        <StatTile label="With consultants" value={withConsult} icon="users-round" tint="slate" />
-      </div>
+      {M.dataSource && <DataSourceBanner fhir={fhir} canEdit={canEdit} onConnect={onConnectFhir} onDisconnect={onDisconnectFhir} onSync={onSyncFhir} />}
 
+      {tiles.length > 0 && (
+        <div style={{ display: "flex", gap: 14, marginBottom: 22 }}>
+          {tiles.map(([key, label, value, icon, tint]) => <StatTile key={key} label={label} value={value} icon={icon} tint={tint} />)}
+        </div>
+      )}
+
+      {!M.census && (
+        <Card style={{ padding: 22, textAlign: "center", color: "var(--muted-foreground)" }}>
+          <Icon name="layout-list" size={22} color="var(--muted-foreground)" />
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--foreground)", marginTop: 8 }}>Census table is hidden</div>
+          <div style={{ fontSize: 12.5, marginTop: 4 }}>The live patient census needs an EHR/FHIR connection.{canCustomize ? " Turn it on from “Customize board” once that's wired up." : ""}</div>
+        </Card>
+      )}
+
+      {M.census && <React.Fragment>
       {/* Controls */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220, maxWidth: 320 }}>
@@ -282,6 +350,7 @@ function PatientBoard({ patients, role, providers = [], fhir, onReassign, onUpda
       </div>
 
       {adding && <AddAdmissionModal providers={providers} onAdd={onAdd} onClose={() => setAdding(false)} />}
+      </React.Fragment>}
     </BoardWrap>
   );
 }

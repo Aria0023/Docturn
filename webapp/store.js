@@ -110,10 +110,19 @@
   function seed() {
     var t0 = now();
     return {
-      v: 6,
+      v: 7,
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
+      // Per-role patient-board module visibility overrides (merged over the
+      // role defaults in boardModulesFor). Lets a director/ER director switch
+      // board sections on/off — the FHIR-dependent ones stay off until the EHR
+      // census is wired up.
+      boardModules: {},
+      // Per-organization on-call schedule source. Every tenant can use a
+      // different scheduling vendor (Amion, QGenda, …) — keyed by org code so it
+      // survives the developer org re-hydrate (which rebuilds the orgs array).
+      scheduleSources: { MAYO: "amion", STJUDE: "qgenda", CLEVE: "amion", MERCY: "amion", PINE: "none" },
       session: null, // { role, org, user, name }
       ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
       me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
@@ -321,7 +330,7 @@
       var raw = localStorage.getItem(KEY);
       if (!raw) return null;
       var s = JSON.parse(raw);
-      if (!s || s.v !== 6) return null;
+      if (!s || s.v !== 7) return null;
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
@@ -370,6 +379,17 @@
   }
   function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (c.unread || 0); }, 0); }
   function unreadNotifs() { return state.notifications.filter(function (n) { return !n.read; }).length; }
+
+  // Patient-board modules a role sees, defaults merged with any saved overrides.
+  // ER director starts with just the working tiles (admissions/accepted); the
+  // census-table + FHIR-dependent sections stay off until the EHR is connected.
+  function boardModulesFor(role) {
+    var base = (role === "er_director")
+      ? { admissions: true, accepted: true, awaiting: false, consultants: false, dataSource: false, census: false }
+      : { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
+    var ov = (state.boardModules && state.boardModules[role]) || {};
+    return Object.assign({}, base, ov);
+  }
 
   /* ---- audit / notify helpers ------------------------------------------- */
   function pushAudit(s, entry) {
@@ -787,6 +807,26 @@
       });
     },
 
+    /* patient-board modules — per role, toggle a section on/off */
+    setBoardModule: function (role, key, on) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.boardModules && s.boardModules[role]) || {});
+        cur[key] = on;
+        s.boardModules = Object.assign({}, s.boardModules, (function () { var o = {}; o[role] = cur; return o; })());
+        return s;
+      });
+    },
+
+    /* per-organization on-call schedule source (Amion / QGenda / custom / …) */
+    setScheduleSource: function (code, source) {
+      set(function (s) {
+        s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
+        pushAudit(s, { action: "set_schedule_source", resource: code + " → " + source, risk: "low" });
+        s.__toast = { tone: "accepted", title: "Schedule source updated", msg: code + " now syncs via " + source + "." };
+        return s;
+      });
+    },
+
     /* org settings */
     setSetting: function (key, val) { set(function (s) { s.settings = Object.assign({}, s.settings, (function () { var o = {}; o[key] = val; return o; })()); return s; }); },
     toggleFlag: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { flags: Object.assign({}, s.settings.flags, (function () { var o = {}; o[key] = !s.settings.flags[key]; return o; })()) }); pushAudit(s, { action: "toggle_feature_flag", resource: key, risk: "low" }); return s; }); },
@@ -909,7 +949,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
