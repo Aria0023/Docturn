@@ -36,6 +36,8 @@ function Messaging() {
   // Mirror the Directory exactly: you can start a message with anyone in the
   // provider directory (filtered by the same search box). Picking someone you
   // already have a thread with just reopens it (startConversation dedupes).
+  // Full directory of people you can message (same live source as the Directory
+  // tab); shown in a large full-panel picker when composing.
   const startable = (st.providers || []).filter((p) =>
     p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
@@ -50,25 +52,6 @@ function Messaging() {
           </div>
           <Field icon="search" placeholder="Search conversations…" value={q} onChange={setQ} />
         </div>
-
-        {composing && (
-          <div style={{ borderBottom: "1px solid var(--border)", background: "var(--secondary)", maxHeight: 260, overflowY: "auto" }}>
-            <div style={{ padding: "10px 16px 4px", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>Start a conversation</div>
-            {startable.length === 0 && <div style={{ padding: "8px 16px 14px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No one in the directory matches that search.</div>}
-            {startable.map((p) => (
-              <button key={p.id} onClick={() => startWith(p)}
-                onMouseEnter={(e) => e.currentTarget.style.background = "#fff"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                style={{ width: "100%", display: "flex", gap: 10, alignItems: "center", padding: "9px 16px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left" }}>
-                <Avatar initials={p.avatar} size={30} tint={p.working ? "emerald" : "slate"} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{p.specialty}</div>
-                </div>
-                <Icon name="plus" size={15} color="var(--primary)" />
-              </button>
-            ))}
-          </div>
-        )}
 
         <div style={{ overflowY: "auto", flex: 1 }}>
           {list.map((c) => {
@@ -95,12 +78,47 @@ function Messaging() {
               </button>
             );
           })}
-          {list.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No conversations match "{q}".</div>}
+          {list.length === 0 && <div style={{ padding: "18px 16px 6px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No conversations yet — tap the pencil to message anyone in the directory.</div>}
         </div>
       </div>
 
       {/* Thread */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--secondary)" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--secondary)", position: "relative" }}>
+        {composing && (
+          <div style={{ position: "absolute", inset: 0, zIndex: 5, background: "#fff", display: "flex", flexDirection: "column" }}>
+            <div style={{ height: 60, flex: "none", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
+              <Icon name="pen-square" size={18} color="var(--primary)" />
+              <div style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>New message</div>
+              <Button size="sm" variant="ghost" icon="x" onClick={() => { setComposing(false); setQ(""); }}>Close</Button>
+            </div>
+            <div style={{ padding: "12px 20px", flex: "none", borderBottom: "1px solid var(--border)" }}>
+              <Field icon="search" placeholder="Search the directory by name or specialty…" value={q} onChange={setQ} />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
+              {startable.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No one in the directory matches "{q}".</div>}
+              {startable.map((p) => {
+                const existing = convos.some((c) => c.name === p.name);
+                return (
+                  <button key={p.id} onClick={() => startWith(p)}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                    style={{ width: "100%", display: "flex", gap: 13, alignItems: "center", padding: "11px 24px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", background: "#fff" }}>
+                    <div style={{ position: "relative", flex: "none" }}>
+                      <Avatar initials={p.avatar} size={40} tint={p.working ? "emerald" : "slate"} />
+                      <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>
+                      <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.specialty}{p.working ? " · on shift" : " · off shift"}</div>
+                    </div>
+                    {existing
+                      ? <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Open thread</span>
+                      : <Button size="sm" variant="outline" icon="message-square">Message</Button>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         <div style={{ height: 60, flex: "none", background: "#fff", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
           <Avatar initials={conv.initials} size={36} tint={conv.tint} />
           <div style={{ flex: 1 }}>

@@ -305,13 +305,18 @@
     DT.set(function (s) {
       var p = (s.pending || []).find(function (x) { return x.id === id; });
       if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), initials: p.initials, room: p.room, complaint: p.complaint }].concat(s.myAdmissions || []);
+      s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
       s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." };
       return s;
     });
   };
   DT.actions.decline = function (id) {
     api("PATCH", "/api/assignments/" + id + "/reject").then(rehydrate).catch(function () {});
-    DT.set(function (s) { s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." }; return s; });
+    DT.set(function (s) {
+      s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
+      s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." };
+      return s;
+    });
   };
 
   DT.actions.sendAssignment = function (provider, fields, consults) {
