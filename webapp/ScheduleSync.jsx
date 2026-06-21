@@ -25,7 +25,6 @@ const SS_ROWS = [
   { slot: "Tarzana 2 PM Swing", hrs: "4p-12a", prov: "Manukian, Naira", grp: "ISP North", secure: false },
   { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
   { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
-  { slot: "West Night2", hrs: "11p-7a", prov: "Shergill, Jasper", grp: "ISP Hospitalist", secure: true },
 ];
 const SS_MAP = [
   { code: "7a–7p",  shift: "Day call",      tint: "amber" },
