@@ -90,6 +90,19 @@ const DT = window.DT;
 const results = [];
 const rec = (label, ok, detail = "") => { results.push({ label, ok, detail }); if (process.env.UI_PROGRESS) console.log((ok ? "ok  " : "ERR ") + label); };
 
+// Set a React-controlled input/textarea value the way a user typing would
+// (native setter + input event), so onChange fires.
+function setInput(el, value) {
+  const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+  setter.call(el, value);
+  el.dispatchEvent(new window.Event("input", { bubbles: true }));
+}
+const allButtons = () => [...window.document.querySelectorAll("button")];
+const btnByText = (re) => allButtons().find((b) => re.test((b.textContent || "").trim()));
+const inputByPlaceholder = (sub) => [...window.document.querySelectorAll("input,textarea")].find((i) => (i.placeholder || "").includes(sub));
+
+
 // Buttons that change session/identity — skipped so the sweep doesn't flood
 // /api/login (role switcher) or log itself out mid-test.
 const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "developer", "log out", "sign out", "logout", "lock"]);
@@ -194,6 +207,64 @@ if (got) {
   DT.actions.accept(got.id); await flush(); await flush();
   rec("hospitalist: accept removes it from pending", !(DT.getState().pending || []).find((p) => p.initials === "ZZ"));
 }
+}
+
+// ER physician MANUAL send, end-to-end through the real form (the user's bug):
+// type initials+room, switch to Manual, pick a NON-default provider, click Send.
+await DT.actions.login("er_doctor", "MERCY"); DT.actions.setNav("dashboard"); await flush(); await flush();
+{
+  const provs = DT.sortedProviders();
+  const pick = provs[1] || provs[0]; // not the round-robin default, to prove manual selection
+  const initEl = inputByPlaceholder("e.g. JS");
+  const roomEl = inputByPlaceholder("Hall");
+  let manualOk = false, detail = "";
+  if (initEl && roomEl && pick) {
+    setInput(initEl, "QX"); setInput(roomEl, "disc 44"); await flush();
+    const manualTab = btnByText(/^Manual$/); if (manualTab) manualTab.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
+    const provBtn = allButtons().find((b) => (b.textContent || "").includes(pick.name));
+    if (provBtn) provBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
+    const before = (DT.getState().admissions || []).length;
+    const sendBtn = btnByText(/^Send assignment/);
+    const disabled = sendBtn && (sendBtn.style.pointerEvents === "none" || sendBtn.disabled);
+    if (sendBtn && !disabled) sendBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await flush(); await flush();
+    const adm = (DT.getState().admissions || [])[0];
+    manualOk = (DT.getState().admissions || []).length > before && adm && adm.initials === "QX" && adm.provider === pick.name;
+    detail = "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
+  }
+  rec("ER manual send routes to the chosen provider (end-to-end)", manualOk, detail);
+}
+
+// Cross-user: import an Amion physician, then ER routes an admission to THEM.
+await DT.actions.login("developer", "MERCY"); await flush();
+await DT.actions.importProviders("MERCY", [{ name: "Roupen Guedikian", group: "Nocturnist", shift: "night" }]);
+await flush(); await flush();
+await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+{
+  const imported = DT.sortedProviders().find((p) => /Guedikian/.test(p.name));
+  let ok = false, detail = "imported=" + !!imported;
+  if (imported) {
+    DT.actions.sendAssignment(imported, { initials: "AM", room: "Bay 2", complaint: "Amion route test", specialty: "Cardiology" }, []);
+    await flush(); await flush();
+    const adm = (DT.getState().admissions || [])[0];
+    ok = adm && adm.provider === imported.name && adm.initials === "AM";
+    detail = "latest=" + JSON.stringify(adm && { p: adm.provider, i: adm.initials });
+  }
+  rec("ER routes an admission to an Amion-imported physician", ok, detail);
+}
+
+// Messaging: start a conversation with a provider and send a message (stored).
+await DT.actions.login("hospitalist", "MERCY"); await flush();
+{
+  const who = DT.sortedProviders().find((p) => !/Chen/.test(p.name)) || DT.sortedProviders()[0];
+  DT.actions.startConversation({ name: who.name, specialty: who.specialty, avatar: who.avatar }); await flush();
+  const st0 = DT.getState();
+  const conv = (st0.conversations || []).find((c) => c.name === who.name);
+  if (conv) { DT.actions.sendMessage(conv.id, "Test handoff message"); }
+  await flush();
+  const conv2 = (DT.getState().conversations || []).find((c) => c.name === who.name);
+  const sent = conv2 && (conv2.messages || []).some((m) => m.text === "Test handoff message" && m.me);
+  rec("messaging: start conversation + send message persists", !!sent, "msgs=" + (conv2 ? conv2.messages.length : "no convo"));
 }
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)

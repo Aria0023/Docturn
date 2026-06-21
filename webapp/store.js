@@ -68,7 +68,7 @@
     if (nameM) {
       var after = lead.slice(nameM[0].length);
       var looksName = prefixed
-        || /^\s*,?\s*\d{1,3}\s*[MFmf]\b/.test(after)
+        || /^\s*,?\s*\d{1,3}\s*(?:y\/?o\b|yo\b|years?\b|m\b|f\b|male\b|female\b|man\b|woman\b)/i.test(after)
         || /^\s*(presents|presenting|complains|c\/o)\b/i.test(after);
       if (looksName) initials = (nameM[1][0] + nameM[2][0]).toUpperCase();
     }
@@ -81,10 +81,12 @@
     // Explicit initials: "patient J.S." / standalone "JS" / "J.S."
     if (!initials) { var im = text.match(/\b(?:patient|pt\.?)\s+([A-Z])\.?\s?([A-Z])\b/i); if (im) initials = (im[1] + im[2]).toUpperCase(); }
     if (!initials) { var im2 = text.match(/\b([A-Z])\.?\s?([A-Z])\b/); if (im2) initials = (im2[1] + im2[2]).toUpperCase(); }
-    // Room/location — accepts any designation: 412, A/B, Hall, Bay 3, Disaster.
+    // Room/location — accepts any designation incl. spaces: 412, A/B, Hall,
+    // Bay 3, "disc 44", Disaster. Capture after the keyword up to punctuation
+    // or a clinical phrase, so multi-word designations ("disc 44") are kept.
     var room = "";
-    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9][A-Za-z0-9\/\-]{0,11})/i);
-    if (rm) room = rm[1];
+    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9][A-Za-z0-9\/\- ]*?)(?=\s*(?:[,.;]|\bwith\b|\bw\/|\bpresent|\bcomplain|\bc\/o\b|\bhx\b|\bfor\b|$))/i);
+    if (rm) room = rm[1].trim();
     if (!room) { var spot = text.match(/\b(hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
     if (!room) room = (text.match(/\b([0-9]{3}[A-Za-z]?)\b/) || [])[1] || "";
     var complaint = text.split(/[.\n;]/)[0].trim().replace(/^\s*(patient|pt\.?)\s+[A-Z][A-Za-z.\s]*?\s*(with|w\/|presenting with|presents with)\s*/i, "");
