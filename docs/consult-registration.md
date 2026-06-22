@@ -24,3 +24,17 @@ Self-registration via an organization code:
 
 This is an onboarding/auth feature (DocTurn is currently admin-provisioned), so
 it's parked until launch.
+
+---
+
+# Parked: Amion scoping (remember for later)
+The **Amion** schedule-sync source should be available/enabled **only** for the
+Cedars organizations — **Providence Cedars-Sinai** and **Cedars-Sinai Medical
+Center** — and NOT defaulted (or offered as the default) for other tenants.
+Other orgs use their own sources (QGenda, Word, PDF, online, none).
+
+Current state: per-org `scheduleSources` already keys Amion to a single
+`CEDARS` demo org; when the real Cedars tenants exist, set those two to `amion`
+and ensure no other tenant defaults to Amion. Consider restricting the Amion
+option in the source dropdown to those orgs (or gating by org) once tenants are
+finalized.

@@ -124,6 +124,22 @@
     { initials: "TS", room: "210", complaint: "Acute pancreatitis", specialty: "GI", from: "Dr. Osei (ER)" },
   ];
 
+  // Default consult-service menu (directors edit these; the ER intake's
+  // multi-select + quick PA/NP add render from this list). onCall null = use the
+  // live registered roster for that specialty.
+  function defaultConsultServices() {
+    return [
+      { id: "cs_hm",    name: "Hospital Medicine",  onCall: null },
+      { id: "cs_card",  name: "Cardiology",         onCall: null },
+      { id: "cs_gi",    name: "GI",                 onCall: null },
+      { id: "cs_pulm",  name: "Pulmonology",        onCall: null },
+      { id: "cs_neph",  name: "Nephrology",         onCall: null },
+      { id: "cs_endo",  name: "Endocrine",          onCall: null },
+      { id: "cs_id",    name: "Infectious Disease", onCall: null },
+      { id: "cs_neuro", name: "Neurology",          onCall: null },
+    ];
+  }
+
   /* ---- seed (initial) state --------------------------------------------- */
   function seed() {
     var t0 = now();
@@ -147,6 +163,8 @@
       // org code (this survives the developer org re-hydrate). Only the Amion
       // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
       scheduleSources: { CEDARS: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", MERCY: "none", PINE: "none" },
+      // Director-editable consult-service menu that powers the ER intake.
+      consultServices: defaultConsultServices(),
       session: null, // { role, org, user, name }
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
       ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
@@ -375,6 +393,7 @@
       Object.keys(NEW_ROLE).forEach(function (k) {
         if (!s.roleColors[k] || s.roleColors[k] === OLD_ROLE[k]) s.roleColors[k] = NEW_ROLE[k];
       });
+      if (!s.consultServices || !s.consultServices.length) s.consultServices = defaultConsultServices();
       return s;
     } catch (e) { return null; }
   }
@@ -903,6 +922,40 @@
         s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
         pushAudit(s, { action: "set_schedule_source", resource: code + " → " + source, risk: "low" });
         s.__toast = { tone: "accepted", title: "Schedule source updated", msg: code + " now syncs via " + source + "." };
+        return s;
+      });
+    },
+
+    /* consult services — director-editable menu behind the ER intake */
+    addConsultService: function (name) {
+      set(function (s) {
+        var nm = String(name || "").trim();
+        if (!nm) return s;
+        var list = (s.consultServices || []).slice();
+        if (list.some(function (x) { return x.name.toLowerCase() === nm.toLowerCase(); })) { s.__toast = { tone: "rejected", title: "Already exists", msg: nm + " is already a consult service." }; return s; }
+        list.push({ id: uid("cs"), name: nm, onCall: null });
+        s.consultServices = list;
+        s.__toast = { tone: "accepted", title: "Consult service added", msg: nm + " is now available in ER intake." };
+        return s;
+      });
+    },
+    renameConsultService: function (id, name) {
+      set(function (s) {
+        var nm = String(name || "").trim(); if (!nm) return s;
+        s.consultServices = (s.consultServices || []).map(function (x) { return x.id === id ? Object.assign({}, x, { name: nm }) : x; });
+        return s;
+      });
+    },
+    setConsultOnCall: function (id, onCall) {
+      set(function (s) {
+        s.consultServices = (s.consultServices || []).map(function (x) { return x.id === id ? Object.assign({}, x, { onCall: onCall || null }) : x; });
+        return s;
+      });
+    },
+    removeConsultService: function (id) {
+      set(function (s) {
+        s.consultServices = (s.consultServices || []).filter(function (x) { return x.id !== id; });
+        s.__toast = { tone: "rejected", title: "Consult service removed", msg: "It's no longer offered in ER intake." };
         return s;
       });
     },

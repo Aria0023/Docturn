@@ -45,6 +45,7 @@
 <script type="text/babel" src="AdmissionsLog.jsx"></script>
 <script type="text/babel" src="ErDirectorDashboard.jsx"></script>
 <script type="text/babel" src="CustomizableDashboard.jsx"></script>
+<script type="text/babel" src="ConsultServices.jsx"></script>
 <script type="text/babel" src="Messaging.jsx"></script>
 <script type="text/babel" src="Directory.jsx"></script>
 <script type="text/babel" src="CareTeam.jsx"></script>
@@ -280,6 +281,11 @@ function App() {
     if (!cur || (!cur.onCall && d.working)) consultRoster[d.specialty] = { name: d.name, avatar: d.avatar, onCall: !!d.working };
   });
   const midlevels = (st.directory || []).filter((d) => MIDLEVEL_CREDS[d.credential]).map((d) => ({ id: "ml" + d.id, name: d.name, avatar: d.avatar, role: d.credential }));
+  // Director-curated consult menu drives the ER intake: service list + explicit
+  // on-call overrides (pinned consultant wins over the auto-derived roster).
+  const consultCfg = st.consultServices || [];
+  const consultServiceNames = consultCfg.length ? consultCfg.map((s) => s.name) : null;
+  consultCfg.forEach((s) => { if (s.onCall && s.onCall.name) consultRoster[s.name] = { name: s.onCall.name, avatar: s.onCall.avatar, onCall: true }; });
 
   let screen;
   if (nav === "messages") screen = <Messaging />;
@@ -309,7 +315,7 @@ function App() {
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultRoster={consultRoster} midlevels={midlevels} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultRoster={consultRoster} midlevels={midlevels} services={consultServiceNames} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
@@ -318,7 +324,7 @@ function App() {
     { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel erPhysicians={st.erPhysicians} shifts={st.shifts} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} /> },
     { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
     { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultRoster={consultRoster} midlevels={midlevels} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultRoster={consultRoster} midlevels={midlevels} services={consultServiceNames} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;

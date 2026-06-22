@@ -41,7 +41,7 @@ function Directory({ providers, onMessage }) {
 // management that used to live under its own nav item.
 function DirectoryHub({ providers, onMessage, scopeOrg, domainRoles, domainPortals, roles, onCreate, onUpdate, onDelete }) {
   const [tab, setTab] = React.useState("directory");
-  const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"], ["roles", "Roles & permissions", "shield-half"]];
+  const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"], ["consult", "Consult services", "stethoscope"], ["roles", "Roles & permissions", "shield-half"]];
   return (
     <React.Fragment>
       <div style={{ padding: "22px 28px 0", maxWidth: "var(--content-max, 1040px)", margin: "0 auto" }}>
@@ -62,7 +62,9 @@ function DirectoryHub({ providers, onMessage, scopeOrg, domainRoles, domainPorta
         ? <Directory providers={providers} onMessage={onMessage} />
         : tab === "people"
           ? <PeopleManager scopeOrg={scopeOrg} domainRoles={domainRoles} />
-          : <RoleManagement roles={roles} onCreate={onCreate} onUpdate={onUpdate} onDelete={onDelete} domainPortals={domainPortals} />}
+          : tab === "consult"
+            ? <ConsultServices />
+            : <RoleManagement roles={roles} onCreate={onCreate} onUpdate={onUpdate} onDelete={onDelete} domainPortals={domainPortals} />}
     </React.Fragment>
   );
 }

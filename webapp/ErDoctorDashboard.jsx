@@ -132,12 +132,14 @@ function ReassignSelect({ providers, onPick }) {
 // Intake + routing panel — the ER physician's primary action (write the note,
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
-function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels }) {
+function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels, services }) {
   // On-call consultant per service: prefer a registered provider for that
   // specialty (live directory), fall back to the demo roster for gaps.
   const rosterFor = (s) => (consultRoster && consultRoster[s]) || CONSULT_ROSTER[s];
   // PA/NP/RN pool: registered midlevels when present, else the demo pool.
   const pool = (midlevels && midlevels.length) ? midlevels : MIDLEVEL_POOL;
+  // Service menu is director-curated when provided; else the built-in list.
+  const serviceList = (services && services.length) ? services : CONSULT_OPTIONS;
   const [note, setNote] = React.useState("");
   const [extracted, setExtracted] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
@@ -296,7 +298,7 @@ function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels }) {
               <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>optional · select multiple</span>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {CONSULT_OPTIONS.map((s) => {
+              {serviceList.map((s) => {
                 const on = consults.includes(s);
                 return (
                   <button key={s} onClick={() => toggleConsult(s)}

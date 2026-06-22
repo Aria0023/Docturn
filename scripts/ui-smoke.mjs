@@ -74,7 +74,7 @@ const JSX_FILES = [
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
   "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
-  "CustomizableDashboard.jsx",
+  "CustomizableDashboard.jsx", "ConsultServices.jsx",
 ];
 const html = read("index.html");
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);
@@ -420,6 +420,23 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
   const hasCredential = dir.some((d) => /^(PA|NP|RN|MD|DO)$/.test(d.credential || ""));
   rec("consult services hydrate from the registered directory", dir.length >= 3 && hasSpecialty && hasCredential,
     "dir=" + dir.length + " specialty=" + hasSpecialty + " credential=" + hasCredential);
+}
+
+// Consult services are director-editable (add / rename / set on-call / remove).
+{
+  const n0 = (DT.getState().consultServices || []).length;
+  DT.actions.addConsultService("Hematology"); await flush();
+  const added = (DT.getState().consultServices || []).some((s) => s.name === "Hematology");
+  const svc = (DT.getState().consultServices || []).find((s) => s.name === "Hematology");
+  DT.actions.setConsultOnCall(svc.id, { name: "Dr. Jordan Chen", avatar: "JC" }); await flush();
+  const pinned = (DT.getState().consultServices || []).find((s) => s.name === "Hematology").onCall;
+  DT.actions.renameConsultService(svc.id, "Heme/Onc"); await flush();
+  const renamed = (DT.getState().consultServices || []).some((s) => s.name === "Heme/Onc");
+  DT.actions.removeConsultService(svc.id); await flush();
+  const removed = !(DT.getState().consultServices || []).some((s) => s.id === svc.id);
+  rec("consult services are director-editable (add/rename/on-call/remove)",
+    n0 >= 1 && added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed,
+    "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
 }
 
 // ---- report ---------------------------------------------------------------
