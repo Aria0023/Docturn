@@ -257,13 +257,15 @@
       // registered consultants/PAs/NPs appear automatically. Empty = use the
       // component's demo fallback offline.
       directory: [],
+      // Soft, muted role palette — distinct hues that stay legible as text on a
+      // light tint and as small dots (easier to read than saturated primaries).
       roleColors: {
-        hospitalist: "#2563EB",
-        er_doctor:   "#D97706",
-        er_director: "#DC2626",
-        director:    "#7C3AED",
-        developer:   "#0F766E",
-        consultant:  "#0891B2",
+        hospitalist: "#4666C4",
+        er_doctor:   "#C07A33",
+        er_director: "#C25A6B",
+        director:    "#7A60C0",
+        developer:   "#3E9B6E",
+        consultant:  "#2C8C92",
       },
       devUsers: [
         { id: uid("u"), name: "Dr. Lena Ortiz", role: "hospitalist", org: "MAYO", specialty: "Nephrology" },
@@ -365,6 +367,14 @@
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
+      // Migrate role colors to the softer palette unless the user customized
+      // them (only replace values still set to the old saturated defaults).
+      var OLD_ROLE = { hospitalist: "#2563EB", er_doctor: "#D97706", er_director: "#DC2626", director: "#7C3AED", developer: "#0F766E", consultant: "#0891B2" };
+      var NEW_ROLE = { hospitalist: "#4666C4", er_doctor: "#C07A33", er_director: "#C25A6B", director: "#7A60C0", developer: "#3E9B6E", consultant: "#2C8C92" };
+      s.roleColors = s.roleColors || {};
+      Object.keys(NEW_ROLE).forEach(function (k) {
+        if (!s.roleColors[k] || s.roleColors[k] === OLD_ROLE[k]) s.roleColors[k] = NEW_ROLE[k];
+      });
       return s;
     } catch (e) { return null; }
   }

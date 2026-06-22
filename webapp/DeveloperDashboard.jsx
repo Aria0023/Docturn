@@ -41,8 +41,9 @@ const DEV_ROLES = [
   ["developer", "Developer"],
 ];
 const ROLE_LABEL = Object.fromEntries(DEV_ROLES.map((r) => [r[0], r[1]]));
-// Curated swatch options for role-color customization.
-const ROLE_SWATCHES = ["#2563EB", "#0F766E", "#7C3AED", "#D97706", "#DC2626", "#DB2777", "#0891B2", "#475569"];
+// Curated SOFT swatch options for role-color customization — muted, distinct,
+// and readable as both text and dots.
+const ROLE_SWATCHES = ["#4666C4", "#2C8C92", "#7A60C0", "#C07A33", "#C25A6B", "#B05C9A", "#3E7CA8", "#5E6A78"];
 // Stable accent color per organization (by position, falling back to a hash).
 const ORG_PALETTE = ["#2563EB", "#0F766E", "#7C3AED", "#DB2777", "#EA580C", "#0891B2", "#CA8A04", "#475569"];
 function orgColor(code, organizations) {
