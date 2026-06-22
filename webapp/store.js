@@ -252,6 +252,11 @@
         { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12,  active: false },
       ],
       selectedOrg: "MAYO",
+      // Registered org people (hydrated from /api/physicians/directory for all
+      // roles). Drives the ER Consult-services roster + midlevel pool so newly
+      // registered consultants/PAs/NPs appear automatically. Empty = use the
+      // component's demo fallback offline.
+      directory: [],
       roleColors: {
         hospitalist: "#2563EB",
         er_doctor:   "#D97706",

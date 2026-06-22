@@ -411,6 +411,17 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
   rec("triage: acuity carries onto the routed admission", ok, detail);
 }
 
+// Consult services are driven by the live registered directory (consultants by
+// specialty + PA/NP midlevels), not hardcoded lists.
+await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+{
+  const dir = DT.getState().directory || [];
+  const hasSpecialty = dir.some((d) => d.specialty);
+  const hasCredential = dir.some((d) => /^(PA|NP|RN|MD|DO)$/.test(d.credential || ""));
+  rec("consult services hydrate from the registered directory", dir.length >= 3 && hasSpecialty && hasCredential,
+    "dir=" + dir.length + " specialty=" + hasSpecialty + " credential=" + hasCredential);
+}
+
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
 let pass = 0, fail = 0;

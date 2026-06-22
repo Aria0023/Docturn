@@ -132,7 +132,12 @@ function ReassignSelect({ providers, onPick }) {
 // Intake + routing panel — the ER physician's primary action (write the note,
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
-function IntakeRoutingPanel({ providers, onSend }) {
+function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels }) {
+  // On-call consultant per service: prefer a registered provider for that
+  // specialty (live directory), fall back to the demo roster for gaps.
+  const rosterFor = (s) => (consultRoster && consultRoster[s]) || CONSULT_ROSTER[s];
+  // PA/NP/RN pool: registered midlevels when present, else the demo pool.
+  const pool = (midlevels && midlevels.length) ? midlevels : MIDLEVEL_POOL;
   const [note, setNote] = React.useState("");
   const [extracted, setExtracted] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
@@ -308,7 +313,7 @@ function IntakeRoutingPanel({ providers, onSend }) {
             {consults.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
                 {consults.map((s) => (
-                  <ConsultPanel key={s} service={s} roster={CONSULT_ROSTER[s]} pool={MIDLEVEL_POOL}
+                  <ConsultPanel key={s} service={s} roster={rosterFor(s)} pool={pool}
                     members={consultMembers[s] || []} channels={chOf(s)}
                     onAddMember={(m) => addConsultMember(s, m)} onRemoveMember={(id) => removeConsultMember(s, id)}
                     onToggleChannel={(ch) => toggleChannel(s, ch)} onRemoveService={() => toggleConsult(s)} />

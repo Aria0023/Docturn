@@ -197,6 +197,11 @@
         var pending = e[0], mine = e[1], board = e[2];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
+          // Full registered directory (all roles): drives the ER Consult-services
+          // roster + midlevel pool from real people, not hardcoded lists.
+          if (directory) s.directory = (directory || []).map(function (d) {
+            return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working };
+          });
           if (role === "hospitalist") {
             s.pending = mapPending(pending, patientsById, usersById);
             s.myPatients = mapAccepted(mine, patientsById);
