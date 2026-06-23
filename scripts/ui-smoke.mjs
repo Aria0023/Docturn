@@ -433,6 +433,12 @@ await DT.actions.login("director", "MERCY"); await flush();
   const pinned = (DT.getState().consultServices || []).find((s) => s.name === "Hematology").onCall;
   DT.actions.renameConsultService(svc.id, "Heme/Onc"); await flush();
   const renamed = (DT.getState().consultServices || []).some((s) => s.name === "Heme/Onc");
+  // assign a PA/NP under the service, then remove it
+  DT.actions.addConsultMember(svc.id, { id: "m_t1", name: "Taylor PA-C", avatar: "TP", role: "PA" }); await flush();
+  const withMember = ((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.name === "Taylor PA-C");
+  DT.actions.removeConsultMember(svc.id, "m_t1"); await flush();
+  const memberRemoved = !((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.id === "m_t1");
+  rec("consult service carries its own PA/NPs (add/remove member)", withMember && memberRemoved, "withMember=" + withMember + " removed=" + memberRemoved);
   DT.actions.removeConsultService(svc.id); await flush();
   const removed = !(DT.getState().consultServices || []).some((s) => s.id === svc.id);
   rec("consult services are director-editable (add/rename/on-call/remove)",

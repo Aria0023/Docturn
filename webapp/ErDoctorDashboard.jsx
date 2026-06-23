@@ -40,7 +40,8 @@ function ConsultRowLabel({ children }) {
 
 function ConsultPanel({ service, roster, pool, members, channels, onAddMember, onRemoveMember, onToggleChannel, onRemoveService }) {
   const [adding, setAdding] = React.useState(false);
-  const r = roster || { name: "On-call provider", avatar: "?", onCall: true };
+  const hasRoster = !!(roster && roster.name);
+  const r = roster || {};
   const addable = pool.filter((m) => !members.some((x) => x.id === m.id));
   const noChannel = !channels.app && !channels.text;
   return (
@@ -53,11 +54,11 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.25 }}>{service}</div>
           <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 1, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-            <StatusDot status={r.onCall ? "online" : "offline"} pulse={r.onCall} />
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name} · {r.onCall ? "on call" : "covering provider paged"}</span>
+            <StatusDot status={hasRoster && r.onCall ? "online" : "offline"} pulse={hasRoster && r.onCall} />
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hasRoster ? (r.name + " · " + (r.onCall ? "on call" : "covering provider paged")) : "No on-call assigned — set in Consult services"}</span>
           </div>
         </div>
-        <Avatar initials={r.avatar} size={30} tint="blue" />
+        <Avatar initials={hasRoster ? r.avatar : "—"} size={30} tint={hasRoster ? "blue" : "slate"} />
         <button onClick={onRemoveService} title="Remove consult"
           onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
           style={{ width: 26, height: 26, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="x" size={15} /></button>
@@ -132,11 +133,14 @@ function ReassignSelect({ providers, onPick }) {
 // Intake + routing panel — the ER physician's primary action (write the note,
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
-function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels, services }) {
-  // On-call consultant per service: prefer a registered provider for that
-  // specialty (live directory), fall back to the demo roster for gaps.
-  const rosterFor = (s) => (consultRoster && consultRoster[s]) || CONSULT_ROSTER[s];
-  // PA/NP/RN pool: registered midlevels when present, else the demo pool.
+function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, services }) {
+  // Per-service config from the director's Consult services tab: the on-call
+  // consultant (explicit pin OR live registered roster — no fake fallback) and
+  // the PA/NPs assigned under that service.
+  const cfgFor = (s) => (consultConfig && consultConfig[s]) || null;
+  const rosterFor = (s) => { const c = cfgFor(s); return c ? c.onCall : null; };
+  const membersFor = (s) => { const c = cfgFor(s); return (c && c.members) || []; };
+  // PA/NP/RN pool for the ER physician's quick-add: registered midlevels.
   const pool = (midlevels && midlevels.length) ? midlevels : MIDLEVEL_POOL;
   // Service menu is director-curated when provided; else the built-in list.
   const serviceList = (services && services.length) ? services : CONSULT_OPTIONS;
@@ -168,6 +172,8 @@ function IntakeRoutingPanel({ providers, onSend, consultRoster, midlevels, servi
       setConsultChannels((cc) => { const n = Object.assign({}, cc); delete n[s]; return n; });
       return c.filter((x) => x !== s);
     }
+    // Pre-populate with the service's configured PA/NPs; the ER can add more.
+    setConsultMembers((cm) => Object.assign({}, cm, { [s]: (membersFor(s) || []).slice() }));
     return [...c, s];
   });
   const addConsultMember = (s, m) => setConsultMembers((cm) => Object.assign({}, cm, { [s]: [...(cm[s] || []), m] }));

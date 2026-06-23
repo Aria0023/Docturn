@@ -128,15 +128,18 @@
   // multi-select + quick PA/NP add render from this list). onCall null = use the
   // live registered roster for that specialty.
   function defaultConsultServices() {
+    // Each service = a consultant specialty with an on-call attending (onCall)
+    // and its own PA/NP midlevels (members). onCall null = derive from the live
+    // registered roster for that specialty; members [] = none assigned yet.
     return [
-      { id: "cs_hm",    name: "Hospital Medicine",  onCall: null },
-      { id: "cs_card",  name: "Cardiology",         onCall: null },
-      { id: "cs_gi",    name: "GI",                 onCall: null },
-      { id: "cs_pulm",  name: "Pulmonology",        onCall: null },
-      { id: "cs_neph",  name: "Nephrology",         onCall: null },
-      { id: "cs_endo",  name: "Endocrine",          onCall: null },
-      { id: "cs_id",    name: "Infectious Disease", onCall: null },
-      { id: "cs_neuro", name: "Neurology",          onCall: null },
+      { id: "cs_hm",    name: "Hospital Medicine",  onCall: null, members: [] },
+      { id: "cs_card",  name: "Cardiology",         onCall: null, members: [] },
+      { id: "cs_gi",    name: "GI",                 onCall: null, members: [] },
+      { id: "cs_pulm",  name: "Pulmonology",        onCall: null, members: [] },
+      { id: "cs_neph",  name: "Nephrology",         onCall: null, members: [] },
+      { id: "cs_endo",  name: "Endocrine",          onCall: null, members: [] },
+      { id: "cs_id",    name: "Infectious Disease", onCall: null, members: [] },
+      { id: "cs_neuro", name: "Neurology",          onCall: null, members: [] },
     ];
   }
 
@@ -394,6 +397,7 @@
         if (!s.roleColors[k] || s.roleColors[k] === OLD_ROLE[k]) s.roleColors[k] = NEW_ROLE[k];
       });
       if (!s.consultServices || !s.consultServices.length) s.consultServices = defaultConsultServices();
+      else s.consultServices = s.consultServices.map(function (x) { return x.members ? x : Object.assign({}, x, { members: [] }); });
       return s;
     } catch (e) { return null; }
   }
@@ -933,7 +937,7 @@
         if (!nm) return s;
         var list = (s.consultServices || []).slice();
         if (list.some(function (x) { return x.name.toLowerCase() === nm.toLowerCase(); })) { s.__toast = { tone: "rejected", title: "Already exists", msg: nm + " is already a consult service." }; return s; }
-        list.push({ id: uid("cs"), name: nm, onCall: null });
+        list.push({ id: uid("cs"), name: nm, onCall: null, members: [] });
         s.consultServices = list;
         s.__toast = { tone: "accepted", title: "Consult service added", msg: nm + " is now available in ER intake." };
         return s;
@@ -949,6 +953,27 @@
     setConsultOnCall: function (id, onCall) {
       set(function (s) {
         s.consultServices = (s.consultServices || []).map(function (x) { return x.id === id ? Object.assign({}, x, { onCall: onCall || null }) : x; });
+        return s;
+      });
+    },
+    addConsultMember: function (serviceId, member) {
+      set(function (s) {
+        if (!member || !member.name) return s;
+        s.consultServices = (s.consultServices || []).map(function (x) {
+          if (x.id !== serviceId) return x;
+          var members = (x.members || []).slice();
+          if (members.some(function (m) { return m.name === member.name; })) return x;
+          members.push({ id: member.id || uid("cm"), name: member.name, avatar: member.avatar || "", role: member.role || "NP" });
+          return Object.assign({}, x, { members: members });
+        });
+        return s;
+      });
+    },
+    removeConsultMember: function (serviceId, memberId) {
+      set(function (s) {
+        s.consultServices = (s.consultServices || []).map(function (x) {
+          return x.id === serviceId ? Object.assign({}, x, { members: (x.members || []).filter(function (m) { return m.id !== memberId; }) }) : x;
+        });
         return s;
       });
     },
