@@ -54,7 +54,12 @@ async function main() {
     console.error("[db] seed/ensure failed:", e);
   }
 
-  const app = createApp({ trustProxy: process.env.NODE_ENV === "production" });
+  // Trust one proxy hop by default. In production this is the load balancer;
+  // in dev it's whatever tunnel (cloudflared/ngrok/localtunnel) you use to reach
+  // the app from a phone. Without it, the tunnel's X-Forwarded-For header makes
+  // express-rate-limit throw on every request (and can 500 /api/login). Set
+  // TRUST_PROXY=0 to opt out for a strictly local-only run.
+  const app = createApp({ trustProxy: process.env.TRUST_PROXY !== "0" });
 
   const server = createServer(app);
   attachWebSocket(

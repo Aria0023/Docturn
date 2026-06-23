@@ -77,17 +77,23 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // local dev, the headless UI smoke test, and load testing).
   if (opts.rateLimiting !== false && process.env.RATE_LIMIT !== "off") {
     // Tiered limits: stricter on auth, looser on general traffic.
+    // Disable the X-Forwarded-For validation: behind a dev tunnel the proxy hop
+    // count can differ from `trust proxy`, and a failed validation otherwise
+    // throws and 500s the request (breaking login from a phone). We still get
+    // correct client IPs via `trust proxy`; this just stops the hard failure.
     const authLimiter = rateLimit({
       windowMs: 15 * 60 * 1000,
       max: 50,
       standardHeaders: true,
       legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
     });
     const generalLimiter = rateLimit({
       windowMs: 60 * 1000,
       max: 300,
       standardHeaders: true,
       legacyHeaders: false,
+      validate: { xForwardedForHeader: false },
     });
     app.use("/api/login", authLimiter);
     app.use("/api/register", authLimiter);
