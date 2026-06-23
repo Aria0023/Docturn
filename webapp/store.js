@@ -954,6 +954,12 @@
     },
     removeConsultService: function (id) {
       set(function (s) {
+        // Delete is reserved for the Hospitalist Director and developer.
+        var role = (s.session || {}).role;
+        if (role !== "director" && role !== "developer") {
+          s.__toast = { tone: "rejected", title: "Not allowed", msg: "Only the Hospitalist Director or developer can remove a consult service." };
+          return s;
+        }
         s.consultServices = (s.consultServices || []).filter(function (x) { return x.id !== id; });
         s.__toast = { tone: "rejected", title: "Consult service removed", msg: "It's no longer offered in ER intake." };
         return s;

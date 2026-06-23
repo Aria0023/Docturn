@@ -137,6 +137,7 @@ const NAV = {
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
     { id: "roles",      label: "Role management", icon: "shield-half" },
+    { id: "consult",    label: "Consult services", icon: "stethoscope" },
     { id: "compliance", label: "Compliance",      icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
     { id: "settings",   label: "Tenant settings", icon: "settings" },
@@ -154,6 +155,7 @@ const TOP = {
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
+  consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
   people:     ["People", "Manage everyone in your organization, grouped by role"],
   access:     ["Access & people", "Manage your organization's people and the roles that govern their access"],
   appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
@@ -304,6 +306,7 @@ function App() {
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
   else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  else if (nav === "consult") screen = <ConsultServices />;
   else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
   else if (nav === "access") {
     const dom = role === "er_director"

@@ -10,6 +10,12 @@ function ConsultServices() {
   const directory = st.directory || [];
   const [name, setName] = React.useState("");
 
+  // Everyone who reaches this surface can add / rename / set on-call. Deleting a
+  // service is more destructive, so it's reserved for the Hospitalist Director
+  // and the developer (NOT the ER director).
+  const role = (st.session || {}).role;
+  const canDelete = role === "director" || role === "developer";
+
   // Provider options for "on-call" — registered people, prefer those whose
   // specialty matches the service; everyone is selectable as a manual override.
   const providerOpts = directory.map((d) => ({ name: d.name, avatar: d.avatar, specialty: d.specialty }));
@@ -68,9 +74,11 @@ function ConsultServices() {
                     </select>
                     <Icon name="chevron-down" size={13} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
                   </div>
-                  <button onClick={() => a.removeConsultService(s.id)} title="Remove service"
-                    onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                    style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={16} /></button>
+                  {canDelete
+                    ? <button onClick={() => a.removeConsultService(s.id)} title="Remove service"
+                        onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+                        style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={16} /></button>
+                    : <span title="Only the Hospitalist Director or developer can remove a service" style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--border)", flex: "none" }}><Icon name="lock" size={14} /></span>}
                 </div>
               </div>
             </Card>

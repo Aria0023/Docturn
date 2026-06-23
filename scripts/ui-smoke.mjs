@@ -121,7 +121,7 @@ async function clickEveryButton(roleLabel, screen) {
 }
 
 const NAV = {
-  developer: ["dashboard", "roles", "compliance", "appearance", "settings"],
+  developer: ["dashboard", "roles", "consult", "compliance", "appearance", "settings"],
   director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_doctor: ["dashboard", "messages", "directory", "compliance"],
@@ -423,6 +423,7 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 }
 
 // Consult services are director-editable (add / rename / set on-call / remove).
+await DT.actions.login("director", "MERCY"); await flush();
 {
   const n0 = (DT.getState().consultServices || []).length;
   DT.actions.addConsultService("Hematology"); await flush();
@@ -437,6 +438,17 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
   rec("consult services are director-editable (add/rename/on-call/remove)",
     n0 >= 1 && added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed,
     "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
+}
+// ER director can add/rename but NOT delete; delete stays with director + dev.
+await DT.actions.login("er_director", "MERCY"); await flush();
+{
+  DT.actions.addConsultService("Pain Mgmt"); await flush();
+  const svc = (DT.getState().consultServices || []).find((s) => s.name === "Pain Mgmt");
+  const erCanAdd = !!svc;
+  if (svc) { DT.actions.removeConsultService(svc.id); await flush(); }
+  const stillThere = (DT.getState().consultServices || []).some((s) => s.name === "Pain Mgmt");
+  rec("consult delete is director/dev-only (ER director add ok, delete blocked)",
+    erCanAdd && stillThere, "erCanAdd=" + erCanAdd + " blockedDelete=" + stillThere);
 }
 
 // ---- report ---------------------------------------------------------------
