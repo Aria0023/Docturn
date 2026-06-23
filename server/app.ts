@@ -56,7 +56,11 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     rolling: true, // 15-minute rolling, inactivity expiry.
     cookie: {
       httpOnly: true,
-      sameSite: "strict",
+      // "lax" (not "strict") so the session cookie reliably sticks when the app
+      // is reached from another device / through a tunnel (strict can drop the
+      // cookie in some navigation contexts, e.g. mobile Safari). Still safe: the
+      // API is same-origin and CSRF surface is minimal for this app.
+      sameSite: "lax",
       secure: isProd,
       maxAge: 15 * 60 * 1000,
     },

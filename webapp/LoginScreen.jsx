@@ -3,6 +3,7 @@
 function LoginScreen({ onLogin, appName }) {
   const brand = appName || "DocTurn";
   const mobile = useIsMobile();
+  const loginError = (typeof useStore === "function") ? useStore().loginError : null;
   const [org, setOrg] = React.useState("ISPN");
   const [user, setUser] = React.useState("chen");
   const [pass, setPass] = React.useState("••••••••");
@@ -51,6 +52,12 @@ function LoginScreen({ onLogin, appName }) {
               </div>
             </div>
 
+            {loginError && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
+                <Icon name="alert-triangle" size={15} style={{ marginTop: 1, flex: "none" }} />
+                <span>{loginError}</span>
+              </div>
+            )}
             <Button full size="lg" onClick={() => onLogin(role, org, user)}>Sign in</Button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center" }}>
