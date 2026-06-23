@@ -15,6 +15,12 @@
   @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
+  /* Phone: collapse the kit's inline multi-column grids to a single column so
+     dashboards/forms stack instead of overflowing. */
+  @media (max-width: 760px) {
+    div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+    img, svg, table { max-width: 100%; }
+  }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
      behind hospital/corporate firewalls that block unpkg). -->
@@ -228,6 +234,9 @@ function App() {
   const role = st.session && st.session.role;
   const nav = st.ui.nav;
   const [locked, setLocked] = React.useState(false);
+  const isMobile = useIsMobile();
+  const [drawer, setDrawer] = React.useState(false);
+  React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
 
   // Idle auto-lock (HIPAA). Resets on any interaction; locks after 15 min idle.
   React.useEffect(() => {
@@ -340,6 +349,56 @@ function App() {
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
 
+  const impersonationBanner = st.impersonating && (
+    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
+      <Icon name="eye" size={16} color="#FDBA74" />
+      <span style={{ fontSize: 13, fontWeight: 600 }}>Root access — viewing {st.impersonating.name}'s portal ({st.impersonating.role.replace(/_/g, " ")} · {st.impersonating.org})</span>
+      <span style={{ fontSize: 12, color: "#FED7AA" }}>You're seeing exactly what this user sees. Actions are audited.</span>
+      <button onClick={() => a.stopImpersonating()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
+    </div>
+  );
+
+  if (isMobile) {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
+        <ThemeStyle theme={st.theme} />
+        {/* mobile top bar */}
+        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 12px" }}>
+          <button onClick={() => setDrawer(true)} title="Menu" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="menu" size={20} /></button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
+          </div>
+          <button onClick={() => a.toggleNotif()} title="Notifications" style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+            <Icon name="bell" size={18} />
+            {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
+          </button>
+          <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
+        </header>
+        {impersonationBanner}
+        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+
+        {/* slide-out nav drawer */}
+        {drawer && (
+          <React.Fragment>
+            <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(15,23,42,.45)" }} />
+            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 264, maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column" }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                <Sidebar role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
+              </div>
+              <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
+                <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
+              </div>
+            </div>
+          </React.Fragment>
+        )}
+        <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
+        <Toast toast={st.__toast} />
+        {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "var(--secondary)" }}>
       <ThemeStyle theme={st.theme} />
@@ -352,14 +411,7 @@ function App() {
           onBell={() => a.toggleNotif()}
           onLock={() => setLocked(true)}
           right={<RoleSwitcher role={role} onChange={a.setRole} />} />
-        {st.impersonating && (
-          <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: "#7C2D12", color: "#fff" }}>
-            <Icon name="eye" size={16} color="#FDBA74" />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>Root access — viewing {st.impersonating.name}'s portal ({st.impersonating.role.replace(/_/g, " ")} · {st.impersonating.org})</span>
-            <span style={{ fontSize: 12, color: "#FED7AA" }}>You're seeing exactly what this user sees. Actions are audited.</span>
-            <button onClick={() => a.stopImpersonating()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
-          </div>
-        )}
+        {impersonationBanner}
         <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />

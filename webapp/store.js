@@ -165,7 +165,7 @@
       // uploaded Word/PDF, or a web page — so the source is modular and keyed by
       // org code (this survives the developer org re-hydrate). Only the Amion
       // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
-      scheduleSources: { CEDARS: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", MERCY: "none", PINE: "none" },
+      scheduleSources: { CEDARS: "amion", ISPN: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", PINE: "none" },
       // Director-editable consult-service menu that powers the ER intake.
       consultServices: defaultConsultServices(),
       session: null, // { role, org, user, name }
@@ -269,7 +269,7 @@
         { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88,  active: true },
         { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54,  active: true },
         { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132, active: true },
-        { code: "MERCY",  name: "Mercy West",              timezone: "America/Los_Angeles", users: 67,  assignments: 29,  active: true },
+        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29,  active: true },
         { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12,  active: false },
       ],
       selectedOrg: "MAYO",
@@ -532,7 +532,7 @@
     /* session */
     login: function (role, org, user) {
       set(function (s) {
-        s.session = { role: role, org: org || "MERCY", user: user || "dr.chen", name: s.me.name };
+        s.session = { role: role, org: org || "ISPN", user: user || "dr.chen", name: s.me.name };
         s.ui.nav = "dashboard"; s.ui.notifOpen = false;
         pushAudit(s, { action: "login", resource: "session", risk: "low" });
         return s;

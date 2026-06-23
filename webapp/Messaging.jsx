@@ -14,11 +14,14 @@ function Messaging() {
   const st = useStore();
   const a = useActions();
   const convos = st.conversations;
+  const isMobile = useIsMobile();
   const [active, setActive] = React.useState(st.__activeConvo || (convos[0] && convos[0].id));
   const [draft, setDraft] = React.useState("");
   const [q, setQ] = React.useState("");
   const [composing, setComposing] = React.useState(false);
+  const [mobileView, setMobileView] = React.useState("list"); // phone: "list" | "thread"
   const threadRef = React.useRef(null);
+  const openThread = (id) => { setActive(id); if (isMobile) setMobileView("thread"); };
 
   // follow a store-initiated conversation switch (e.g. "Message" from another screen)
   React.useEffect(() => { if (st.__activeConvo && st.__activeConvo !== active) setActive(st.__activeConvo); }, [st.__activeConvo]);
@@ -31,7 +34,11 @@ function Messaging() {
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
 
   const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft); setDraft(""); };
-  const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); };
+  const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+
+  // On a phone, show exactly one pane at a time (list OR thread/compose).
+  const showList = !isMobile || (!composing && mobileView === "list");
+  const showThread = !isMobile || composing || mobileView === "thread";
 
   // Mirror the Directory exactly: you can start a message with anyone in the
   // provider directory (filtered by the same search box). Picking someone you
@@ -42,9 +49,10 @@ function Messaging() {
     p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <div style={{ display: "flex", height: "calc(100vh - 64px)" }}>
+    <div style={{ display: "flex", height: isMobile ? "calc(100vh - 56px)" : "calc(100vh - 64px)" }}>
       {/* List */}
-      <div style={{ width: 312, flex: "none", borderRight: "1px solid var(--border)", background: "#fff", display: "flex", flexDirection: "column" }}>
+      {showList && (
+      <div style={{ width: isMobile ? "100%" : 312, flex: isMobile ? "1 1 auto" : "none", borderRight: isMobile ? "none" : "1px solid var(--border)", background: "#fff", display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Messages</h2>
@@ -57,7 +65,7 @@ function Messaging() {
           {list.map((c) => {
             const last = c.messages[c.messages.length - 1];
             return (
-              <button key={c.id} onClick={() => setActive(c.id)}
+              <button key={c.id} onClick={() => openThread(c.id)}
                 style={{ width: "100%", display: "flex", gap: 11, padding: "12px 16px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left",
                   background: active === c.id ? "#EFF6FF" : "#fff" }}>
                 <div style={{ position: "relative", flex: "none" }}>
@@ -81,8 +89,10 @@ function Messaging() {
           {list.length === 0 && <div style={{ padding: "18px 16px 6px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No conversations yet — tap the pencil to message anyone in the directory.</div>}
         </div>
       </div>
+      )}
 
       {/* Thread */}
+      {showThread && (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "var(--secondary)", position: "relative" }}>
         {composing && (
           <div style={{ position: "absolute", inset: 0, zIndex: 5, background: "#fff", display: "flex", flexDirection: "column" }}>
@@ -120,7 +130,8 @@ function Messaging() {
           </div>
         )}
         {conv ? (<React.Fragment>
-        <div style={{ height: 60, flex: "none", background: "#fff", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
+        <div style={{ height: 60, flex: "none", background: "#fff", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "0 12px" : "0 20px" }}>
+          {isMobile && <button onClick={() => setMobileView("list")} title="Back" style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="arrow-left" size={20} /></button>}
           <Avatar initials={conv.initials} size={36} tint={conv.tint} />
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700 }}>{conv.name}</div>
@@ -178,6 +189,7 @@ function Messaging() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

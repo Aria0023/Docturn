@@ -43,10 +43,10 @@ async function main() {
   try {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
-    const existing = await storage.getOrganizationByCode("MERCY");
+    const existing = await storage.getOrganizationByCode("ISPN");
     if (!existing) {
       await seed(storage);
-      console.log("[db] empty database — seeded demo data (org MERCY + platform).");
+      console.log("[db] empty database — seeded demo data (org ISPN + platform).");
     } else {
       await ensurePlatform(storage);
     }

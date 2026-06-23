@@ -18,13 +18,13 @@ interface SeedResult {
 
 /**
  * Deterministic seed (fixed ordering) shared by `npm run seed` and the test
- * harness. One org (MERCY), one user per role, providers with varied census/cap,
+ * harness. One org (ISPN), one user per role, providers with varied census/cap,
  * and a couple of pending assignments so dashboards aren't empty.
  */
 export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   const org = await storage.createOrganization({
-    name: "Mercy General Hospital",
-    code: "MERCY",
+    name: "Cedars-Sinai (ISP North)",
+    code: "ISPN",
     city: "Springfield",
     state: "NY",
     timezone: "America/New_York",
@@ -160,7 +160,7 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   };
 }
 
-// The clinical demo roster (MERCY). The developer (`dev`) is provisioned
+// The clinical demo roster (ISPN). The developer (`dev`) is provisioned
 // separately in the platform org — see ensurePlatform().
 const DEMO_USERS: Array<{ username: string; role: string; displayName: string; credential?: string }> = [
   { username: "director", role: "director", displayName: "Dr. Dana Director" },
@@ -269,7 +269,7 @@ if (isMain) {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
     try {
-      const existing = await storage.getOrganizationByCode("MERCY");
+      const existing = await storage.getOrganizationByCode("ISPN");
       if (existing) {
         // Already seeded: top up any missing demo accounts and ensure the
         // platform org + developer account exist (migrating a legacy in-tenant
@@ -287,7 +287,7 @@ if (isMain) {
       } else {
         const result = await seed(storage);
         console.log(
-          `Seeded org MERCY (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
+          `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
         );
       }
     } catch (err) {

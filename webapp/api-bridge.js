@@ -37,11 +37,11 @@
   // The developer account lives in its own platform org, not a clinical tenant,
   // so resolve the right org code by role. Clinical roles must NEVER inherit the
   // platform org (e.g. when switching role from Developer) — their demo accounts
-  // live in the MERCY tenant.
+  // live in the ISPN tenant.
   var PLATFORM_ORG = "DOCTURN";
   function orgForRole(role, fallback) {
     if (role === "developer") return PLATFORM_ORG;
-    if (!fallback || fallback === PLATFORM_ORG) return "MERCY";
+    if (!fallback || fallback === PLATFORM_ORG) return "ISPN";
     return fallback;
   }
 
@@ -369,7 +369,7 @@
   var origSetRole = DT.actions.setRole;
   DT.actions.setRole = function (role) {
     var st = DT.getState();
-    var org = (st.session && st.session.org) || "MERCY";
+    var org = (st.session && st.session.org) || "ISPN";
     if (st.impersonating) DT.set(function (s) { s.impersonating = null; return s; }); // leaving the impersonated portal
     doLogin(role, org).catch(function (e) {
       if (isNetworkError(e)) {

@@ -2,8 +2,9 @@
 
 function LoginScreen({ onLogin, appName }) {
   const brand = appName || "DocTurn";
-  const [org, setOrg] = React.useState("MERCY");
-  const [user, setUser] = React.useState("dr.chen");
+  const mobile = useIsMobile();
+  const [org, setOrg] = React.useState("ISPN");
+  const [user, setUser] = React.useState("chen");
   const [pass, setPass] = React.useState("••••••••");
   const [role, setRole] = React.useState("hospitalist");
 
@@ -18,7 +19,7 @@ function LoginScreen({ onLogin, appName }) {
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "var(--background)" }}>
       {/* Left: form */}
-      <div style={{ flex: "1 1 50%", display: "flex", alignItems: "center", justifyContent: "center", padding: 32 }}>
+      <div style={{ flex: mobile ? "1 1 100%" : "1 1 50%", display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "24px 18px" : 32 }}>
         <div style={{ width: "100%", maxWidth: 360 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{brand.charAt(0).toUpperCase()}</span>
@@ -56,11 +57,15 @@ function LoginScreen({ onLogin, appName }) {
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />
               HIPAA‑compliant · MFA enabled · 15‑min sessions
             </div>
+            <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
+              Demo — pick a role and sign in. Org <b style={{ color: "var(--foreground)", fontWeight: 600 }}>ISPN</b> · any password.
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Right: brand panel */}
+      {/* Right: brand panel — hidden on phones */}
+      {!mobile && (
       <div style={{ flex: "1 1 50%", background: "var(--marketing-bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: 48, position: "relative", overflow: "hidden" }}>
         <div style={{ maxWidth: 380, position: "relative", zIndex: 2 }}>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,.7)", padding: "5px 12px", borderRadius: "99px", fontSize: 12, fontWeight: 600, color: "var(--sky-700)" }}>
@@ -93,6 +98,7 @@ function LoginScreen({ onLogin, appName }) {
         <div style={{ position: "absolute", width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(56,189,248,.25), transparent 70%)", top: -80, right: -60 }} />
         <div style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,228,230,.6), transparent 70%)", bottom: -70, left: -50 }} />
       </div>
+      )}
     </div>
   );
 }

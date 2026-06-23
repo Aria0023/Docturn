@@ -132,12 +132,12 @@ await flush();
 rec("App mounted", !!window.document.querySelector("#root").children.length);
 
 for (const role of ["developer", "director", "er_director", "er_doctor", "hospitalist"]) {
-  await DT.actions.login(role, "MERCY");
+  await DT.actions.login(role, "ISPN");
   await flush(); await flush();
   const st = DT.getState();
   rec(`LOGIN as ${role}`, st.session && st.session.role === role, "session=" + JSON.stringify(st.session));
   if (role === "developer") {
-    const mercy = (st.orgs || []).find((o) => o.code === "MERCY");
+    const mercy = (st.orgs || []).find((o) => o.code === "ISPN");
     const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
     rec("developer: orgs hydrated from backend (Mercy=8, platform hidden)", !!mercy && mercy.users === 8 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }
@@ -146,7 +146,7 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
 }
 
 // developer org CRUD
-await DT.actions.login("developer", "MERCY"); await flush();
+await DT.actions.login("developer", "ISPN"); await flush();
 DT.actions.addTenant({ name: "Harness Test Hospital", code: "HARN", city: "Testville", state: "CA", timezone: "America/Los_Angeles" });
 await flush(); await flush();
 const harn = (DT.getState().orgs || []).find((o) => o.code === "HARN");
@@ -193,7 +193,7 @@ try { await DT.actions.deleteTenant({ code: "AMION" }); } catch (e) { /* ignore 
 await flush();
 
 // clinical flow: ER doctor sends -> hospitalist receives -> accept
-await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 const provs = DT.sortedProviders();
 const target = provs.find((p) => /Chen/i.test(p.name)) || provs[0];
 rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.stringify(provs.map((p) => p.name)));
@@ -201,7 +201,7 @@ if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
 rec("admission logged on send", (DT.getState().admissions || []).some((a) => a.initials === "ZZ"), "admissions=" + (DT.getState().admissions || []).length);
-await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
 const got = (DT.getState().pending || []).find((p) => p.initials === "ZZ");
 rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + JSON.stringify((DT.getState().pending || []).map((p) => p.initials)));
 if (got) {
@@ -212,7 +212,7 @@ if (got) {
 
 // ER physician MANUAL send, end-to-end through the real form (the user's bug):
 // type initials+room, switch to Manual, pick a NON-default provider, click Send.
-await DT.actions.login("er_doctor", "MERCY"); DT.actions.setNav("dashboard"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
 {
   const provs = DT.sortedProviders();
   const pick = provs[1] || provs[0]; // not the round-robin default, to prove manual selection
@@ -237,10 +237,10 @@ await DT.actions.login("er_doctor", "MERCY"); DT.actions.setNav("dashboard"); aw
 }
 
 // Cross-user: import an Amion physician, then ER routes an admission to THEM.
-await DT.actions.login("developer", "MERCY"); await flush();
-await DT.actions.importProviders("MERCY", [{ name: "Roupen Guedikian", group: "Nocturnist", shift: "night" }]);
+await DT.actions.login("developer", "ISPN"); await flush();
+await DT.actions.importProviders("ISPN", [{ name: "Roupen Guedikian", group: "Nocturnist", shift: "night" }]);
 await flush(); await flush();
-await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
   // Provider hydration after import/login is async; poll briefly so the test
   // isn't racing the rehydrate (the app creates the user synchronously server-side).
@@ -259,7 +259,7 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 
 // Messaging is backend-backed (cross-device): starting a conversation creates a
 // real server conversation and a sent message persists + round-trips.
-await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
 {
   const who = DT.sortedProviders().find((p) => !/Chen/.test(p.name)) || DT.sortedProviders()[0];
   let conv = null;
@@ -276,7 +276,7 @@ await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
 }
 // Cross-user delivery: ER physician messages a hospitalist; the hospitalist
 // sees it on their OWN login (the real "works across devices" path).
-await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
   const target = (DT.getState().directory || []).find((d) => /Chen/.test(d.name)) || (DT.getState().directory || [])[0];
   let ok = false, detail = "no target";
@@ -285,7 +285,7 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
     let conv = null;
     for (let i = 0; i < 12 && !conv; i++) { await flush(); conv = (DT.getState().conversations || []).find((c) => c.name === target.name); }
     if (conv) { DT.actions.sendMessage(conv.id, "X-user ping 42"); for (let i = 0; i < 12; i++) await flush(); }
-    await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 14; i++) await flush();
+    await DT.actions.login("hospitalist", "ISPN"); for (let i = 0; i < 14; i++) await flush();
     const conv2 = (DT.getState().conversations || []).find((c) => (c.messages || []).some((m) => m.text === "X-user ping 42"));
     ok = !!(conv2 && (conv2.messages || []).some((m) => m.text === "X-user ping 42" && !m.me));
     detail = "received=" + ok + " from=" + (conv2 && conv2.name);
@@ -295,21 +295,23 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)
 // then perform a dev action — the bridge should re-auth and succeed, not 401.
-await DT.actions.login("developer", "MERCY"); await flush();
+await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 window.__wipeSession();
 let recovered = false, recErr = "";
 DT.actions.addTenant({ name: "Recovery Org", code: "RECOV", city: "X", state: "CA", timezone: "America/Los_Angeles" });
-await flush(); await flush();
-const recov = (DT.getState().orgs || []).find((o) => o.code === "RECOV");
+// addTenant fire-and-forgets a 401 → self-heal re-auth → retry → hydrate (4
+// sequential round-trips); poll instead of racing a fixed wait.
+let recov = null;
+for (let i = 0; i < 15 && !recov; i++) { await flush(); recov = (DT.getState().orgs || []).find((o) => o.code === "RECOV"); }
 if (recov) {
   try { await DT.actions.deleteTenant(recov); recovered = true; } catch (e) { recErr = e.message; }
-  await flush();
+  for (let i = 0; i < 8; i++) await flush();
 }
 rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.getState().orgs || []).find((o) => o.code === "RECOV"), recErr || (recov ? "" : "addTenant failed after wipe"));
 
 // role switcher: switching FROM developer (platform org) to a clinical role must
 // authenticate into the clinical tenant, not the platform org.
-await DT.actions.login("developer", "MERCY"); await flush(); await flush();
+await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 DT.actions.setRole("hospitalist");
 await flush(); await flush();
 const swSess = DT.getState().session || {};
@@ -319,9 +321,9 @@ await flush(); await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
 // Developer ROOT access: open any user's portal (impersonation) and return.
-await DT.actions.login("developer", "MERCY"); await flush(); await flush();
+await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 {
-  const target = (DT.getState().devUsers || []).find((u) => u.role === "hospitalist" && u.org === "MERCY")
+  const target = (DT.getState().devUsers || []).find((u) => u.role === "hospitalist" && u.org === "ISPN")
               || (DT.getState().devUsers || []).find((u) => u.role !== "developer");
   let ok = false, detail = "no target user";
   if (target) {
@@ -337,9 +339,9 @@ await DT.actions.login("developer", "MERCY"); await flush(); await flush();
 }
 
 // ER/Hospitalist directors can add midlevels (PA/NP) as credentialed consultants.
-await DT.actions.login("developer", "MERCY"); await flush();
+await DT.actions.login("developer", "ISPN"); await flush();
 {
-  await DT.actions.addUser({ org: "MERCY", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
+  await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
   await flush(); await flush(); await flush();
   const np = (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
   rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP", "np=" + JSON.stringify(np && { n: np.name, c: np.credential }));
@@ -404,9 +406,9 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
   const distinct = new Set(Object.values(sources)).size;
   rec("schedule source is per-organization (distinct sources seeded)",
     sources.MAYO && sources.STJUDE && distinct >= 2, "sources=" + JSON.stringify(sources));
-  DT.actions.setScheduleSource("MERCY", "qgenda"); await flush();
+  DT.actions.setScheduleSource("ISPN", "qgenda"); await flush();
   rec("setScheduleSource updates that org only",
-    DT.getState().scheduleSources.MERCY === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
+    DT.getState().scheduleSources.ISPN === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
 }
 
 // Triage acuity: AI suggests an ESI level from the note; it carries onto the
@@ -419,7 +421,7 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
     a1.acuity === 1 && a2.acuity === 2 && a3.acuity === 5,
     "acuity=" + a1.acuity + "/" + a2.acuity + "/" + a3.acuity);
 }
-await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
   const prov = DT.sortedProviders()[0];
   let ok = false, detail = "no provider";
@@ -435,7 +437,7 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 
 // Consult services are driven by the live registered directory (consultants by
 // specialty + PA/NP midlevels), not hardcoded lists.
-await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
   const dir = DT.getState().directory || [];
   const hasSpecialty = dir.some((d) => d.specialty);
@@ -445,7 +447,7 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
 }
 
 // Consult services are director-editable (add / rename / set on-call / remove).
-await DT.actions.login("director", "MERCY"); await flush();
+await DT.actions.login("director", "ISPN"); await flush();
 {
   const n0 = (DT.getState().consultServices || []).length;
   DT.actions.addConsultService("Hematology"); await flush();
@@ -468,7 +470,7 @@ await DT.actions.login("director", "MERCY"); await flush();
     "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
 }
 // ER director can add/rename but NOT delete; delete stays with director + dev.
-await DT.actions.login("er_director", "MERCY"); await flush();
+await DT.actions.login("er_director", "ISPN"); await flush();
 {
   DT.actions.addConsultService("Pain Mgmt"); await flush();
   const svc = (DT.getState().consultServices || []).find((s) => s.name === "Pain Mgmt");

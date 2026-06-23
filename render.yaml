@@ -3,7 +3,7 @@
 # free web service. The app self-seeds an in-process database on first boot,
 # so there are no secrets or external database to configure for the demo.
 #
-# Demo logins (org code MERCY, password "docturn"): chen / er.doc / director /
+# Demo logins (org code ISPN, password "docturn"): chen / er.doc / director /
 # er.director ; developer is user "dev" on org code DOCTURN (the app picks the
 # right org automatically when you choose a role on the sign-in screen).
 services:

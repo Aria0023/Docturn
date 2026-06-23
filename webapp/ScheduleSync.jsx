@@ -129,7 +129,7 @@ function ScheduleSync({ org }) {
   const [shiftsAdded, setShiftsAdded] = React.useState(false);
   const [shiftsBusy, setShiftsBusy] = React.useState(false);
 
-  const orgCode = (org && org.code) || st.selectedOrg || "MERCY";
+  const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
   const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
   const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
   const notConfigured = srcKey === "none";

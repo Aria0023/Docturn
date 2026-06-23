@@ -1,5 +1,21 @@
 /* DocTurn web-app UI kit — app shell: sidebar + topbar */
 
+// Reactive viewport check so layouts can switch to a phone-friendly form.
+function useIsMobile(bp) {
+  var q = "(max-width: " + (bp || 760) + "px)";
+  var read = function () { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
+  var ref = React.useState(read);
+  var m = ref[0], setM = ref[1];
+  React.useEffect(function () {
+    var mq = window.matchMedia(q);
+    var on = function () { setM(mq.matches); };
+    if (mq.addEventListener) mq.addEventListener("change", on); else mq.addListener(on);
+    on();
+    return function () { if (mq.removeEventListener) mq.removeEventListener("change", on); else mq.removeListener(on); };
+  }, [q]);
+  return m;
+}
+
 function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, appName }) {
   const who = me || { name: "Dr. Jordan Chen", avatar: "JC" };
   const name = appName || "DocTurn";
@@ -81,7 +97,8 @@ function Topbar({ title, subtitle, working, onToggleWorking, right, onBell, noti
 }
 
 function PageWrap({ children }) {
-  return <div style={{ padding: 28, maxWidth: "var(--content-max, 1040px)", margin: "0 auto" }}>{children}</div>;
+  var mobile = useIsMobile();
+  return <div style={{ padding: mobile ? "16px 14px" : 28, maxWidth: "var(--content-max, 1040px)", margin: "0 auto" }}>{children}</div>;
 }
 
 function SectionTitle({ children, action }) {
@@ -131,4 +148,4 @@ function ThemeStyle({ theme }) {
   return null;
 }
 
-Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, applyTheme, ThemeStyle, hexToHsl });
+Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, applyTheme, ThemeStyle, hexToHsl, useIsMobile });
