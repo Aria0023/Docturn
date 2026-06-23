@@ -257,18 +257,40 @@ await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
   rec("ER routes an admission to an Amion-imported physician", ok, detail);
 }
 
-// Messaging: start a conversation with a provider and send a message (stored).
-await DT.actions.login("hospitalist", "MERCY"); await flush();
+// Messaging is backend-backed (cross-device): starting a conversation creates a
+// real server conversation and a sent message persists + round-trips.
+await DT.actions.login("hospitalist", "MERCY"); await flush(); await flush();
 {
   const who = DT.sortedProviders().find((p) => !/Chen/.test(p.name)) || DT.sortedProviders()[0];
-  DT.actions.startConversation({ name: who.name, specialty: who.specialty, avatar: who.avatar }); await flush();
-  const st0 = DT.getState();
-  const conv = (st0.conversations || []).find((c) => c.name === who.name);
-  if (conv) { DT.actions.sendMessage(conv.id, "Test handoff message"); }
-  await flush();
-  const conv2 = (DT.getState().conversations || []).find((c) => c.name === who.name);
+  let conv = null;
+  if (who) {
+    await DT.actions.startConversation({ name: who.name, specialty: who.specialty, avatar: who.avatar });
+    for (let i = 0; i < 12 && !conv; i++) { await flush(); conv = (DT.getState().conversations || []).find((c) => c.name === who.name); }
+    if (conv) { DT.actions.sendMessage(conv.id, "Test handoff message"); for (let i = 0; i < 12; i++) await flush(); }
+  }
+  const conv2 = (DT.getState().conversations || []).find((c) => c.name === (who && who.name));
   const sent = conv2 && (conv2.messages || []).some((m) => m.text === "Test handoff message" && m.me);
-  rec("messaging: start conversation + send message persists", !!sent, "msgs=" + (conv2 ? conv2.messages.length : "no convo"));
+  // backend-backed conversation carries a numeric server id
+  const realId = conv2 && typeof conv2.id === "number";
+  rec("messaging: backend conversation + message round-trips", !!sent && !!realId, "convId=" + (conv2 && conv2.id) + " msgs=" + (conv2 ? conv2.messages.length : "no convo"));
+}
+// Cross-user delivery: ER physician messages a hospitalist; the hospitalist
+// sees it on their OWN login (the real "works across devices" path).
+await DT.actions.login("er_doctor", "MERCY"); await flush(); await flush();
+{
+  const target = (DT.getState().directory || []).find((d) => /Chen/.test(d.name)) || (DT.getState().directory || [])[0];
+  let ok = false, detail = "no target";
+  if (target) {
+    await DT.actions.startConversation({ name: target.name });
+    let conv = null;
+    for (let i = 0; i < 12 && !conv; i++) { await flush(); conv = (DT.getState().conversations || []).find((c) => c.name === target.name); }
+    if (conv) { DT.actions.sendMessage(conv.id, "X-user ping 42"); for (let i = 0; i < 12; i++) await flush(); }
+    await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 14; i++) await flush();
+    const conv2 = (DT.getState().conversations || []).find((c) => (c.messages || []).some((m) => m.text === "X-user ping 42"));
+    ok = !!(conv2 && (conv2.messages || []).some((m) => m.text === "X-user ping 42" && !m.me));
+    detail = "received=" + ok + " from=" + (conv2 && conv2.name);
+  }
+  rec("messaging: receiver sees the sender's message (cross-user)", ok, detail);
 }
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)

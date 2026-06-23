@@ -18,6 +18,8 @@
   var DT = window.DT;
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
+  var meId = null;   // current user's backend id (for messaging "me" / participants)
+  var ws = null;     // live WebSocket for real-time messages + assignment events
   // Safety: some screens call DT.actions.toast(); ensure it exists.
   if (!DT.actions.toast) {
     DT.actions.toast = function (t) { DT.set(function (s) { s.__toast = t; return s; }); };
@@ -217,6 +219,75 @@
     return hydrate(st.session && st.session.role);
   }
 
+  // ---- messaging (real, cross-device) --------------------------------------
+  function nameForUserId(uid) {
+    var d = (DT.getState().directory || []).find(function (x) { return x.id === uid; });
+    return d ? d.name : null;
+  }
+  function dirByUserId(uid) {
+    return (DT.getState().directory || []).find(function (x) { return x.id === uid; }) || null;
+  }
+  function mapMessage(m) {
+    return { id: m.id, me: m.senderId === meId, text: m.content, at: new Date(m.createdAt || Date.now()).getTime(), read: true };
+  }
+  // Pull the user's conversations + their messages from the backend into the
+  // kit's conversation shape. Shared server state → both devices see the same.
+  function hydrateConversations() {
+    return get("/api/messaging/conversations").then(function (convos) {
+      return Promise.all((convos || []).map(function (c) {
+        return get("/api/messaging/conversations/" + c.id + "/messages")
+          .then(function (msgs) { return { c: c, msgs: msgs || [] }; })
+          .catch(function () { return { c: c, msgs: [] }; });
+      })).then(function (rows) {
+        DT.set(function (s) {
+          s.conversations = rows.map(function (row) {
+            var c = row.c;
+            var others = (c.participantIds || []).filter(function (id) { return id !== meId; });
+            var dirOther = others.length ? dirByUserId(others[0]) : null;
+            var nm = c.name || (others.length === 1 ? (nameForUserId(others[0]) || "Conversation") : "Group conversation");
+            return {
+              id: c.id,
+              name: nm,
+              role: c.type === "emergency" ? "Code · all providers" : (c.type === "group" ? ("Group · " + (c.participantIds || []).length + " members") : ((dirOther && dirOther.specialty) || "Provider")),
+              initials: initials(nm),
+              presence: (dirOther && dirOther.working) ? "online" : "offline",
+              tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
+              unread: c.unreadCount || 0,
+              group: c.type === "group",
+              broadcast: c.type === "emergency",
+              typing: false,
+              participantIds: c.participantIds || [],
+              messages: (row.msgs || []).map(mapMessage),
+            };
+          });
+          return s;
+        });
+      });
+    }).catch(function () { /* keep whatever's there on failure */ });
+  }
+
+  // ---- live WebSocket ------------------------------------------------------
+  // Cookie-authenticated socket at /ws. Refreshes messaging on MESSAGE_RECEIVED
+  // and the role's data on assignment/board/broadcast events, so a second device
+  // updates live without a manual refresh.
+  function connectWs() {
+    try { if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } } catch (e) {}
+    if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
+    try {
+      var proto = location.protocol === "https:" ? "wss:" : "ws:";
+      var sock = new WebSocket(proto + "//" + location.host + "/ws");
+      ws = sock;
+      sock.onmessage = function (e) {
+        var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
+        if (!ev || !ev.type) return;
+        if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
+        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "PATIENT_BOARD_UPDATED" || ev.type === "BROADCAST_SENT") rehydrate();
+      };
+      sock.onclose = function () { if (ws === sock) ws = null; if (DT.getState().session) setTimeout(connectWs, 3000); };
+      sock.onerror = function () { try { sock.close(); } catch (e) {} };
+    } catch (e) { /* WS unavailable — messaging still works via fetch on actions */ }
+  }
+
   // Developer: hydrate real organizations into the kit's org shape.
   function hydrateOrgs() {
     return get("/api/dev/organizations").then(function (orgs) {
@@ -249,15 +320,17 @@
       .then(function () { return get("/api/user"); })
       .then(function (u) {
         lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
+        meId = u.id;
         DT.set(function (s) {
           s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
-          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.ui.nav = "dashboard";
           s.ui.notifOpen = false;
           return s;
         });
+        connectWs();
         if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
-        return hydrate(u.role);
+        return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
       });
   }
 
@@ -325,6 +398,52 @@
       s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." };
       return s;
     });
+  };
+
+  // Logout: tear down the live socket + clear the server session too.
+  var origLogout = DT.actions.logout;
+  DT.actions.logout = function () {
+    try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    meId = null;
+    rawApi("POST", "/api/logout", {}).catch(function () {});
+    if (origLogout) origLogout();
+  };
+
+  // ---- messaging overrides (backend-backed, cross-device) ------------------
+  var origStartConversation = DT.actions.startConversation;
+  DT.actions.openConversation = function (id) {
+    var convo = (DT.getState().conversations || []).find(function (c) { return c.id === id; });
+    DT.set(function (s) { s.conversations = (s.conversations || []).map(function (c) { return c.id === id ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; });
+    if (convo) {
+      var ids = (convo.messages || []).filter(function (m) { return !m.me && m.id; }).map(function (m) { return m.id; });
+      if (ids.length) api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {});
+    }
+  };
+  DT.actions.sendMessage = function (id, text) {
+    if (!text || !text.trim()) return;
+    var t = text.trim();
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true }]), unread: 0 }) : c;
+      });
+      return s;
+    });
+    api("POST", "/api/messaging/send", { conversationId: Number(id), content: t })
+      .then(function () { hydrateConversations(); })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
+  };
+  DT.actions.startConversation = function (participant) {
+    var other = (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });
+    if (!other || meId == null) { if (origStartConversation) origStartConversation(participant); return; } // not a registered user → local only
+    return get("/api/messaging/conversations").then(function (convos) {
+      var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(other.id) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
+      if (existing) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.conversations = (s.conversations || []).map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }); });
+      }
+      return api("POST", "/api/messaging/conversations", { type: "direct", participantIds: [other.id] }).then(function (convo) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+      });
+    }).catch(function () { if (origStartConversation) origStartConversation(participant); });
   };
 
   DT.actions.sendAssignment = function (provider, fields, consults) {
@@ -487,14 +606,16 @@
     return api("POST", "/api/dev/impersonate", { userId: Number(user.id) })
       .then(function () { return get("/api/user"); })
       .then(function (u) {
+        meId = u.id;
         DT.set(function (s) {
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
-          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD" };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.impersonating = { name: u.displayName, role: u.role, org: user.org || s.selectedOrg };
           s.ui.nav = "dashboard"; s.ui.notifOpen = false;
           return s;
         });
-        return hydrate(u.role);
+        connectWs();
+        return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
       })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open portal", msg: "Impersonation failed." }; return s; }); });
   };

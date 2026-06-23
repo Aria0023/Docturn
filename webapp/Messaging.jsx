@@ -119,6 +119,7 @@ function Messaging() {
             </div>
           </div>
         )}
+        {conv ? (<React.Fragment>
         <div style={{ height: 60, flex: "none", background: "#fff", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
           <Avatar initials={conv.initials} size={36} tint={conv.tint} />
           <div style={{ flex: 1 }}>
@@ -169,6 +170,13 @@ function Messaging() {
           </div>
           <Button icon="send" onClick={send}>Send</Button>
         </div>
+        </React.Fragment>) : (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", gap: 8 }}>
+            <Icon name="message-square" size={30} color="var(--muted-foreground)" />
+            <div style={{ fontSize: 14, fontWeight: 600 }}>No conversation selected</div>
+            <div style={{ fontSize: 12.5 }}>Tap the pencil to message anyone in the directory.</div>
+          </div>
+        )}
       </div>
     </div>
   );
