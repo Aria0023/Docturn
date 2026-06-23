@@ -194,7 +194,8 @@ await flush();
 
 // clinical flow: ER doctor sends -> hospitalist receives -> accept
 await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
-const provs = DT.sortedProviders();
+let provs = DT.sortedProviders();
+for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
 const target = provs.find((p) => /Chen/i.test(p.name)) || provs[0];
 rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.stringify(provs.map((p) => p.name)));
 if (target) {
@@ -214,7 +215,8 @@ if (got) {
 // type initials+room, switch to Manual, pick a NON-default provider, click Send.
 await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
 {
-  const provs = DT.sortedProviders();
+  let provs = DT.sortedProviders();
+  for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
   const pick = provs[1] || provs[0]; // not the round-robin default, to prove manual selection
   const initEl = inputByPlaceholder("e.g. JS");
   const roomEl = inputByPlaceholder("Hall");
@@ -292,6 +294,11 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   }
   rec("messaging: receiver sees the sender's message (cross-user)", ok, detail);
 }
+
+// demo resilience: a wrong/stale org code (e.g. cached "MERCY") still signs in
+// via the role's canonical demo org, so the demo never dead-ends on org code.
+await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();
+rec("login falls back to canonical org when the code is wrong/stale", (DT.getState().session || {}).role === "hospitalist", "session=" + JSON.stringify(DT.getState().session));
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)
 // then perform a dev action — the bridge should re-auth and succeed, not 401.
@@ -423,7 +430,8 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
 }
 await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
-  const prov = DT.sortedProviders()[0];
+  let prov = DT.sortedProviders()[0];
+  for (let i = 0; i < 12 && !prov; i++) { await flush(); prov = DT.sortedProviders()[0]; }
   let ok = false, detail = "no provider";
   if (prov) {
     DT.actions.sendAssignment(prov, { initials: "AZ", room: "9", complaint: "GSW", specialty: "Cardiology", acuity: 1 }, []);

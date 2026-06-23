@@ -313,25 +313,42 @@
   // Real authentication for both first login and the topbar role switcher, so
   // the SERVER session always matches the role shown in the UI (otherwise dev
   // endpoints 403 and CRUD operates on demo data with no real ids).
+  // The canonical demo org for a role — used as a fallback if the org code on
+  // the login form is wrong/stale (e.g. a cached old "MERCY").
+  function canonicalOrg(role) { return role === "developer" ? PLATFORM_ORG : "ISPN"; }
+
   function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
-    var orgCode = orgForRole(role, org);
-    return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
-      .then(function () { return get("/api/user"); })
-      .then(function (u) {
-        lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
-        meId = u.id;
-        DT.set(function (s) {
-          s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
-          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
-          s.ui.nav = "dashboard";
-          s.ui.notifOpen = false;
-          return s;
-        });
-        connectWs();
-        if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
-        return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+    var primary = orgForRole(role, org);
+    var canonical = canonicalOrg(role);
+
+    function finish(u, orgCode) {
+      lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
+      meId = u.id;
+      DT.set(function (s) {
+        s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.ui.nav = "dashboard";
+        s.ui.notifOpen = false;
+        s.loginError = null;
+        return s;
       });
+      connectWs();
+      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+    }
+    function attempt(orgCode) {
+      return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
+        .then(function () { return get("/api/user"); })
+        .then(function (u) { return finish(u, orgCode); });
+    }
+
+    return attempt(primary).catch(function (e) {
+      // Demo resilience: a wrong/stale org code (cached "MERCY") shouldn't block
+      // sign-in — retry once with the role's canonical demo org.
+      if (!isNetworkError(e) && primary !== canonical) return attempt(canonical);
+      throw e;
+    });
   }
 
   // Distinguish "backend unreachable" (fetch rejects with a TypeError) from
@@ -354,13 +371,17 @@
         DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
         return;
       }
-      // Server reachable but login failed (bad/missing account).
+      // Server reachable but login failed (bad/missing account or org code).
+      var why = String((e && e.message) || "");
+      var msg = /credential/i.test(why) ? "Wrong account/password for this role."
+        : /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
+        : "Run \"npm run seed\" to create the demo accounts.";
       DT.set(function (s) {
-        s.loginError = "Sign-in failed for this role. Run \"npm run seed\" to (re)create demo accounts, then try again.";
-        s.__toast = { tone: "rejected", title: "Sign-in failed", msg: "Run \"npm run seed\" to create the demo accounts." };
+        s.loginError = "Sign-in failed: " + msg;
+        s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };
         return s;
       });
-      console.error("[DocTurn] login failed (account missing?):", e);
+      console.error("[DocTurn] login failed:", e);
     });
   };
 
