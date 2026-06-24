@@ -458,6 +458,21 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
     "dir=" + dir.length + " specialty=" + hasSpecialty + " credential=" + hasCredential);
 }
 
+// Schedule-driven on-call: the consult on-call follows the clock — for a given
+// specialty it picks the provider whose shift is active now, auto-rotating
+// between day and night as the time changes.
+{
+  const roster = (h) => window.onCallRoster([
+    { name: "Dr. Day GI",   specialty: "GI", working: true, shift: "day" },
+    { name: "Dr. Night GI", specialty: "GI", working: true, shift: "night" },
+  ], h);
+  const atDay = roster(9), atNight = roster(23);
+  const dayOk = atDay.GI && atDay.GI.name === "Dr. Day GI" && atDay.GI.onCall;
+  const nightOk = atNight.GI && atNight.GI.name === "Dr. Night GI" && atNight.GI.onCall;
+  rec("on-call follows the schedule by shift time (day/night auto-rotate)", !!(dayOk && nightOk),
+    "day=" + JSON.stringify(atDay.GI && { n: atDay.GI.name, o: atDay.GI.onCall }) + " night=" + JSON.stringify(atNight.GI && { n: atNight.GI.name, o: atNight.GI.onCall }));
+}
+
 // Consult services are director-editable (add / rename / set on-call / remove).
 await DT.actions.login("director", "ISPN"); await flush();
 {

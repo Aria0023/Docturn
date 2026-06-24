@@ -202,7 +202,7 @@
           // Full registered directory (all roles): drives the ER Consult-services
           // roster + midlevel pool from real people, not hardcoded lists.
           if (directory) s.directory = (directory || []).map(function (d) {
-            return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working };
+            return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
           if (role === "hospitalist") {
             s.pending = mapPending(pending, patientsById, usersById);

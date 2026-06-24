@@ -27,6 +27,41 @@
     return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
   function clockLabel() { return hhmm(); }
+
+  /* ---- shift-time helpers ------------------------------------------------
+     On-call follows the schedule by current time: a provider's shift is
+     "active now" when the clock falls inside that shift's window. Night wraps
+     past midnight. atHour is injectable for deterministic tests. */
+  var SHIFT_WINDOWS = {
+    day:   [7, 19],
+    swing: [13, 23],
+    night: [19, 7],
+    nocturnist: [19, 7],
+    rounding: [7, 19],
+  };
+  function shiftActiveNow(shiftType, atHour) {
+    var w = SHIFT_WINDOWS[shiftType] || SHIFT_WINDOWS.day;
+    var h = (atHour == null) ? new Date().getHours() : atHour;
+    var start = w[0], end = w[1];
+    return (start < end) ? (h >= start && h < end) : (h >= start || h < end);
+  }
+  // Schedule-driven on-call by specialty: for each specialty pick the best
+  // candidate — on-shift-now AND working (the true on-call) > working > on-shift
+  // > anyone registered. onCall is true only when someone of that specialty is
+  // both working and on shift at this hour, so it auto-rotates with the clock.
+  function onCallRoster(directory, atHour) {
+    var roster = {};
+    (directory || []).forEach(function (d) {
+      if (!d.specialty) return;
+      var a = shiftActiveNow(d.shift, atHour);
+      var r = (a && d.working) ? 3 : d.working ? 2 : a ? 1 : 0;
+      var cur = roster[d.specialty];
+      if (!cur || r > cur._rank) {
+        roster[d.specialty] = { name: d.name, avatar: d.avatar, onCall: !!(d.working && a), shift: d.shift || "", _rank: r };
+      }
+    });
+    return roster;
+  }
   function mmss(ms) {
     if (ms <= 0) return "0:00";
     var s = Math.round(ms / 1000);
@@ -1119,4 +1154,7 @@
   window.useClock = useClock;
   window.dtFmt = { mmss: mmss, ago: ago, hhmm: hhmm, clockLabel: clockLabel, initialsOf: initialsOf };
   window.extractIntake = extractIntake;
+  window.shiftActiveNow = shiftActiveNow;
+  window.SHIFT_WINDOWS = SHIFT_WINDOWS;
+  window.onCallRoster = onCallRoster;
 })();

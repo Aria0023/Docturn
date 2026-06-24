@@ -282,15 +282,12 @@ function App() {
   const canManagePeople = role === "director" || role === "er_director";
 
   // ER Consult services come from the director-curated menu. Each service's
-  // on-call = its pinned consultant, else the live registered roster for that
-  // specialty (no fake fallback). Members = the PA/NPs assigned under it.
+  // on-call = its pinned consultant, else the provider of that specialty whose
+  // SHIFT IS ACTIVE NOW (schedule-driven, auto-rotating across day/swing/night)
+  // — no fake fallback. Members = the PA/NPs assigned under it.
   const MIDLEVEL_CREDS = { PA: 1, NP: 1, RN: 1 };
-  const dirRoster = {}; // on-call derived from the registered directory by specialty
-  (st.directory || []).forEach((d) => {
-    if (!d.specialty) return;
-    const cur = dirRoster[d.specialty];
-    if (!cur || (!cur.onCall && d.working)) dirRoster[d.specialty] = { name: d.name, avatar: d.avatar, onCall: !!d.working };
-  });
+  // Schedule-driven on-call by specialty (auto-rotates with the clock).
+  const dirRoster = window.onCallRoster ? window.onCallRoster(st.directory) : {};
   const midlevels = (st.directory || []).filter((d) => MIDLEVEL_CREDS[d.credential]).map((d) => ({ id: "ml" + d.id, name: d.name, avatar: d.avatar, role: d.credential }));
   const consultCfg = st.consultServices || [];
   const consultServiceNames = consultCfg.length ? consultCfg.map((s) => s.name) : null;

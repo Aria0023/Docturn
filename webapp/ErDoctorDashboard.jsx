@@ -55,7 +55,7 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
           <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.25 }}>{service}</div>
           <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 1, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
             <StatusDot status={hasRoster && r.onCall ? "online" : "offline"} pulse={hasRoster && r.onCall} />
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hasRoster ? (r.name + " · " + (r.onCall ? "on call" : "covering provider paged")) : "No on-call assigned — set in Consult services"}</span>
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hasRoster ? (r.name + " · " + (r.onCall ? ("on call" + (r.shift ? " · " + r.shift + " shift" : "")) : "covering provider paged")) : "No on-call assigned — set in Consult services"}</span>
           </div>
         </div>
         <Avatar initials={hasRoster ? r.avatar : "—"} size={30} tint={hasRoster ? "blue" : "slate"} />
