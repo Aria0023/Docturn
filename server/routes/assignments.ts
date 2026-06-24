@@ -100,6 +100,51 @@ export function registerAssignmentRoutes(app: Express) {
     },
   );
 
+  // What the ER sent: every assignment THIS ER physician routed (er_director /
+  // developer see the whole org), enriched with patient + current provider +
+  // live status, newest first. Drives the ER's "Patient board" so declines,
+  // re-routes and accepts are visible — not just the optimistic local copy.
+  app.get(
+    "/api/assignments/sent",
+    requireAuth,
+    requireRole("er_doctor", "er_director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await logPhiAccess(req, "assignments");
+      const [all, patients, hospitalists, users] = await Promise.all([
+        storage().listAssignments(me.organizationId),
+        storage().listPatients(me.organizationId),
+        storage().listHospitalists(me.organizationId),
+        storage().listUsers(me.organizationId),
+      ]);
+      const pById = new Map(patients.map((p) => [p.id, p]));
+      const hById = new Map(hospitalists.map((h) => [h.id, h]));
+      const uById = new Map(users.map((u) => [u.id, u]));
+      const mine = me.role === "er_doctor"
+        ? all.filter((a) => a.erDoctorId === me.id)
+        : all;
+      const rows = mine.slice(0, 60).map((a) => {
+        const p = pById.get(a.patientId);
+        const h = hById.get(a.hospitalistId);
+        const provider = h ? uById.get(h.userId) : undefined;
+        return {
+          id: a.id,
+          patientId: a.patientId,
+          initials: p?.initials ?? "??",
+          room: p?.roomNumber ?? "",
+          complaint: p?.issueSummary ?? "",
+          acuity: p?.acuity ?? null,
+          provider: provider?.displayName ?? "Unassigned",
+          hospitalistId: a.hospitalistId,
+          status: a.status,
+          via: a.via,
+          createdAt: a.createdAt,
+        };
+      });
+      res.json(rows);
+    },
+  );
+
   app.patch(
     "/api/assignments/:id/accept",
     requireAuth,
@@ -158,12 +203,18 @@ export function registerAssignmentRoutes(app: Express) {
   app.patch(
     "/api/assignments/:id/reassign",
     requireAuth,
-    requireRole("director", "er_director", "developer"),
+    requireRole("director", "er_director", "er_doctor", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       const id = Number(req.params.id);
       const parsed = reassignSchema.safeParse(req.body ?? {});
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // An ER physician may re-route only the patients THEY admitted.
+      if (me.role === "er_doctor") {
+        const a = await storage().getAssignment(me.organizationId, id);
+        if (!a) return res.status(404).json({ error: "not_found" });
+        if (a.erDoctorId !== me.id) return res.status(403).json({ error: "forbidden" });
+      }
       try {
         const result = await reassignAssignment(
           storage(),

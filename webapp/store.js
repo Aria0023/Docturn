@@ -138,9 +138,14 @@
     // continuation — a number ("disc 44", "hall 5"), a slashed pair ("A/B"), or
     // a lone unit letter ("Bay A"). Plain words ("here", "for", "with") are NOT
     // continuations, so an un-delimited "hall5 here for GSW" stops at "hall5".
-    var rm = text.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9/\-]+(?:\s+(?:[0-9]+[A-Za-z]?|[A-Za-z]\/[A-Za-z]|[A-Z](?![A-Za-z])))?)/i);
+    // Don't let a leading "<INITIALS> <age><sex>" (e.g. "RM 72F") be misread as a
+    // room — strip it before the "rm"/"room" keyword scan (initials are still
+    // pulled from the original text above).
+    var roomText = text.replace(/^\s*[A-Z]{1,3}\.?,?\s*\d{1,3}\s*[MFmf]\b/, "");
+    var rm = roomText.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9/\-]+(?:\s+(?:[0-9]+[A-Za-z]?|[A-Za-z]\/[A-Za-z]|[A-Z](?![A-Za-z])))?)/i);
     if (rm) room = rm[1].trim();
-    if (!room) { var spot = text.match(/\b(hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
+    // Bare ward designations without the word "room": "hall5", "bay 3", "hallway".
+    if (!room) { var spot = text.match(/\b(hall\s?\d+[A-Za-z]?|bay\s?\d+[A-Za-z]?|hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
     if (!room) room = (text.match(/\b([0-9]{3}[A-Za-z]?)\b/) || [])[1] || "";
     var complaint = text.split(/[.\n;]/)[0].trim().replace(/^\s*(patient|pt\.?)\s+[A-Z][A-Za-z.\s]*?\s*(with|w\/|presenting with|presents with)\s*/i, "");
     complaint = complaint.charAt(0).toUpperCase() + complaint.slice(1);

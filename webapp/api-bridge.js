@@ -153,10 +153,31 @@
       return { id: "p" + a.id, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "" };
     });
   }
+  // ER "Patient board": the assignments this ER routed, with LIVE backend status
+  // (so declines show as "re-routed", reassigns show the new provider, accepts
+  // show "accepted") — replaces the optimistic-only local list.
+  function mapSent(rows) {
+    var SMAP = { pending: "sent", accepted: "accepted", rejected: "rejected", expired: "rejected", cancelled: "rejected" };
+    var now = new Date();
+    return (rows || []).map(function (a) {
+      var d = a.createdAt ? new Date(a.createdAt) : now;
+      var sameDay = d.toDateString() === now.toDateString();
+      var day = sameDay ? "Today" : (d.toDateString() === new Date(now.getTime() - 86400000).toDateString() ? "Yesterday" : d.toLocaleDateString());
+      return {
+        id: "as" + a.id, backendId: a.id, patientId: a.patientId,
+        initials: a.initials, provider: a.provider, complaint: a.complaint,
+        consultants: [], acuity: a.acuity || null,
+        time: day + " · " + fmt.hhmm(d.getTime()), day: day,
+        status: SMAP[a.status] || "sent",
+      };
+    });
+  }
   function mapBoard(rows) {
     return (rows || []).map(function (r) {
       return {
         id: "b" + r.patient.id,
+        assignmentId: r.assignmentId || null, // backend id, for director/ER reassign
+        patientId: r.patient.id,
         initials: r.patient.initials,
         room: r.patient.room || "—",
         dept: r.patient.department || "MED",
@@ -202,9 +223,12 @@
         extra.push(Promise.resolve([]));
       }
       extra.push(get("/api/patient-board").catch(function () { return null; }));
+      // ER roles: their live "sent" board (declines / re-routes / accepts).
+      var wantsSent = (role === "er_doctor" || role === "er_director");
+      extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
           // Full registered directory (all roles): drives the ER Consult-services
@@ -217,6 +241,7 @@
             s.myPatients = mapAccepted(mine, patientsById);
           }
           if (board) s.board = mapBoard(board);
+          if (wantsSent && sent) s.sent = mapSent(sent);
           return s;
         });
       });
@@ -428,6 +453,43 @@
       s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." };
       return s;
     });
+  };
+
+  // ER re-routes a patient they sent to a different hospitalist. Hits the real
+  // backend so the new provider actually receives it (and the ER board updates).
+  DT.actions.reassignSent = function (sentId, providerName) {
+    var st = DT.getState();
+    var item = (st.sent || []).find(function (x) { return x.id === sentId; });
+    var prov = (st.providers || []).find(function (p) { return p.name === providerName; });
+    if (!item || item.backendId == null || !prov) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't re-route", msg: "Only currently-routing patients can be re-routed." }; return s; });
+      return;
+    }
+    api("PATCH", "/api/assignments/" + item.backendId + "/reassign", { hospitalistId: bid(prov.id) })
+      .then(rehydrate)
+      .then(function () { DT.set(function (s) { s.__toast = { tone: "sent", title: "Re-routed to " + providerName, msg: "Sent to their queue." }; return s; }); })
+      .catch(function (e) {
+        var m = String((e && e.message) || "");
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't re-route", msg: /pending/.test(m) ? "That patient is no longer routing." : (m || "Try again.") }; return s; });
+      });
+  };
+
+  // Director / ER director re-routes a board patient's pending assignment.
+  DT.actions.reassignBoard = function (rowId, providerName) {
+    var st = DT.getState();
+    var row = (st.board || []).find(function (b) { return b.id === rowId; });
+    var prov = (st.providers || []).find(function (p) { return p.name === providerName; });
+    if (!row || row.assignmentId == null || !prov) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: "Only patients currently being routed can be reassigned." }; return s; });
+      return;
+    }
+    api("PATCH", "/api/assignments/" + row.assignmentId + "/reassign", { hospitalistId: bid(prov.id) })
+      .then(rehydrate)
+      .then(function () { DT.set(function (s) { s.__toast = { tone: "sent", title: "Reassigned to " + providerName, msg: "They've been notified." }; return s; }); })
+      .catch(function (e) {
+        var m = String((e && e.message) || "");
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: /pending/.test(m) ? "That patient is no longer routing." : (m || "Try again.") }; return s; });
+      });
   };
 
   // Logout: tear down the live socket + clear the server session too.

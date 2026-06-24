@@ -1,7 +1,7 @@
 import type { Assignment, Hospitalist } from "@shared/schema";
 import type { DatabaseStorage } from "../storage.js";
 import { appendAudit } from "../audit.js";
-import { notifyAssignment } from "./notifications.js";
+import { broadcastAssignmentChange, notifyAssignment } from "./notifications.js";
 import { selectNext } from "./rotation.js";
 
 // Assignment routing always uses the full storage surface (unit fan-out etc.).
@@ -95,6 +95,7 @@ export async function createAssignment(
     assignment,
     await targetUserIds(storage, orgId, hospitalist),
   );
+  broadcastAssignmentChange(orgId);
   return assignment;
 }
 
@@ -137,6 +138,7 @@ export async function acceptAssignment(
     details: {},
     riskLevel: "low",
   });
+  broadcastAssignmentChange(orgId);
   return updated!;
 }
 
@@ -168,6 +170,7 @@ export async function rejectAssignment(
   });
 
   const next = await rerouteToNext(storage, orgId, a);
+  broadcastAssignmentChange(orgId);
   return { rejected: rejected!, reroute: next };
 }
 
@@ -209,6 +212,7 @@ export async function cancelAssignment(
     details: { wasAccepted },
     riskLevel: "medium",
   });
+  broadcastAssignmentChange(orgId);
   return updated!;
 }
 
@@ -249,6 +253,7 @@ export async function reassignAssignment(
     details: { toHospitalistId: next?.hospitalistId ?? null },
     riskLevel: "medium",
   });
+  broadcastAssignmentChange(orgId);
   return { previous: previous!, reroute: next };
 }
 
@@ -276,6 +281,7 @@ export async function runExpirySweep(
     });
     const next = await rerouteToNext(storage, a.organizationId, a);
     if (next) rerouted++;
+    broadcastAssignmentChange(a.organizationId);
   }
   return { expired: due.length, rerouted };
 }

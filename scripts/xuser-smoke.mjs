@@ -87,6 +87,39 @@ await chen.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ con
 await wait(500);
 rec("Chen→ER reply delivered live (bidirectional)", erWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
 
+// Decline visibility: ER routes a fresh patient to Chen, Chen declines — the ER
+// must SEE the decline live and in its sent feed (and the auto-reroute).
+const patelH = hosps.find((h) => h.specialty && h.userId && h.id !== chenProv.id);
+const p2 = (await er.f("/api/patients", { method: "POST", body: JSON.stringify({ initials: "DC", roomNumber: "7", issueSummary: "AKI", acuity: 2 }) })).json;
+const a2 = (await er.f("/api/assignments", { method: "POST", body: JSON.stringify({ patientId: p2.id, mode: "manual", hospitalistId: chenProv.id }) })).json;
+await wait(300);
+before = erWs.got.length;
+await chen.f("/api/assignments/" + a2.id + "/reject", { method: "PATCH" });
+await wait(500);
+rec("ER sees the decline live (ASSIGNMENT_UPDATED)", erWs.got.slice(before).some((e) => e.type === "ASSIGNMENT_UPDATED"));
+let erSent = (await er.f("/api/assignments/sent")).json;
+rec("ER sent feed records the decline", (erSent.find((x) => x.id === a2.id) || {}).status !== "pending", "status=" + ((erSent.find((x) => x.id === a2.id) || {}).status));
+
+// ER re-routes their patient to a different hospitalist (own-patient reassign).
+const reroute = erSent.find((x) => x.patientId === p2.id && x.status === "pending");
+if (reroute && patelH) {
+  const re = await er.f("/api/assignments/" + reroute.id + "/reassign", { method: "PATCH", body: JSON.stringify({ hospitalistId: patelH.id }) });
+  rec("ER can re-route their own patient", re.status === 200, "status=" + re.status);
+}
+
+// Director reassign reaches the new hospitalist live.
+const dir = jar();
+await login(dir, "director");
+const p3 = (await er.f("/api/patients", { method: "POST", body: JSON.stringify({ initials: "DR", roomNumber: "9", issueSummary: "obs", acuity: 3 }) })).json;
+const a3 = (await er.f("/api/assignments", { method: "POST", body: JSON.stringify({ patientId: p3.id, mode: "manual", hospitalistId: patelH.id }) })).json;
+await wait(300); before = chenWs.got.length;
+const board = (await dir.f("/api/patient-board")).json;
+const row = board.find((b) => b.patient.id === p3.id);
+rec("board row exposes assignmentId for reassign", !!(row && row.assignmentId === a3.id));
+await dir.f("/api/assignments/" + a3.id + "/reassign", { method: "PATCH", body: JSON.stringify({ hospitalistId: chenProv.id }) });
+await wait(500);
+rec("director reassign reaches the hospitalist live", chenWs.got.slice(before).some((e) => e.type === "ASSIGNMENT_CREATED"));
+
 // RBAC: hospitalist cannot perform the ER-only action.
 const forbidden = await chen.f("/api/assignments", { method: "POST", body: JSON.stringify({ patientId: p.id, mode: "manual", hospitalistId: chenProv.id }) });
 rec("RBAC: hospitalist blocked from ER-only action", forbidden.status === 403, "status=" + forbidden.status);

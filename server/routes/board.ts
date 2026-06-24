@@ -86,6 +86,8 @@ export function registerBoardRoutes(app: Express) {
             acuity: p.acuity,
             status: p.status,
           },
+          // Current assignment id (if any), so director/ER reassign can target it.
+          assignmentId: a?.id ?? null,
           responsible,
           consultants: consultsByPatient.get(p.id) ?? [],
           admittedBy: admittedByUser

@@ -56,6 +56,20 @@ export function notificationDeps(): NotificationDeps {
   return deps;
 }
 
+/**
+ * Tell every client in the org that assignment state changed (accept / reject /
+ * reassign / cancel / expire / create), so the ER's sent board, the director's
+ * board and hospitalists' pending lists all re-hydrate to the new truth. The
+ * targeted ASSIGNMENT_CREATED push (notifyAssignment) still alerts the recipient.
+ */
+export function broadcastAssignmentChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "ASSIGNMENT_UPDATED" });
+  } catch (err) {
+    console.error("[notify] assignment broadcast failed", err);
+  }
+}
+
 /** In-memory acknowledgement state, keyed by assignment id. */
 const acked = new Set<number>();
 export function acknowledgeAssignment(assignmentId: number) {
