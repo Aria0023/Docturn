@@ -331,6 +331,7 @@ function App() {
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
+    { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;

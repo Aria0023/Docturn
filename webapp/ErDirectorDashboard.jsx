@@ -185,4 +185,4 @@ function ErDirectorDashboard({ erPhysicians, shifts, sent, board, diversion, avg
   );
 }
 
-Object.assign(window, { ErDirectorDashboard, ErDiversionPanel, ErStatsPanel, ErRosterPanel, ErRecentIntakesPanel, ErOpsPanel });
+Object.assign(window, { ErDirectorDashboard, ErDiversionPanel, ErStatsPanel, ErRosterPanel, ErRecentIntakesPanel, ErOpsPanel, ErStat, fmtDuration });

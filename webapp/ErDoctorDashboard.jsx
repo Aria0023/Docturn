@@ -130,6 +130,35 @@ function ReassignSelect({ providers, onPick }) {
   );
 }
 
+// My metrics — the ER director's throughput stats, but scoped to THIS physician:
+// derived from the patients this provider personally routed (s.sent). Mirrors
+// ErStatsPanel visually so the two portals feel consistent. avgAcceptSec is the
+// org figure (no per-provider clock on each routed row), labelled accordingly.
+function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
+  const Stat = window.ErStat;
+  const dur = window.fmtDuration || ((s) => Math.round((s || 0) / 60) + "m");
+  const mine = sent || [];
+  const today = mine.filter((s) => s.day === "Today");
+  const accepted = mine.filter((s) => s.status === "accepted").length;
+  const rejected = mine.filter((s) => s.status === "rejected").length;
+  const pending = mine.filter((s) => s.status === "sent").length;
+  const acceptRate = (accepted + rejected) ? Math.round((accepted / (accepted + rejected)) * 100) : 100;
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 10px" }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>My shift</h3>
+        <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{meName ? meName + " · " : ""}patients you routed</span>
+      </div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <Stat label="My admits today" value={today.length} icon="clipboard-plus" tint="blue" sub={mine.length + " routed in all"} />
+        <Stat label="Avg time-to-accept" value={dur(avgAcceptSec || 0)} icon="timer" tint="amber" sub="hospitalist response" />
+        <Stat label="My acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + rejected + " re-routed"} />
+        <Stat label="Awaiting accept" value={pending} icon="loader" tint="slate" sub="still routing" />
+      </div>
+    </div>
+  );
+}
+
 // Intake + routing panel — the ER physician's primary action (write the note,
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
@@ -403,4 +432,4 @@ function ErDoctorDashboard({ providers, onSend, onReassign, sent }) {
   );
 }
 
-Object.assign(window, { ErDoctorDashboard, IntakeRoutingPanel, RoutedBoardPanel });
+Object.assign(window, { ErDoctorDashboard, IntakeRoutingPanel, RoutedBoardPanel, ErMyMetricsPanel });
