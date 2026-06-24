@@ -703,6 +703,9 @@ export const devCreateUserSchema = z.object({
   specialty: z.string().optional(),
   patientCap: z.number().int().min(1).max(50).optional(),
   shiftType: z.enum(SHIFT_TYPE).optional(),
+  // When importing from a schedule (Amion/QGenda/etc.) the imported providers
+  // are the active roster, so the importer marks them on-shift.
+  working: z.boolean().optional(),
 });
 
 export const deviceTokenSchema = z.object({

@@ -248,6 +248,10 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   // isn't racing the rehydrate (the app creates the user synchronously server-side).
   let imported = null;
   for (let i = 0; i < 10 && !imported; i++) { imported = DT.sortedProviders().find((p) => /Guedikian/.test(p.name)); if (!imported) await flush(); }
+  // On-call fix: providers imported from a schedule come in ON-SHIFT (working),
+  // so they immediately populate the consult on-call roster (previously they
+  // defaulted to inactive and the Amion on-call never updated).
+  rec("imported (schedule) provider comes in on-shift → drives on-call", !!(imported && imported.working), "working=" + (imported && imported.working));
   let ok = false, detail = "imported=" + !!imported;
   if (imported) {
     DT.actions.sendAssignment(imported, { initials: "AM", room: "Bay 2", complaint: "Amion route test", specialty: "Cardiology" }, []);

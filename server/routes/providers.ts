@@ -15,6 +15,8 @@ const createProviderSchema = z.object({
   shiftType: z.enum(["day", "night", "swing"]).default("day"),
   role: z.enum(["hospitalist", "er_doctor"]).default("hospitalist"),
   credential: z.enum(["MD", "DO", "NP", "PA"]).optional(),
+  // Imported-from-schedule providers come in on-shift (drives on-call roster).
+  working: z.boolean().optional(),
 });
 
 const workingStatusSchema = z.object({
@@ -102,7 +104,7 @@ export function registerProviderRoutes(app: Express) {
           currentPatientCount: 0,
           patientCap: data.patientCap,
           rotationOrder: existingProviders.length,
-          working: false,
+          working: data.working ?? false,
           shiftType: data.shiftType,
         });
       }

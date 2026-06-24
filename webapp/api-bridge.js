@@ -469,16 +469,34 @@
 
   DT.actions.sendAssignment = function (provider, fields, consults) {
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
+    var sentId = "s" + Date.now();
+    var admId = "ad-" + sentId;
     api("POST", "/api/patients", {
       initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty,
       acuity: fields.acuity || undefined,
     }).then(function (p) {
       return api("POST", "/api/assignments", { patientId: p.id, mode: mode, hospitalistId: bid(provider.id) });
-    }).then(rehydrate).catch(function () {});
+    }).then(rehydrate).catch(function (e) {
+      // Network failure → keep the optimistic row (offline demo mode). But a
+      // server REJECTION (e.g. this tab's session is signed in as a different
+      // role because two tabs in one browser share a cookie) must NOT look like
+      // success: undo the optimistic row and tell the user what happened.
+      if (isNetworkError(e)) return;
+      var why = String((e && e.message) || "");
+      DT.set(function (s) {
+        s.sent = (s.sent || []).filter(function (x) { return x.id !== sentId; });
+        s.admissions = (s.admissions || []).filter(function (x) { return x.id !== admId; });
+        s.__toast = { tone: "rejected", title: "Couldn't send assignment",
+          msg: /forbidden|role|unauthor/i.test(why)
+            ? "This tab isn't signed in as an ER physician. Two tabs in one browser share a login — use a separate browser or device per user."
+            : (/no.?provider/i.test(why) ? "No eligible hospitalist is on shift to receive this." : "The server rejected this admission — please retry.") };
+        return s;
+      });
+    });
     DT.set(function (s) {
-      s.sent = [{ id: "s" + Date.now(), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
+      s.sent = [{ id: sentId, initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
       // append to the admissions log (every admission given to a team)
-      s.admissions = [{ id: "ad" + Date.now(), at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
+      s.admissions = [{ id: admId, at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
       s.__toast = { tone: "sent", title: "Assignment sent to " + provider.name, msg: "Notified by push, SMS fallback." };
       return s;
     });
@@ -535,13 +553,16 @@
         organizationId: orgId, role: "hospitalist", displayName: p.name,
         username: unameFor(p.name), specialty: p.group || undefined,
         patientCap: 12, shiftType: p.shift || "day",
+        // Imported from the schedule → on-shift, so they appear in the on-call
+        // roster (consult services) immediately, not as inactive providers.
+        working: true,
       });
     }
     function createOwn(p) {
       return api("POST", "/api/director/hospitalists", {
         username: unameFor(p.name), password: "docturn", displayName: p.name,
         specialty: p.group || "Hospital Medicine", patientCap: 12,
-        shiftType: p.shift || "day", role: "hospitalist",
+        shiftType: p.shift || "day", role: "hospitalist", working: true,
       });
     }
     function runSeq(make) {

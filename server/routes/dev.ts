@@ -262,7 +262,7 @@ export function registerDevRoutes(app: Express) {
             currentPatientCount: 0,
             patientCap: d.patientCap ?? 12,
             rotationOrder: existing.length,
-            working: false,
+            working: d.working ?? false,
             shiftType: d.shiftType ?? "day",
           });
         }
