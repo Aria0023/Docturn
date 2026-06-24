@@ -61,6 +61,14 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
 
   const SHIFT_TINT = { day: "amber", swing: "blue", night: "slate" };
 
+  // Schedule-source badge reflects THIS org's actual source (not always Amion).
+  const dtState = (typeof window !== "undefined" && window.DT) ? window.DT.getState() : null;
+  const schedOrg = (dtState && dtState.session && dtState.session.org) || (dtState && dtState.selectedOrg) || "ISPN";
+  const schedKey = (dtState && dtState.scheduleSources && dtState.scheduleSources[schedOrg]) || "amion";
+  const SRC_LABELS = { amion: "Amion", qgenda: "QGenda", tangier: "Tangier / Spok", shiftadmin: "ShiftAdmin", word: "Word document", pdf: "PDF document", online: "Online page", custom: "Custom", none: "Not configured" };
+  const schedLabel = SRC_LABELS[schedKey] || "Amion";
+  const schedConfigured = schedKey !== "none";
+
   return (
     <PageWrap>
       <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
@@ -78,8 +86,8 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
       <Card style={{ padding: "12px 16px", marginBottom: 18, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={17} color="var(--primary)" /></span>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span style={{ whiteSpace: "nowrap" }}>On-call schedule synced</span><Badge status="accepted" icon="circle">Amion · 2m ago</Badge></div>
-          <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows the live on-call grid. Toggles below override locally for this shift.</div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span style={{ whiteSpace: "nowrap" }}>{schedConfigured ? "On-call schedule synced" : "On-call schedule not connected"}</span>{schedConfigured ? <Badge status="accepted" icon="circle">{schedLabel} · 2m ago</Badge> : <Badge status="pending" icon="circle">{schedLabel}</Badge>}</div>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows {schedConfigured ? "the live on-call grid" : "this org's schedule once connected"}. Toggles below override locally for this shift.</div>
         </div>
         <Button size="sm" variant="outline" icon="settings" onClick={onOpenSchedule}>Manage sync</Button>
       </Card>

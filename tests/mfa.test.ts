@@ -32,7 +32,7 @@ describe("MFA (TOTP + backup codes)", () => {
     const agent2 = supertest.agent(ctx.app);
     const loginRes = await agent2
       .post("/api/login")
-      .send({ orgCode: "MERCY", username: "chen", password: "docturn" });
+      .send({ orgCode: "ISPN", username: "chen", password: "docturn" });
     expect(loginRes.status).toBe(202);
     expect(loginRes.body.twoFactorRequired).toBe(true);
 
@@ -48,7 +48,7 @@ describe("MFA (TOTP + backup codes)", () => {
     const agent3 = supertest.agent(ctx.app);
     await agent3
       .post("/api/login")
-      .send({ orgCode: "MERCY", username: "chen", password: "docturn" });
+      .send({ orgCode: "ISPN", username: "chen", password: "docturn" });
     const first = await agent3
       .post("/api/2fa/complete-login")
       .send({ code: backupCodes[0] });
@@ -57,7 +57,7 @@ describe("MFA (TOTP + backup codes)", () => {
     const agent4 = supertest.agent(ctx.app);
     await agent4
       .post("/api/login")
-      .send({ orgCode: "MERCY", username: "chen", password: "docturn" });
+      .send({ orgCode: "ISPN", username: "chen", password: "docturn" });
     const reuse = await agent4
       .post("/api/2fa/complete-login")
       .send({ code: backupCodes[0] });

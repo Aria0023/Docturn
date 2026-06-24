@@ -139,7 +139,8 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
   if (role === "developer") {
     const mercy = (st.orgs || []).find((o) => o.code === "ISPN");
     const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
-    rec("developer: orgs hydrated from backend (Mercy=8, platform hidden)", !!mercy && mercy.users === 8 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
+    // ISPN seeds the real Cedars Amion roster: 3 ops roles + 12 hospitalists + 1 PA = 16.
+    rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users === 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }
   if (role === "hospitalist") rec("hospitalist: providers hydrated", (st.providers || []).length >= 4, "providers=" + (st.providers || []).length);
   for (const navId of NAV[role]) { DT.actions.setNav(navId); await flush(); await clickEveryButton(role, navId); }
@@ -192,11 +193,15 @@ rec("importProviders skips duplicates on re-sync", dupRes && dupRes.added === 0 
 try { await DT.actions.deleteTenant({ code: "AMION" }); } catch (e) { /* ignore */ }
 await flush();
 
-// clinical flow: ER doctor sends -> hospitalist receives -> accept
+// clinical flow: ER doctor sends -> hospitalist receives -> accept.
+// Resolve the demo hospitalist's display name first so we route to EXACTLY the
+// account we then log in as (the seed roster uses real Amion names now).
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+const hospName = (DT.getState().me && DT.getState().me.name) || "";
 await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 let provs = DT.sortedProviders();
 for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
-const target = provs.find((p) => /Chen/i.test(p.name)) || provs[0];
+const target = provs.find((p) => p.name === hospName) || provs[0];
 rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.stringify(provs.map((p) => p.name)));
 if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);

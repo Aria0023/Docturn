@@ -33,7 +33,7 @@ afterAll(async () => {
 async function loginCookie(username: string): Promise<string> {
   const res = await supertest(ctx.app)
     .post("/api/login")
-    .send({ orgCode: "MERCY", username, password: DEV_PASSWORD });
+    .send({ orgCode: "ISPN", username, password: DEV_PASSWORD });
   expect(res.status).toBe(200);
   const setCookie = res.headers["set-cookie"];
   const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
@@ -127,7 +127,7 @@ describe("realtime websocket", () => {
     const er = supertest.agent(ctx.app);
     await er
       .post("/api/login")
-      .send({ orgCode: "MERCY", username: "er.doc", password: DEV_PASSWORD });
+      .send({ orgCode: "ISPN", username: "er.doc", password: DEV_PASSWORD });
     const patient = await er
       .post("/api/patients")
       .send({ initials: "WS", roomNumber: "5", issueSummary: "rt" });
@@ -155,7 +155,7 @@ describe("realtime websocket", () => {
     const chen = supertest.agent(ctx.app);
     await chen
       .post("/api/login")
-      .send({ orgCode: "MERCY", username: "chen", password: DEV_PASSWORD });
+      .send({ orgCode: "ISPN", username: "chen", password: DEV_PASSWORD });
     const convo = await chen
       .post("/api/messaging/conversations")
       .send({ type: "direct", participantIds: [ctx.seedResult.userIds.patel] });

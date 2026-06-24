@@ -67,13 +67,6 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   await mkUser("director", "director", "Dr. Dana Director");
   await mkUser("er.director", "er_director", "Dr. Evan Marsh", "MD");
   await mkUser("er.doc", "er_doctor", "Dr. Erin Reyes", "MD");
-  const chen = await mkUser("chen", "hospitalist", "Dr. Jordan Chen", "MD");
-  const patel = await mkUser("patel", "hospitalist", "Dr. Priya Patel", "MD");
-  const lopez = await mkUser("lopez", "hospitalist", "Dr. Luis Lopez", "DO");
-  const liu = await mkUser("liu", "hospitalist", "Dr. Mei Liu", "MD");
-  // A midlevel (NP): an ordinary user with role hospitalist + credential NP, but
-  // NO rotation profile — they receive/accept via a care-team unit, not rotation.
-  const wu = await mkUser("wu", "hospitalist", "Jordan Wu, PA-C", "PA");
 
   const hospitalistIds: Record<string, number> = {};
   async function mkProvider(
@@ -84,6 +77,7 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     cap: number,
     working: boolean,
     order: number,
+    shiftType: "day" | "swing" | "night" = "day",
   ) {
     const h = await storage.createHospitalist({
       organizationId: org.id,
@@ -93,17 +87,47 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
       patientCap: cap,
       rotationOrder: order,
       working,
-      shiftType: "day",
+      shiftType,
     });
     hospitalistIds[key] = h.id;
     return h;
   }
 
-  // Chen 3/12, Patel 5/12, Lopez 7/10 (all working); Liu 2/8 (off).
-  await mkProvider(chen.id, "chen", "Cardiology", 3, 12, true, 0);
-  await mkProvider(patel.id, "patel", "General", 5, 12, true, 1);
-  await mkProvider(lopez.id, "lopez", "Pulmonology", 7, 10, true, 2);
-  await mkProvider(liu.id, "liu", "Neurology", 2, 8, false, 3);
+  // Cedars-Sinai / Tarzana ISP North — the REAL Amion on-call roster
+  // (amion.com/cgi-bin/ocs), not placeholder names. The first four keep stable
+  // demo usernames so the role-based demo login still resolves a hospitalist;
+  // the rest fill out the captured grid so the director's roster matches Amion.
+  // shiftType drives the schedule-time on-call (day/swing/night).
+  const ROSTER: Array<{
+    u: string; name: string; cred: string;
+    shift: "day" | "swing" | "night"; census: number; cap: number; working: boolean;
+  }> = [
+    { u: "chen",       name: "Dr. Nathan Alyesh",    cred: "MD", shift: "day",   census: 0, cap: 12, working: true },
+    { u: "patel",      name: "Dr. Sharon George",    cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
+    { u: "lopez",      name: "Dr. Amir Ahmed",       cred: "DO", shift: "day",   census: 7, cap: 12, working: true },
+    { u: "liu",        name: "Dr. Joline Darouichi", cred: "MD", shift: "day",   census: 2, cap: 12, working: true },
+    { u: "kazanchyan", name: "Dr. Moe Kazanchyan",   cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
+    { u: "gideon",     name: "Dr. Danny Gideon",     cred: "MD", shift: "day",   census: 6, cap: 12, working: true },
+    { u: "gopal",      name: "Dr. Arun Gopal",       cred: "MD", shift: "day",   census: 3, cap: 12, working: true },
+    { u: "williams",   name: "Dr. Nicole Williams",  cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
+    { u: "malhotra",   name: "Dr. Veshal Malhotra",  cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
+    { u: "manukian",   name: "Dr. Naira Manukian",   cred: "MD", shift: "swing", census: 2, cap: 12, working: true },
+    { u: "kohan",      name: "Dr. Salar Kohan",      cred: "MD", shift: "night", census: 1, cap: 12, working: true },
+    { u: "niculescu",  name: "Dr. Alex Niculescu",   cred: "MD", shift: "night", census: 1, cap: 12, working: true },
+  ];
+
+  let chen!: Awaited<ReturnType<typeof mkUser>>;
+  let order = 0;
+  for (const r of ROSTER) {
+    const u = await mkUser(r.u, "hospitalist", r.name, r.cred);
+    if (r.u === "chen") chen = u;
+    await mkProvider(u.id, r.u, "Hospital Medicine", r.census, r.cap, r.working, order++, r.shift);
+  }
+
+  // A midlevel (NP/PA): an ordinary user with role hospitalist + credential PA,
+  // but NO rotation profile — they receive/accept via a care-team unit, not
+  // rotation. Midlevels are NOT on Amion (manual call lists), so Wu stays here.
+  const wu = await mkUser("wu", "hospitalist", "Jordan Wu, PA-C", "PA");
 
   // A couple of patients with pending assignments to the lowest-census provider.
   const erDocId = userIds["er.doc"]!;
@@ -166,10 +190,11 @@ const DEMO_USERS: Array<{ username: string; role: string; displayName: string; c
   { username: "director", role: "director", displayName: "Dr. Dana Director" },
   { username: "er.director", role: "er_director", displayName: "Dr. Evan Marsh", credential: "MD" },
   { username: "er.doc", role: "er_doctor", displayName: "Dr. Erin Reyes", credential: "MD" },
-  { username: "chen", role: "hospitalist", displayName: "Dr. Jordan Chen", credential: "MD" },
-  { username: "patel", role: "hospitalist", displayName: "Dr. Priya Patel", credential: "MD" },
-  { username: "lopez", role: "hospitalist", displayName: "Dr. Luis Lopez", credential: "DO" },
-  { username: "liu", role: "hospitalist", displayName: "Dr. Mei Liu", credential: "MD" },
+  // Real Cedars/Tarzana ISP Amion roster; usernames stay stable for demo login.
+  { username: "chen", role: "hospitalist", displayName: "Dr. Nathan Alyesh", credential: "MD" },
+  { username: "patel", role: "hospitalist", displayName: "Dr. Sharon George", credential: "MD" },
+  { username: "lopez", role: "hospitalist", displayName: "Dr. Amir Ahmed", credential: "DO" },
+  { username: "liu", role: "hospitalist", displayName: "Dr. Joline Darouichi", credential: "MD" },
   { username: "wu", role: "hospitalist", displayName: "Jordan Wu, PA-C", credential: "PA" },
 ];
 

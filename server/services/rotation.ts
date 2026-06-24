@@ -35,6 +35,15 @@ export async function selectNext(
 
   let eligible = await computeEligible(storage, org, opts, true);
 
+  // Specialty is a PREFERENCE, not a hard gate: hospitalists are generalists, so
+  // if no provider of the requested specialty is free, fall back to the full
+  // working pool rather than failing to route. (A dedicated-specialty group can
+  // still be honored when such providers exist and have capacity.)
+  const general = { ...opts, specialty: undefined };
+  if (eligible.length === 0 && opts.specialty) {
+    eligible = await computeEligible(storage, org, general, true);
+  }
+
   if (eligible.length === 0) {
     // Cap relief: let the queue drain by raising every working provider's cap.
     const working = await storage.listWorkingHospitalists(orgId);
@@ -43,13 +52,13 @@ export async function selectNext(
         patientCap: h.patientCap + 1,
       });
     }
-    eligible = await computeEligible(storage, org, opts, true);
+    eligible = await computeEligible(storage, org, general, true);
   }
 
   // Last resort: if excluding the previous provider left nobody, re-offer to
   // them (a single-provider org must still route).
   if (eligible.length === 0 && opts.excludeHospitalistId) {
-    eligible = await computeEligible(storage, org, opts, false);
+    eligible = await computeEligible(storage, org, general, false);
   }
 
   if (eligible.length === 0) return null;

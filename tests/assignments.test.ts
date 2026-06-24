@@ -22,7 +22,7 @@ async function createPatient(initials = "AB", specialty?: string) {
 }
 
 describe("assignments — round robin & lifecycle", () => {
-  it("round-robin picks the lowest-census provider (Chen 3, not Patel 5)", async () => {
+  it("round-robin picks the lowest-census provider (Chen 0, not George 5)", async () => {
     const { agent, patient } = await createPatient();
     const res = await agent
       .post("/api/assignments")

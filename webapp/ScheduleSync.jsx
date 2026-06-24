@@ -130,6 +130,11 @@ function ScheduleSync({ org }) {
   const [shiftsBusy, setShiftsBusy] = React.useState(false);
 
   const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
+  // The captured Amion on-call grid is the REAL Cedars / Tarzana ISP roster, so
+  // it only auto-populates for the Cedars org (code ISP*/CEDARS). Any other org
+  // may still select Amion and connect — they just wire their own live feed
+  // instead of seeing Cedars' people.
+  const isCedars = /^(ISP|CEDARS)/i.test(orgCode);
   const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
   const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
   const notConfigured = srcKey === "none";
@@ -295,8 +300,8 @@ function ScheduleSync({ org }) {
         </div>
       )}
 
-      {/* capture / sync result */}
-      {connected && revealed && src.demo && (
+      {/* capture / sync result — the captured Cedars grid only for the ISP org */}
+      {connected && revealed && src.demo && isCedars && (
         <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(0,260px) 1fr", gap: 16, alignItems: "start" }}>
           {/* captured raw page */}
           <div>
@@ -418,9 +423,9 @@ function ScheduleSync({ org }) {
         </div>
       )}
 
-      {/* Non-Amion sources: connected, but no demo grid is wired — show an
-          honest parsed-result panel plus the same re-sync controls. */}
-      {connected && revealed && !src.demo && (
+      {/* Non-Amion sources — and Amion on a non-Cedars org — connect but have no
+          captured grid: show an honest parsed-result panel + re-sync controls. */}
+      {connected && revealed && (!src.demo || !isCedars) && (
         <div style={{ marginTop: 16 }}>
           <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--status-accepted-bg)", border: "1px solid var(--status-accepted)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--foreground)", lineHeight: 1.5 }}>
             <Icon name="circle-check-big" size={15} color="var(--status-accepted)" style={{ marginTop: 1, flex: "none" }} />

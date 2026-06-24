@@ -37,7 +37,7 @@ describe("v2 care teams & accept-lock", () => {
       ctx.seedResult.orgId,
       ctx.seedResult.hospitalistIds.chen!,
     );
-    expect(chen!.currentPatientCount).toBe(4); // seeded 3 + 1
+    expect(chen!.currentPatientCount).toBe(1); // seeded 0 + 1
 
     // Accept-lock: Chen trying to accept the now-accepted offer → 409.
     const { agent: chenAgent } = await login(ctx.app, { username: "chen" });
@@ -74,7 +74,7 @@ describe("v2 patient board", () => {
     const board = await director.get("/api/patient-board");
     expect(board.status).toBe(200);
     const row = board.body.find((r: any) => r.patient.initials === "ZZ");
-    expect(row.responsible.attending.displayName).toContain("Chen");
+    expect(row.responsible.attending.displayName).toContain("Alyesh");
     expect(row.responsible.unit.some((u: any) => u.credential === "PA")).toBe(true);
 
     // PHI access was logged for the board load.
@@ -200,10 +200,10 @@ describe("developer org management", () => {
     const id = created.body.id;
 
     const list = await agent.get("/api/dev/organizations");
-    const mercy = list.body.find((o: any) => o.code === "MERCY");
+    const mercy = list.body.find((o: any) => o.code === "ISPN");
     expect(mercy.userCount).toBeGreaterThan(0);
 
-    // Empty org deletes; MERCY (has users) is blocked.
+    // Empty org deletes; the seeded org (has users) is blocked.
     expect((await agent.delete(`/api/dev/organizations/${id}`)).status).toBe(204);
     const blocked = await agent.delete(`/api/dev/organizations/${mercy.id}`);
     expect(blocked.status).toBe(409);
@@ -328,12 +328,12 @@ describe("resources, sms & oversight endpoints", () => {
 
 describe("mobile API", () => {
   it("exposes safe org fields publicly and compact assignments to providers", async () => {
-    const pub = await supertest(ctx.app).get("/api/mobile/org/MERCY");
+    const pub = await supertest(ctx.app).get("/api/mobile/org/ISPN");
     expect(pub.status).toBe(200);
     expect(pub.body).toEqual({
       id: ctx.seedResult.orgId,
-      name: "Mercy General Hospital",
-      code: "MERCY",
+      name: "Cedars-Sinai (ISP North)",
+      code: "ISPN",
       timezone: "America/New_York",
     });
 

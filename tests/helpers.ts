@@ -50,7 +50,7 @@ export async function login(
 ) {
   const agent = supertest.agent(app);
   const res = await agent.post("/api/login").send({
-    orgCode: creds.orgCode ?? "MERCY",
+    orgCode: creds.orgCode ?? "ISPN",
     username: creds.username,
     password: creds.password ?? DEV_PASSWORD,
   });
