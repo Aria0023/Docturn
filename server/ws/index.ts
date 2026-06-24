@@ -3,6 +3,7 @@ import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
+import { resolveDemoUserId } from "../demoAuth.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -120,9 +121,24 @@ export class WsHub implements WsFanout {
   }
 
   /** Resolve the session by replaying the session middleware on the upgrade req. */
-  private resolveSession(
+  private async resolveSession(
     req: IncomingMessage,
   ): Promise<{ userId: number; organizationId: number } | null> {
+    // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
+    // pane authenticates without the shared session cookie. Check it first.
+    try {
+      const url = new URL(req.url ?? "", "http://localhost");
+      const token = url.searchParams.get("token");
+      if (token) {
+        const uid = resolveDemoUserId(token);
+        if (uid != null) {
+          const user = await storage().getUserById(uid);
+          if (user) return { userId: user.id, organizationId: user.organizationId };
+        }
+      }
+    } catch {
+      /* fall through to cookie session */
+    }
     return new Promise((resolve) => {
       // A real ServerResponse gives express-session the methods it wraps
       // (setHeader/end/on) without us mocking them.

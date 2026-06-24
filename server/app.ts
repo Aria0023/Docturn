@@ -8,8 +8,11 @@ import passport from "passport";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import createMemoryStore from "memorystore";
-import { configurePassport } from "./auth.js";
+import { configurePassport, verifyPassword } from "./auth.js";
 import { registerRoutes } from "./routes/index.js";
+import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
+import { storage } from "./storage.js";
+import { toSafeUser } from "@shared/schema";
 
 export interface CreateAppOptions {
   sessionSecret?: string;
@@ -72,6 +75,32 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   configurePassport();
   app.use(passport.initialize());
   app.use(passport.session());
+  // Demo-token auth: lets the side-by-side demo console give each pane its own
+  // identity without colliding on the shared session cookie. Additive — a
+  // request with no token is unaffected.
+  app.use(demoTokenAuth());
+
+  // Mint a demo token from valid demo credentials. Non-production only; the
+  // 3-up demo console (/demo) calls this once per pane, then loads the real app
+  // in an iframe with ?token=<t>. Requires the demo password, like normal login.
+  if (!isProd) {
+    app.post("/api/demo/login", async (req, res) => {
+      const { orgCode, username, password } = (req.body ?? {}) as {
+        orgCode?: string; username?: string; password?: string;
+      };
+      try {
+        const org = await storage().getOrganizationByCode(String(orgCode ?? ""));
+        if (!org) return res.status(401).json({ error: "invalid_org" });
+        const user = await storage().getUserByUsername(org.id, String(username ?? ""));
+        if (!user || !(await verifyPassword(String(password ?? ""), user.passwordHash))) {
+          return res.status(401).json({ error: "invalid_credentials" });
+        }
+        res.json({ token: issueDemoToken(user.id), user: toSafeUser(user) });
+      } catch {
+        res.status(500).json({ error: "demo_login_failed" });
+      }
+    });
+  }
 
   // Rate limiting is on by default; set RATE_LIMIT=off to disable (useful for
   // local dev, the headless UI smoke test, and load testing).
@@ -136,6 +165,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
         },
       }),
     );
+    // Convenience alias for the side-by-side demo console (served from demo.html
+    // by express.static; without this the SPA fallback below would shadow it).
+    app.get("/demo", (_req, res) => res.redirect("/demo.html"));
     app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
       res.setHeader("Cache-Control", "no-cache, must-revalidate");
       res.sendFile(join(uiDir, "index.html"));

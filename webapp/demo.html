@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocTurn — live 3-user demo</title>
+  <style>
+    :root { --bd: #e2e8f0; --fg: #0f172a; --mut: #64748b; --pri: #2563eb; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--fg); }
+    body { display: flex; flex-direction: column; height: 100vh; background: #f1f5f9; }
+    .bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: #fff; border-bottom: 1px solid var(--bd); flex: none; }
+    .bar b { font-size: 15px; letter-spacing: -.01em; }
+    .bar .hint { font-size: 12.5px; color: var(--mut); }
+    .bar button { margin-left: auto; font: inherit; font-size: 13px; font-weight: 600; color: var(--pri); background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+    .grid { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); min-height: 0; }
+    .col { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--bd); background: #fff; }
+    .col:last-child { border-right: 0; }
+    .col h2 { margin: 0; padding: 9px 14px; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--bd); background: #f8fafc; }
+    .col h2 .dot { width: 9px; height: 9px; border-radius: 99px; flex: none; }
+    .col h2 .who { margin-left: auto; font-weight: 500; color: var(--mut); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .col iframe { flex: 1; width: 100%; border: 0; min-height: 0; }
+    .msg { padding: 28px; color: var(--mut); font-size: 14px; line-height: 1.6; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; grid-auto-rows: 80vh; overflow-y: auto; } .col { border-right: 0; border-bottom: 8px solid #f1f5f9; } }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <b>DocTurn — live demo</b>
+    <span class="hint">Three users, one screen. An admission or message from one pane appears in the others in real time.</span>
+    <button onclick="location.reload()">↻ Reset demo</button>
+  </div>
+  <div class="grid" id="grid"><div class="msg">Signing in three users…</div></div>
+
+  <script>
+    // The three portals shown side by side. Each gets its own demo token, so it
+    // is a genuinely separate logged-in user (not three tabs sharing a cookie).
+    var USERS = [
+      { role: "er_doctor",   user: "er.doc",   org: "ISPN", label: "ER Physician",     color: "#C07A33" },
+      { role: "hospitalist", user: "chen",     org: "ISPN", label: "Hospitalist",      color: "#4666C4" },
+      { role: "director",    user: "director", org: "ISPN", label: "Hospitalist Director", color: "#7A60C0" },
+    ];
+
+    function tokenFor(u) {
+      return fetch("/api/demo/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orgCode: u.org, username: u.user, password: "docturn" }),
+      }).then(function (r) {
+        if (!r.ok) throw new Error(u.label + " sign-in failed (HTTP " + r.status + ")");
+        return r.json();
+      });
+    }
+
+    (function () {
+      var grid = document.getElementById("grid");
+      Promise.all(USERS.map(function (u) {
+        return tokenFor(u).then(function (res) { return { u: u, token: res.token, name: res.user && res.user.displayName }; });
+      })).then(function (panes) {
+        grid.innerHTML = "";
+        panes.forEach(function (p) {
+          var col = document.createElement("div"); col.className = "col";
+          var h = document.createElement("h2");
+          h.innerHTML = '<span class="dot" style="background:' + p.u.color + '"></span>' + p.u.label + '<span class="who">' + (p.name || "") + '</span>';
+          var f = document.createElement("iframe");
+          f.src = "/?token=" + encodeURIComponent(p.token);
+          f.title = p.u.label;
+          col.appendChild(h); col.appendChild(f); grid.appendChild(col);
+        });
+      }).catch(function (e) {
+        grid.innerHTML = '<div class="msg"><b>Could not start the demo.</b><br>' + (e && e.message ? e.message : e) +
+          '<br><br>Make sure the server is running and seeded:<br><code>Remove-Item -Recurse -Force .pglite; npm run dev</code><br><br>' +
+          '(The demo console is enabled in development only.)</div>';
+      });
+    })();
+  </script>
+</body>
+</html>

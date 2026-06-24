@@ -19,6 +19,10 @@
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
   var meId = null;   // current user's backend id (for messaging "me" / participants)
+  // Demo console: when loaded as an iframe pane with ?token=<t>, this pane
+  // authenticates with that bearer token instead of the shared session cookie,
+  // so three users can run side by side in one browser. Null for normal use.
+  var DEMO_TOKEN = (function () { try { return new URLSearchParams(window.location.search).get("token"); } catch (e) { return null; } })();
   var ws = null;     // live WebSocket for real-time messages + assignment events
   // Safety: some screens call DT.actions.toast(); ensure it exists.
   if (!DT.actions.toast) {
@@ -51,10 +55,12 @@
   var lastAuth = null;
 
   function rawApi(method, path, body) {
+    var headers = body ? { "Content-Type": "application/json" } : {};
+    if (DEMO_TOKEN) headers["Authorization"] = "Bearer " + DEMO_TOKEN;
     return fetch(path, {
       method: method,
       credentials: "include",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers: (body || DEMO_TOKEN) ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     }).then(function (r) {
       if (r.status === 204) return null;
@@ -90,7 +96,9 @@
     return rawApi(method, path, body).catch(function (e) {
       var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
       var hint = authHint();
-      if (is401 && hint && path !== "/api/login") {
+      // Token-mode panes authenticate by bearer token, not a re-loginable cookie
+      // session, so don't attempt the cookie self-heal there.
+      if (is401 && hint && path !== "/api/login" && !DEMO_TOKEN) {
         return rawApi("POST", "/api/login", {
           orgCode: hint.org, username: DEMO[hint.role] || "chen", password: "docturn",
         }).then(function () { lastAuth = hint; return rawApi(method, path, body); });
@@ -275,7 +283,8 @@
     if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
     try {
       var proto = location.protocol === "https:" ? "wss:" : "ws:";
-      var sock = new WebSocket(proto + "//" + location.host + "/ws");
+      var wsUrl = proto + "//" + location.host + "/ws" + (DEMO_TOKEN ? ("?token=" + encodeURIComponent(DEMO_TOKEN)) : "");
+      var sock = new WebSocket(wsUrl);
       ws = sock;
       sock.onmessage = function (e) {
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
@@ -747,6 +756,24 @@
       throw new Error(msg);
     });
   };
+
+  // Demo console bootstrap: a token-bearing pane skips the login screen and
+  // enters directly as that token's user (same path as a successful login).
+  if (DEMO_TOKEN) {
+    get("/api/user").then(function (u) {
+      lastAuth = { role: u.role, org: u.role === "developer" ? PLATFORM_ORG : "ISPN" };
+      meId = u.id;
+      DT.set(function (s) {
+        s.session = { role: u.role, org: lastAuth.org, user: u.username, name: u.displayName };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.ui.nav = "dashboard"; s.ui.notifOpen = false; s.loginError = null;
+        return s;
+      });
+      connectWs();
+      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrate(u.role).then(function () { hydrateConversations(); });
+    }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
+  }
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();
