@@ -17,11 +17,14 @@ export function registerSettingsRoutes(app: Express) {
   app.get("/api/settings", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const org = await storage().getOrganization(me.organizationId);
+    const autoReassignOnDecline =
+      (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
     res.json({
       org: {
         assignmentTimeoutMin: org?.assignmentTimeoutMin,
         roundRobinShiftTypes: org?.roundRobinShiftTypes,
         rotationMode: org?.rotationMode,
+        autoReassignOnDecline,
       },
     });
   });

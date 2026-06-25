@@ -71,7 +71,26 @@ describe("assignments — round robin & lifecycle", () => {
     expect(providerAfter!.currentPatientCount).toBe(censusBeforeReject);
   });
 
-  it("reject reroutes to exactly one new pending assignment", async () => {
+  it("reject leaves the patient unrouted by default (manual reassignment)", async () => {
+    const { agent, patient } = await createPatient();
+    const created = await agent
+      .post("/api/assignments")
+      .send({ patientId: patient.id, mode: "round_robin" });
+    const { agent: targetUser } = await login(ctx.app, {
+      username: providerUsername(created.body.hospitalistId),
+    });
+    const reject = await targetUser.patch(`/api/assignments/${created.body.id}/reject`);
+    expect(reject.status).toBe(200);
+    expect(reject.body.reroute).toBeNull(); // no auto-reassign by default
+    const all = await ctx.storage.listAssignments(ctx.seedResult.orgId);
+    const active = all.filter(
+      (a) => a.patientId === patient.id && (a.status === "pending" || a.status === "accepted"),
+    );
+    expect(active).toHaveLength(0); // patient waits for manual reassignment
+  });
+
+  it("reject reroutes to one new pending assignment when auto-reassign is ON", async () => {
+    await ctx.storage.setOrgSetting(ctx.seedResult.orgId, "autoReassignOnDecline", true, 1);
     const { agent, patient } = await createPatient();
     const created = await agent
       .post("/api/assignments")

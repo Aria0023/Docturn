@@ -185,7 +185,9 @@
         dept: r.patient.department || "MED",
         issue: r.patient.issue || "",
         acuity: r.patient.acuity || null,
-        status: r.patient.status || r.status,
+        // Prefer the DERIVED routing status (pending / assigned / rejected /
+        // waiting) over the raw patient column, so declines surface on the board.
+        status: r.status || r.patient.status,
         attending: r.responsible && r.responsible.attending
           ? { name: r.responsible.attending.displayName, avatar: initials(r.responsible.attending.displayName) }
           : { name: "", avatar: "" },
@@ -228,9 +230,11 @@
       // ER roles: their live "sent" board (declines / re-routes / accepts).
       var wantsSent = (role === "er_doctor" || role === "er_director");
       extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
+      // Director: org settings (auto-reassign-on-decline toggle).
+      extra.push(role === "director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
           // Full registered directory (all roles): drives the ER Consult-services
@@ -244,6 +248,7 @@
           }
           if (board) s.board = mapBoard(board);
           if (wantsSent && sent) s.sent = mapSent(sent);
+          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
           return s;
         });
       });
@@ -492,6 +497,16 @@
         var m = String((e && e.message) || "");
         DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: /pending/.test(m) ? "That patient is no longer routing." : (m || "Try again.") }; return s; });
       });
+  };
+
+  // Persist the director's "auto-reassign on decline" toggle to the org settings
+  // (other settings stay local to the kit).
+  var origSetSetting = DT.actions.setSetting;
+  DT.actions.setSetting = function (key, value) {
+    if (key === "autoReassign") {
+      api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
+    }
+    if (origSetSetting) return origSetSetting(key, value);
   };
 
   // Logout: tear down the live socket + clear the server session too.

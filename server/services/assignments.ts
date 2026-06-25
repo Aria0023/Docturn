@@ -142,7 +142,12 @@ export async function acceptAssignment(
   return updated!;
 }
 
-/** Provider rejects → rejected; immediate reroute to the next eligible provider. */
+/**
+ * Provider rejects → rejected. By default the patient is left UNROUTED so the ER
+ * physician / hospitalist director decides where it goes (manual reassignment).
+ * If the org has opted into auto-reassign-on-decline, it reroutes to the next
+ * eligible provider as before.
+ */
 export async function rejectAssignment(
   storage: IStorage,
   orgId: number,
@@ -169,7 +174,17 @@ export async function rejectAssignment(
     riskLevel: "low",
   });
 
-  const next = await rerouteToNext(storage, orgId, a);
+  const autoReassign = (await storage.getOrgSetting(orgId, "autoReassignOnDecline")) === true;
+  let next: Assignment | null = null;
+  if (autoReassign) {
+    next = await rerouteToNext(storage, orgId, a);
+  } else {
+    // Leave the patient waiting; the ER / director will reassign manually.
+    await storage.updatePatient(orgId, a.patientId, {
+      status: "waiting",
+      assignedHospitalistId: null,
+    });
+  }
   broadcastAssignmentChange(orgId);
   return { rejected: rejected!, reroute: next };
 }
@@ -217,13 +232,16 @@ export async function cancelAssignment(
 }
 
 /**
- * Director / ER reassign. Works whether the patient is still routing (pending)
- * OR already accepted — a real bedside handoff:
+ * Director / ER reassign. Works whether the patient is still routing (pending),
+ * already accepted, OR was declined and left unrouted:
  *   • pending  → release it and re-offer to the named provider (they accept) or
  *     the next eligible provider.
  *   • accepted → release the current attending (census −−) and, when a provider
  *     is named, hand the patient straight to them (census ++, already accepted);
  *     with no name, send the patient back into routing.
+ *   • declined/expired (resolved, unrouted) → no release needed; route the
+ *     patient afresh to the named provider (or the next eligible one). Refuses
+ *     if the patient already has another active assignment.
  */
 export async function reassignAssignment(
   storage: IStorage,
@@ -234,22 +252,33 @@ export async function reassignAssignment(
 ): Promise<{ previous: Assignment; reroute: Assignment | null }> {
   const a = await storage.getAssignment(orgId, assignmentId);
   if (!a) throw new AssignmentError("not_found", "assignment not found");
-  if (a.status !== "pending" && a.status !== "accepted") {
-    throw new AssignmentError("conflict", "only an active assignment can be reassigned");
-  }
   const wasAccepted = a.status === "accepted";
+  const wasActive = a.status === "pending" || a.status === "accepted";
+
+  // Re-routing from a resolved (declined/expired) record: only if the patient
+  // isn't already being handled by a newer assignment.
+  if (!wasActive) {
+    const latest = await storage.latestAssignmentByPatient(orgId);
+    const cur = latest.get(a.patientId);
+    if (cur && (cur.status === "pending" || cur.status === "accepted") && cur.id !== a.id) {
+      throw new AssignmentError("conflict", "patient already has an active assignment");
+    }
+  }
 
   // Release the current assignment; an accepted one frees the old attending's census.
-  const previous = await storage.updateAssignment(orgId, assignmentId, {
-    status: wasAccepted ? "cancelled" : "expired",
-    resolvedAt: new Date(),
-  });
-  if (wasAccepted) {
-    const oldH = await storage.getHospitalist(orgId, a.hospitalistId);
-    if (oldH) {
-      await storage.updateHospitalist(orgId, oldH.id, {
-        currentPatientCount: Math.max(0, oldH.currentPatientCount - 1),
-      });
+  let previous = a;
+  if (wasActive) {
+    previous = (await storage.updateAssignment(orgId, assignmentId, {
+      status: wasAccepted ? "cancelled" : "expired",
+      resolvedAt: new Date(),
+    }))!;
+    if (wasAccepted) {
+      const oldH = await storage.getHospitalist(orgId, a.hospitalistId);
+      if (oldH) {
+        await storage.updateHospitalist(orgId, oldH.id, {
+          currentPatientCount: Math.max(0, oldH.currentPatientCount - 1),
+        });
+      }
     }
   }
 

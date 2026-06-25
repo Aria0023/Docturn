@@ -296,14 +296,21 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               <span style={{ flex: "1.5 1 0", fontSize: 13, color: "var(--foreground)", minWidth: 0, paddingRight: 8 }}>{canEdit ? <EditableText value={p.issue} onSave={(v) => onUpdate(p.id, { issue: v })} size={13} weight={400} multiline /> : p.issue}</span>
               {/* Responsible */}
               <div style={{ flex: "1.4 1 0", minWidth: 0 }}>
-                {p.status === "pending" ? (
-                  canEdit && onReassign ? (
-                    <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label="Assign…" />
-                  ) : (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--status-pending)", fontWeight: 600 }}>
-                      <Icon name="loader" size={14} />Routing…
-                    </span>
-                  )
+                {(p.status === "pending" || p.status === "waiting" || p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled" || p.status === "unrouted") ? (
+                  (function () {
+                    const declined = p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled";
+                    const color = declined ? "var(--status-rejected)" : "var(--status-pending)";
+                    return canEdit && onReassign ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                        {declined && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: color }}><Icon name="x" size={13} />Declined</span>}
+                        <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label={declined ? "Assign…" : "Assign…"} />
+                      </div>
+                    ) : (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: color, fontWeight: 600 }}>
+                        <Icon name={declined ? "x" : "loader"} size={14} />{declined ? "Declined — awaiting reassignment" : "Routing…"}
+                      </span>
+                    );
+                  })()
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
                     <AvatarStack lead={p.attending} unit={p.unit} />

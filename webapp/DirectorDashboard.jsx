@@ -32,7 +32,7 @@ function ShiftSelect({ shifts, value, onChange }) {
   );
 }
 
-function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions }) {
+function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions }) {
   const [dragId, setDragId] = React.useState(null);
   const [overId, setOverId] = React.useState(null);
   const [capInput, setCapInput] = React.useState("12");
@@ -69,8 +69,10 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
   const schedLabel = SRC_LABELS[schedKey] || "Amion";
   const schedConfigured = schedKey !== "none";
 
+  // `bare` renders without the page frame so this can be a dashboard widget.
+  const Wrap = bare ? React.Fragment : PageWrap;
   return (
-    <PageWrap>
+    <Wrap>
       <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
         <StatTile label="Total providers" value={providers.length} icon="users" tint="blue" />
         <StatTile label="Active (on shift)" value={working.length} icon="activity" tint="emerald" />
@@ -229,10 +231,13 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
           <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 15)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-page the next provider after this." />
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <div style={{ fontSize: 13, fontWeight: 500 }}>Auto-reassign on expiry</div>
-              <button onClick={onToggleAutoReassign}
-                style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative",
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>Auto-reassign declined patients</div>
+                <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 2 }}>{(settings && settings.autoReassign) ? "A decline routes straight to the next provider." : "Off: a declined patient waits for the ER / director to reassign it."}</div>
+              </div>
+              <button onClick={onToggleAutoReassign} title="Auto-reassign on decline"
+                style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative", flex: "none",
                   background: (settings && settings.autoReassign) ? "var(--status-accepted)" : "var(--status-neutral-bg)", transition: "background .2s" }}>
                 <span style={{ position: "absolute", top: 3, left: (settings && settings.autoReassign) ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
               </button>
@@ -273,7 +278,7 @@ function DirectorDashboard({ providers, shifts, settings, onToggleWorking, onAdj
             </div>
           } />
       )}
-    </PageWrap>
+    </Wrap>
   );
 }
 

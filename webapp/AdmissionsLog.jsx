@@ -13,15 +13,16 @@ function alWhen(at) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + hm;
 }
 
-function AdmissionsLog({ admissions, resetAt }) {
+function AdmissionsLog({ admissions, resetAt, bare }) {
   const log = (admissions || []).slice().sort((a, b) => b.at - a.at);
   const sinceReset = log.filter((a) => a.at >= (resetAt || 0)).length;
   const last24h = log.filter((a) => a.at >= Date.now() - 86400000).length;
 
-  const statusTint = (s) => s === "accepted" ? "accepted" : s === "rejected" ? "rejected" : "pending";
+  const statusTint = (s) => s === "accepted" ? "accepted" : (s === "rejected" || s === "declined") ? "rejected" : "pending";
 
+  const Wrap = bare ? React.Fragment : PageWrap;
   return (
-    <PageWrap>
+    <Wrap>
       <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <Card style={{ padding: "14px 18px", flex: 1, minWidth: 160 }}>
           <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>Total logged</div>
@@ -81,7 +82,7 @@ function AdmissionsLog({ admissions, resetAt }) {
           </div>
         )}
       </Card>
-    </PageWrap>
+    </Wrap>
   );
 }
 
