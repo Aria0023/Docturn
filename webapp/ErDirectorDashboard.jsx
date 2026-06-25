@@ -61,14 +61,14 @@ function ErStatsPanel({ erPhysicians, sent, board, avgAcceptSec }) {
   const admitsToday = (erPhysicians || []).reduce((a, p) => a + (p.admitsToday || 0), 0);
   const todaySent = (sent || []).filter((s) => s.day === "Today");
   const accepted = (sent || []).filter((s) => s.status === "accepted").length;
-  const rejected = (sent || []).filter((s) => s.status === "rejected").length;
-  const acceptRate = (accepted + rejected) ? Math.round((accepted / (accepted + rejected)) * 100) : 100;
+  const declined = (sent || []).filter((s) => s.status === "declined" || s.status === "rejected").length;
+  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
   const pendingER = (board || []).filter((b) => b.status === "pending").length;
   return (
     <div style={{ display: "flex", gap: 14 }}>
       <ErStat label="Admits today" value={admitsToday} icon="clipboard-plus" tint="blue" sub={todaySent.length + " routed via DocTurn"} />
       <ErStat label="Avg time-to-accept" value={fmtDuration(avgAcceptSec)} icon="timer" tint="amber" sub="across hospitalist groups" />
-      <ErStat label="Acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + rejected + " re-routed"} />
+      <ErStat label="Acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + declined + " declined"} />
       <ErStat label="Pending in ER" value={pendingER} icon="loader" tint="slate" sub="awaiting hospitalist accept" />
     </div>
   );
@@ -136,14 +136,15 @@ function ErRecentIntakesPanel({ sent }) {
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Recent intakes</h3>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {(sent || []).slice(0, 5).map((s) => {
-          const st = { accepted: ["accepted", "Accepted"], sent: ["pending", "Routing"], rejected: ["rejected", "Re-routed"] }[s.status] || ["pending", "Routing"];
+        {(sent || []).slice(0, 6).map((s) => {
+          const st = { accepted: ["accepted", "Accepted"], sent: ["sent", "Routing"], declined: ["declined", "Declined"], rerouted: ["rerouted", "Re-routed"], expired: ["expired", "Expired"], rejected: ["declined", "Declined"] }[s.status] || ["sent", "Routing"];
+          const tint = { accepted: "emerald", declined: "slate", sent: "blue" }[s.status] || "slate";
           return (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Avatar initials={s.initials} size={30} tint="slate" />
+              <Avatar initials={s.initials} size={30} tint={tint} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.complaint}</div>
-                <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>→ {s.provider} · {s.time}</div>
+                <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{s.status === "declined" ? "✗ declined by" : "→"} {s.provider} · {s.time}</div>
               </div>
               <Badge status={st[0]}>{st[1]}</Badge>
             </div>

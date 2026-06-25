@@ -140,9 +140,9 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
   const mine = sent || [];
   const today = mine.filter((s) => s.day === "Today");
   const accepted = mine.filter((s) => s.status === "accepted").length;
-  const rejected = mine.filter((s) => s.status === "rejected").length;
+  const declined = mine.filter((s) => s.status === "declined" || s.status === "rejected").length;
   const pending = mine.filter((s) => s.status === "sent").length;
-  const acceptRate = (accepted + rejected) ? Math.round((accepted / (accepted + rejected)) * 100) : 100;
+  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 10px" }}>
@@ -152,7 +152,7 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         <Stat label="My admits today" value={today.length} icon="clipboard-plus" tint="blue" sub={mine.length + " routed in all"} />
         <Stat label="Avg time-to-accept" value={dur(avgAcceptSec || 0)} icon="timer" tint="amber" sub="hospitalist response" />
-        <Stat label="My acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + rejected + " re-routed"} />
+        <Stat label="My acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + declined + " declined"} />
         <Stat label="Awaiting accept" value={pending} icon="loader" tint="slate" sub="still routing" />
       </div>
     </div>
@@ -395,11 +395,16 @@ function RoutedBoardPanel({ sent, providers, onReassign }) {
         <div key={day} style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", margin: "0 2px 8px" }}>{day}</div>
           <Card style={{ padding: 0, overflow: "visible" }}>
-            {grouped[day].map((s, i) => (
-              <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-                <Avatar initials={s.initials} size={32} tint={s.status === "accepted" ? "emerald" : "blue"} />
+            {grouped[day].map((s, i) => {
+              const ACCENT = { accepted: "var(--status-accepted)", declined: "var(--status-rejected)", sent: "var(--status-active)", rerouted: "var(--status-pending)", expired: "var(--status-neutral)" };
+              const TINT = { accepted: "emerald", declined: "slate", sent: "blue", rerouted: "amber", expired: "slate" };
+              const accent = ACCENT[s.status] || "transparent";
+              const accepted = s.status === "accepted", declined = s.status === "declined";
+              return (
+              <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px 12px 13px", borderTop: i ? "1px solid var(--border)" : "none", borderLeft: `3px solid ${accent}`, background: accepted ? "var(--status-accepted-bg)" : declined ? "var(--status-rejected-bg)" : "transparent" }}>
+                <Avatar initials={s.initials} size={32} tint={TINT[s.status] || "blue"} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {s.initials} → {s.provider}{s.acuity ? <AcuityChip level={s.acuity} size="sm" /> : null}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {s.initials} {declined ? "✗ declined by" : "→"} {s.provider}{s.acuity ? <AcuityChip level={s.acuity} size="sm" /> : null}</div>
                   <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{s.complaint || "—"} · {s.time}</span>
                     {(s.consultants || []).map((c) => (
@@ -410,9 +415,10 @@ function RoutedBoardPanel({ sent, providers, onReassign }) {
                   </div>
                 </div>
                 <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
-                <Badge status={s.status}>{STATUS[s.status].label}</Badge>
+                <Badge status={s.status}>{(STATUS[s.status] || {}).label || s.status}</Badge>
               </div>
-            ))}
+              );
+            })}
           </Card>
         </div>
       ))}

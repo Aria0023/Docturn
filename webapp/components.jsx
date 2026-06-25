@@ -52,6 +52,8 @@ const STATUS = {
   sent:     { label: "Sent",     bg: "var(--status-active-bg)",   fg: "var(--status-active)",   icon: "send" },
   active:   { label: "Active",   bg: "var(--status-active-bg)",   fg: "var(--status-active)",   icon: "activity" },
   rejected: { label: "Rejected", bg: "var(--status-rejected-bg)", fg: "var(--status-rejected)", icon: "x" },
+  declined: { label: "Declined", bg: "var(--status-rejected-bg)", fg: "var(--status-rejected)", icon: "x" },
+  rerouted: { label: "Re-routed", bg: "var(--status-pending-bg)", fg: "var(--status-pending)", icon: "repeat" },
   expired:  { label: "Expired",  bg: "var(--status-neutral-bg)",  fg: "var(--status-neutral)",  icon: "minus" },
   offline:  { label: "Offline",  bg: "var(--status-neutral-bg)",  fg: "var(--status-neutral)",  icon: "minus" },
 };

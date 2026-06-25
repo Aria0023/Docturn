@@ -157,7 +157,9 @@
   // (so declines show as "re-routed", reassigns show the new provider, accepts
   // show "accepted") — replaces the optimistic-only local list.
   function mapSent(rows) {
-    var SMAP = { pending: "sent", accepted: "accepted", rejected: "rejected", expired: "rejected", cancelled: "rejected" };
+    // Keep accept vs decline DISTINCT: a hospitalist reject = "declined" (red),
+    // a timeout = "expired", a handoff away = "rerouted" — not all lumped together.
+    var SMAP = { pending: "sent", accepted: "accepted", rejected: "declined", expired: "expired", cancelled: "rerouted" };
     var now = new Date();
     return (rows || []).map(function (a) {
       var d = a.createdAt ? new Date(a.createdAt) : now;
