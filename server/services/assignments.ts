@@ -216,7 +216,15 @@ export async function cancelAssignment(
   return updated!;
 }
 
-/** Director/ER-director reassign → reroute to next eligible or a named provider. */
+/**
+ * Director / ER reassign. Works whether the patient is still routing (pending)
+ * OR already accepted — a real bedside handoff:
+ *   • pending  → release it and re-offer to the named provider (they accept) or
+ *     the next eligible provider.
+ *   • accepted → release the current attending (census −−) and, when a provider
+ *     is named, hand the patient straight to them (census ++, already accepted);
+ *     with no name, send the patient back into routing.
+ */
 export async function reassignAssignment(
   storage: IStorage,
   orgId: number,
@@ -226,21 +234,39 @@ export async function reassignAssignment(
 ): Promise<{ previous: Assignment; reroute: Assignment | null }> {
   const a = await storage.getAssignment(orgId, assignmentId);
   if (!a) throw new AssignmentError("not_found", "assignment not found");
-  if (a.status !== "pending") {
-    throw new AssignmentError("conflict", "only pending can be reassigned");
+  if (a.status !== "pending" && a.status !== "accepted") {
+    throw new AssignmentError("conflict", "only an active assignment can be reassigned");
   }
+  const wasAccepted = a.status === "accepted";
 
+  // Release the current assignment; an accepted one frees the old attending's census.
   const previous = await storage.updateAssignment(orgId, assignmentId, {
-    status: "expired",
+    status: wasAccepted ? "cancelled" : "expired",
     resolvedAt: new Date(),
   });
+  if (wasAccepted) {
+    const oldH = await storage.getHospitalist(orgId, a.hospitalistId);
+    if (oldH) {
+      await storage.updateHospitalist(orgId, oldH.id, {
+        currentPatientCount: Math.max(0, oldH.currentPatientCount - 1),
+      });
+    }
+  }
 
   let next: Assignment | null = null;
   if (toHospitalistId) {
     const target = await storage.getHospitalist(orgId, toHospitalistId);
     if (!target) throw new AssignmentError("not_found", "target not found");
-    next = await createReroute(storage, orgId, a, target, "manual");
+    next = wasAccepted
+      ? await transferTo(storage, orgId, a, target, actingUserId) // direct handoff
+      : await createReroute(storage, orgId, a, target, "manual"); // re-offer
   } else {
+    if (wasAccepted) {
+      await storage.updatePatient(orgId, a.patientId, {
+        status: "waiting",
+        assignedHospitalistId: null,
+      });
+    }
     next = await rerouteToNext(storage, orgId, a);
   }
 
@@ -250,11 +276,44 @@ export async function reassignAssignment(
     action: "assignment.reassign",
     resourceType: "assignment",
     resourceId: assignmentId,
-    details: { toHospitalistId: next?.hospitalistId ?? null },
+    details: { toHospitalistId: next?.hospitalistId ?? null, fromAccepted: wasAccepted },
     riskLevel: "medium",
   });
   broadcastAssignmentChange(orgId);
   return { previous: previous!, reroute: next };
+}
+
+/** Hand an already-accepted patient directly to a new attending (no re-accept). */
+async function transferTo(
+  storage: IStorage,
+  orgId: number,
+  previous: Assignment,
+  target: Hospitalist,
+  actingUserId: number,
+): Promise<Assignment> {
+  const org = await storage.getOrganization(orgId);
+  const timeoutMin = org?.assignmentTimeoutMin ?? 10;
+  const created = await storage.createAssignment({
+    organizationId: orgId,
+    patientId: previous.patientId,
+    hospitalistId: target.id,
+    erDoctorId: previous.erDoctorId,
+    status: "accepted",
+    via: "manual",
+    acceptedByUserId: actingUserId,
+    expiresAt: new Date(Date.now() + timeoutMin * 60_000),
+  });
+  await storage.updateAssignment(orgId, created.id, { resolvedAt: new Date() });
+  await storage.updateHospitalist(orgId, target.id, {
+    currentPatientCount: target.currentPatientCount + 1,
+  });
+  await storage.updatePatient(orgId, previous.patientId, {
+    status: "assigned",
+    assignedHospitalistId: target.id,
+  });
+  // Inform the new attending's unit (shows up in their census on rehydrate).
+  await notifyAssignment(created, await targetUserIds(storage, orgId, target));
+  return created;
 }
 
 /** Mark expired pending assignments and reroute each. Capped per tick. */

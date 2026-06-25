@@ -462,7 +462,7 @@
     var item = (st.sent || []).find(function (x) { return x.id === sentId; });
     var prov = (st.providers || []).find(function (p) { return p.name === providerName; });
     if (!item || item.backendId == null || !prov) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't re-route", msg: "Only currently-routing patients can be re-routed." }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't re-route", msg: "This patient has no active assignment to move." }; return s; });
       return;
     }
     api("PATCH", "/api/assignments/" + item.backendId + "/reassign", { hospitalistId: bid(prov.id) })
@@ -480,7 +480,7 @@
     var row = (st.board || []).find(function (b) { return b.id === rowId; });
     var prov = (st.providers || []).find(function (p) { return p.name === providerName; });
     if (!row || row.assignmentId == null || !prov) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: "Only patients currently being routed can be reassigned." }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: "This patient has no active assignment to reassign." }; return s; });
       return;
     }
     api("PATCH", "/api/assignments/" + row.assignmentId + "/reassign", { hospitalistId: bid(prov.id) })

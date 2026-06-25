@@ -120,6 +120,13 @@ await dir.f("/api/assignments/" + a3.id + "/reassign", { method: "PATCH", body: 
 await wait(500);
 rec("director reassign reaches the hospitalist live", chenWs.got.slice(before).some((e) => e.type === "ASSIGNMENT_CREATED"));
 
+// Reassign AFTER acceptance — a real handoff (not just while still routing).
+const p4 = (await er.f("/api/patients", { method: "POST", body: JSON.stringify({ initials: "HF", roomNumber: "12", issueSummary: "handoff", acuity: 3 }) })).json;
+const a4 = (await er.f("/api/assignments", { method: "POST", body: JSON.stringify({ patientId: p4.id, mode: "manual", hospitalistId: chenProv.id }) })).json;
+await wait(150); await chen.f("/api/assignments/" + a4.id + "/accept", { method: "PATCH" }); await wait(150);
+const handoff = patelH ? await dir.f("/api/assignments/" + a4.id + "/reassign", { method: "PATCH", body: JSON.stringify({ hospitalistId: patelH.id }) }) : { status: 0 };
+rec("director can reassign an ACCEPTED patient (handoff, not 'no longer routing')", handoff.status === 200, "status=" + handoff.status);
+
 // RBAC: hospitalist cannot perform the ER-only action.
 const forbidden = await chen.f("/api/assignments", { method: "POST", body: JSON.stringify({ patientId: p.id, mode: "manual", hospitalistId: chenProv.id }) });
 rec("RBAC: hospitalist blocked from ER-only action", forbidden.status === 403, "status=" + forbidden.status);
