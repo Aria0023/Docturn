@@ -187,7 +187,7 @@
   function seed() {
     var t0 = now();
     return {
-      v: 7,
+      v: 8,
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
@@ -394,25 +394,11 @@
         { id: uid("n"), icon: "megaphone", title: "Code stroke — Bed 4 ICU", body: "Critical broadcast · ack required", at: t0 - 480000, read: true },
       ],
 
-      audit: [
-        { id: uid("a"), at: t0 - 1000,   actor: "Dr. R. Osei",   role: "er_doctor",   action: "create_assignment", resource: "assignment #a8842", ip: "10.2.4.18", risk: "low", org: "MAYO" },
-        { id: uid("a"), at: t0 - 380000, actor: "Admin K. Vance", role: "director",    action: "reassign_patient",  resource: "assignment #a8830", ip: "10.2.4.6",  risk: "medium", org: "MAYO" },
-        { id: uid("a"), at: t0 - 760000, actor: "Dr. S. Chen",    role: "hospitalist", action: "accept_assignment", resource: "assignment #a8829", ip: "10.2.7.91", risk: "low", org: "MAYO" },
-        { id: uid("a"), at: t0 - 1500000,actor: "Admin K. Vance", role: "director",    action: "delete_conversation", resource: "conversation 3f9a", ip: "10.2.4.6", risk: "high", org: "MAYO" },
-        { id: uid("a"), at: t0 - 1980000,actor: "Dr. A. Patel",   role: "hospitalist", action: "login",             resource: "session", ip: "10.2.7.40", risk: "low", org: "MAYO" },
-      ],
-      phiLog: [
-        { id: uid("ph"), at: t0 - 1000,   actor: "Dr. R. Osei",  patient: "RM", access: "view", fields: "initials, room, issue", purpose: "Admission intake", ok: true },
-        { id: uid("ph"), at: t0 - 290000, actor: "Dr. S. Chen",  patient: "DW", access: "edit", fields: "issue summary", purpose: "Care update", ok: true },
-        { id: uid("ph"), at: t0 - 1010000,actor: "Dr. M. Lopez", patient: "TK", access: "view", fields: "full record", purpose: "—", ok: false },
-        { id: uid("ph"), at: t0 - 2900000,actor: "Dr. A. Patel", patient: "BG", access: "export", fields: "discharge summary", purpose: "Transfer", ok: true },
-      ],
-      incidents: [
-        { id: uid("i"), type: "failed_login", sev: "medium", desc: "5 failed logins for user #214 from 84.21.x.x", status: "investigating", at: t0 - 720000 },
-        { id: uid("i"), type: "unauthorized_access", sev: "critical", desc: "Cross-tenant read attempt blocked — STJUDE → MAYO", status: "open", at: t0 - 1860000 },
-        { id: uid("i"), type: "suspicious_activity", sev: "high", desc: "PHI export volume spike for user #51", status: "open", at: t0 - 3600000 },
-        { id: uid("i"), type: "failed_login", sev: "low", desc: "Expired session reuse rejected", status: "resolved", at: t0 - 10800000 },
-      ],
+      // Compliance logs start EMPTY — they fill from real activity (logins,
+      // assignments, PHI access) rather than seeded demo rows.
+      audit: [],
+      phiLog: [],
+      incidents: [],
 
       lastAdmitAt: t0,
     };
@@ -1066,6 +1052,7 @@
       return Promise.resolve({ added: added });
     },
     resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
+    clearComplianceLogs: function () { set(function (s) { s.audit = []; s.phiLog = []; s.incidents = []; return s; }); },
 
     /* toast lifecycle */
     toast: function (t) { set(function (s) { s.__toast = t; return s; }); },

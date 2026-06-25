@@ -74,7 +74,7 @@ const JSX_FILES = [
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
   "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
-  "CustomizableDashboard.jsx", "ConsultServices.jsx",
+  "CustomizableDashboard.jsx", "ConsultServices.jsx", "RegistrationApprovals.jsx",
 ];
 const html = read("index.html");
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);

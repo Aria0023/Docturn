@@ -630,6 +630,9 @@ export const registerSchema = z.object({
   username: z.string().min(3),
   password: z.string().min(6),
   displayName: z.string().min(1),
+  // Self-selected role; a director / ER director approves. Never self-register
+  // as a developer (root). Defaults to hospitalist.
+  requestedRole: z.enum(["hospitalist", "er_doctor", "er_director", "director"]).optional(),
 });
 
 export const extractNoteSchema = z.object({

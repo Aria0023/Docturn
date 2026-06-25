@@ -52,6 +52,7 @@
 <script type="text/babel" src="ErDirectorDashboard.jsx"></script>
 <script type="text/babel" src="CustomizableDashboard.jsx"></script>
 <script type="text/babel" src="ConsultServices.jsx"></script>
+<script type="text/babel" src="RegistrationApprovals.jsx"></script>
 <script type="text/babel" src="Messaging.jsx"></script>
 <script type="text/babel" src="Directory.jsx"></script>
 <script type="text/babel" src="CareTeam.jsx"></script>
@@ -122,6 +123,7 @@ const NAV = {
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
@@ -133,6 +135,7 @@ const NAV = {
     { id: "dashboard",  label: "Overview",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
@@ -160,6 +163,7 @@ const TOP = {
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  approvals:  ["Approvals", "Review and approve people who registered with your org code"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
   consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
   people:     ["People", "Manage everyone in your organization, grouped by role"],
@@ -314,9 +318,10 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
-  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
+  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
   else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
   else if (nav === "consult") screen = <ConsultServices />;
+  else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
   else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
   else if (nav === "access") {
     const dom = role === "er_director"

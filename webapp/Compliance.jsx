@@ -56,7 +56,7 @@ const LOG_LEVEL = {
 };
 function logLevelFor(r) { return r.risk === "high" ? "error" : r.risk === "medium" ? "warn" : (/login|logout|access|impersonat|audit/.test(r.action) ? "audit" : "info"); }
 
-function Compliance({ audit = [], phiLog = [], incidents = [], onResolve }) {
+function Compliance({ audit = [], phiLog = [], incidents = [], onResolve, onClear }) {
   const [tab, setTab] = React.useState("audit");
   const openCount = incidents.filter((r) => r.status === "open" || r.status === "investigating").length;
   const deniedCount = phiLog.filter((r) => !r.ok).length;
@@ -85,6 +85,9 @@ function Compliance({ audit = [], phiLog = [], incidents = [], onResolve }) {
           else if (tab === "incidents") csvDownload("docturn-incidents.csv", [["type", "severity", "description", "status"]].concat(incidents.map((r) => [r.type, r.sev, r.desc, r.status])));
           else csvDownload("docturn-logs.csv", [["time", "level", "org", "message", "risk"]].concat(logs.map((l) => [l.t, l.level, l.org, l.msg, l.risk])));
         }}>Export</Button>
+        {onClear && (
+          <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Clear all audit, PHI and incident logs? This can't be undone.")) onClear(); }}>Clear logs</Button>
+        )}
       </div>
 
       {tab === "audit" && (

@@ -107,7 +107,7 @@ export function registerAuthRoutes(app: Express) {
       username: parsed.data.username,
       passwordHash: await hashPassword(parsed.data.password),
       displayName: parsed.data.displayName,
-      requestedRole: "hospitalist",
+      requestedRole: parsed.data.requestedRole ?? "hospitalist",
       status: "pending",
     });
     await appendAudit({
@@ -123,11 +123,11 @@ export function registerAuthRoutes(app: Express) {
     return res.status(201).json({ pending: true });
   });
 
-  // Director-approval queue.
+  // Approval queue — directors AND ER directors (and developers) can review.
   app.get(
     "/api/registrations",
     requireAuth,
-    requireRole("director", "developer"),
+    requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = req.user as unknown as User;
       res.json(await storage().listPendingRegistrations(me.organizationId));
@@ -137,7 +137,7 @@ export function registerAuthRoutes(app: Express) {
   app.post(
     "/api/registrations/:id/approve",
     requireAuth,
-    requireRole("director", "developer"),
+    requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = req.user as unknown as User;
       const id = Number(req.params.id);
@@ -155,6 +155,20 @@ export function registerAuthRoutes(app: Express) {
         phone: null,
         twoFactorEnabled: false,
       });
+      // Hospitalists need a rotation profile to appear in routing / dashboards.
+      if (reg.requestedRole === "hospitalist") {
+        const existing = await storage().listHospitalists(reg.organizationId);
+        await storage().createHospitalist({
+          organizationId: reg.organizationId,
+          userId: user.id,
+          specialty: "Hospital Medicine",
+          currentPatientCount: 0,
+          patientCap: 12,
+          rotationOrder: existing.length,
+          working: false,
+          shiftType: "day",
+        });
+      }
       await storage().updatePendingRegistration(me.organizationId, id, {
         status: "approved",
       });
@@ -164,10 +178,37 @@ export function registerAuthRoutes(app: Express) {
         action: "registration.approve",
         resourceType: "user",
         resourceId: user.id,
-        details: { username: reg.username },
+        details: { username: reg.username, role: reg.requestedRole },
         riskLevel: "medium",
       });
       res.status(201).json({ userId: user.id });
+    },
+  );
+
+  app.post(
+    "/api/registrations/:id/deny",
+    requireAuth,
+    requireRole("director", "er_director", "developer"),
+    async (req, res) => {
+      const me = req.user as unknown as User;
+      const id = Number(req.params.id);
+      const reg = await storage().getPendingRegistration(me.organizationId, id);
+      if (!reg || reg.status !== "pending") {
+        return res.status(404).json({ error: "not_found" });
+      }
+      await storage().updatePendingRegistration(me.organizationId, id, {
+        status: "rejected",
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "registration.deny",
+        resourceType: "user",
+        resourceId: null,
+        details: { username: reg.username },
+        riskLevel: "low",
+      });
+      res.json({ ok: true });
     },
   );
 

@@ -232,9 +232,12 @@
       extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
       // Director: org settings (auto-reassign-on-decline toggle).
       extra.push(role === "director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
+      // Director / ER director: pending self-registrations awaiting approval.
+      var wantsRegs = (role === "director" || role === "er_director");
+      extra.push(wantsRegs ? get("/api/registrations").catch(function () { return null; }) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
           // Full registered directory (all roles): drives the ER Consult-services
@@ -249,6 +252,7 @@
           if (board) s.board = mapBoard(board);
           if (wantsSent && sent) s.sent = mapSent(sent);
           if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
+          if (wantsRegs && regs) s.registrations = regs;
           return s;
         });
       });
@@ -507,6 +511,35 @@
       api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
     }
     if (origSetSetting) return origSetSetting(key, value);
+  };
+
+  // ---- self-registration + director/ER-director approval queue -------------
+  // Public: anyone with an org code can request an account (no session needed).
+  DT.actions.register = function (data) {
+    return rawApi("POST", "/api/register", {
+      orgCode: data.orgCode, username: data.username, password: data.password,
+      displayName: data.displayName, requestedRole: data.role || "hospitalist",
+    });
+  };
+  function hydrateRegistrations() {
+    return get("/api/registrations").then(function (rows) {
+      DT.set(function (s) { s.registrations = rows || []; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.refreshRegistrations = hydrateRegistrations;
+  DT.actions.approveRegistration = function (id) {
+    return api("POST", "/api/registrations/" + id + "/approve").then(function () {
+      hydrateRegistrations(); rehydrate();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Registration approved", msg: "The account is now active." }; return s; });
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't approve", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.denyRegistration = function (id) {
+    return api("POST", "/api/registrations/" + id + "/deny").then(function () {
+      hydrateRegistrations();
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Registration denied", msg: "The request was removed." }; return s; });
+    }).catch(function () {});
   };
 
   // Logout: tear down the live socket + clear the server session too.
