@@ -245,7 +245,38 @@ function SpecialtyTag({ name, size }) {
   );
 }
 
-Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag });
+// "+ Consult" picker — drop-in for any patient row so hospitalists / directors
+// (anyone, really) can request a consult service. Calls onPick(specialtyName).
+function ConsultAdd({ services, onPick, label }) {
+  const [open, setOpen] = React.useState(false);
+  const list = (services && services.length) ? services : ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button onClick={() => setOpen((v) => !v)}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "#fff", color: "var(--primary)" }}>
+        <Icon name={open ? "x" : "plus"} size={11} />{label || "Consult"}
+      </button>
+      {open && (
+        <React.Fragment>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 41, width: 210, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {list.map((s) => {
+              const c = specialtyColor(s);
+              return (
+                <button key={s} onClick={() => { onPick(s); setOpen(false); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: `1px solid ${c.color}`, background: c.bg, color: c.color }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 99, background: c.color }} />{s}
+                </button>
+              );
+            })}
+          </div>
+        </React.Fragment>
+      )}
+    </span>
+  );
+}
+
+Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag, ConsultAdd });
 
 function StatTile({ label, value, icon, tint = "blue" }) {
   const tints = { blue: "var(--primary)", emerald: "var(--status-accepted)", amber: "var(--status-pending)", slate: "var(--status-neutral)" };

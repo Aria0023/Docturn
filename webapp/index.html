@@ -276,7 +276,7 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} />;
 
   // Roles that also manage org people/roles — their Directory tab folds in the
   // Access & people surfaces (People + Roles & permissions) as sub-tabs.
@@ -331,7 +331,7 @@ function App() {
   }
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
   else if (nav === "settings") screen = <OrgSettings />;
-  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} />;
+  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
     { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} /> },

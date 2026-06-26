@@ -136,6 +136,7 @@
       var er = usersById[a.erDoctorId] || {};
       return {
         id: a.id,
+        patientId: a.patientId,
         initials: p.initials || "??",
         room: p.roomNumber || "—",
         complaint: p.issueSummary || "",
@@ -150,7 +151,7 @@
   function mapAccepted(assignments, patientsById) {
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
-      return { id: "p" + a.id, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "" };
+      return { id: "p" + a.id, patientId: a.patientId, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: [] };
     });
   }
   // ER "Patient board": the assignments this ER routed, with LIVE backend status
@@ -451,9 +452,32 @@
     api("PATCH", "/api/assignments/" + id + "/accept").then(rehydrate).catch(function () {});
     DT.set(function (s) {
       var p = (s.pending || []).find(function (x) { return x.id === id; });
-      if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), initials: p.initials, room: p.room, complaint: p.complaint }].concat(s.myAdmissions || []);
+      if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), patientId: p.patientId, initials: p.initials, room: p.room, complaint: p.complaint, consultants: [] }].concat(s.myAdmissions || []);
       s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
       s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." };
+      return s;
+    });
+  };
+  // Request a consult on a patient — available to hospitalists, directors and ER
+  // (the backend allows all of them). Optimistically tags the patient everywhere
+  // they appear, then re-hydrates from the server.
+  DT.actions.requestConsult = function (patientId, specialty) {
+    if (patientId == null || !specialty) return;
+    var pid = bid(patientId);
+    api("POST", "/api/patients/" + pid + "/consults", { specialty: specialty }).then(rehydrate).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't request consult", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+    DT.set(function (s) {
+      var add = function (list) {
+        return (list || []).map(function (row) {
+          if (row.patientId === patientId && (row.consultants || []).indexOf(specialty) < 0) {
+            return Object.assign({}, row, { consultants: (row.consultants || []).concat([specialty]) });
+          }
+          return row;
+        });
+      };
+      s.board = add(s.board); s.myAdmissions = add(s.myAdmissions); s.myPatients = add(s.myPatients); s.sent = add(s.sent);
+      s.__toast = { tone: "sent", title: specialty + " consult requested", msg: "The consult service has been notified." };
       return s;
     });
   };

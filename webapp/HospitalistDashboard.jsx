@@ -24,7 +24,7 @@ function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hh
 // "Dr. Jordan Chen" -> "Chen"; "Jordan Wu, PA-C" -> "Wu"
 function shortName(name) { return String(name || "").split(",")[0].replace(/^Dr\.\s*/i, "").trim().split(/\s+/).slice(-1)[0] || name; }
 
-function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory }) {
+function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory, onConsult, consultServices }) {
   // Accepted during THIS shift (since 7am); resets each morning.
   const since = shiftStart();
   const shiftAdmits = (myAdmissions || []).filter((a) => a.at >= since).sort((a, b) => b.at - a.at);
@@ -132,8 +132,12 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
             <Avatar initials={p.initials} size={34} tint="blue" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
-              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.complaint}</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span>{p.complaint}</span>
+                {(p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
+              </div>
             </div>
+            {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
             <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>
             <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
           </div>

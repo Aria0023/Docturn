@@ -165,7 +165,7 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
   );
 }
 
-function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir, onPurge }) {
+function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir, onPurge, onAddConsult, consultServices }) {
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");
   const [adding, setAdding] = React.useState(false);
@@ -327,12 +327,15 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               </div>
               {/* Consultants */}
               <div style={{ flex: "1.2 1 0", minWidth: 0, display: "flex", flexWrap: "wrap", gap: 5 }}>
-                {(p.consultants || []).length === 0
+                {(p.consultants || []).length === 0 && !onAddConsult
                   ? <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>—</span>
                   : p.consultants.map((c) => {
                     const nm = typeof c === "string" ? c : (c.specialty || c.name || "");
                     return <SpecialtyTag key={nm} name={nm} size="sm" />;
                   })}
+                {onAddConsult && p.patientId != null && (
+                  <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(p.patientId, spec)} />
+                )}
               </div>
               {/* Admitted by */}
               <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
