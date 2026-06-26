@@ -204,7 +204,48 @@ function AcuityChip({ level, showName, size }) {
   );
 }
 
-Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI });
+// Per-specialty color scheme so consult services are distinguishable at a
+// glance (each gets a stable color whether selected or not). Common services
+// are fixed; anything else (manually-added) hashes to a palette slot.
+const SPECIALTY_PALETTE = [
+  { color: "#2563EB", bg: "#EFF6FF" }, // blue
+  { color: "#DC2626", bg: "#FEF2F2" }, // red
+  { color: "#D97706", bg: "#FFFBEB" }, // amber
+  { color: "#0891B2", bg: "#ECFEFF" }, // cyan
+  { color: "#7C3AED", bg: "#F5F3FF" }, // violet
+  { color: "#059669", bg: "#ECFDF5" }, // emerald
+  { color: "#DB2777", bg: "#FDF2F8" }, // pink
+  { color: "#4F46E5", bg: "#EEF2FF" }, // indigo
+  { color: "#CA8A04", bg: "#FEFCE8" }, // yellow
+  { color: "#0D9488", bg: "#F0FDFA" }, // teal
+];
+const SPECIALTY_FIXED = {
+  "hospital medicine": 0, "cardiology": 1, "gi": 2, "gastroenterology": 2, "pulmonology": 3, "pulm": 3,
+  "endocrine": 4, "endocrinology": 4, "infectious disease": 5, "id": 5, "neurology": 6, "neuro": 6,
+  "nephrology": 7, "nephro": 7, "hematology": 8, "heme/onc": 8, "oncology": 8, "general medicine": 9,
+};
+function specialtyColor(name) {
+  const key = String(name || "").trim().toLowerCase();
+  let idx = SPECIALTY_FIXED[key];
+  if (idx == null) {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    idx = h % SPECIALTY_PALETTE.length;
+  }
+  return SPECIALTY_PALETTE[idx];
+}
+// Small colored pill for a consult specialty (used on boards).
+function SpecialtyTag({ name, size }) {
+  const c = specialtyColor(name);
+  const fs = size === "sm" ? 11 : 11.5;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: c.bg, color: c.color, border: `1px solid ${c.color}`, fontSize: fs, fontWeight: 700, whiteSpace: "nowrap", lineHeight: 1.5 }}>
+      <span style={{ width: 6, height: 6, borderRadius: 99, background: c.color, flex: "none" }} />{name}
+    </span>
+  );
+}
+
+Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag });
 
 function StatTile({ label, value, icon, tint = "blue" }) {
   const tints = { blue: "var(--primary)", emerald: "var(--status-accepted)", amber: "var(--status-pending)", slate: "var(--status-neutral)" };

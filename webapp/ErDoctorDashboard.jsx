@@ -46,9 +46,9 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
   const noChannel = !channels.app && !channels.text;
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "#fff", overflow: "hidden" }}>
-      {/* header band: service + on-call provider */}
-      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
-        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+      {/* header band: service + on-call provider — tinted by specialty */}
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: (window.specialtyColor(service) || {}).bg || "var(--secondary)", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${(window.specialtyColor(service) || {}).color || "var(--primary)"}` }}>
+        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="stethoscope" size={15} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -335,13 +335,14 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {serviceList.map((s) => {
                 const on = consults.includes(s);
+                const c = window.specialtyColor(s);
                 return (
                   <button key={s} onClick={() => toggleConsult(s)}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-full)",
                       fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", whiteSpace: "nowrap", transition: "all .12s",
-                      border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--primary)" : "#fff",
-                      color: on ? "#fff" : "var(--foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
-                    <Icon name={on ? "check" : "plus"} size={12} /> {s}
+                      border: `1px solid ${c.color}`, background: on ? c.color : c.bg,
+                      color: on ? "#fff" : c.color, boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                    {on ? <Icon name="check" size={12} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />} {s}
                   </button>
                 );
               })}
@@ -408,9 +409,7 @@ function RoutedBoardPanel({ sent, providers, onReassign }) {
                   <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <span>{s.complaint || "—"} · {s.time}</span>
                     {(s.consultants || []).map((c) => (
-                      <span key={c} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--foreground)", fontSize: 11, fontWeight: 600 }}>
-                        <Icon name="stethoscope" size={10} /> {c}
-                      </span>
+                      <SpecialtyTag key={c} name={c} size="sm" />
                     ))}
                   </div>
                 </div>

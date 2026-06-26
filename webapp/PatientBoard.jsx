@@ -329,9 +329,10 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               <div style={{ flex: "1.2 1 0", minWidth: 0, display: "flex", flexWrap: "wrap", gap: 5 }}>
                 {(p.consultants || []).length === 0
                   ? <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>—</span>
-                  : p.consultants.map((c) => (
-                    <span key={c} style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px", borderRadius: "var(--radius-full)", background: "#DBEAFE", color: "var(--primary)" }}>{c}</span>
-                  ))}
+                  : p.consultants.map((c) => {
+                    const nm = typeof c === "string" ? c : (c.specialty || c.name || "");
+                    return <SpecialtyTag key={nm} name={nm} size="sm" />;
+                  })}
               </div>
               {/* Admitted by */}
               <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
