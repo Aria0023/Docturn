@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { DbType } from "./db.js";
 import { getDb } from "./db.js";
 import {
@@ -339,6 +339,46 @@ export class DatabaseStorage implements IStorage {
   async createPatient(p: Omit<Patient, "id" | "createdAt">) {
     const [row] = await this.db.insert(patients).values(p).returning();
     return row!;
+  }
+  /**
+   * Delete patients older than `olderThanMs` (0 = all) along with their
+   * assignments and consults, then recompute each hospitalist's census from the
+   * accepted assignments that remain. Returns the number of patients removed.
+   * Used by the manual "clear" controls and the daily auto-clean sweep.
+   */
+  async purgeOldPatients(orgId: number, olderThanMs: number): Promise<number> {
+    const cutoff = olderThanMs > 0 ? new Date(Date.now() - olderThanMs) : null;
+    const rows = await this.db
+      .select({ id: patients.id })
+      .from(patients)
+      .where(
+        cutoff
+          ? and(eq(patients.organizationId, orgId), lt(patients.createdAt, cutoff))
+          : eq(patients.organizationId, orgId),
+      );
+    const ids = rows.map((r) => r.id);
+    if (!ids.length) return 0;
+    await this.db
+      .delete(assignments)
+      .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids)));
+    await this.db
+      .delete(patientConsults)
+      .where(and(eq(patientConsults.organizationId, orgId), inArray(patientConsults.patientId, ids)));
+    await this.db
+      .delete(patients)
+      .where(and(eq(patients.organizationId, orgId), inArray(patients.id, ids)));
+    // Keep census honest: it now equals each provider's remaining accepted load.
+    const hosps = await this.listHospitalists(orgId);
+    for (const h of hosps) {
+      const accepted = await this.db
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, h.id), eq(assignments.status, "accepted")));
+      if (h.currentPatientCount !== accepted.length) {
+        await this.updateHospitalist(orgId, h.id, { currentPatientCount: accepted.length });
+      }
+    }
+    return ids.length;
   }
   async updatePatient(orgId: number, id: number, patch: Partial<Patient>) {
     const [row] = await this.db

@@ -13,7 +13,7 @@ function alWhen(at) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + hm;
 }
 
-function AdmissionsLog({ admissions, resetAt, bare }) {
+function AdmissionsLog({ admissions, resetAt, bare, onPurge }) {
   const log = (admissions || []).slice().sort((a, b) => b.at - a.at);
   const sinceReset = log.filter((a) => a.at >= (resetAt || 0)).length;
   const last24h = log.filter((a) => a.at >= Date.now() - 86400000).length;
@@ -43,7 +43,14 @@ function AdmissionsLog({ admissions, resetAt, bare }) {
           <Icon name="scroll-text" size={17} color="var(--primary)" />
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Admissions log</h3>
           <Badge variant="secondary">{log.length}</Badge>
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>Newest first · full history</span>
+          {onPurge ? (
+            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>
+              <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients and admission history? This can't be undone.")) onPurge(0); }}>Clear all</Button>
+            </span>
+          ) : (
+            <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>Newest first · full history</span>
+          )}
         </div>
 
         {log.length === 0 ? (

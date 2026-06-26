@@ -42,17 +42,17 @@ function LoginScreen({ onLogin, appName }) {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--background)" }}>
-      {/* Left: form */}
-      <div style={{ flex: mobile ? "1 1 100%" : "1 1 50%", display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "24px 18px" : 32 }}>
-        <div style={{ width: "100%", maxWidth: 360 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 18 }}>{brand.charAt(0).toUpperCase()}</span>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: mobile ? "20px 14px" : 28 }}>
+      {/* Single sleek card — no split graphics panel */}
+      <div style={{ width: "100%", maxWidth: 400, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "26px 20px" : "32px 30px" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+            <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
             <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{brand}</span>
           </div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, margin: "28px 0 6px" }}>{mode === "register" ? "Create an account" : "Sign in"}</h1>
-          <p style={{ fontSize: 14, color: "var(--muted-foreground)", margin: "0 0 24px" }}>
-            {mode === "register" ? "Request access with your organization's code. A director approves new accounts." : "Secure access to your hospital workspace."}
+          <h1 style={{ fontSize: 22, fontWeight: 700, margin: "22px 0 5px", textAlign: "center" }}>{mode === "register" ? "Create an account" : "Sign in"}</h1>
+          <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: "0 0 22px", textAlign: "center" }}>
+            {mode === "register" ? "Request access with your organization's code — a director approves it." : "Secure access to your hospital workspace."}
           </p>
 
           {mode === "signin" ? (
@@ -133,42 +133,6 @@ function LoginScreen({ onLogin, appName }) {
           )}
         </div>
       </div>
-
-      {/* Right: brand panel — hidden on phones */}
-      {!mobile && (
-      <div style={{ flex: "1 1 50%", background: "var(--marketing-bg)", display: "flex", alignItems: "center", justifyContent: "center", padding: 48, position: "relative", overflow: "hidden" }}>
-        <div style={{ maxWidth: 380, position: "relative", zIndex: 2 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,.7)", padding: "5px 12px", borderRadius: "99px", fontSize: 12, fontWeight: 600, color: "var(--sky-700)" }}>
-            <Icon name="route" size={14} /> Patient assignment, automated
-          </div>
-          <h2 style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.15, letterSpacing: "-0.02em", color: "#0f172a", margin: "18px 0 12px" }}>
-            Every admit reaches the right hospitalist — in seconds.
-          </h2>
-          <p style={{ fontSize: 15, color: "#475569", lineHeight: 1.55, margin: 0 }}>
-            Round‑robin routing, real‑time notifications across push and SMS, and HIPAA‑compliant messaging for your whole care team.
-          </p>
-          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 12 }}>
-            {[
-              ["bell-ring", "Notified instantly", "WebSocket → push → SMS cascade"],
-              ["repeat", "Fair rotation", "Lowest‑census provider goes next"],
-              ["lock", "PHI stays protected", "Initials only, full audit trail"],
-            ].map(([ic, t, d]) => (
-              <div key={t} style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                <span style={{ width: 38, height: 38, borderRadius: 10, background: "#fff", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "var(--shadow-sm)" }}>
-                  <Icon name={ic} size={18} />
-                </span>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>{t}</div>
-                  <div style={{ fontSize: 12.5, color: "#64748b" }}>{d}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={{ position: "absolute", width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(56,189,248,.25), transparent 70%)", top: -80, right: -60 }} />
-        <div style={{ position: "absolute", width: 260, height: 260, borderRadius: "50%", background: "radial-gradient(circle, rgba(255,228,230,.6), transparent 70%)", bottom: -70, left: -50 }} />
-      </div>
-      )}
     </div>
   );
 }

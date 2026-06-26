@@ -542,6 +542,25 @@
     }).catch(function () {});
   };
 
+  // Clear old patients/logs (or all). hours=24 by default; 0 = everything.
+  // Backend deletes patients + their assignments/consults; local admission log
+  // is pruned to match. Also runs automatically every 24h server-side.
+  DT.actions.purgeData = function (hours) {
+    var h = (hours == null) ? 24 : Number(hours);
+    return api("POST", "/api/maintenance/purge", { olderThanHours: h }).then(function (r) {
+      DT.set(function (s) {
+        if (h <= 0) { s.admissions = []; s.sent = []; }
+        else { var cut = Date.now() - h * 3600000; s.admissions = (s.admissions || []).filter(function (a) { return (a.at || 0) >= cut; }); }
+        var n = r && r.removed != null ? r.removed : 0;
+        s.__toast = { tone: "accepted", title: "Cleared", msg: n + " patient record" + (n === 1 ? "" : "s") + " removed." };
+        return s;
+      });
+      rehydrate();
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't clear", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+
   // Logout: tear down the live socket + clear the server session too.
   var origLogout = DT.actions.logout;
   DT.actions.logout = function () {

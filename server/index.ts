@@ -4,7 +4,7 @@ import { createApp } from "./app.js";
 import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 import { ensurePlatform, seed } from "./seed.js";
-import { startExpiryLoop } from "./services/expiry.js";
+import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { attachWebSocket } from "./ws/index.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -68,6 +68,9 @@ async function main() {
   );
 
   startExpiryLoop();
+  // Auto-clean: hourly sweep purges patients/assignments older than 24h so stale
+  // board and log data clears itself. Manual "Clear" controls call the same path.
+  startAutoCleanLoop();
 
   server.listen(PORT, () => {
     const mode = handle.ephemeral ? "PGlite (in-process)" : "PostgreSQL";

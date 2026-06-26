@@ -106,7 +106,9 @@ const inputByPlaceholder = (sub) => [...window.document.querySelectorAll("input,
 
 // Buttons that change session/identity — skipped so the sweep doesn't flood
 // /api/login (role switcher) or log itself out mid-test.
-const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "developer", "log out", "sign out", "logout", "lock"]);
+const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "developer", "log out", "sign out", "logout", "lock",
+  // destructive maintenance buttons — don't wipe data mid-sweep
+  "clear all", "clear 24h+", "clear logs"]);
 async function clickEveryButton(roleLabel, screen) {
   const before = errors.length;
   let clicked = 0;

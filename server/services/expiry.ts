@@ -24,3 +24,38 @@ export function stopExpiryLoop() {
     timer = null;
   }
 }
+
+/**
+ * Daily auto-clean: every org's patients (and their assignments/consults) older
+ * than `olderThanHours` are purged so stale board/log data clears itself rather
+ * than piling up. Runs on an interval; also safe to call directly.
+ */
+let cleanTimer: NodeJS.Timeout | null = null;
+export async function runAutoClean(olderThanHours = 24): Promise<number> {
+  let removed = 0;
+  try {
+    const orgs = await storage().listOrganizations();
+    for (const o of orgs) {
+      removed += await storage().purgeOldPatients(o.id, olderThanHours * 3600_000);
+    }
+  } catch (err) {
+    console.error("[autoclean] sweep failed", err);
+  }
+  if (removed) console.log(`[autoclean] purged ${removed} stale patient record(s) (>${olderThanHours}h)`);
+  return removed;
+}
+
+export function startAutoCleanLoop(intervalMs = 3600_000, olderThanHours = 24) {
+  if (cleanTimer) return;
+  cleanTimer = setInterval(() => {
+    void runAutoClean(olderThanHours);
+  }, intervalMs);
+  cleanTimer.unref?.();
+}
+
+export function stopAutoCleanLoop() {
+  if (cleanTimer) {
+    clearInterval(cleanTimer);
+    cleanTimer = null;
+  }
+}

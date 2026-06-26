@@ -276,7 +276,7 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
 
   // Roles that also manage org people/roles — their Directory tab folds in the
   // Access & people surfaces (People + Roles & permissions) as sub-tabs.
@@ -309,7 +309,7 @@ function App() {
     ? <DirectoryHub providers={sortedProviders} onMessage={message} scopeOrg={st.selectedOrg} domainRoles={dirDomain.roles} domainPortals={dirDomain.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
-  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} />;
+  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};
@@ -350,7 +350,7 @@ function App() {
   else screen = <CustomizableDashboard role="director" widgets={[
     { id: "rotation", label: "Rotation & roster", icon: "users-round", node: <DirectorDashboard bare providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} /> },
     { id: "board", label: "Patient board (declines & reassign)", icon: "layout-list", node: boardEl },
-    { id: "admissions", label: "Admissions log", icon: "scroll-text", node: <AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} /> },
+    { id: "admissions", label: "Admissions log", icon: "scroll-text", node: <AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} /> },
   ]} />;
 
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;

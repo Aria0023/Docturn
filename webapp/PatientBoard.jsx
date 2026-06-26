@@ -165,7 +165,7 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
   );
 }
 
-function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir }) {
+function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir, onPurge }) {
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");
   const [adding, setAdding] = React.useState(false);
@@ -198,9 +198,11 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
 
   return (
     <BoardWrap>
-      {canCustomize && (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12, position: "relative" }}>
-          <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => setCustomizing((v) => !v)}>Customize board</Button>
+      {(canCustomize || onPurge) && (
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, position: "relative" }}>
+          {onPurge && <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>}
+          {onPurge && <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients on the board? This can't be undone.")) onPurge(0); }}>Clear all</Button>}
+          {canCustomize && <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => setCustomizing((v) => !v)}>Customize board</Button>}
           {customizing && <BoardCustomize modules={M} onSetModule={onSetModule} onClose={() => setCustomizing(false)} />}
         </div>
       )}

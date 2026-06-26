@@ -338,9 +338,9 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                 return (
                   <button key={s} onClick={() => toggleConsult(s)}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-full)",
-                      fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
-                      border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "#EFF6FF" : "#fff",
-                      color: on ? "var(--primary)" : "var(--foreground)" }}>
+                      fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", whiteSpace: "nowrap", transition: "all .12s",
+                      border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--primary)" : "#fff",
+                      color: on ? "#fff" : "var(--foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                     <Icon name={on ? "check" : "plus"} size={12} /> {s}
                   </button>
                 );
