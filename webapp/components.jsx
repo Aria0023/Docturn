@@ -249,17 +249,35 @@ function SpecialtyTag({ name, size }) {
 // (anyone, really) can request a consult service. Calls onPick(specialtyName).
 function ConsultAdd({ services, onPick, label }) {
   const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState(null);
+  const btnRef = React.useRef(null);
   const list = (services && services.length) ? services : ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
+  // Anchor the menu with position:fixed off the button's screen rect so it
+  // floats ABOVE the row (and any clipping ancestor) instead of being buried
+  // inside it. Flip upward when there isn't enough room below.
+  function place() {
+    const el = btnRef.current;
+    const vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+    const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { top: 0, bottom: 0, right: 0, left: 0 };
+    const width = Math.min(260, vw - 24);
+    let left = r.right - width;
+    if (left < 12) left = 12;
+    if (left + width > vw - 12) left = vw - 12 - width;
+    const below = vh - r.bottom;
+    const up = below < 240 && r.top > below;
+    return { left, width, top: up ? null : Math.round(r.bottom + 6), bottom: up ? Math.round(vh - r.top + 6) : null };
+  }
+  function toggle() { setOpen((v) => { const nv = !v; if (nv) setPos(place()); return nv; }); }
   return (
-    <span style={{ position: "relative", display: "inline-flex" }}>
-      <button onClick={() => setOpen((v) => !v)}
+    <span style={{ display: "inline-flex" }}>
+      <button ref={btnRef} onClick={toggle}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "#fff", color: "var(--primary)" }}>
         <Icon name={open ? "x" : "plus"} size={11} />{label || "Consult"}
       </button>
-      {open && (
+      {open && pos && (
         <React.Fragment>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 240, maxWidth: "80vw", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
+          <div style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: "60vh", overflowY: "auto", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {list.map((s) => {
               const c = specialtyColor(s);
               return (

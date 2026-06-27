@@ -439,6 +439,25 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
     a1.acuity === 1 && a2.acuity === 2 && a3.acuity === 5,
     "acuity=" + a1.acuity + "/" + a2.acuity + "/" + a3.acuity);
 }
+// Room extraction handles ward/unit designations & prefixes, not just "room NNN".
+{
+  const R = (s) => DT.extractIntake(s).room;
+  const cases = [
+    ["jane doe 70F in DISC awaiting bed", "DISC"],
+    ["bob 55M disc 44 chest pain", "DISC 44"],
+    ["pt in HALL, abd pain", "HALL"],
+    ["pt hall 7 with SOB", "HALL 7"],
+    ["55M in ICU 4 septic", "ICU 4"],
+    ["admit to CCU-12 for NSTEMI", "CCU 12"],
+    ["tele 5, afib rvr", "TELE 5"],
+    ["seen in ED 7, ankle fx", "ED 7"],
+    ["obs 2, syncope workup", "OBS 2"],
+    ["bob parker 60M chest pain, room 5", "5"],
+    ["chest pain or SOB, no bed yet", ""],
+  ];
+  let bad = cases.filter(([n, want]) => R(n) !== want).map(([n, want]) => n + "→'" + R(n) + "'(want '" + want + "')");
+  rec("room extraction: DISC/HALL/ICU/CCU/TELE/ED/OBS prefixes + no false positives", bad.length === 0, bad.join(" | "));
+}
 await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 {
   let prov = DT.sortedProviders()[0];

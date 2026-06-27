@@ -142,10 +142,31 @@
     // room — strip it before the "rm"/"room" keyword scan (initials are still
     // pulled from the original text above).
     var roomText = text.replace(/^\s*[A-Z]{1,3}\.?,?\s*\d{1,3}\s*[MFmf]\b/, "");
-    var rm = roomText.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([A-Za-z0-9/\-]+(?:\s+(?:[0-9]+[A-Za-z]?|[A-Za-z]\/[A-Za-z]|[A-Z](?![A-Za-z])))?)/i);
+    // The token after the keyword must look like a room id — digit-bearing
+    // ("5", "412A", "hall5"), a slashed pair ("A/B"), or a lone unit letter
+    // ("Bay A") — so "no bed yet" doesn't capture "yet".
+    var rm = roomText.match(/\b(?:room|rm\.?|bed|bay|loc(?:ation)?)\s*#?\s*([0-9]+[A-Za-z]?(?:\/[A-Za-z0-9]+)?|[A-Za-z]+\d[A-Za-z0-9]*|[A-Za-z]\/[A-Za-z]|[A-Za-z](?![A-Za-z]))/i);
     if (rm) room = rm[1].trim();
-    // Bare ward designations without the word "room": "hall5", "bay 3", "hallway".
-    if (!room) { var spot = text.match(/\b(hall\s?\d+[A-Za-z]?|bay\s?\d+[A-Za-z]?|hall\s?way|hallway|hall|disaster(?:\s+bay)?|triage|waiting\s+room|lobby)\b/i); if (spot) room = spot[1].replace(/\s+/g, " ").replace(/\b\w/g, function (c) { return c.toUpperCase(); }); }
+    // Bare ward / unit designations (no "room" keyword): "HALL", "hall5",
+    // "DISC 44", "ICU 4", "CCU-12", "TELE 5", "Stepdown 9", "OBS 2"… Two tiers:
+    // distinctive unit names may stand alone, while short ambiguous codes
+    // (ED/ER/OR/MED/SURG…) only count as a room when a bed number follows — so
+    // prose like "chest pain or SOB" or "seen in the ED" isn't misread.
+    function fmtUnit(p, n) { return (String(p).toUpperCase() + (n ? " " + String(n).toUpperCase() : "")).replace(/\s+/g, " ").trim(); }
+    if (!room) {
+      // longer alternatives first so "discharge"/"observation" win over "disc"/"obs".
+      var SAFE_UNIT = "cvicu|micu|sicu|nicu|picu|icu|ccu|pcu|tcu|sdu|telemetry|tele|pacu|observation|obs|ldr|stepdown|step|hallway|hall|discharge|disch|disc|triage|rehab|disaster|lobby|waiting\\s?room";
+      // not "disc" of disc herniation/disease, etc.
+      var u1 = roomText.match(new RegExp("\\b(" + SAFE_UNIT + ")\\b(?!\\s*(?:herniat|disease|bulg|space|protrus|degener))(?:\\s*[#-]?\\s*([0-9]+[A-Za-z]?|[A-Za-z](?![A-Za-z])))?", "i"));
+      if (u1) room = fmtUnit(u1[1], u1[2]);
+    }
+    if (!room) {
+      var AMB_UNIT = "ed|er|ew|or|ft|fast\\s?track|med|surg|wr|ante|post";
+      var u2 = roomText.match(new RegExp("\\b(" + AMB_UNIT + ")\\s*[#-]?\\s*([0-9]+[A-Za-z]?)\\b", "i"));
+      if (u2) room = fmtUnit(u2[1], u2[2]);
+    }
+    // Directional ward-prefixed rooms ("3West 12", "4E-22", "3W12").
+    if (!room) { var wp = roomText.match(/\b(\d{1,2}\s?(?:east|west|north|south)\s?\d{1,3}[A-Za-z]?|\d\s?[ewns][-\s]?\d{1,3}[A-Za-z]?)\b/i); if (wp) room = fmtUnit(wp[1].replace(/\s+/g, ""), ""); }
     if (!room) room = (text.match(/\b([0-9]{3}[A-Za-z]?)\b/) || [])[1] || "";
     var complaint = text.split(/[.\n;]/)[0].trim().replace(/^\s*(patient|pt\.?)\s+[A-Z][A-Za-z.\s]*?\s*(with|w\/|presenting with|presents with)\s*/i, "");
     complaint = complaint.charAt(0).toUpperCase() + complaint.slice(1);
