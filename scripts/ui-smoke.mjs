@@ -215,6 +215,14 @@ rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + J
 if (got) {
   DT.actions.accept(got.id); await flush(); await flush();
   rec("hospitalist: accept removes it from pending", !(DT.getState().pending || []).find((p) => p.initials === "ZZ"));
+  // Re-hydrate from scratch (the path a live WS refresh / reassignment takes) and
+  // confirm the patient is on the dashboard census — not just the optimistic
+  // local entry. Regression: reassigned/handed-off patients weren't appearing
+  // because hydrate populated myPatients but not myAdmissions for hospitalists.
+  await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+  rec("hospitalist: census persists on rehydrate (myAdmissions from server)",
+    (DT.getState().myAdmissions || []).some((a) => a.initials === "ZZ" && a.at),
+    "myAdmissions=" + JSON.stringify((DT.getState().myAdmissions || []).map((a) => a.initials)));
 }
 }
 

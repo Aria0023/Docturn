@@ -148,10 +148,12 @@
       };
     });
   }
-  function mapAccepted(assignments, patientsById) {
+  function mapAccepted(assignments, patientsById, consultByPid) {
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
-      return { id: "p" + a.id, patientId: a.patientId, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: [] };
+      // `at` drives the hospitalist dashboard's "this shift" filter — without it
+      // a handed-off/reassigned patient would be filtered out and never show.
+      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [] };
     });
   }
   // ER "Patient board": the assignments this ER routed, with LIVE backend status
@@ -249,11 +251,17 @@
             return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
           if (role === "hospitalist" || role === "director") {
+            // Consultants per patient come off the live board so the census rows
+            // can show who's been consulted.
+            var consultByPid = {};
+            (board || []).forEach(function (r) { if (r && r.patient) consultByPid[r.patient.id] = r.consultants || []; });
             s.pending = mapPending(pending, patientsById, usersById);
-            s.myPatients = mapAccepted(mine, patientsById);
-            // Director's "My hospitalist work" census mirrors myPatients (the
-            // hospitalist dashboard tracks an optimistic local list separately).
-            if (role === "director") s.myAdmissions = (mine || []).map(function (a) { var p = patientsById[a.patientId] || {}; return { id: "ma" + a.id, at: Date.now(), patientId: a.patientId, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: [] }; });
+            var census = mapAccepted(mine, patientsById, consultByPid);
+            s.myPatients = census;
+            // The hospitalist dashboard AND the director's "My hospitalist work"
+            // widget both render myAdmissions — keep it authoritative from the
+            // server so a reassigned/handed-off patient shows up automatically.
+            s.myAdmissions = census;
             s.isProvider = (hosps || []).some(function (h) { return h.userId === meId; });
           }
           if (board) s.board = mapBoard(board);
