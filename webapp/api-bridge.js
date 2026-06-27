@@ -220,7 +220,9 @@
       (patients || []).forEach(function (p) { patientsById[p.id] = p; });
 
       var extra = [];
-      if (role === "hospitalist") {
+      // Hospitalists — and directors who also take patients — get the incoming
+      // queue + their census.
+      if (role === "hospitalist" || role === "director") {
         extra.push(get("/api/assignments/pending").catch(function () { return []; }));
         extra.push(get("/api/assignments/my").catch(function () { return []; }));
       } else {
@@ -246,9 +248,13 @@
           if (directory) s.directory = (directory || []).map(function (d) {
             return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
-          if (role === "hospitalist") {
+          if (role === "hospitalist" || role === "director") {
             s.pending = mapPending(pending, patientsById, usersById);
             s.myPatients = mapAccepted(mine, patientsById);
+            // Director's "My hospitalist work" census mirrors myPatients (the
+            // hospitalist dashboard tracks an optimistic local list separately).
+            if (role === "director") s.myAdmissions = (mine || []).map(function (a) { var p = patientsById[a.patientId] || {}; return { id: "ma" + a.id, at: Date.now(), patientId: a.patientId, initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: [] }; });
+            s.isProvider = (hosps || []).some(function (h) { return h.userId === meId; });
           }
           if (board) s.board = mapBoard(board);
           if (wantsSent && sent) s.sent = mapSent(sent);
@@ -582,6 +588,17 @@
       rehydrate();
     }).catch(function (e) {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't clear", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+
+  // Director opts in to take patients (gets a rotation profile), then hydrates
+  // the hospitalist work surface.
+  DT.actions.becomeHospitalist = function () {
+    return api("POST", "/api/director/become-hospitalist").then(function () {
+      DT.set(function (s) { s.isProvider = true; s.__toast = { tone: "accepted", title: "You're taking patients", msg: "You're on shift — admissions can route to you now." }; return s; });
+      rehydrate();
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't start", msg: String((e && e.message) || "Try again.") }; return s; });
     });
   };
 

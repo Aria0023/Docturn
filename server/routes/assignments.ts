@@ -73,7 +73,7 @@ export function registerAssignmentRoutes(app: Express) {
   app.get(
     "/api/assignments/pending",
     requireAuth,
-    requireRole("hospitalist", "developer"),
+    requireRole("hospitalist", "director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "assignments");
@@ -88,7 +88,7 @@ export function registerAssignmentRoutes(app: Express) {
   app.get(
     "/api/assignments/my",
     requireAuth,
-    requireRole("hospitalist", "developer"),
+    requireRole("hospitalist", "director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "assignments");
@@ -148,7 +148,7 @@ export function registerAssignmentRoutes(app: Express) {
   app.patch(
     "/api/assignments/:id/accept",
     requireAuth,
-    requireRole("hospitalist", "developer"),
+    requireRole("hospitalist", "director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       const id = Number(req.params.id);
@@ -176,7 +176,7 @@ export function registerAssignmentRoutes(app: Express) {
   app.patch(
     "/api/assignments/:id/reject",
     requireAuth,
-    requireRole("hospitalist", "developer"),
+    requireRole("hospitalist", "director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       const id = Number(req.params.id);

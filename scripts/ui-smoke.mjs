@@ -70,7 +70,7 @@ if (!window.DT) { console.log("FATAL: store.js did not set window.DT"); process.
 
 const JSX_FILES = [
   "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
-  "HospitalistDashboard.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
+  "HospitalistDashboard.jsx", "HospitalistWork.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
   "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",

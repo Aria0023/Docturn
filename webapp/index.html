@@ -45,6 +45,7 @@
 <script type="text/babel" src="LockScreen.jsx"></script>
 <script type="text/babel" src="AppShell.jsx"></script>
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
+<script type="text/babel" src="HospitalistWork.jsx"></script>
 <script type="text/babel" src="HospitalistHistory.jsx"></script>
 <script type="text/babel" src="ErDoctorDashboard.jsx"></script>
 <script type="text/babel" src="DirectorDashboard.jsx"></script>
@@ -132,7 +133,7 @@ const NAV = {
     { id: "settings",   label: "Settings",   icon: "settings" },
   ],
   director: [
-    { id: "dashboard",  label: "Overview",   icon: "layout-dashboard" },
+    { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
@@ -334,7 +335,7 @@ function App() {
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
     { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
@@ -343,13 +344,13 @@ function App() {
     { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel erPhysicians={st.erPhysicians} shifts={st.shifts} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} /> },
     { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
     { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
   else screen = <CustomizableDashboard role="director" widgets={[
     { id: "rotation", label: "Rotation & roster", icon: "users-round", node: <DirectorDashboard bare providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} /> },
-    { id: "board", label: "Patient board (declines & reassign)", icon: "layout-list", node: boardEl },
+    { id: "myhosp", label: "My hospitalist work", icon: "stethoscope", node: <HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} consultServices={consultServiceNames} onMessage={message} /> },
     { id: "admissions", label: "Admissions log", icon: "scroll-text", node: <AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} /> },
   ]} />;
 

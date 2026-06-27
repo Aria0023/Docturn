@@ -162,7 +162,10 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
 // Intake + routing panel — the ER physician's primary action (write the note,
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
-function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, services }) {
+function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, services, hiddenServices, onToggleService, onAddService }) {
+  const [mgmt, setMgmt] = React.useState(false);
+  const [newSvc, setNewSvc] = React.useState("");
+  const hidden = hiddenServices || [];
   // Per-service config from the director's Consult services tab: the on-call
   // consultant (explicit pin OR live registered roster — no fake fallback) and
   // the PA/NPs assigned under that service.
@@ -172,7 +175,9 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   // PA/NP/RN pool for the ER physician's quick-add: registered midlevels.
   const pool = (midlevels && midlevels.length) ? midlevels : MIDLEVEL_POOL;
   // Service menu is director-curated when provided; else the built-in list.
-  const serviceList = (services && services.length) ? services : CONSULT_OPTIONS;
+  const allServices = (services && services.length) ? services : CONSULT_OPTIONS;
+  // The picker shows everything except specialties hidden for this view.
+  const serviceList = allServices.filter((s) => hidden.indexOf(s) < 0);
   const [note, setNote] = React.useState("");
   const [extracted, setExtracted] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
@@ -327,11 +332,38 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 
           {/* Consult services — multi-select */}
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginBottom: 10 }}>
-              <Icon name="users-round" size={15} color="var(--muted-foreground)" style={{ alignSelf: "center" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+              <Icon name="users-round" size={15} color="var(--muted-foreground)" />
               <span style={{ fontSize: 13, fontWeight: 600 }}>Consult services</span>
               <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>optional · select multiple</span>
+              {onToggleService && <button onClick={() => setMgmt((v) => !v)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--border)", background: mgmt ? "var(--secondary)" : "#fff", borderRadius: "var(--radius-md)", padding: "4px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", color: "var(--foreground)" }}><Icon name={mgmt ? "check" : "sliders-horizontal"} size={12} />{mgmt ? "Done" : "Customize"}</button>}
             </div>
+
+            {mgmt && (
+              <div style={{ marginBottom: 12, padding: 12, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: 8 }}>Show in picker</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {allServices.map((s) => {
+                    const shown = hidden.indexOf(s) < 0;
+                    const c = window.specialtyColor(s);
+                    return (
+                      <button key={s} onClick={() => onToggleService(s)} title={shown ? "Hide from picker" : "Show in picker"}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)",
+                          border: `1px solid ${shown ? c.color : "var(--border)"}`, background: shown ? c.bg : "#fff", color: shown ? c.color : "var(--muted-foreground)", opacity: shown ? 1 : 0.6 }}>
+                        <Icon name={shown ? "eye" : "eye-off"} size={11} />{s}
+                      </button>
+                    );
+                  })}
+                </div>
+                {onAddService && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input value={newSvc} onChange={(e) => setNewSvc(e.target.value)} placeholder="Add a specialty…" onKeyDown={(e) => { if (e.key === "Enter" && newSvc.trim()) { onAddService(newSvc.trim()); setNewSvc(""); } }}
+                      style={{ flex: 1, height: 32, border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "0 10px", fontSize: 13, fontFamily: "var(--font-sans)", outline: "none" }} />
+                    <Button size="sm" icon="plus" onClick={() => { if (newSvc.trim()) { onAddService(newSvc.trim()); setNewSvc(""); } }}>Add</Button>
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {serviceList.map((s) => {
                 const on = consults.includes(s);

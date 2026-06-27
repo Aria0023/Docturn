@@ -125,7 +125,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
       <div style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "-6px 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
         <Icon name="clock" size={13} /> Shift list (7am–7pm) · resets at 7am · older admissions move to the history tab
       </div>
-      <Card style={{ padding: 0, overflow: "hidden" }}>
+      <Card style={{ padding: 0, overflow: "visible" }}>
         {shiftAdmits.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Nothing accepted yet this shift.</div>}
         {shiftAdmits.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>

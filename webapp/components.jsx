@@ -259,7 +259,7 @@ function ConsultAdd({ services, onPick, label }) {
       {open && (
         <React.Fragment>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-          <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 41, width: 210, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 240, maxWidth: "80vw", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {list.map((s) => {
               const c = specialtyColor(s);
               return (

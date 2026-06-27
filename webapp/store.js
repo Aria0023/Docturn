@@ -187,7 +187,7 @@
   function seed() {
     var t0 = now();
     return {
-      v: 8,
+      v: 9,
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
@@ -208,6 +208,7 @@
       scheduleSources: { CEDARS: "amion", ISPN: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", PINE: "none" },
       // Director-editable consult-service menu that powers the ER intake.
       consultServices: defaultConsultServices(),
+      consultHidden: [], // specialty names hidden from the ER route-assignment picker
       session: null, // { role, org, user, name }
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
       ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
@@ -1053,6 +1054,18 @@
     },
     resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
     clearComplianceLogs: function () { set(function (s) { s.audit = []; s.phiLog = []; s.incidents = []; return s; }); },
+    // Show/hide a specialty in the ER route-assignment consult picker (does NOT
+    // delete the director-managed consult service + roster).
+    toggleConsultHidden: function (name) {
+      set(function (s) {
+        var nm = String(name || "").trim(); if (!nm) return s;
+        var h = (s.consultHidden || []).slice();
+        var i = h.indexOf(nm);
+        if (i >= 0) h.splice(i, 1); else h.push(nm);
+        s.consultHidden = h;
+        return s;
+      });
+    },
 
     /* toast lifecycle */
     toast: function (t) { set(function (s) { s.__toast = t; return s; }); },

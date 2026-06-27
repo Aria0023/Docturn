@@ -36,6 +36,41 @@ export function registerProviderRoutes(app: Express) {
     res.json(await storage().listHospitalists(me.organizationId));
   });
 
+  // A Hospitalist Director opts in to also take patients: give their account a
+  // (working) rotation profile if it doesn't have one. Idempotent.
+  app.post(
+    "/api/director/become-hospitalist",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      let h = await storage().getHospitalistByUser(me.organizationId, me.id);
+      if (!h) {
+        const existing = await storage().listHospitalists(me.organizationId);
+        h = await storage().createHospitalist({
+          organizationId: me.organizationId,
+          userId: me.id,
+          specialty: "Hospital Medicine",
+          currentPatientCount: 0,
+          patientCap: 12,
+          rotationOrder: existing.length,
+          working: true,
+          shiftType: "day",
+        });
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "director.become_hospitalist",
+          resourceType: "hospitalist",
+          resourceId: h.id,
+          details: {},
+          riskLevel: "low",
+        });
+      }
+      res.status(201).json({ hospitalistId: h.id });
+    },
+  );
+
   app.get("/api/hospitalists/working", requireAuth, async (req, res) => {
     const me = currentUser(req);
     res.json(await storage().listWorkingHospitalists(me.organizationId));
