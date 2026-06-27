@@ -59,6 +59,7 @@
 <script type="text/babel" src="CareTeam.jsx"></script>
 <script type="text/babel" src="PatientBoard.jsx"></script>
 <script type="text/babel" src="DeveloperDashboard.jsx"></script>
+<script type="text/babel" src="OrgConfig.jsx"></script>
 <script type="text/babel" src="Compliance.jsx"></script>
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
@@ -146,11 +147,12 @@ const NAV = {
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
+    { id: "enterprise", label: "Enterprise defaults", icon: "globe" },
+    { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "roles",      label: "Role management", icon: "shield-half" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
     { id: "compliance", label: "Compliance",      icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
-    { id: "settings",   label: "Tenant settings", icon: "settings" },
   ],
 };
 
@@ -171,6 +173,7 @@ const TOP = {
   access:     ["Access & people", "Manage your organization's people and the roles that govern their access"],
   appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
   settings:   ["Organization settings", "Rotation rules, feature flags and integrations"],
+  enterprise: ["Enterprise defaults", "Platform-wide rules and permissions every tenant inherits"],
 };
 
 function Toast({ toast }) {
@@ -331,6 +334,8 @@ function App() {
     screen = <AccessPeople scopeOrg={st.selectedOrg} domainRoles={dom.roles} domainPortals={dom.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
   }
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
+  else if (nav === "enterprise") screen = <OrgConfig scope="*" audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
+  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[

@@ -36,12 +36,17 @@ export async function runAutoClean(olderThanHours = 24): Promise<number> {
   try {
     const orgs = await storage().listOrganizations();
     for (const o of orgs) {
-      removed += await storage().purgeOldPatients(o.id, olderThanHours * 3600_000);
+      // Each org can individualize its retention window (or disable auto-clean
+      // with 0). Falls back to the platform default when unset.
+      const perOrg = await storage().getOrgSetting(o.id, "autoCleanHours");
+      const hours = typeof perOrg === "number" ? perOrg : olderThanHours;
+      if (hours <= 0) continue; // 0 = retain indefinitely for this org
+      removed += await storage().purgeOldPatients(o.id, hours * 3600_000);
     }
   } catch (err) {
     console.error("[autoclean] sweep failed", err);
   }
-  if (removed) console.log(`[autoclean] purged ${removed} stale patient record(s) (>${olderThanHours}h)`);
+  if (removed) console.log(`[autoclean] purged ${removed} stale patient record(s)`);
   return removed;
 }
 

@@ -155,6 +155,71 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // Per-organization rule settings (individualized), read by the developer's
+  // org-detail page. Combines the organization columns (timeout, rotation) with
+  // org-scoped key/value settings (auto-reassign, retention) and a compliance
+  // summary, so each tenant carries its own preferences.
+  const ORG_SETTING_KEYS = ["autoReassignOnDecline", "autoCleanHours"] as const;
+  app.get(
+    "/api/dev/organizations/:id/settings",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const id = Number(req.params.id);
+      const org = await storage().getOrganization(id);
+      if (!org) return res.status(404).json({ error: "not_found" });
+      const settings: Record<string, unknown> = {};
+      for (const k of ORG_SETTING_KEYS) {
+        const v = await storage().getOrgSetting(id, k);
+        settings[k] = v === undefined ? null : v;
+      }
+      const [audit, phi] = await Promise.all([
+        storage().listAuditLogs(id, 100),
+        storage().countPhiAccess(id),
+      ]);
+      res.json({
+        org: {
+          id: org.id,
+          code: org.code,
+          name: org.name,
+          assignmentTimeoutMin: org.assignmentTimeoutMin,
+          rotationMode: org.rotationMode,
+          roundRobinShiftTypes: org.roundRobinShiftTypes,
+        },
+        settings,
+        compliance: { auditCount: audit.length, phiCount: phi },
+      });
+    },
+  );
+
+  // Persist a per-organization rule setting (developer edits ANY tenant).
+  app.patch(
+    "/api/dev/organizations/:id/settings",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = Number(req.params.id);
+      const org = await storage().getOrganization(id);
+      if (!org) return res.status(404).json({ error: "not_found" });
+      const b = req.body ?? {};
+      if (typeof b.key !== "string" || !ORG_SETTING_KEYS.includes(b.key)) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      await storage().setOrgSetting(id, b.key, b.value, me.id);
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.org_setting",
+        resourceType: "organization",
+        resourceId: id,
+        details: { key: b.key, value: b.value },
+        riskLevel: "medium",
+      });
+      res.json({ ok: true, key: b.key, value: b.value });
+    },
+  );
+
   // Cross-tenant user/specialist creation (v2).
   app.get(
     "/api/dev/users",

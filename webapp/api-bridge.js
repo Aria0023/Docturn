@@ -351,23 +351,78 @@
   // Developer: hydrate real organizations into the kit's org shape.
   function hydrateOrgs() {
     return get("/api/dev/organizations").then(function (orgs) {
+      var tenants = (orgs || []).filter(function (o) {
+        return String(o.code).toUpperCase() !== PLATFORM_ORG; // platform org isn't a tenant
+      }).map(function (o) {
+        return {
+          id: o.id, code: o.code, name: o.name,
+          city: o.city, state: o.state, timezone: o.timezone,
+          users: o.userCount || 0, assignments: 0, active: true,
+        };
+      });
       DT.set(function (s) {
-        s.orgs = (orgs || []).filter(function (o) {
-          return String(o.code).toUpperCase() !== PLATFORM_ORG; // platform org isn't a tenant
-        }).map(function (o) {
-          return {
-            id: o.id, code: o.code, name: o.name,
-            city: o.city, state: o.state, timezone: o.timezone,
-            users: o.userCount || 0, assignments: 0, active: true,
-          };
-        });
+        s.orgs = tenants;
         if (s.orgs.length && !s.orgs.some(function (o) { return o.code === s.selectedOrg; })) {
           s.selectedOrg = s.orgs[0].code;
         }
         return s;
       });
+      // Pull each tenant's individualized rule settings into orgConfigs so the
+      // developer's per-org page reflects real backend state (overrides vs
+      // inherited enterprise defaults).
+      return Promise.all(tenants.map(function (o) {
+        return get("/api/dev/organizations/" + o.id + "/settings")
+          .then(function (d) { return { code: o.code, d: d }; })
+          .catch(function () { return null; });
+      })).then(function (rows) {
+        DT.set(function (s) {
+          var ent = (s.enterprise || {}).rules || {};
+          var cfgs = Object.assign({}, s.orgConfigs);
+          (rows || []).filter(Boolean).forEach(function (row) {
+            var d = row.d || {}, org = d.org || {}, setg = d.settings || {};
+            var rules = {};
+            // Only record values that genuinely differ from the enterprise
+            // default — so unchanged tenants show "Inherited", not "Custom".
+            if (typeof org.assignmentTimeoutMin === "number" && org.assignmentTimeoutMin !== ent.timeout) rules.timeout = org.assignmentTimeoutMin;
+            if (org.rotationMode && org.rotationMode !== ent.rotationMode) rules.rotationMode = org.rotationMode;
+            if (setg.autoReassignOnDecline === true || setg.autoReassignOnDecline === false) rules.autoReassign = !!setg.autoReassignOnDecline;
+            if (typeof setg.autoCleanHours === "number") rules.autoCleanHours = setg.autoCleanHours;
+            var c = Object.assign({}, cfgs[row.code]); c.rules = Object.assign({}, c.rules, rules); cfgs[row.code] = c;
+          });
+          s.orgConfigs = cfgs;
+          return s;
+        });
+      });
     }).catch(function () {});
   }
+  function orgIdForCode(code) {
+    var o = (DT.getState().orgs || []).find(function (x) { return x.code === code; });
+    return o ? o.id : null;
+  }
+  // Persist the real per-org rule fields to the backend (others stay local).
+  var origSetOrgRule = DT.actions.setOrgRule;
+  DT.actions.setOrgRule = function (code, key, val) {
+    var id = orgIdForCode(code);
+    if (id != null) {
+      if (key === "timeout") api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: Number(val) || 15 }).catch(function () {});
+      else if (key === "rotationMode") api("PATCH", "/api/dev/organizations/" + id, { rotationMode: val }).catch(function () {});
+      else if (key === "autoReassign") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoReassignOnDecline", value: !!val }).catch(function () {});
+      else if (key === "autoCleanHours") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoCleanHours", value: Number(val) || 0 }).catch(function () {});
+    }
+    if (origSetOrgRule) return origSetOrgRule(code, key, val);
+  };
+  var origResetOrgRule = DT.actions.resetOrgRule;
+  DT.actions.resetOrgRule = function (code, key) {
+    var id = orgIdForCode(code);
+    var ent = (DT.getState().enterprise || {}).rules || {};
+    if (id != null) {
+      if (key === "timeout") api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: Number(ent.timeout) || 15 }).catch(function () {});
+      else if (key === "rotationMode") api("PATCH", "/api/dev/organizations/" + id, { rotationMode: ent.rotationMode || "lowest_census" }).catch(function () {});
+      else if (key === "autoReassign") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoReassignOnDecline", value: null }).catch(function () {});
+      else if (key === "autoCleanHours") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoCleanHours", value: null }).catch(function () {});
+    }
+    if (origResetOrgRule) return origResetOrgRule(code, key);
+  };
 
   // ---- action overrides ----------------------------------------------------
   // Real authentication for both first login and the topbar role switcher, so

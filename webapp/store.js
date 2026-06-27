@@ -208,7 +208,7 @@
   function seed() {
     var t0 = now();
     return {
-      v: 9,
+      v: 10,
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
@@ -410,6 +410,23 @@
           portals: ["hospitalist"], perms: ["view_census"], features: [], users: 12 },
       ],
 
+      // Enterprise (platform-wide) defaults every organization inherits unless it
+      // overrides a value. The developer edits these on "Enterprise defaults"; an
+      // org's detail page can override any rule or permission individually.
+      enterprise: {
+        rules: { timeout: 15, autoReassign: false, autoCleanHours: 24, rotationMode: "lowest_census", onCallOnly: false, activeOnly: true },
+        permissions: {
+          hospitalist: ["view_census", "manage_assignments", "request_consult", "message"],
+          er_doctor:   ["view_census", "assign_patients", "request_consult", "message"],
+          er_director: ["view_census", "assign_patients", "view_reports", "manage_staff", "approve_users", "message"],
+          director:    ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "approve_users", "request_consult", "message"],
+          developer:   ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "system_settings", "approve_users", "request_consult", "message"],
+        },
+      },
+      // Sparse per-organization overrides keyed by org code. Only customized keys
+      // are present; everything else inherits from `enterprise`.
+      orgConfigs: {},
+
       notifications: [
         { id: uid("n"), icon: "route", title: "New assignment routed", body: "Patient RM → you · round-robin", at: t0 - 90000, read: false },
         { id: uid("n"), icon: "message-square", title: "Dr. Sarah Chen", body: "Accepting the 412 hand-off now.", at: t0 - 120000, read: false },
@@ -432,7 +449,11 @@
       var raw = localStorage.getItem(KEY);
       if (!raw) return null;
       var s = JSON.parse(raw);
-      if (!s || s.v !== 7) return null;
+      if (!s || s.v !== 10) return null;
+      // Per-org / enterprise config (added v10) — backfill so older saves don't
+      // crash the developer settings pages.
+      if (!s.enterprise) s.enterprise = seed().enterprise;
+      if (!s.orgConfigs) s.orgConfigs = {};
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
@@ -526,6 +547,35 @@
     s.notifications = [Object.assign({ id: uid("n"), at: now(), read: false }, entry)].concat(s.notifications).slice(0, 30);
   }
   function actorName(s) { return (s.session && s.session.name) || s.me.name; }
+
+  /* ---- enterprise / per-org config helpers ------------------------------- */
+  function kvPair(key, val) { var o = {}; o[key] = val; return o; }
+  function togglePerm(list, perm, on) {
+    var arr = (list || []).slice();
+    var i = arr.indexOf(perm);
+    if (on && i < 0) arr.push(perm);
+    if (!on && i >= 0) arr.splice(i, 1);
+    return arr;
+  }
+  // Effective config for an org code (or "*" for enterprise itself): enterprise
+  // defaults merged with that org's sparse overrides, plus which keys are
+  // overridden so the UI can show "inherited" vs "custom".
+  function orgEffectiveConfig(code) {
+    var ent = state.enterprise || { rules: {}, permissions: {} };
+    if (!code || code === "*") {
+      return { rules: Object.assign({}, ent.rules), permissions: Object.assign({}, ent.permissions), overridden: { rules: [], permissions: [] }, scope: "*" };
+    }
+    var ov = (state.orgConfigs || {})[code] || {};
+    var rules = Object.assign({}, ent.rules, ov.rules || {});
+    var perms = {};
+    Object.keys(ent.permissions || {}).forEach(function (r) {
+      perms[r] = (ov.permissions && ov.permissions[r]) ? ov.permissions[r].slice() : (ent.permissions[r] || []).slice();
+    });
+    return {
+      rules: rules, permissions: perms, scope: code,
+      overridden: { rules: Object.keys(ov.rules || {}), permissions: Object.keys(ov.permissions || {}) },
+    };
+  }
 
   /* ---- the 1-second clock: live countdowns + expiry re-routing ---------- */
   var lastTickRender = 0;
@@ -1041,6 +1091,65 @@
 
     /* org settings */
     setSetting: function (key, val) { set(function (s) { s.settings = Object.assign({}, s.settings, (function () { var o = {}; o[key] = val; return o; })()); return s; }); },
+
+    /* enterprise defaults + per-organization overrides (developer console) */
+    setEnterpriseRule: function (key, val) {
+      set(function (s) {
+        var ent = Object.assign({}, s.enterprise);
+        ent.rules = Object.assign({}, ent.rules, kvPair(key, val));
+        s.enterprise = ent;
+        pushAudit(s, { action: "enterprise_rule_set", resource: key, risk: "medium" });
+        return s;
+      });
+    },
+    setOrgRule: function (code, key, val) {
+      set(function (s) {
+        var cfgs = Object.assign({}, s.orgConfigs);
+        var c = Object.assign({}, cfgs[code]);
+        c.rules = Object.assign({}, c.rules, kvPair(key, val));
+        cfgs[code] = c; s.orgConfigs = cfgs;
+        pushAudit(s, { action: "org_rule_set", resource: code + "." + key, risk: "medium" });
+        return s;
+      });
+    },
+    resetOrgRule: function (code, key) {
+      set(function (s) {
+        var cfgs = Object.assign({}, s.orgConfigs);
+        var c = Object.assign({}, cfgs[code]);
+        var r = Object.assign({}, c.rules); delete r[key]; c.rules = r;
+        cfgs[code] = c; s.orgConfigs = cfgs;
+        pushAudit(s, { action: "org_rule_reset", resource: code + "." + key, risk: "low" });
+        return s;
+      });
+    },
+    setRolePerm: function (scope, role, perm, on) {
+      set(function (s) {
+        if (scope === "*") {
+          var ent = Object.assign({}, s.enterprise);
+          var p = Object.assign({}, ent.permissions);
+          p[role] = togglePerm(p[role] || [], perm, on);
+          ent.permissions = p; s.enterprise = ent;
+        } else {
+          var cfgs = Object.assign({}, s.orgConfigs);
+          var c = Object.assign({}, cfgs[scope]);
+          var pp = Object.assign({}, c.permissions || {});
+          var base = ((s.enterprise.permissions || {})[role] || []).slice();
+          pp[role] = togglePerm(pp[role] || base, perm, on);
+          c.permissions = pp; cfgs[scope] = c; s.orgConfigs = cfgs;
+        }
+        pushAudit(s, { action: "permission_set", resource: (scope === "*" ? "enterprise" : scope) + "." + role + "." + perm, risk: "medium" });
+        return s;
+      });
+    },
+    resetOrgPerms: function (code, role) {
+      set(function (s) {
+        var cfgs = Object.assign({}, s.orgConfigs);
+        var c = Object.assign({}, cfgs[code]);
+        var pp = Object.assign({}, c.permissions || {}); delete pp[role]; c.permissions = pp;
+        cfgs[code] = c; s.orgConfigs = cfgs;
+        return s;
+      });
+    },
     toggleFlag: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { flags: Object.assign({}, s.settings.flags, (function () { var o = {}; o[key] = !s.settings.flags[key]; return o; })()) }); pushAudit(s, { action: "toggle_feature_flag", resource: key, risk: "low" }); return s; }); },
     toggleIntegration: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { integrations: Object.assign({}, s.settings.integrations, (function () { var o = {}; o[key] = !s.settings.integrations[key]; return o; })()) }); pushAudit(s, { action: "toggle_integration", resource: key, risk: "medium" }); s.__toast = { tone: "accepted", title: (s.settings.integrations[key] ? "Connected" : "Disconnected"), msg: key + " integration updated." }; return s; }); },
     addShiftType: function () {
@@ -1174,7 +1283,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, orgConfig: orgEffectiveConfig };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

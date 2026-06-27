@@ -72,7 +72,7 @@ const JSX_FILES = [
   "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
   "HospitalistDashboard.jsx", "HospitalistWork.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
-  "PatientBoard.jsx", "DeveloperDashboard.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
+  "PatientBoard.jsx", "DeveloperDashboard.jsx", "OrgConfig.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
   "CustomizableDashboard.jsx", "ConsultServices.jsx", "RegistrationApprovals.jsx",
 ];
@@ -123,7 +123,7 @@ async function clickEveryButton(roleLabel, screen) {
 }
 
 const NAV = {
-  developer: ["dashboard", "roles", "consult", "compliance", "appearance", "settings"],
+  developer: ["dashboard", "enterprise", "settings", "roles", "consult", "compliance", "appearance"],
   director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_doctor: ["dashboard", "messages", "directory", "compliance"],
@@ -172,6 +172,42 @@ rec("deleteTenant force-cascades a populated tenant", cascadeOk && !(DT.getState
 let ownErr = "";
 try { await DT.actions.deleteTenant({ code: "DOCTURN" }); } catch (e) { ownErr = e.message; }
 rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr), "msg=" + ownErr);
+
+// Enterprise defaults vs per-organization overrides (individualized config).
+{
+  // Per-org rule starts inherited (no override recorded), then becomes custom.
+  const before = DT.orgConfig("ISPN");
+  DT.actions.setOrgRule("ISPN", "autoCleanHours", 48);
+  await flush();
+  const after = DT.orgConfig("ISPN");
+  rec("per-org rule override is individualized (ISPN autoCleanHours=48, marked custom)",
+    after.rules.autoCleanHours === 48 && after.overridden.rules.indexOf("autoCleanHours") >= 0
+      && before.overridden.rules.indexOf("autoCleanHours") < 0,
+    "before=" + JSON.stringify(before.overridden.rules) + " after=" + JSON.stringify(after.overridden.rules) + " val=" + after.rules.autoCleanHours);
+  // Reset reverts to the inherited enterprise default.
+  DT.actions.resetOrgRule("ISPN", "autoCleanHours");
+  await flush();
+  const reset = DT.orgConfig("ISPN");
+  const ent = DT.getState().enterprise.rules.autoCleanHours;
+  rec("reset reverts a per-org rule to the enterprise default",
+    reset.overridden.rules.indexOf("autoCleanHours") < 0 && reset.rules.autoCleanHours === ent,
+    "overridden=" + JSON.stringify(reset.overridden.rules) + " val=" + reset.rules.autoCleanHours + " ent=" + ent);
+  // Enterprise change propagates to every org that hasn't overridden it.
+  DT.actions.setEnterpriseRule("timeout", 25);
+  await flush();
+  rec("enterprise default propagates to inheriting orgs",
+    DT.orgConfig("ISPN").rules.timeout === 25 && DT.orgConfig("*").rules.timeout === 25,
+    "ispn=" + DT.orgConfig("ISPN").rules.timeout);
+  // Per-org permission override is independent of enterprise.
+  DT.actions.setRolePerm("*", "hospitalist", "view_reports", false);
+  DT.actions.setRolePerm("ISPN", "hospitalist", "view_reports", true);
+  await flush();
+  const perm = DT.orgConfig("ISPN");
+  rec("per-org permission override is individualized",
+    perm.permissions.hospitalist.indexOf("view_reports") >= 0
+      && DT.orgConfig("*").permissions.hospitalist.indexOf("view_reports") < 0,
+    "ispn=" + JSON.stringify(perm.permissions.hospitalist));
+}
 
 // Amion-style import: parsed providers become real users in the org
 DT.actions.addTenant({ name: "Amion Clinic", code: "AMION", city: "Z", state: "CA", timezone: "America/Los_Angeles" });
