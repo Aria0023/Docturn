@@ -352,7 +352,7 @@ function App() {
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
   ]} />;
-  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
+  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
   else screen = <CustomizableDashboard role="director" widgets={[
     { id: "rotation", label: "Rotation & roster", icon: "users-round", node: <DirectorDashboard bare providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} /> },
     { id: "myhosp", label: "My hospitalist work", icon: "stethoscope", node: <HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} consultServices={consultServiceNames} onMessage={message} /> },
@@ -363,10 +363,14 @@ function App() {
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
 
   const impersonationBanner = st.impersonating && (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
-      <Icon name="eye" size={16} color="#FDBA74" />
-      <span style={{ fontSize: 13, fontWeight: 600 }}>Root access — viewing {st.impersonating.name}'s portal ({st.impersonating.role.replace(/_/g, " ")} · {st.impersonating.org})</span>
-      <span style={{ fontSize: 12, color: "#FED7AA" }}>You're seeing exactly what this user sees. Actions are audited.</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: st.impersonating.managing ? "#1E3A5F" : "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
+      <Icon name={st.impersonating.managing ? "building-2" : "eye"} size={16} color="#FDBA74" />
+      <span style={{ fontSize: 13, fontWeight: 600 }}>
+        {st.impersonating.managing
+          ? "Managing " + st.impersonating.name + " (" + st.impersonating.org + ") — full per-organization portal"
+          : "Root access — viewing " + st.impersonating.name + "'s portal (" + st.impersonating.role.replace(/_/g, " ") + " · " + st.impersonating.org + ")"}
+      </span>
+      <span style={{ fontSize: 12, color: "#FED7AA" }}>{st.impersonating.managing ? "Every change applies to this organization only. Actions are audited." : "You're seeing exactly what this user sees. Actions are audited."}</span>
       <button onClick={() => a.stopImpersonating()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
     </div>
   );

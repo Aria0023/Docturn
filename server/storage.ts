@@ -638,11 +638,11 @@ export class DatabaseStorage implements IStorage {
     await this.db.insert(phiAccessLogs).values(row);
   }
   async countPhiAccess(orgId: number) {
-    const rows = await this.db
-      .select({ id: phiAccessLogs.id })
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)` })
       .from(phiAccessLogs)
       .where(eq(phiAccessLogs.organizationId, orgId));
-    return rows.length;
+    return Number(row?.n ?? 0);
   }
   async listAuditLogs(orgId: number, limit = 100) {
     return this.db

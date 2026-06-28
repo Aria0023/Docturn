@@ -192,6 +192,23 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // A tenant's real audit + PHI trail (developer views ANY org's compliance).
+  app.get(
+    "/api/dev/organizations/:id/audit",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const id = Number(req.params.id);
+      const org = await storage().getOrganization(id);
+      if (!org) return res.status(404).json({ error: "not_found" });
+      const [audit, phi] = await Promise.all([
+        storage().listAuditLogs(id, 100),
+        storage().listPhiAccess(id, 50),
+      ]);
+      res.json({ org: { code: org.code }, audit, phiAccess: phi });
+    },
+  );
+
   // Persist a per-organization rule setting (developer edits ANY tenant).
   app.patch(
     "/api/dev/organizations/:id/settings",
@@ -361,6 +378,44 @@ export function registerDevRoutes(app: Express) {
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
         res.json(toSafeUser(target));
+      });
+    },
+  );
+
+  // Enter an organization's context as its senior admin (audited session swap)
+  // so the developer gets that tenant's FULL portal — board, compliance,
+  // directory, approvals, settings — all individualized to that org.
+  app.post(
+    "/api/dev/manage-org",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res, next) => {
+      const me = currentUser(req);
+      const orgId = Number(req.body?.orgId);
+      const org = await storage().getOrganization(orgId);
+      if (!org) return res.status(404).json({ error: "not_found" });
+      const users = await storage().listUsers(orgId);
+      // Prefer the broadest admin surface available in the tenant.
+      const order = ["director", "er_director", "er_doctor", "hospitalist"];
+      let admin = null;
+      for (const role of order) {
+        admin = users.find((u) => u.role === role) || null;
+        if (admin) break;
+      }
+      if (!admin) admin = users[0] || null;
+      if (!admin) return res.status(409).json({ error: "no_admin", message: "This organization has no users to manage as." });
+      await appendAudit({
+        organizationId: orgId,
+        userId: me.id,
+        action: "dev.manage_org",
+        resourceType: "organization",
+        resourceId: orgId,
+        details: { as: admin.id, role: admin.role },
+        riskLevel: "high",
+      });
+      req.login(admin as unknown as Express.User, (err) => {
+        if (err) return next(err);
+        res.json({ ...toSafeUser(admin), orgCode: org.code, orgName: org.name });
       });
     },
   );

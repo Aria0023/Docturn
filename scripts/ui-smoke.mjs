@@ -209,6 +209,26 @@ rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr),
     "ispn=" + JSON.stringify(perm.permissions.hospitalist));
 }
 
+// developer enters an organization's FULL portal (org-scoped admin context) so
+// every per-org surface — compliance, directory, board, settings — is real.
+await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+{
+  await DT.actions.manageOrg({ code: "ISPN" });
+  for (let i = 0; i < 10; i++) await flush();
+  const st = DT.getState();
+  rec("manageOrg enters the org as its admin (real per-org portal)",
+    !!(st.impersonating && st.impersonating.managing) && st.session && st.session.role !== "developer" && st.session.org === "ISPN",
+    "session=" + JSON.stringify(st.session) + " imp=" + JSON.stringify(st.impersonating));
+  // real per-org audit hydrated for the managed org
+  rec("managed org shows its real backend audit trail", Array.isArray(st.audit) && st.audit.length >= 1,
+    "audit=" + (st.audit || []).length);
+  await DT.actions.stopImpersonating();
+  for (let i = 0; i < 8; i++) await flush();
+  rec("return to developer after managing an org",
+    (DT.getState().session || {}).role === "developer" && !DT.getState().impersonating,
+    "session=" + JSON.stringify(DT.getState().session));
+}
+
 // Amion-style import: parsed providers become real users in the org
 DT.actions.addTenant({ name: "Amion Clinic", code: "AMION", city: "Z", state: "CA", timezone: "America/Los_Angeles" });
 await flush(); await flush();
@@ -376,6 +396,8 @@ rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.
 await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 DT.actions.setRole("hospitalist");
 await flush(); await flush();
+// Provider hydration is async; poll briefly so the assertion isn't racing it.
+for (let i = 0; i < 12 && (DT.getState().providers || []).length < 4; i++) await flush();
 const swSess = DT.getState().session || {};
 rec("role switch developer→hospitalist works", swSess.role === "hospitalist" && (DT.getState().providers || []).length >= 4, "session=" + JSON.stringify(swSess));
 DT.actions.setRole("developer");

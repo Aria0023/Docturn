@@ -366,7 +366,7 @@ function OrgAutocomplete({ value, onText, onPick }) {
   );
 }
 
-function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics, onImpersonate }) {
+function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onManageOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics, onImpersonate }) {
   const [query, setQuery] = React.useState("");
   const [newTenant, setNewTenant] = React.useState(false);
   const detected = React.useMemo(detectLocation, []);
@@ -411,10 +411,10 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
               <Field icon="search" value={query} onChange={setQuery} placeholder="Search by name or code…" />
             </div>
             {orgs.map((o, i) => (
-              <div key={o.code} onClick={() => onSelectOrg && onSelectOrg(o)}
+              <div key={o.code}
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                style={{ display: "flex", alignItems: "center", gap: 13, padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", cursor: "pointer", transition: "background .12s" }}>
+                style={{ display: "flex", alignItems: "center", gap: 13, padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", transition: "background .12s" }}>
                 <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: o.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: o.active ? "var(--primary)" : "var(--status-neutral)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                   {o.code.slice(0, 2)}
                 </span>
@@ -429,7 +429,9 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                   <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>users</div>
                 </div>
                 {o.active ? <Badge status="accepted">Active</Badge> : <Badge status="offline">Suspended</Badge>}
-                <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "inline-flex", alignItems: "center", gap: 4 }}>Manage<Icon name="chevron-right" size={15} color="var(--muted-foreground)" /></span>
+                {/* Config = per-org rules/permissions; Manage = enter the org's full portal */}
+                <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => onSelectOrg && onSelectOrg(o)}>Config</Button>
+                <Button size="sm" icon="log-in" onClick={() => onManageOrg && onManageOrg(o)}>Manage</Button>
               </div>
             ))}
           </Card>

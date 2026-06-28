@@ -19,6 +19,7 @@
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
   var meId = null;   // current user's backend id (for messaging "me" / participants)
+  var auditLoaded = false; // fetch the per-org audit trail once per context, then only while viewing Compliance
   // Demo console: when loaded as an iframe pane with ?token=<t>, this pane
   // authenticates with that bearer token instead of the shared session cookie,
   // so three users can run side by side in one browser. Null for normal use.
@@ -177,6 +178,37 @@
       };
     });
   }
+  // Backend audit/PHI rows → the kit's Compliance shape (per-org, real).
+  function mapAudit(rows, usersById, orgCode) {
+    return (rows || []).map(function (r) {
+      var u = usersById[r.userId];
+      return {
+        id: r.id,
+        at: new Date(r.createdAt || Date.now()).getTime(),
+        actor: (u && u.displayName) || (r.userId ? "User " + r.userId : "System"),
+        role: (u && u.role) || "",
+        action: r.action || "",
+        resource: r.resourceType ? (r.resourceType + (r.resourceId != null ? " #" + r.resourceId : "")) : "",
+        ip: "—",
+        org: orgCode,
+        risk: r.riskLevel || "low",
+      };
+    });
+  }
+  function mapPhi(rows, usersById) {
+    return (rows || []).map(function (r) {
+      var u = usersById[r.userId];
+      return {
+        id: r.id,
+        at: new Date(r.createdAt || Date.now()).getTime(),
+        actor: (u && u.displayName) || (r.userId ? "User " + r.userId : "System"),
+        patient: r.resource || "—",
+        access: r.method || "",
+        fields: "", purpose: "",
+        ok: true,
+      };
+    });
+  }
   function mapBoard(rows) {
     return (rows || []).map(function (r) {
       return {
@@ -240,9 +272,18 @@
       // Director / ER director: pending self-registrations awaiting approval.
       var wantsRegs = (role === "director" || role === "er_director");
       extra.push(wantsRegs ? get("/api/registrations").catch(function () { return null; }) : Promise.resolve(null));
+      // Roles that can see compliance get the REAL per-org audit + PHI trail, so
+      // the Compliance screen reflects this organization (individualized), not a
+      // locally-accumulated demo log. Fetch it once per context, then only while
+      // the Compliance screen is open — so routine rehydrates (every action / WS
+      // event) don't pay for it.
+      var canAudit = (role === "director" || role === "er_director" || role === "developer");
+      var onCompliance = (DT.getState().ui && DT.getState().ui.nav) === "compliance";
+      var wantsAudit = canAudit && (!auditLoaded || onCompliance);
+      extra.push(wantsAudit ? get("/api/audit").catch(function () { return null; }) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
           // Full registered directory (all roles): drives the ER Consult-services
@@ -268,6 +309,12 @@
           if (wantsSent && sent) s.sent = mapSent(sent);
           if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
           if (wantsRegs && regs) s.registrations = regs;
+          if (wantsAudit && auditData) {
+            var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
+            s.audit = mapAudit(auditData.audit, usersById, orgCode);
+            s.phiLog = mapPhi(auditData.phiAccess, usersById);
+            auditLoaded = true;
+          }
           return s;
         });
       });
@@ -440,6 +487,7 @@
     function finish(u, orgCode) {
       lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
       meId = u.id;
+      auditLoaded = false; // new login context → reload that org's audit on first hydrate
       DT.set(function (s) {
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -893,6 +941,7 @@
       .then(function () { return get("/api/user"); })
       .then(function (u) {
         meId = u.id;
+        auditLoaded = false;
         DT.set(function (s) {
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -909,6 +958,34 @@
     return doLogin("developer").then(function () {
       DT.set(function (s) { s.impersonating = null; return s; });
     });
+  };
+
+  // developer enters an ORGANIZATION's context (as its senior admin) to manage
+  // that tenant's full portal — compliance, directory, approvals, board,
+  // settings — every surface individualized to that org. Audited session swap.
+  DT.actions.manageOrg = function (org) {
+    var code = (org && org.code) || org;
+    var id = (org && org.id != null) ? org.id : orgIdForCode(code);
+    if (id == null) { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open org", msg: "Unknown organization." }; return s; }); return; }
+    return api("POST", "/api/dev/manage-org", { orgId: Number(id) })
+      .then(function (u) {
+        meId = u.id;
+        auditLoaded = false;
+        DT.set(function (s) {
+          s.session = { role: u.role, org: u.orgCode || code, user: u.username, name: u.displayName };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+          s.selectedOrg = u.orgCode || code;
+          s.impersonating = { name: u.orgName || code, role: u.role, org: u.orgCode || code, managing: true };
+          s.ui.nav = "dashboard"; s.ui.notifOpen = false;
+          return s;
+        });
+        connectWs();
+        return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+      })
+      .catch(function (e) {
+        var m = String((e && e.message) || "");
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open org", msg: /no_admin/.test(m) ? "This org has no users yet — add one first." : "Try again." }; return s; });
+      });
   };
 
   DT.actions.runDiagnostics = function () {

@@ -70,7 +70,19 @@ function OCNumber({ value, onChange, suffix, width }) {
 
 function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }) {
   const [tab, setTab] = React.useState("rules");
+  const [liveAudit, setLiveAudit] = React.useState(null);
   const DT = window.DT, a = DT.actions;
+  // For a specific org, pull that tenant's REAL audit trail from the backend so
+  // compliance is genuinely individualized (not the developer's platform log).
+  React.useEffect(() => {
+    if (tab !== "compliance" || scope === "*" || !org || org.id == null) return;
+    let alive = true;
+    fetch("/api/dev/organizations/" + org.id + "/audit", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => { if (alive) setLiveAudit(Array.isArray(d.audit) ? d.audit : []); })
+      .catch(() => { if (alive) setLiveAudit([]); });
+    return () => { alive = false; };
+  }, [tab, scope, org && org.id]);
   const cfg = DT.orgConfig(scope);
   const isEnt = scope === "*";
   const rules = cfg.rules;
@@ -83,7 +95,16 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
     ? "Platform-wide defaults. Every organization inherits these unless it overrides a value on its own page."
     : "Settings here apply to this organization only. Unset values inherit the enterprise defaults.";
 
-  const scopedAudit = isEnt ? audit : (audit || []).filter((r) => !r.org || r.org === scope);
+  // Prefer the live per-org audit (real backend rows) for a specific org;
+  // fall back to the in-store audit (enterprise/platform view).
+  const scopedAudit = (!isEnt && liveAudit)
+    ? liveAudit.map((r) => ({
+        id: r.id, at: new Date(r.createdAt || Date.now()).getTime(),
+        actor: r.userId ? "User " + r.userId : "System", role: "",
+        action: r.action || "", resource: r.resourceType ? (r.resourceType + (r.resourceId != null ? " #" + r.resourceId : "")) : "",
+        org: scope, risk: r.riskLevel || "low",
+      }))
+    : (isEnt ? audit : (audit || []).filter((r) => !r.org || r.org === scope));
   const scopedInc = isEnt ? incidents : (incidents || []).filter((r) => !r.org || r.org === scope);
 
   const TABS = [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["compliance", "Compliance", "shield-check"]];
