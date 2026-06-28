@@ -675,6 +675,14 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   }
 }
 
+// Self-service password change: a wrong current password is rejected (so the
+// account is unchanged and demo logins keep working).
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+{
+  const r = await DT.actions.changePassword("definitely-wrong-pass", "BrandNewPass123");
+  rec("password change rejects an incorrect current password", r && r.ok === false, "r=" + JSON.stringify(r));
+}
+
 // Consulting a service with a NAMED on-call records that provider's name (not a
 // nameless "on-call team") — the requester sees who they called.
 await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();

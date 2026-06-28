@@ -265,6 +265,30 @@ export function registerAuthRoutes(app: Express) {
     const list = await storage().listUsers(me.organizationId);
     res.json(list.map(toSafeUser));
   });
+
+  // Self-service password change: verify the current password, then set a new one
+  // (scrypt-hashed). Lets users move off the shared demo password for real use.
+  app.patch("/api/account/password", requireAuth, async (req, res) => {
+    const me = req.user as unknown as User;
+    const current = String((req.body || {}).currentPassword || "");
+    const next = String((req.body || {}).newPassword || "");
+    if (next.length < 8) return res.status(400).json({ error: "weak_password" });
+    const fresh = await storage().getUserById(me.id);
+    if (!fresh) return res.status(404).json({ error: "not_found" });
+    const ok = await verifyPassword(current, fresh.passwordHash);
+    if (!ok) return res.status(403).json({ error: "wrong_password" });
+    await storage().updateUser(me.id, { passwordHash: await hashPassword(next) });
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "auth.password_change",
+      resourceType: "user",
+      resourceId: me.id,
+      details: {},
+      riskLevel: "medium",
+    });
+    res.json({ ok: true });
+  });
 }
 
 // Imported here to avoid a cycle at module top in some bundlers.

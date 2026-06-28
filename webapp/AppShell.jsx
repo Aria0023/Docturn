@@ -52,6 +52,7 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
             </div>
             <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
           </div>}
+          {!compact && <ChangePasswordButton />}
           {!compact && <button onClick={onLogout} title="Sign out"
             onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
             style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
@@ -60,6 +61,50 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
         </div>
       </div>
     </aside>
+  );
+}
+
+// Self-service password change — a key button in the sidebar footer that opens a
+// small modal. Lets every user move off the shared demo password for real use.
+function ChangePasswordButton() {
+  const [open, setOpen] = React.useState(false);
+  const [cur, setCur] = React.useState("");
+  const [next, setNext] = React.useState("");
+  const [confirm, setConfirm] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const err = next && next.length < 8 ? "At least 8 characters." : (confirm && next !== confirm ? "Passwords don't match." : "");
+  const canSave = cur && next.length >= 8 && next === confirm && !busy;
+  function submit() {
+    if (!canSave) return;
+    setBusy(true);
+    Promise.resolve(window.DT.actions.changePassword(cur, next)).then((r) => {
+      setBusy(false);
+      if (r && r.ok) { setOpen(false); setCur(""); setNext(""); setConfirm(""); }
+    });
+  }
+  return (
+    <React.Fragment>
+      <button onClick={() => setOpen(true)} title="Change password"
+        onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+        style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+        <Icon name="key-round" size={16} />
+      </button>
+      {open && (
+        <Modal title="Change password" subtitle="Set a new password for your account." icon="key-round" onClose={() => setOpen(false)}
+          children={
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Field label="Current password" icon="lock" type="password" value={cur} onChange={setCur} placeholder="Current password" />
+              <Field label="New password" icon="key-round" type="password" value={next} onChange={setNext} placeholder="At least 8 characters" />
+              <Field label="Confirm new password" icon="key-round" type="password" value={confirm} onChange={setConfirm} placeholder="Re-enter new password" />
+              {err && <div style={{ fontSize: 12.5, color: "var(--destructive)" }}>{err}</div>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+                <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button size="sm" icon="check" onClick={submit} style={{ opacity: canSave ? 1 : 0.5, pointerEvents: canSave ? "auto" : "none" }}>{busy ? "Saving…" : "Update password"}</Button>
+              </div>
+            </div>
+          } />
+      )}
+    </React.Fragment>
   );
 }
 
