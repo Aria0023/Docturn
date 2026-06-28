@@ -644,6 +644,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(phiAccessLogs.organizationId, orgId));
     return Number(row?.n ?? 0);
   }
+  async countAuditLogs(orgId: number) {
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId));
+    return Number(row?.n ?? 0);
+  }
   async listAuditLogs(orgId: number, limit = 100) {
     return this.db
       .select()

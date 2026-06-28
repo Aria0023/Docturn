@@ -192,6 +192,43 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // Cross-tenant compliance overview: per-organization audit/PHI/high-risk
+  // counts + a few recent events, so the developer sees compliance separated by
+  // organization at a glance (drill into one org for the full trail).
+  app.get(
+    "/api/dev/compliance-overview",
+    requireAuth,
+    requireRole("developer"),
+    async (_req, res) => {
+      const orgs = await storage().listOrganizations();
+      const rows = await Promise.all(
+        orgs.map(async (o) => {
+          const [recent, auditCount, phiCount] = await Promise.all([
+            storage().listAuditLogs(o.id, 6),
+            storage().countAuditLogs(o.id),
+            storage().countPhiAccess(o.id),
+          ]);
+          return {
+            id: o.id,
+            code: o.code,
+            name: o.name,
+            auditCount,
+            phiCount,
+            highRisk: recent.filter((a) => a.riskLevel === "high").length,
+            recent: recent.map((a) => ({
+              action: a.action,
+              resourceType: a.resourceType,
+              riskLevel: a.riskLevel,
+              createdAt: a.createdAt,
+              userId: a.userId,
+            })),
+          };
+        }),
+      );
+      res.json(rows);
+    },
+  );
+
   // A tenant's real audit + PHI trail (developer views ANY org's compliance).
   app.get(
     "/api/dev/organizations/:id/audit",

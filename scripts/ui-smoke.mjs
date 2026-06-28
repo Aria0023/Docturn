@@ -72,7 +72,7 @@ const JSX_FILES = [
   "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
   "HospitalistDashboard.jsx", "HospitalistWork.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
   "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
-  "PatientBoard.jsx", "DeveloperDashboard.jsx", "OrgConfig.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
+  "PatientBoard.jsx", "DeveloperDashboard.jsx", "OrgConfig.jsx", "ComplianceOverview.jsx", "SupportDirectory.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
   "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
   "CustomizableDashboard.jsx", "ConsultServices.jsx", "RegistrationApprovals.jsx",
 ];
@@ -123,7 +123,7 @@ async function clickEveryButton(roleLabel, screen) {
 }
 
 const NAV = {
-  developer: ["dashboard", "enterprise", "settings", "roles", "consult", "compliance", "appearance"],
+  developer: ["dashboard", "enterprise", "settings", "users", "compliance", "appearance"],
   director: ["dashboard", "board", "consult", "roles", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_doctor: ["dashboard", "messages", "directory", "compliance"],
@@ -215,6 +215,21 @@ rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr),
   rec("enterprise platform controls (mobile + security) are settable",
     entPlat.mobile && entPlat.mobile.ios === false && entPlat.security && entPlat.security.sessionTimeoutMin === 30,
     "platform=" + JSON.stringify({ ios: entPlat.mobile && entPlat.mobile.ios, to: entPlat.security && entPlat.security.sessionTimeoutMin }));
+}
+
+// Cross-org compliance overview: per-organization audit/PHI counts, separated by
+// org, for the developer. Plus the support directory hydrates users per org.
+await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+{
+  const resp = await window.fetch("/api/dev/compliance-overview", { credentials: "include" });
+  const arr = await resp.json().catch(() => []);
+  const ispn = Array.isArray(arr) ? arr.find((o) => o.code === "ISPN") : null;
+  rec("dev compliance overview separates by organization",
+    Array.isArray(arr) && arr.length >= 1 && !!ispn && typeof ispn.auditCount === "number" && typeof ispn.phiCount === "number",
+    "orgs=" + JSON.stringify((arr || []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200));
+  rec("support directory: users hydrated per organization",
+    (DT.getState().devUsers || []).some((u) => u.org && u.name),
+    "users=" + (DT.getState().devUsers || []).length);
 }
 
 // developer enters an organization's FULL portal (org-scoped admin context) so

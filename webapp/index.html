@@ -60,6 +60,8 @@
 <script type="text/babel" src="PatientBoard.jsx"></script>
 <script type="text/babel" src="DeveloperDashboard.jsx"></script>
 <script type="text/babel" src="OrgConfig.jsx"></script>
+<script type="text/babel" src="ComplianceOverview.jsx"></script>
+<script type="text/babel" src="SupportDirectory.jsx"></script>
 <script type="text/babel" src="Compliance.jsx"></script>
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
@@ -151,9 +153,8 @@ const NAV = {
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
     { id: "enterprise", label: "Enterprise defaults", icon: "globe" },
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
-    { id: "roles",      label: "Role management", icon: "shield-half" },
-    { id: "consult",    label: "Consult services", icon: "stethoscope" },
-    { id: "compliance", label: "Compliance",      icon: "shield-check" },
+    { id: "users",      label: "Users by org", icon: "life-buoy" },
+    { id: "compliance", label: "Compliance", icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
   ],
 };
@@ -176,6 +177,7 @@ const TOP = {
   appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
   settings:   ["Organization settings", "Rotation rules, feature flags and integrations"],
   enterprise: ["Enterprise defaults", "Platform-wide rules and permissions every tenant inherits"],
+  users:      ["Users by organization", "Support directory — every user grouped by tenant"],
 };
 
 function Toast({ toast }) {
@@ -324,7 +326,9 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
+  else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
   else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
   else if (nav === "consult") screen = <ConsultServices />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
