@@ -4,6 +4,33 @@ A practical guide to running a real (not demo) pilot: durable Postgres database,
 real staff accounts via self-registration + director approval, and in-app
 password changes.
 
+> ## ⚠️ Read first — real patients vs. test patients
+>
+> **Pilot with SYNTHETIC (fake) patients until the security items below are done.**
+> The app's clinical workflow is ready to trial, but it is **not yet cleared for
+> real patient data (PHI)**. Running real PHI now would risk a HIPAA breach.
+>
+> Safe to do today (fake data only): register staff, route admissions, message,
+> consults, dashboards — using made-up patient names/initials.
+>
+> Required **before any real PHI** (see `SECURITY.md` plan):
+> 1. A HIPAA-eligible AWS setup with TLS (https) and encryption at rest.
+> 2. Signed **BAAs** (see glossary below) with AWS and any AI/LLM vendor.
+> 3. MFA enforced; no shared/default passwords; rate limiting ON.
+> 4. The external AI feature stays OFF (it's off by default now).
+>
+> **Glossary in plain English**
+> - **PHI** = Protected Health Information = anything that identifies a patient
+>   (name, room tied to a person, diagnosis, etc.).
+> - **BAA** (Business Associate Agreement) = a signed contract where a vendor
+>   (AWS, an AI provider, a tunnel provider) legally agrees to protect PHI on
+>   your behalf. **No BAA = you may not send them real PHI.** AWS and Azure offer
+>   one; the public OpenAI API and Cloudflare "quick tunnels" do not.
+> - **TLS / "https"** = the lock-icon encryption that protects data while it
+>   travels over the network. Plain `http://` is not acceptable for PHI.
+> - **Encryption at rest** = the database/disk is stored scrambled, so a stolen
+>   drive or backup is useless without the key.
+
 ## 1. Database — real Postgres (durable, never auto-wiped)
 
 The app uses an in-process PGlite database by default (the `./.pglite` folder).
@@ -38,15 +65,21 @@ it. Take regular `pg_dump` backups during the trial.
 ## 2. Start the server
 
 ```powershell
-$env:RATE_LIMIT="off"        # only if you're behind a tunnel/proxy
 npx tsx server/index.ts
 ```
 
-Expose it for off-site access via your tunnel, e.g.:
+> **Do NOT set `RATE_LIMIT=off` for a real trial** — that disables brute-force
+> protection on login. Leave rate limiting ON. (Earlier notes suggested turning
+> it off behind a tunnel; that was wrong for anything but local throwaway tests.)
+
+For off-site **testing with fake data only**, a quick tunnel is fine:
 
 ```powershell
 cloudflared tunnel --url http://localhost:3000
 ```
+
+For real PHI you need a proper https front door (AWS ALB/CloudFront with a
+managed certificate), not a quick tunnel — see `SECURITY.md`.
 
 ## 3. Clear the demo data in ISPN (optional but recommended)
 
