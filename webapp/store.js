@@ -415,6 +415,15 @@
       // org's detail page can override any rule or permission individually.
       enterprise: {
         rules: { timeout: 15, autoReassign: false, autoCleanHours: 24, rotationMode: "lowest_census", onCallOnly: false, activeOnly: true },
+        // Platform-wide controls the operator manages centrally (modeled on
+        // enterprise clinical-comms admin consoles, e.g. TigerConnect/PerfectServe):
+        // mobile-app management, secure-messaging policy, access/security, integrations.
+        platform: {
+          mobile: { ios: true, android: true, minVersion: "3.2.0", forceUpdate: false, mdm: false, biometric: true },
+          messaging: { retentionDays: 90, recall: true, readReceipts: true, attachments: true, priority: true },
+          security: { sso: false, enforce2fa: true, sessionTimeoutMin: 15, autoLock: true },
+          integrations: { sms: true, push: true, fhir: false, paging: false },
+        },
         permissions: {
           hospitalist: ["view_census", "manage_assignments", "request_consult", "message"],
           er_doctor:   ["view_census", "assign_patients", "request_consult", "message"],
@@ -453,6 +462,7 @@
       // Per-org / enterprise config (added v10) — backfill so older saves don't
       // crash the developer settings pages.
       if (!s.enterprise) s.enterprise = seed().enterprise;
+      if (!s.enterprise.platform) s.enterprise.platform = seed().enterprise.platform;
       if (!s.orgConfigs) s.orgConfigs = {};
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
@@ -1099,6 +1109,16 @@
         ent.rules = Object.assign({}, ent.rules, kvPair(key, val));
         s.enterprise = ent;
         pushAudit(s, { action: "enterprise_rule_set", resource: key, risk: "medium" });
+        return s;
+      });
+    },
+    setEnterprisePlatform: function (section, key, val) {
+      set(function (s) {
+        var ent = Object.assign({}, s.enterprise);
+        var plat = Object.assign({}, ent.platform);
+        plat[section] = Object.assign({}, plat[section], kvPair(key, val));
+        ent.platform = plat; s.enterprise = ent;
+        pushAudit(s, { action: "enterprise_platform_set", resource: section + "." + key, risk: "medium" });
         return s;
       });
     },

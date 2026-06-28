@@ -124,7 +124,7 @@ async function clickEveryButton(roleLabel, screen) {
 
 const NAV = {
   developer: ["dashboard", "enterprise", "settings", "roles", "consult", "compliance", "appearance"],
-  director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
+  director: ["dashboard", "board", "consult", "roles", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
   er_doctor: ["dashboard", "messages", "directory", "compliance"],
   hospitalist: ["dashboard", "history", "messages", "directory", "compliance"],
@@ -207,6 +207,14 @@ rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr),
     perm.permissions.hospitalist.indexOf("view_reports") >= 0
       && DT.orgConfig("*").permissions.hospitalist.indexOf("view_reports") < 0,
     "ispn=" + JSON.stringify(perm.permissions.hospitalist));
+  // Enterprise platform controls (mobile/messaging/security/integrations).
+  DT.actions.setEnterprisePlatform("mobile", "ios", false);
+  DT.actions.setEnterprisePlatform("security", "sessionTimeoutMin", 30);
+  await flush();
+  const entPlat = DT.getState().enterprise.platform || {};
+  rec("enterprise platform controls (mobile + security) are settable",
+    entPlat.mobile && entPlat.mobile.ios === false && entPlat.security && entPlat.security.sessionTimeoutMin === 30,
+    "platform=" + JSON.stringify({ ios: entPlat.mobile && entPlat.mobile.ios, to: entPlat.security && entPlat.security.sessionTimeoutMin }));
 }
 
 // developer enters an organization's FULL portal (org-scoped admin context) so

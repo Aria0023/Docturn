@@ -107,7 +107,11 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
     : (isEnt ? audit : (audit || []).filter((r) => !r.org || r.org === scope));
   const scopedInc = isEnt ? incidents : (incidents || []).filter((r) => !r.org || r.org === scope);
 
-  const TABS = [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["compliance", "Compliance", "shield-check"]];
+  const TABS = isEnt
+    ? [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["platform", "Platform & mobile", "smartphone"], ["compliance", "Compliance", "shield-check"]]
+    : [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["compliance", "Compliance", "shield-check"]];
+  const plat = (DT.getState().enterprise || {}).platform || {};
+  const setPlat = (sec, k, v) => a.setEnterprisePlatform(sec, k, v);
 
   return (
     <PageWrap>
@@ -121,6 +125,7 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{isEnt ? "Applies to all tenants" : <span className="ds-mono">{scope}</span>} · individualized configuration</div>
         </div>
         {!isEnt && <Badge variant="secondary" icon="layers">Overrides enterprise</Badge>}
+        {!isEnt && <Button size="sm" icon="log-in" onClick={() => window.DT.actions.manageOrg(scope)}>Manage full portal</Button>}
       </div>
       <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5, marginBottom: 16, maxWidth: 720 }}>{sub}</div>
 
@@ -196,6 +201,90 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {tab === "platform" && isEnt && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Platform-wide controls the operator manages centrally for every tenant — mobile apps, secure-messaging policy, access &amp; security, and integrations.</div>
+
+          {/* Mobile apps */}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, margin: "0 0 6px 2px", display: "flex", alignItems: "center", gap: 7 }}><Icon name="smartphone" size={15} color="var(--primary)" />Mobile apps</div>
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <RuleRow icon="apple" title="iOS app" desc="Allow the DocTurn iPhone/iPad app to connect." scope="*"
+                control={<OCToggle on={!!(plat.mobile || {}).ios} onChange={(v) => setPlat("mobile", "ios", v)} />} />
+              <RuleRow icon="smartphone" title="Android app" desc="Allow the DocTurn Android app to connect." scope="*"
+                control={<OCToggle on={!!(plat.mobile || {}).android} onChange={(v) => setPlat("mobile", "android", v)} />} />
+              <RuleRow icon="git-commit-horizontal" title="Minimum app version" desc="Devices below this build are prompted (or forced) to update." scope="*"
+                control={<input value={(plat.mobile || {}).minVersion || ""} onChange={(e) => setPlat("mobile", "minVersion", e.target.value)} style={{ width: 92, height: 34, textAlign: "center", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit" }} />} />
+              <RuleRow icon="download" title="Force update below minimum" desc="Block sign-in on out-of-date builds until updated." scope="*"
+                control={<OCToggle on={!!(plat.mobile || {}).forceUpdate} onChange={(v) => setPlat("mobile", "forceUpdate", v)} />} />
+              <RuleRow icon="shield" title="Managed deployment (MDM)" desc="Require enrollment via your MDM (Intune/Jamf) to run the app." scope="*"
+                control={<OCToggle on={!!(plat.mobile || {}).mdm} onChange={(v) => setPlat("mobile", "mdm", v)} />} />
+              <RuleRow icon="fingerprint" title="Biometric unlock" desc="Allow Face ID / fingerprint to unlock the app." scope="*"
+                control={<OCToggle on={!!(plat.mobile || {}).biometric} onChange={(v) => setPlat("mobile", "biometric", v)} />} />
+              <RuleRow icon="log-out" title="Remote sign-out" desc="Sign every device out of every tenant immediately." scope="*"
+                control={<Button size="sm" variant="outline" icon="power" onClick={() => window.DT.actions.toast({ tone: "rejected", title: "Remote sign-out queued", msg: "All devices will be signed out." })}>Sign out all</Button>} />
+            </Card>
+          </div>
+
+          {/* Secure messaging */}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, margin: "0 0 6px 2px", display: "flex", alignItems: "center", gap: 7 }}><Icon name="message-square-lock" size={15} color="var(--primary)" />Secure messaging policy</div>
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <RuleRow icon="clock" title="Message retention" desc="How long secure messages are kept before purge." scope="*"
+                control={
+                  <select value={(plat.messaging || {}).retentionDays} onChange={(e) => setPlat("messaging", "retentionDays", Number(e.target.value))}
+                    style={{ height: 34, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                    {[30, 90, 180, 365].map((d) => <option key={d} value={d}>{d} days</option>)}
+                  </select>
+                } />
+              <RuleRow icon="undo-2" title="Message recall" desc="Let senders delete/recall a message after sending." scope="*"
+                control={<OCToggle on={!!(plat.messaging || {}).recall} onChange={(v) => setPlat("messaging", "recall", v)} />} />
+              <RuleRow icon="check-check" title="Read receipts" desc="Show when a message has been read." scope="*"
+                control={<OCToggle on={!!(plat.messaging || {}).readReceipts} onChange={(v) => setPlat("messaging", "readReceipts", v)} />} />
+              <RuleRow icon="paperclip" title="Attachments" desc="Allow images/files in secure messages." scope="*"
+                control={<OCToggle on={!!(plat.messaging || {}).attachments} onChange={(v) => setPlat("messaging", "attachments", v)} />} />
+              <RuleRow icon="siren" title="Priority / STAT messages" desc="Enable escalating high-priority alerts with repeat tones." scope="*"
+                control={<OCToggle on={!!(plat.messaging || {}).priority} onChange={(v) => setPlat("messaging", "priority", v)} />} />
+            </Card>
+          </div>
+
+          {/* Access & security */}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, margin: "0 0 6px 2px", display: "flex", alignItems: "center", gap: 7 }}><Icon name="lock" size={15} color="var(--primary)" />Access &amp; security</div>
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <RuleRow icon="key-round" title="Single sign-on (SSO / SAML)" desc="Authenticate users through your identity provider." scope="*"
+                control={<OCToggle on={!!(plat.security || {}).sso} onChange={(v) => setPlat("security", "sso", v)} />} />
+              <RuleRow icon="shield-check" title="Enforce two-factor" desc="Require 2FA for every account across all tenants." scope="*"
+                control={<OCToggle on={!!(plat.security || {}).enforce2fa} onChange={(v) => setPlat("security", "enforce2fa", v)} />} />
+              <RuleRow icon="timer" title="Session timeout" desc="Auto sign-out after this period of inactivity." scope="*"
+                control={
+                  <select value={(plat.security || {}).sessionTimeoutMin} onChange={(e) => setPlat("security", "sessionTimeoutMin", Number(e.target.value))}
+                    style={{ height: 34, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                    {[5, 15, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+                  </select>
+                } />
+              <RuleRow icon="lock" title="Auto-lock on background" desc="Lock the app when it goes to the background." scope="*"
+                control={<OCToggle on={!!(plat.security || {}).autoLock} onChange={(v) => setPlat("security", "autoLock", v)} />} />
+            </Card>
+          </div>
+
+          {/* Integrations */}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, margin: "0 0 6px 2px", display: "flex", alignItems: "center", gap: 7 }}><Icon name="plug" size={15} color="var(--primary)" />Integrations</div>
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <RuleRow icon="message-square" title="SMS (Twilio)" desc="Escalate to SMS when a push isn't acknowledged." scope="*"
+                control={<OCToggle on={!!(plat.integrations || {}).sms} onChange={(v) => setPlat("integrations", "sms", v)} />} />
+              <RuleRow icon="bell" title="Push notifications (APNs / FCM)" desc="Deliver alerts to the mobile apps." scope="*"
+                control={<OCToggle on={!!(plat.integrations || {}).push} onChange={(v) => setPlat("integrations", "push", v)} />} />
+              <RuleRow icon="activity" title="EHR / FHIR sync" desc="Pull census/ADT from the EHR (Epic/Cerner via FHIR)." scope="*"
+                control={<OCToggle on={!!(plat.integrations || {}).fhir} onChange={(v) => setPlat("integrations", "fhir", v)} />} />
+              <RuleRow icon="radio" title="Paging bridge" desc="Bridge legacy pagers into secure messaging." scope="*"
+                control={<OCToggle on={!!(plat.integrations || {}).paging} onChange={(v) => setPlat("integrations", "paging", v)} />} />
+            </Card>
+          </div>
         </div>
       )}
 
