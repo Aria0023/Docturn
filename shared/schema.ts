@@ -46,7 +46,7 @@ export const SHIFT_TYPE = ["day", "night", "swing"] as const;
 export const RISK_LEVEL = ["low", "medium", "high"] as const;
 export const SETTING_SCOPE = ["org", "user"] as const;
 export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
-export const CONSULT_STATUS = ["requested", "active", "closed"] as const;
+export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
 

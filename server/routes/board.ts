@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { createConsultSchema, updateConsultSchema } from "@shared/schema";
+import { createConsultSchema, updateConsultSchema, type PatientConsult } from "@shared/schema";
 import { logPhiAccess } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
@@ -32,11 +32,28 @@ export function registerBoardRoutes(app: Express) {
 
       const userById = new Map(users.map((u) => [u.id, u]));
       const hById = new Map(hospitalists.map((h) => [h.id, h]));
+      // Specialty pills (deduped) for the column, plus per-consultant detail rows
+      // so the UI can show WHO was consulted and who accepted / declined.
       const consultsByPatient = new Map<number, string[]>();
+      const consultDetailByPatient = new Map<
+        number,
+        Array<{ id: number; specialty: string; consultantUserId: number | null; name: string | null; credential: string | null; status: string }>
+      >();
       for (const c of consults) {
         const arr = consultsByPatient.get(c.patientId) ?? [];
-        arr.push(c.specialty);
+        if (arr.indexOf(c.specialty) < 0) arr.push(c.specialty);
         consultsByPatient.set(c.patientId, arr);
+        const u = c.consultantUserId != null ? userById.get(c.consultantUserId) : undefined;
+        const det = consultDetailByPatient.get(c.patientId) ?? [];
+        det.push({
+          id: c.id,
+          specialty: c.specialty,
+          consultantUserId: c.consultantUserId ?? null,
+          name: u?.displayName ?? null,
+          credential: u?.credential ?? null,
+          status: c.status,
+        });
+        consultDetailByPatient.set(c.patientId, det);
       }
 
       const rows = [];
@@ -90,6 +107,7 @@ export function registerBoardRoutes(app: Express) {
           assignmentId: a?.id ?? null,
           responsible,
           consultants: consultsByPatient.get(p.id) ?? [],
+          consultDetails: consultDetailByPatient.get(p.id) ?? [],
           admittedBy: admittedByUser
             ? { userId: admittedByUser.id, displayName: admittedByUser.displayName }
             : null,
@@ -118,18 +136,61 @@ export function registerBoardRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const patient = await storage().getPatient(me.organizationId, patientId);
       if (!patient) return res.status(404).json({ error: "not_found" });
-      const consult = await storage().createConsult({
-        organizationId: me.organizationId,
-        patientId,
-        specialty: parsed.data.specialty,
-        consultantUserId: parsed.data.consultantUserId ?? null,
-        status: "requested",
-      });
+
+      // Fan the consult out to EVERY provider on that specialty's team (e.g. the
+      // attending MD and an NP/PA who share the specialty), each as its own row,
+      // so we can track who accepts and who doesn't. An explicit consultantUserId
+      // pins it to one person; no team match → a single unassigned row.
+      let created: PatientConsult[];
+      if (parsed.data.consultantUserId != null) {
+        created = [
+          await storage().createConsult({
+            organizationId: me.organizationId, patientId,
+            specialty: parsed.data.specialty,
+            consultantUserId: parsed.data.consultantUserId,
+            status: "requested",
+          }),
+        ];
+      } else {
+        const spec = parsed.data.specialty.trim().toLowerCase();
+        const hosps = await storage().listHospitalists(me.organizationId);
+        const team = hosps.filter((h) => (h.specialty || "").trim().toLowerCase() === spec);
+        // Don't double-request a provider already consulted for this patient+specialty.
+        const existing = await storage().listConsultsForPatient(me.organizationId, patientId);
+        const already = new Set(
+          existing
+            .filter((c) => (c.specialty || "").trim().toLowerCase() === spec && c.consultantUserId != null)
+            .map((c) => c.consultantUserId),
+        );
+        const targets = team.filter((h) => !already.has(h.userId));
+        if (targets.length) {
+          created = await Promise.all(
+            targets.map((h) =>
+              storage().createConsult({
+                organizationId: me.organizationId, patientId,
+                specialty: parsed.data.specialty,
+                consultantUserId: h.userId,
+                status: "requested",
+              }),
+            ),
+          );
+        } else if (!existing.some((c) => (c.specialty || "").trim().toLowerCase() === spec)) {
+          // No team on file and none requested yet → keep a placeholder row.
+          created = [
+            await storage().createConsult({
+              organizationId: me.organizationId, patientId,
+              specialty: parsed.data.specialty, consultantUserId: null, status: "requested",
+            }),
+          ];
+        } else {
+          created = [];
+        }
+      }
       notificationDeps().ws.broadcast(me.organizationId, {
         type: "CONSULT_UPDATED",
-        consult,
+        patientId,
       });
-      res.status(201).json(consult);
+      res.status(201).json(created);
     },
   );
 

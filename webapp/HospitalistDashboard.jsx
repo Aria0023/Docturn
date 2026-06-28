@@ -24,7 +24,7 @@ function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hh
 // "Dr. Jordan Chen" -> "Chen"; "Jordan Wu, PA-C" -> "Wu"
 function shortName(name) { return String(name || "").split(",")[0].replace(/^Dr\.\s*/i, "").trim().split(/\s+/).slice(-1)[0] || name; }
 
-function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory, onConsult, consultServices }) {
+function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory, onConsult, onConsultRespond, consultServices }) {
   // Accepted during THIS shift (since 7am); resets each morning.
   const since = shiftStart();
   const shiftAdmits = (myAdmissions || []).filter((a) => a.at >= since).sort((a, b) => b.at - a.at);
@@ -128,18 +128,21 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
       <Card style={{ padding: 0, overflow: "visible" }}>
         {shiftAdmits.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Nothing accepted yet this shift.</div>}
         {shiftAdmits.map((p, i) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-            <Avatar initials={p.initials} size={34} tint="blue" />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
-              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                <span>{p.complaint}</span>
-                {(p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
+          <div key={p.id} style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <Avatar initials={p.initials} size={34} tint="blue" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
+                <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span>{p.complaint}</span>
+                  {(!p.consultDetails || !p.consultDetails.length) && (p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
+                </div>
               </div>
+              {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
+              <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>
+              <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
             </div>
-            {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
-            <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>
-            <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
+            {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 48, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
           </div>
         ))}
       </Card>

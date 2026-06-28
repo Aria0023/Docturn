@@ -294,7 +294,62 @@ function ConsultAdd({ services, onPick, label }) {
   );
 }
 
-Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag, ConsultAdd });
+// Per-specialty consult roster: shows WHO was consulted on each service and who
+// accepted / declined / is still pending. `details` = [{id, specialty, name,
+// credential, status}]. When onRespond is given, pending rows get Accept/Decline.
+function consultStatusStyle(status) {
+  if (status === "accepted") return { label: "Accepted", color: "var(--status-accepted)", bg: "var(--status-accepted-bg)", icon: "check" };
+  if (status === "declined") return { label: "Declined", color: "var(--status-rejected)", bg: "var(--status-rejected-bg)", icon: "x" };
+  return { label: "Pending", color: "var(--status-pending)", bg: "var(--status-pending-bg)", icon: "clock" };
+}
+function ConsultRoster({ details, onRespond, compact }) {
+  const list = details || [];
+  if (!list.length) return null;
+  const bySpec = {};
+  list.forEach((c) => { (bySpec[c.specialty] = bySpec[c.specialty] || []).push(c); });
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+      {Object.keys(bySpec).map((spec) => {
+        const members = bySpec[spec];
+        const accepted = members.filter((m) => m.status === "accepted").length;
+        const c = specialtyColor(spec);
+        return (
+          <div key={spec} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: c.bg }}>
+              <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: c.color }}>{spec}</span>
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
+            </div>
+            {members.map((m, i) => {
+              const ss = consultStatusStyle(m.status);
+              return (
+                <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderTop: "1px solid var(--border)" }}>
+                  <Avatar initials={(m.name || "?").replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()} size={22} tint="slate" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 600 }}>{m.name || "On-call team"}</span>
+                    {m.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 5 }}>{m.credential}</span> : null}
+                  </div>
+                  {onRespond && m.status !== "accepted" && m.status !== "declined" ? (
+                    <span style={{ display: "inline-flex", gap: 4, flex: "none" }}>
+                      <button onClick={() => onRespond(m.id, "declined")} title="Decline consult"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}><Icon name="x" size={11} />Decline</button>
+                      <button onClick={() => onRespond(m.id, "accepted")} title="Accept consult"
+                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--status-accepted)", background: "var(--status-accepted-bg)", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "var(--status-accepted)", fontFamily: "var(--font-sans)" }}><Icon name="check" size={11} />Accept</button>
+                    </span>
+                  ) : (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none" }}><Icon name={ss.icon} size={10} />{ss.label}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag, ConsultAdd, ConsultRoster });
 
 function StatTile({ label, value, icon, tint = "blue" }) {
   const tints = { blue: "var(--primary)", emerald: "var(--status-accepted)", amber: "var(--status-pending)", slate: "var(--status-neutral)" };

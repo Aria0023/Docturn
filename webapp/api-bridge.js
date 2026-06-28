@@ -149,12 +149,12 @@
       };
     });
   }
-  function mapAccepted(assignments, patientsById, consultByPid) {
+  function mapAccepted(assignments, patientsById, consultByPid, consultDetailByPid) {
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
       // `at` drives the hospitalist dashboard's "this shift" filter — without it
       // a handed-off/reassigned patient would be filtered out and never show.
-      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [] };
+      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [], consultDetails: (consultDetailByPid && consultDetailByPid[a.patientId]) || [] };
     });
   }
   // ER "Patient board": the assignments this ER routed, with LIVE backend status
@@ -230,6 +230,10 @@
           return { avatar: initials(u.displayName), role: u.credential || "" };
         }),
         consultants: r.consultants || [],
+        // Per-consultant detail: who was consulted on each specialty + status.
+        consultDetails: (r.consultDetails || []).map(function (c) {
+          return { id: c.id, specialty: c.specialty, name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"), credential: c.credential || "", status: c.status || "requested", userId: c.consultantUserId || null };
+        }),
         er: r.admittedBy ? { name: r.admittedBy.displayName, avatar: initials(r.admittedBy.displayName) } : { name: "", avatar: "" },
       };
     });
@@ -294,10 +298,17 @@
           if (role === "hospitalist" || role === "director") {
             // Consultants per patient come off the live board so the census rows
             // can show who's been consulted.
-            var consultByPid = {};
-            (board || []).forEach(function (r) { if (r && r.patient) consultByPid[r.patient.id] = r.consultants || []; });
+            var consultByPid = {}, consultDetailByPid = {};
+            (board || []).forEach(function (r) {
+              if (r && r.patient) {
+                consultByPid[r.patient.id] = r.consultants || [];
+                consultDetailByPid[r.patient.id] = (r.consultDetails || []).map(function (c) {
+                  return { id: c.id, specialty: c.specialty, name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"), credential: c.credential || "", status: c.status || "requested", userId: c.consultantUserId || null };
+                });
+              }
+            });
             s.pending = mapPending(pending, patientsById, usersById);
-            var census = mapAccepted(mine, patientsById, consultByPid);
+            var census = mapAccepted(mine, patientsById, consultByPid, consultDetailByPid);
             s.myPatients = census;
             // The hospitalist dashboard AND the director's "My hospitalist work"
             // widget both render myAdmissions — keep it authoritative from the
@@ -595,6 +606,26 @@
       };
       s.board = add(s.board); s.myAdmissions = add(s.myAdmissions); s.myPatients = add(s.myPatients); s.sent = add(s.sent);
       s.__toast = { tone: "sent", title: specialty + " consult requested", msg: "The consult service has been notified." };
+      return s;
+    });
+  };
+  // A consultant accepts/declines a consult request (status: accepted|declined).
+  // Optimistically flips the matching consultDetails row, then re-hydrates.
+  DT.actions.respondConsult = function (consultId, status) {
+    if (consultId == null) return;
+    api("PATCH", "/api/consults/" + consultId, { status: status }).then(rehydrate).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update consult", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+    DT.set(function (s) {
+      var flip = function (list) {
+        return (list || []).map(function (row) {
+          if (!row.consultDetails) return row;
+          var cd = row.consultDetails.map(function (c) { return c.id === consultId ? Object.assign({}, c, { status: status }) : c; });
+          return Object.assign({}, row, { consultDetails: cd });
+        });
+      };
+      s.board = flip(s.board);
+      s.__toast = { tone: status === "accepted" ? "accepted" : "rejected", title: status === "accepted" ? "Consult accepted" : "Consult declined", msg: "" };
       return s;
     });
   };

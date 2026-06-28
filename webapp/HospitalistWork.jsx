@@ -4,7 +4,7 @@
    also seeing patients. Opt-in: a director starts taking patients with one tap,
    which gives them a rotation profile so admissions can route to them. */
 
-function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, consultServices, onMessage }) {
+function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, onConsultRespond, consultServices, onMessage }) {
   const [busy, setBusy] = React.useState(false);
   const incoming = pending || [];
   const since = (function () { const d = new Date(); d.setHours(7, 0, 0, 0); if (Date.now() < d.getTime()) d.setDate(d.getDate() - 1); return d.getTime(); })();
@@ -50,17 +50,20 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
         <Card style={{ padding: 0, overflow: "visible" }}>
           {mine.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients accepted yet this shift.</div>}
           {mine.map((p, i) => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-              <Avatar initials={p.initials} size={34} tint="blue" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
-                <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <span>{p.complaint}</span>
-                  {(p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
+            <div key={p.id} style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Avatar initials={p.initials} size={34} tint="blue" />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
+                  <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span>{p.complaint}</span>
+                    {(!p.consultDetails || !p.consultDetails.length) && (p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
+                  </div>
                 </div>
+                {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
+                <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
               </div>
-              {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
-              <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
+              {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
             </div>
           ))}
         </Card>

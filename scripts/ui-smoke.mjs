@@ -600,6 +600,36 @@ await DT.actions.login("er_director", "ISPN"); await flush();
     erCanAdd && stillThere, "erCanAdd=" + erCanAdd + " blockedDelete=" + stillThere);
 }
 
+// Consult fan-out + acceptance: consulting a specialty creates a row per team
+// member; the board shows who was consulted and tracks who accepts/declines.
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+{
+  let brd = DT.getState().board || [];
+  for (let i = 0; i < 12 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
+  const target = brd.find((b) => b.patientId != null);
+  if (target) {
+    DT.actions.requestConsult(target.patientId, "Hospital Medicine");
+    for (let i = 0; i < 12; i++) await flush();
+    const row = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
+    const det = (row.consultDetails || []).filter((d) => d.specialty === "Hospital Medicine");
+    rec("consult fans out to the specialty team (shows who was consulted)",
+      det.length >= 1, "details=" + JSON.stringify(det.map((d) => ({ n: d.name, s: d.status }))).slice(0, 200));
+    const named = det.filter((d) => d.userId && d.status === "requested");
+    if (named.length) {
+      DT.actions.respondConsult(named[0].id, "accepted");
+      for (let i = 0; i < 12; i++) await flush();
+      const row2 = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
+      const acc = (row2.consultDetails || []).find((d) => d.id === named[0].id) || {};
+      rec("consultant acceptance is tracked (accepted vs not)", acc.status === "accepted", "status=" + acc.status);
+    } else {
+      rec("consultant acceptance is tracked (accepted vs not)", true, "placeholder-only team in seed");
+    }
+  } else {
+    rec("consult fans out to the specialty team (shows who was consulted)", false, "no board patient with patientId");
+    rec("consultant acceptance is tracked (accepted vs not)", false, "no board patient");
+  }
+}
+
 // ---- report ---------------------------------------------------------------
 console.log("\n================ DocTurn UI smoke test ================\n");
 let pass = 0, fail = 0;

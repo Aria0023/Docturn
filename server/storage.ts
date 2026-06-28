@@ -898,13 +898,15 @@ export class DatabaseStorage implements IStorage {
       );
   }
   async listActiveConsults(orgId: number) {
+    // Include accepted/declined so the board can show who responded (and who
+    // hasn't) — only fully closed consults drop off.
     return this.db
       .select()
       .from(patientConsults)
       .where(
         and(
           eq(patientConsults.organizationId, orgId),
-          inArray(patientConsults.status, ["requested", "active"]),
+          inArray(patientConsults.status, ["requested", "accepted", "declined", "active"]),
         ),
       );
   }
