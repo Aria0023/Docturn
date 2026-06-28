@@ -364,6 +364,7 @@ CREATE TABLE IF NOT EXISTS patient_consults (
   specialty TEXT NOT NULL,
   consultant_user_id INTEGER REFERENCES users(id),
   status TEXT NOT NULL DEFAULT 'requested',
+  responded_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

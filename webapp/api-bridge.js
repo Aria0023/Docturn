@@ -20,6 +20,7 @@
   var origLogin = DT.actions.login;
   var meId = null;   // current user's backend id (for messaging "me" / participants)
   var auditLoaded = false; // fetch the per-org audit trail once per context, then only while viewing Compliance
+  var prefsLoaded = false; // load per-org consult catalog + theme once per context (later rehydrates keep local edits)
   // Demo console: when loaded as an iframe pane with ?token=<t>, this pane
   // authenticates with that bearer token instead of the shared session cookie,
   // so three users can run side by side in one browser. Null for normal use.
@@ -209,6 +210,20 @@
       };
     });
   }
+  // Normalize a board row's consultDetails → the kit's consult-roster shape:
+  // who was consulted, their status, and when they responded.
+  function mapConsultDetails(details) {
+    return (details || []).map(function (c) {
+      return {
+        id: c.id, specialty: c.specialty,
+        name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"),
+        credential: c.credential || "", status: c.status || "requested",
+        userId: c.consultantUserId || null,
+        respondedAt: c.respondedAt ? new Date(c.respondedAt).getTime() : null,
+        requestedAt: c.requestedAt ? new Date(c.requestedAt).getTime() : null,
+      };
+    });
+  }
   function mapBoard(rows) {
     return (rows || []).map(function (r) {
       return {
@@ -231,9 +246,7 @@
         }),
         consultants: r.consultants || [],
         // Per-consultant detail: who was consulted on each specialty + status.
-        consultDetails: (r.consultDetails || []).map(function (c) {
-          return { id: c.id, specialty: c.specialty, name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"), credential: c.credential || "", status: c.status || "requested", userId: c.consultantUserId || null };
-        }),
+        consultDetails: mapConsultDetails(r.consultDetails),
         er: r.admittedBy ? { name: r.admittedBy.displayName, avatar: initials(r.admittedBy.displayName) } : { name: "", avatar: "" },
       };
     });
@@ -285,9 +298,13 @@
       var onCompliance = (DT.getState().ui && DT.getState().ui.nav) === "compliance";
       var wantsAudit = canAudit && (!auditLoaded || onCompliance);
       extra.push(wantsAudit ? get("/api/audit").catch(function () { return null; }) : Promise.resolve(null));
+      // Per-organization preferences (every role): the consult-service catalog and
+      // appearance/theme are individualized per tenant. Load ONCE per context so a
+      // later rehydrate can't clobber an in-progress local edit.
+      extra.push(!prefsLoaded ? get("/api/org/config").catch(function () { return null; }) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
           // Full registered directory (all roles): drives the ER Consult-services
@@ -295,18 +312,16 @@
           if (directory) s.directory = (directory || []).map(function (d) {
             return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
+          // Consultants per patient come off the live board so census/sent rows
+          // can show who was consulted, their status, and when they responded.
+          var consultByPid = {}, consultDetailByPid = {};
+          (board || []).forEach(function (r) {
+            if (r && r.patient) {
+              consultByPid[r.patient.id] = r.consultants || [];
+              consultDetailByPid[r.patient.id] = mapConsultDetails(r.consultDetails);
+            }
+          });
           if (role === "hospitalist" || role === "director") {
-            // Consultants per patient come off the live board so the census rows
-            // can show who's been consulted.
-            var consultByPid = {}, consultDetailByPid = {};
-            (board || []).forEach(function (r) {
-              if (r && r.patient) {
-                consultByPid[r.patient.id] = r.consultants || [];
-                consultDetailByPid[r.patient.id] = (r.consultDetails || []).map(function (c) {
-                  return { id: c.id, specialty: c.specialty, name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"), credential: c.credential || "", status: c.status || "requested", userId: c.consultantUserId || null };
-                });
-              }
-            });
             s.pending = mapPending(pending, patientsById, usersById);
             var census = mapAccepted(mine, patientsById, consultByPid, consultDetailByPid);
             s.myPatients = census;
@@ -317,7 +332,9 @@
             s.isProvider = (hosps || []).some(function (h) { return h.userId === meId; });
           }
           if (board) s.board = mapBoard(board);
-          if (wantsSent && sent) s.sent = mapSent(sent);
+          if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
+            return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
+          });
           if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
@@ -325,6 +342,13 @@
             s.audit = mapAudit(auditData.audit, usersById, orgCode);
             s.phiLog = mapPhi(auditData.phiAccess, usersById);
             auditLoaded = true;
+          }
+          // Per-org consult-service catalog + theme (fall back to defaults when
+          // the tenant hasn't customized them). Applied once per context.
+          if (orgCfg && !prefsLoaded) {
+            if (Array.isArray(orgCfg.consultServices) && orgCfg.consultServices.length) s.consultServices = orgCfg.consultServices;
+            if (orgCfg.theme && typeof orgCfg.theme === "object") s.theme = Object.assign({}, s.theme, orgCfg.theme);
+            prefsLoaded = true;
           }
           return s;
         });
@@ -499,6 +523,7 @@
       lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
       meId = u.id;
       auditLoaded = false; // new login context → reload that org's audit on first hydrate
+      prefsLoaded = false;
       DT.set(function (s) {
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -538,7 +563,9 @@
   }
 
   DT.actions.login = function (role, org, user) {
-    doLogin(role, org, user).catch(function (e) {
+    // Return the promise so callers that await login wait for hydrate to finish
+    // (session + per-org prefs settled) before acting.
+    return doLogin(role, org, user).catch(function (e) {
       if (isNetworkError(e)) {
         // Server down → demo login so the UI is still explorable offline.
         origLogin(role, org, user);
@@ -684,6 +711,28 @@
     }
     if (origSetSetting) return origSetSetting(key, value);
   };
+
+  // Persist per-organization preferences (consult-service catalog + theme) to the
+  // tenant's org settings, so each organization keeps its own and edits made
+  // while "managing" an org apply only there.
+  function persistOrgPrefs(patch) { api("PATCH", "/api/org/preferences", patch).catch(function () {}); }
+  ["addConsultService", "renameConsultService", "setConsultOnCall", "addConsultMember", "removeConsultMember", "removeConsultService"].forEach(function (name) {
+    var orig = DT.actions[name];
+    if (!orig) return;
+    DT.actions[name] = function () {
+      var r = orig.apply(null, arguments);
+      persistOrgPrefs({ consultServices: DT.getState().consultServices || [] });
+      return r;
+    };
+  });
+  var origSetTheme = DT.actions.setTheme;
+  if (origSetTheme) {
+    DT.actions.setTheme = function (patch) {
+      var r = origSetTheme(patch);
+      persistOrgPrefs({ theme: DT.getState().theme });
+      return r;
+    };
+  }
 
   // ---- self-registration + director/ER-director approval queue -------------
   // Public: anyone with an org code can request an account (no session needed).
@@ -973,6 +1022,7 @@
       .then(function (u) {
         meId = u.id;
         auditLoaded = false;
+        prefsLoaded = false;
         DT.set(function (s) {
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -1002,6 +1052,7 @@
       .then(function (u) {
         meId = u.id;
         auditLoaded = false;
+        prefsLoaded = false;
         DT.set(function (s) {
           s.session = { role: u.role, org: u.orgCode || code, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };

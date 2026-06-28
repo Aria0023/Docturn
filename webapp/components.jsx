@@ -337,7 +337,7 @@ function ConsultRoster({ details, onRespond, compact }) {
                         style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--status-accepted)", background: "var(--status-accepted-bg)", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "var(--status-accepted)", fontFamily: "var(--font-sans)" }}><Icon name="check" size={11} />Accept</button>
                     </span>
                   ) : (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none" }}><Icon name={ss.icon} size={10} />{ss.label}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none" }} title={m.respondedAt ? ss.label + " at " + new Date(m.respondedAt).toLocaleString() : ss.label}><Icon name={ss.icon} size={10} />{ss.label}{m.respondedAt && window.dtFmt ? " · " + window.dtFmt.hhmm(m.respondedAt) : ""}</span>
                   )}
                 </div>
               );

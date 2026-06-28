@@ -365,6 +365,7 @@ export const patientConsults = pgTable("patient_consults", {
   status: text("status", { enum: CONSULT_STATUS })
     .notNull()
     .default("requested"),
+  respondedAt: timestamp("responded_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

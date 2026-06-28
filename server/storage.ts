@@ -910,7 +910,9 @@ export class DatabaseStorage implements IStorage {
         ),
       );
   }
-  async createConsult(row: Omit<PatientConsult, "id" | "createdAt">) {
+  async createConsult(
+    row: Omit<PatientConsult, "id" | "createdAt" | "respondedAt"> & { respondedAt?: Date | null },
+  ) {
     const [created] = await this.db
       .insert(patientConsults)
       .values(row)

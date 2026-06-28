@@ -413,7 +413,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 
 // Patient board panel — the running log of patients this ER provider routed and
 // their acceptance status. Self-contained (no PageWrap) for use as a widget.
-function RoutedBoardPanel({ sent, providers, onReassign }) {
+function RoutedBoardPanel({ sent, providers, onReassign, onAddConsult, onRespondConsult, consultServices }) {
   const dayOrder = ["Today", "Yesterday"];
   const grouped = {};
   (sent || []).forEach((s, idx) => { (grouped[s.day] = grouped[s.day] || []).push({ ...s, idx }); });
@@ -434,19 +434,23 @@ function RoutedBoardPanel({ sent, providers, onReassign }) {
               const accent = ACCENT[s.status] || "transparent";
               const accepted = s.status === "accepted", declined = s.status === "declined";
               return (
-              <div key={s.idx} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 16px 12px 13px", borderTop: i ? "1px solid var(--border)" : "none", borderLeft: `3px solid ${accent}`, background: accepted ? "var(--status-accepted-bg)" : declined ? "var(--status-rejected-bg)" : "transparent" }}>
-                <Avatar initials={s.initials} size={32} tint={TINT[s.status] || "blue"} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {s.initials} {declined ? "✗ declined by" : "→"} {s.provider}{s.acuity ? <AcuityChip level={s.acuity} size="sm" /> : null}</div>
-                  <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span>{s.complaint || "—"} · {s.time}</span>
-                    {(s.consultants || []).map((c) => (
-                      <SpecialtyTag key={c} name={c} size="sm" />
-                    ))}
+              <div key={s.idx} style={{ padding: "12px 16px 12px 13px", borderTop: i ? "1px solid var(--border)" : "none", borderLeft: `3px solid ${accent}`, background: accepted ? "var(--status-accepted-bg)" : declined ? "var(--status-rejected-bg)" : "transparent" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <Avatar initials={s.initials} size={32} tint={TINT[s.status] || "blue"} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {s.initials} {declined ? "✗ declined by" : "→"} {s.provider}{s.acuity ? <AcuityChip level={s.acuity} size="sm" /> : null}</div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>{s.complaint || "—"} · {s.time}</span>
+                      {(!s.consultDetails || !s.consultDetails.length) && (s.consultants || []).map((c) => (
+                        <SpecialtyTag key={c} name={c} size="sm" />
+                      ))}
+                    </div>
                   </div>
+                  {onAddConsult && s.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(s.patientId, spec)} />}
+                  <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
+                  <Badge status={s.status}>{(STATUS[s.status] || {}).label || s.status}</Badge>
                 </div>
-                <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
-                <Badge status={s.status}>{(STATUS[s.status] || {}).label || s.status}</Badge>
+                {s.consultDetails && s.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 440 }}><ConsultRoster details={s.consultDetails} onRespond={onRespondConsult} /></div> : null}
               </div>
               );
             })}

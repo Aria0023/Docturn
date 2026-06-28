@@ -341,7 +341,7 @@ function App() {
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
     { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
-    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
+    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
     { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.diversion} onToggleDiversion={a.toggleDiversion} /> },
@@ -350,7 +350,7 @@ function App() {
     { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
     { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
-    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} /> },
+    { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
   else screen = <CustomizableDashboard role="director" widgets={[

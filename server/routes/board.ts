@@ -37,7 +37,7 @@ export function registerBoardRoutes(app: Express) {
       const consultsByPatient = new Map<number, string[]>();
       const consultDetailByPatient = new Map<
         number,
-        Array<{ id: number; specialty: string; consultantUserId: number | null; name: string | null; credential: string | null; status: string }>
+        Array<{ id: number; specialty: string; consultantUserId: number | null; name: string | null; credential: string | null; status: string; respondedAt: Date | null; requestedAt: Date | null }>
       >();
       for (const c of consults) {
         const arr = consultsByPatient.get(c.patientId) ?? [];
@@ -52,6 +52,8 @@ export function registerBoardRoutes(app: Express) {
           name: u?.displayName ?? null,
           credential: u?.credential ?? null,
           status: c.status,
+          respondedAt: c.respondedAt ?? null,
+          requestedAt: c.createdAt ?? null,
         });
         consultDetailByPatient.set(c.patientId, det);
       }
@@ -199,8 +201,10 @@ export function registerBoardRoutes(app: Express) {
     const id = Number(req.params.id);
     const parsed = updateConsultSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
+      ...(responded ? { respondedAt: new Date() } : {}),
       ...(parsed.data.consultantUserId !== undefined
         ? { consultantUserId: parsed.data.consultantUserId }
         : {}),

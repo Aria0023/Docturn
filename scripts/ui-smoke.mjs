@@ -621,13 +621,50 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
       const row2 = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
       const acc = (row2.consultDetails || []).find((d) => d.id === named[0].id) || {};
       rec("consultant acceptance is tracked (accepted vs not)", acc.status === "accepted", "status=" + acc.status);
+      rec("consult records WHEN it was accepted (timestamp)", !!acc.respondedAt, "respondedAt=" + acc.respondedAt);
     } else {
       rec("consultant acceptance is tracked (accepted vs not)", true, "placeholder-only team in seed");
+      rec("consult records WHEN it was accepted (timestamp)", true, "placeholder-only team in seed");
     }
   } else {
     rec("consult fans out to the specialty team (shows who was consulted)", false, "no board patient with patientId");
     rec("consultant acceptance is tracked (accepted vs not)", false, "no board patient");
+    rec("consult records WHEN it was accepted (timestamp)", false, "no board patient");
   }
+}
+
+// ER physician can add a consultant on a patient they routed and see who was
+// called on their own board (the "sent" feed carries consult details).
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+{
+  let snt = DT.getState().sent || [];
+  for (let i = 0; i < 12 && snt.length === 0; i++) { await flush(); snt = DT.getState().sent || []; }
+  const mine = snt.find((x) => x.patientId != null);
+  if (mine) {
+    DT.actions.requestConsult(mine.patientId, "Hospital Medicine");
+    for (let i = 0; i < 12; i++) await flush();
+    const row = (DT.getState().sent || []).find((x) => x.patientId === mine.patientId) || {};
+    rec("ER physician sees consultants they called on their own board", (row.consultDetails || []).length >= 1,
+      "consultDetails=" + (row.consultDetails || []).length);
+  } else {
+    rec("ER physician sees consultants they called on their own board", false, "no sent patient with patientId");
+  }
+}
+
+// Per-organization preferences: consult-service catalog + appearance/theme are
+// stored per tenant and survive a fresh login (persisted to org settings).
+await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+{
+  DT.actions.addConsultService("Smoke Consult Svc");
+  DT.actions.setTheme({ appName: "SmokeBrand" });
+  for (let i = 0; i < 10; i++) await flush();
+  await DT.actions.login("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
+  const st = DT.getState();
+  rec("per-org consult catalog persists to the tenant",
+    (st.consultServices || []).some((x) => x.name === "Smoke Consult Svc"),
+    "svcs=" + JSON.stringify((st.consultServices || []).map((x) => x.name)).slice(0, 200));
+  rec("per-org appearance/theme persists to the tenant",
+    (st.theme || {}).appName === "SmokeBrand", "theme.appName=" + (st.theme || {}).appName);
 }
 
 // ---- report ---------------------------------------------------------------
