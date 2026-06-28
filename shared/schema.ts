@@ -362,6 +362,7 @@ export const patientConsults = pgTable("patient_consults", {
     .references(() => patients.id),
   specialty: text("specialty").notNull(),
   consultantUserId: integer("consultant_user_id").references(() => users.id),
+  consultantName: text("consultant_name"),
   status: text("status", { enum: CONSULT_STATUS })
     .notNull()
     .default("requested"),
@@ -681,6 +682,12 @@ export const toggleOnCallSchema = z.object({ onCall: z.boolean() });
 export const createConsultSchema = z.object({
   specialty: z.string().min(1),
   consultantUserId: z.number().int().positive().optional(),
+  // Optional explicit team to consult (the consult service's on-call + members),
+  // so the requester records WHO was called by name even when a consultant has
+  // no user account.
+  consultants: z
+    .array(z.object({ name: z.string().min(1), userId: z.number().int().positive().optional() }))
+    .optional(),
 });
 export const updateConsultSchema = z.object({
   status: z.enum(CONSULT_STATUS).optional(),

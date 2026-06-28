@@ -612,8 +612,9 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
     for (let i = 0; i < 12; i++) await flush();
     const row = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
     const det = (row.consultDetails || []).filter((d) => d.specialty === "Hospital Medicine");
-    rec("consult fans out to the specialty team (shows who was consulted)",
-      det.length >= 1, "details=" + JSON.stringify(det.map((d) => ({ n: d.name, s: d.status }))).slice(0, 200));
+    rec("consult fans out to the specialty team (shows who was consulted, by name)",
+      det.length >= 1 && det.every((d) => d.name && d.name.length),
+      "details=" + JSON.stringify(det.map((d) => ({ n: d.name, s: d.status }))).slice(0, 200));
     const named = det.filter((d) => d.userId && d.status === "requested");
     if (named.length) {
       DT.actions.respondConsult(named[0].id, "accepted");
@@ -648,6 +649,28 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
       "consultDetails=" + (row.consultDetails || []).length);
   } else {
     rec("ER physician sees consultants they called on their own board", false, "no sent patient with patientId");
+  }
+}
+
+// Consulting a service with a NAMED on-call records that provider's name (not a
+// nameless "on-call team") — the requester sees who they called.
+await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+{
+  const card = (DT.getState().consultServices || []).find((s) => s.name === "Cardiology");
+  if (card) DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
+  for (let i = 0; i < 8; i++) await flush();
+  let brd = DT.getState().board || [];
+  for (let i = 0; i < 10 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
+  const target = brd.find((b) => b.patientId != null);
+  if (target) {
+    DT.actions.requestConsult(target.patientId, "Cardiology");
+    for (let i = 0; i < 12; i++) await flush();
+    const row = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
+    const card2 = (row.consultDetails || []).filter((d) => d.specialty === "Cardiology");
+    rec("consult records the named provider called", card2.some((d) => d.name === "Dr. Nadia Cole"),
+      "card=" + JSON.stringify(card2.map((d) => d.name)));
+  } else {
+    rec("consult records the named provider called", false, "no board patient");
   }
 }
 

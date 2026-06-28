@@ -49,7 +49,7 @@ export function registerBoardRoutes(app: Express) {
           id: c.id,
           specialty: c.specialty,
           consultantUserId: c.consultantUserId ?? null,
-          name: u?.displayName ?? null,
+          name: u?.displayName ?? c.consultantName ?? null,
           credential: u?.credential ?? null,
           status: c.status,
           respondedAt: c.respondedAt ?? null,
@@ -139,13 +139,34 @@ export function registerBoardRoutes(app: Express) {
       const patient = await storage().getPatient(me.organizationId, patientId);
       if (!patient) return res.status(404).json({ error: "not_found" });
 
-      // Fan the consult out to EVERY provider on that specialty's team (e.g. the
-      // attending MD and an NP/PA who share the specialty), each as its own row,
-      // so we can track who accepts and who doesn't. An explicit consultantUserId
-      // pins it to one person; no team match → a single unassigned row.
+      // Record WHO is being consulted, each as its own row, so we can track who
+      // accepts and who doesn't. Priority: an explicit team (the consult service's
+      // on-call + members, by name); then a single pinned user; then a fan-out to
+      // hospitalists sharing the specialty; finally a named placeholder.
+      const spec = parsed.data.specialty.trim().toLowerCase();
+      const existing = await storage().listConsultsForPatient(me.organizationId, patientId);
+      const sameSpec = (c: PatientConsult) => (c.specialty || "").trim().toLowerCase() === spec;
+      const haveUid = new Set(existing.filter(sameSpec).map((c) => c.consultantUserId).filter(Boolean));
+      const haveName = new Set(existing.filter(sameSpec).map((c) => (c.consultantName || "").toLowerCase()).filter(Boolean));
+
       let created: PatientConsult[];
-      if (parsed.data.consultantUserId != null) {
-        created = [
+      if (Array.isArray(parsed.data.consultants) && parsed.data.consultants.length) {
+        const targets = parsed.data.consultants.filter(
+          (t) => !(t.userId && haveUid.has(t.userId)) && !haveName.has(t.name.trim().toLowerCase()),
+        );
+        created = await Promise.all(
+          targets.map((t) =>
+            storage().createConsult({
+              organizationId: me.organizationId, patientId,
+              specialty: parsed.data.specialty,
+              consultantUserId: t.userId ?? null,
+              consultantName: t.name,
+              status: "requested",
+            }),
+          ),
+        );
+      } else if (parsed.data.consultantUserId != null) {
+        created = haveUid.has(parsed.data.consultantUserId) ? [] : [
           await storage().createConsult({
             organizationId: me.organizationId, patientId,
             specialty: parsed.data.specialty,
@@ -154,17 +175,12 @@ export function registerBoardRoutes(app: Express) {
           }),
         ];
       } else {
-        const spec = parsed.data.specialty.trim().toLowerCase();
         const hosps = await storage().listHospitalists(me.organizationId);
-        const team = hosps.filter((h) => (h.specialty || "").trim().toLowerCase() === spec);
-        // Don't double-request a provider already consulted for this patient+specialty.
-        const existing = await storage().listConsultsForPatient(me.organizationId, patientId);
-        const already = new Set(
-          existing
-            .filter((c) => (c.specialty || "").trim().toLowerCase() === spec && c.consultantUserId != null)
-            .map((c) => c.consultantUserId),
-        );
-        const targets = team.filter((h) => !already.has(h.userId));
+        const users = await storage().listUsers(me.organizationId);
+        const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+        const targets = hosps
+          .filter((h) => (h.specialty || "").trim().toLowerCase() === spec)
+          .filter((h) => !haveUid.has(h.userId));
         if (targets.length) {
           created = await Promise.all(
             targets.map((h) =>
@@ -172,16 +188,17 @@ export function registerBoardRoutes(app: Express) {
                 organizationId: me.organizationId, patientId,
                 specialty: parsed.data.specialty,
                 consultantUserId: h.userId,
+                consultantName: nameById.get(h.userId) ?? null,
                 status: "requested",
               }),
             ),
           );
-        } else if (!existing.some((c) => (c.specialty || "").trim().toLowerCase() === spec)) {
-          // No team on file and none requested yet → keep a placeholder row.
+        } else if (!existing.some(sameSpec)) {
           created = [
             await storage().createConsult({
               organizationId: me.organizationId, patientId,
-              specialty: parsed.data.specialty, consultantUserId: null, status: "requested",
+              specialty: parsed.data.specialty, consultantUserId: null,
+              consultantName: parsed.data.specialty + " on-call", status: "requested",
             }),
           ];
         } else {

@@ -619,7 +619,17 @@
   DT.actions.requestConsult = function (patientId, specialty) {
     if (patientId == null || !specialty) return;
     var pid = bid(patientId);
-    api("POST", "/api/patients/" + pid + "/consults", { specialty: specialty }).then(rehydrate).catch(function (e) {
+    // Pull the named team off this org's consult-service roster (on-call + members)
+    // so the consult records WHO was called by name, not just the specialty.
+    var svc = (DT.getState().consultServices || []).find(function (x) { return x.name === specialty; });
+    var numId = function (v) { return typeof v === "number" && v > 0 ? v : undefined; };
+    var team = [];
+    if (svc) {
+      if (svc.onCall && svc.onCall.name) team.push({ name: svc.onCall.name, userId: numId(svc.onCall.userId) });
+      (svc.members || []).forEach(function (m) { if (m && m.name) team.push({ name: m.name, userId: numId(m.userId) }); });
+    }
+    var body = team.length ? { specialty: specialty, consultants: team } : { specialty: specialty };
+    api("POST", "/api/patients/" + pid + "/consults", body).then(rehydrate).catch(function (e) {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't request consult", msg: String((e && e.message) || "Try again.") }; return s; });
     });
     DT.set(function (s) {
