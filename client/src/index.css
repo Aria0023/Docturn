@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #2563eb;
+  --status-pending: #f59e0b;
+  --status-accepted: #10b981;
+  --status-rejected: #ef4444;
+  --status-offline: #64748b;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    Helvetica, Arial, sans-serif;
+  background-color: #f8fafc;
+  color: hsl(222.2 47.4% 11.2%);
+  -webkit-font-smoothing: antialiased;
+}
