@@ -108,6 +108,23 @@ function ChangePasswordButton() {
   );
 }
 
+// Unmistakable test-only marker shown on every screen (incl. login) whenever the
+// instance is in synthetic-data mode, so no one mistakes a pilot for real PHI.
+function SyntheticBanner({ on }) {
+  if (!on) return null;
+  return (
+    <div role="status" style={{
+      flex: "none", zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+      padding: "6px 14px", fontSize: 12.5, fontWeight: 700, color: "#7C2D12", textAlign: "center",
+      background: "repeating-linear-gradient(45deg, #FEF3C7, #FEF3C7 14px, #FDE68A 14px, #FDE68A 28px)",
+      borderBottom: "1px solid #F59E0B", letterSpacing: ".01em",
+    }}>
+      <Icon name="flask-conical" size={14} color="#B45309" />
+      SYNTHETIC DATA — testing only. Do not enter real patient information (PHI).
+    </div>
+  );
+}
+
 function Topbar({ title, subtitle, working, onToggleWorking, right, onBell, notifCount = 0, onLock }) {
   return (
     <header style={{ height: 64, borderBottom: "1px solid var(--border)", background: "rgba(255,255,255,.85)", backdropFilter: "blur(6px)", position: "sticky", top: 0, zIndex: 5, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px" }}>

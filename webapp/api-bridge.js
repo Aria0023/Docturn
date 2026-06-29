@@ -1193,5 +1193,11 @@
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
   }
 
+  // Load public client config (synthetic-data flag + app name) before/after login
+  // so the test-only banner reflects the server. Defaults to synthetic ON.
+  rawApi("GET", "/api/config").then(function (cfg) {
+    if (cfg) DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
+  }).catch(function () { /* keep the safe default (synthetic on) */ });
+
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

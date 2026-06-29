@@ -209,6 +209,9 @@
     var t0 = now();
     return {
       v: 10,
+      // Test-only by default until an operator deliberately turns it off for a
+      // compliant real-PHI deployment (server: SYNTHETIC_DATA=false).
+      syntheticData: true,
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},

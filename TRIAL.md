@@ -30,6 +30,12 @@ password changes.
 >   travels over the network. Plain `http://` is not acceptable for PHI.
 > - **Encryption at rest** = the database/disk is stored scrambled, so a stolen
 >   drive or backup is useless without the key.
+>
+> **Synthetic-data mode (on by default).** Every screen — including login — shows
+> a yellow **"SYNTHETIC DATA — testing only"** banner. It stays on unless someone
+> deliberately starts the server with `SYNTHETIC_DATA=false` (only do that for a
+> fully compliant real-PHI deployment). Leave it on for the pilot; it's your
+> visible proof to clinicians that no real patient data should be entered.
 
 ## 1. Database — real Postgres (durable, never auto-wiped)
 
