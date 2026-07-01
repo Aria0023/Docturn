@@ -14,14 +14,13 @@ import { eq } from 'drizzle-orm';
 async function seed() {
   console.log('[seed] starting...');
 
-  // Idempotency: wipe seedable tables in FK-safe order.
-  db.delete(messageDeliveryStatus).run();
-  db.delete(messages).run();
-  db.delete(conversations).run();
-  db.delete(patients).run();
-  db.delete(hospitalists).run();
-  db.delete(users).run();
-  db.delete(organizations).run();
+  // Idempotency: if the MERCY org already exists, skip seeding entirely so we
+  // never delete and recreate (and risk data loss) on a re-run.
+  const existing = db.select().from(organizations).where(eq(organizations.code, 'MERCY')).get();
+  if (existing) {
+    console.log('[seed] already seeded, skipping.');
+    return;
+  }
 
   // Organization
   const org = db

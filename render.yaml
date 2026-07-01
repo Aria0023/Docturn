@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: docturn
+    runtime: node
+    plan: free
+    buildCommand: npm install --include=dev && npm run build && npm run db:push && npm run seed
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        value: ./docturn.db
+      - key: SESSION_SECRET
+        generateValue: true

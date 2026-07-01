@@ -1,8 +1,12 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { configureAuth } from './auth.js';
 import { buildRouter } from './routes.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function createApp(): Express {
   const app = express();
@@ -48,6 +52,17 @@ export function createApp(): Express {
   app.use('/api', (_req: Request, res: Response) => {
     res.status(404).json({ error: 'Not found' });
   });
+
+  // Serve the built React client in production.
+  // At runtime app.js lives in dist/server/, and the client build is at <repoRoot>/client/dist.
+  if (process.env.NODE_ENV === 'production') {
+    const clientDist = path.resolve(__dirname, '..', '..', 'client', 'dist');
+    app.use(express.static(clientDist));
+    // SPA fallback: any non-/api GET that isn't a static file returns index.html.
+    app.get(/^\/(?!api\/).*/, (_req: Request, res: Response) => {
+      res.sendFile(path.join(clientDist, 'index.html'));
+    });
+  }
 
   // Consistent error shape.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
