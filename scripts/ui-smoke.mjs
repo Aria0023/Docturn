@@ -232,6 +232,14 @@ await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await 
     "users=" + (DT.getState().devUsers || []).length);
 }
 
+// Synthetic-data mode: public /api/config flag + store default both "on" so the
+// test-only banner shows unless an operator deliberately disables it.
+{
+  const cfg = await window.fetch("/api/config", { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  rec("public /api/config exposes synthetic-data flag (default on)", cfg.syntheticData === true, "cfg=" + JSON.stringify(cfg));
+  rec("store defaults to synthetic-data mode on", DT.getState().syntheticData === true, "flag=" + DT.getState().syntheticData);
+}
+
 // developer enters an organization's FULL portal (org-scoped admin context) so
 // every per-org surface — compliance, directory, board, settings — is real.
 await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
@@ -673,6 +681,14 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   } else {
     rec("ER physician sees consultants they called on their own board", false, "no sent patient with patientId");
   }
+}
+
+// Self-service password change: a wrong current password is rejected (so the
+// account is unchanged and demo logins keep working).
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+{
+  const r = await DT.actions.changePassword("definitely-wrong-pass", "BrandNewPass123");
+  rec("password change rejects an incorrect current password", r && r.ok === false, "r=" + JSON.stringify(r));
 }
 
 // Consulting a service with a NAMED on-call records that provider's name (not a

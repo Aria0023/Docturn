@@ -123,10 +123,25 @@ export class OpenAIExtractor implements AIExtractor {
 let _extractor: AIExtractor | null = null;
 export function getExtractor(): AIExtractor {
   if (_extractor) return _extractor;
-  // Live only when a key is present AND the stub isn't forced (CI sets nothing).
-  if (process.env.OPENAI_API_KEY && process.env.USE_STUB_AI !== "true") {
+  // SAFETY: the external extractor sends the intake note (PHI) to a third-party
+  // LLM. That is only lawful under a signed BAA with a HIPAA-eligible endpoint.
+  // So it is OFF unless BOTH a key is present AND the operator has explicitly
+  // acknowledged the BAA via AI_EXTERNAL_PHI_OK=true. Default = local extractor,
+  // which never leaves the server. Setting a key alone no longer leaks PHI.
+  const externalOk = process.env.AI_EXTERNAL_PHI_OK === "true";
+  if (process.env.OPENAI_API_KEY && externalOk && process.env.USE_STUB_AI !== "true") {
+    console.warn(
+      "[ai] EXTERNAL AI ENABLED — intake notes (PHI) will be sent to the configured LLM endpoint. " +
+        "Confirm a BAA is in place and the endpoint is HIPAA-eligible.",
+    );
     _extractor = new OpenAIExtractor();
   } else {
+    if (process.env.OPENAI_API_KEY && !externalOk) {
+      console.warn(
+        "[ai] OPENAI_API_KEY is set but AI_EXTERNAL_PHI_OK!=true — using the LOCAL extractor; " +
+          "no PHI leaves the server.",
+      );
+    }
     _extractor = new MockAIExtractor();
   }
   return _extractor;

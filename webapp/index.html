@@ -265,7 +265,7 @@ function App() {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
@@ -385,6 +385,7 @@ function App() {
     return (
       <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
         <ThemeStyle theme={st.theme} />
+        <SyntheticBanner on={st.syntheticData} />
         {/* mobile top bar */}
         <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 12px" }}>
           <button onClick={() => setDrawer(true)} title="Menu" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="menu" size={20} /></button>
@@ -423,8 +424,10 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--secondary)" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)" }}>
       <ThemeStyle theme={st.theme} />
+      <SyntheticBanner on={st.syntheticData} />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Topbar title={topTitle} subtitle={topSub}
@@ -436,6 +439,7 @@ function App() {
           right={<RoleSwitcher role={role} onChange={a.setRole} />} />
         {impersonationBanner}
         <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+      </div>
       </div>
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />

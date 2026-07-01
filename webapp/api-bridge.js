@@ -666,6 +666,20 @@
       return s;
     });
   };
+  // Self-service password change. Returns a promise so the UI can await + report.
+  DT.actions.changePassword = function (currentPassword, newPassword) {
+    return api("PATCH", "/api/account/password", { currentPassword: currentPassword, newPassword: newPassword })
+      .then(function () {
+        DT.set(function (s) { s.__toast = { tone: "accepted", title: "Password updated", msg: "Use your new password next time you sign in." }; return s; });
+        return { ok: true };
+      })
+      .catch(function (e) {
+        var m = String((e && e.message) || "");
+        var msg = /weak/.test(m) ? "Use at least 8 characters." : /wrong/.test(m) ? "Current password is incorrect." : "Couldn't update password.";
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Password not changed", msg: msg }; return s; });
+        return { ok: false, error: msg };
+      });
+  };
   DT.actions.decline = function (id) {
     api("PATCH", "/api/assignments/" + id + "/reject").then(rehydrate).catch(function () {});
     DT.set(function (s) {
@@ -1178,6 +1192,12 @@
       hydrate(u.role).then(function () { hydrateConversations(); });
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
   }
+
+  // Load public client config (synthetic-data flag + app name) before/after login
+  // so the test-only banner reflects the server. Defaults to synthetic ON.
+  rawApi("GET", "/api/config").then(function (cfg) {
+    if (cfg) DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
+  }).catch(function () { /* keep the safe default (synthetic on) */ });
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

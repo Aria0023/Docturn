@@ -281,6 +281,219 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
   return changed;
 }
 
+/**
+ * Two additional, fully-isolated demo tenants, seeded idempotently (skip if the
+ * org code already exists — same skip-if-exists pattern the seed uses per org).
+ * Kept separate from ISPN/DOCTURN so neither tenant can see the other's users
+ * or data.
+ *   - HOSP "Summit Hospitalist Group" — hospitalist-director demo.
+ *   - ER   "Metro ER Network"        — ER-director demo.
+ * Both admins deliberately share username `director` / password `docturn`;
+ * usernames are unique per-org, so they differ only by org code.
+ */
+export async function ensureDemoTenants(storage: DatabaseStorage): Promise<void> {
+  const passwordHash = await hashPassword(DEV_PASSWORD);
+
+  async function addUser(
+    orgId: number,
+    username: string,
+    role: string,
+    displayName: string,
+    credential: string | null = null,
+  ) {
+    return storage.createUser({
+      organizationId: orgId,
+      username,
+      passwordHash,
+      role: role as never,
+      displayName,
+      credential: credential as never,
+      phone: null,
+      twoFactorEnabled: false,
+    });
+  }
+
+  async function addProvider(
+    orgId: number,
+    userId: number,
+    specialty: string,
+    census: number,
+    cap: number,
+    working: boolean,
+    order: number,
+    shiftType: "day" | "swing" | "night",
+  ) {
+    return storage.createHospitalist({
+      organizationId: orgId,
+      userId,
+      specialty,
+      currentPatientCount: census,
+      patientCap: cap,
+      rotationOrder: order,
+      working,
+      shiftType,
+    });
+  }
+
+  // ---- Hospital A: Summit Hospitalist Group (HOSP) — hospitalist director -----
+  if (!(await storage.getOrganizationByCode("HOSP"))) {
+    const org = await storage.createOrganization({
+      name: "Summit Hospitalist Group",
+      code: "HOSP",
+      city: "Boulder",
+      state: "CO",
+      timezone: "America/Denver",
+      assignmentTimeoutMin: 15,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+
+    await addUser(org.id, "director", "director", "Dr. Morgan Hale", "MD");
+    // An ER doctor exists purely to author the seeded pending assignments so the
+    // hand-off flow is real (an assignment needs an er_doctor creator id).
+    const erDoc = await addUser(org.id, "er.doc", "er_doctor", "Dr. Priya Nair", "MD");
+
+    const roster: Array<{
+      u: string; name: string; cred: string; specialty: string;
+      census: number; cap: number; working: boolean; shift: "day" | "swing" | "night";
+    }> = [
+      { u: "okafor", name: "Dr. Sam Okafor", cred: "MD", specialty: "General",           census: 3, cap: 10, working: true,  shift: "day"   },
+      { u: "voss",   name: "Dr. Lena Voss",  cred: "MD", specialty: "Cardiology",        census: 8, cap: 14, working: true,  shift: "swing" },
+      { u: "raj",    name: "Dr. Raj Patel",  cred: "DO", specialty: "Pulmonology",       census: 5, cap: 12, working: false, shift: "night" },
+      { u: "kim",    name: "Dr. Chloe Kim",  cred: "MD", specialty: "Hospital Medicine", census: 2, cap: 8,  working: true,  shift: "day"   },
+    ];
+    const hosp: Record<string, number> = {};
+    let order = 0;
+    for (const r of roster) {
+      const u = await addUser(org.id, r.u, "hospitalist", r.name, r.cred);
+      const h = await addProvider(org.id, u.id, r.specialty, r.census, r.cap, r.working, order++, r.shift);
+      hosp[r.u] = h.id;
+    }
+
+    const patients: Array<{ initials: string; room: string; summary: string; specialty: string; acuity: number }> = [
+      { initials: "JD", room: "210", summary: "Chest pain, rule out ACS",              specialty: "Cardiology",  acuity: 2 },
+      { initials: "MR", room: "305", summary: "Shortness of breath, COPD flare",       specialty: "Pulmonology", acuity: 3 },
+      { initials: "TW", room: "112", summary: "Abdominal pain, possible obstruction",  specialty: "General",     acuity: 3 },
+    ];
+    const pids: number[] = [];
+    for (const p of patients) {
+      const created = await storage.createPatient({
+        organizationId: org.id,
+        initials: p.initials,
+        roomNumber: p.room,
+        issueSummary: p.summary,
+        specialty: p.specialty,
+        department: "Emergency",
+        acuity: p.acuity,
+        status: "waiting",
+        erDoctorId: erDoc.id,
+        assignedHospitalistId: null,
+      });
+      pids.push(created.id);
+    }
+
+    // Pending assignments routed to a few providers so the director/hospitalist
+    // dashboards show live pending work.
+    const routes: Array<[number, number]> = [
+      [pids[0]!, hosp["voss"]!],
+      [pids[1]!, hosp["okafor"]!],
+      [pids[2]!, hosp["kim"]!],
+    ];
+    for (const [patientId, hospitalistId] of routes) {
+      await storage.createAssignment({
+        organizationId: org.id,
+        patientId,
+        hospitalistId,
+        erDoctorId: erDoc.id,
+        status: "pending",
+        via: "round_robin",
+        acceptedByUserId: null,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+      });
+    }
+  }
+
+  // ---- Hospital B: Metro ER Network (ER) — ER director -----------------------
+  if (!(await storage.getOrganizationByCode("ER"))) {
+    const org = await storage.createOrganization({
+      name: "Metro ER Network",
+      code: "ER",
+      city: "Metro City",
+      state: "IL",
+      timezone: "America/Chicago",
+      assignmentTimeoutMin: 15,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+
+    await addUser(org.id, "director", "er_director", "Dr. Alex Reyes", "MD");
+    const erDocs = [
+      await addUser(org.id, "er.doc1", "er_doctor", "Dr. Tara Singh",  "MD"),
+      await addUser(org.id, "er.doc2", "er_doctor", "Dr. Ben Carter",  "MD"),
+      await addUser(org.id, "er.doc3", "er_doctor", "Dr. Nadia Frost", "DO"),
+    ];
+
+    // Two hospitalists exist only as routing targets so the ER hand-off flow is
+    // functional. Kept minimal (working=true, no extra data).
+    const routeHosp: number[] = [];
+    let order = 0;
+    for (const h of [
+      { u: "holt", name: "Dr. Ivan Holt", cred: "MD", shift: "day" as const },
+      { u: "reed", name: "Dr. Maya Reed", cred: "MD", shift: "night" as const },
+    ]) {
+      const u = await addUser(org.id, h.u, "hospitalist", h.name, h.cred);
+      const prof = await addProvider(org.id, u.id, "Hospital Medicine", 0, 12, true, order++, h.shift);
+      routeHosp.push(prof.id);
+    }
+
+    const patients: Array<{ initials: string; room: string; summary: string; acuity: number }> = [
+      { initials: "AB", room: "ER-1", summary: "Fever and cough, awaiting workup", acuity: 3 },
+      { initials: "CD", room: "ER-2", summary: "Laceration, awaiting suture",       acuity: 4 },
+      { initials: "EF", room: "ER-3", summary: "Palpitations, on monitor",          acuity: 2 },
+    ];
+    const pids: number[] = [];
+    for (const p of patients) {
+      const created = await storage.createPatient({
+        organizationId: org.id,
+        initials: p.initials,
+        roomNumber: p.room,
+        issueSummary: p.summary,
+        specialty: "General",
+        department: "Emergency",
+        acuity: p.acuity,
+        status: "waiting",
+        erDoctorId: erDocs[0]!.id,
+        assignedHospitalistId: null,
+      });
+      pids.push(created.id);
+    }
+
+    // A couple of pending hand-offs from ER doctors to the routing hospitalists.
+    await storage.createAssignment({
+      organizationId: org.id,
+      patientId: pids[0]!,
+      hospitalistId: routeHosp[0]!,
+      erDoctorId: erDocs[0]!.id,
+      status: "pending",
+      via: "round_robin",
+      acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+    await storage.createAssignment({
+      organizationId: org.id,
+      patientId: pids[2]!,
+      hospitalistId: routeHosp[1]!,
+      erDoctorId: erDocs[1]!.id,
+      status: "pending",
+      via: "round_robin",
+      acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+  }
+}
+
 // CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
 // backslashes so this also fires on Windows (the naive `file://${argv[1]}`
 // string compare fails on Windows paths, silently skipping the seed).
@@ -315,6 +528,8 @@ if (isMain) {
           `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
         );
       }
+      // Idempotently provision the two isolated demo tenants (HOSP + ER).
+      await ensureDemoTenants(storage);
     } catch (err) {
       console.error("Seed failed:", err);
       process.exitCode = 1;

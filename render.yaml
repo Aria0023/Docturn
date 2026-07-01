@@ -12,8 +12,8 @@ services:
     runtime: node
     plan: free
     branch: claude/sleepy-davinci-kmin7n
-    buildCommand: npm install
-    startCommand: npm run serve
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
