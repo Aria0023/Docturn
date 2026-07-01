@@ -3,7 +3,7 @@ import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
 import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
-import { ensurePlatform, seed } from "./seed.js";
+import { ensureDemoTenants, ensurePlatform, seed } from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { attachWebSocket } from "./ws/index.js";
 
@@ -50,6 +50,8 @@ async function main() {
     } else {
       await ensurePlatform(storage);
     }
+    // Idempotently provision the two isolated demo tenants (HOSP + ER).
+    await ensureDemoTenants(storage);
   } catch (e) {
     console.error("[db] seed/ensure failed:", e);
   }
