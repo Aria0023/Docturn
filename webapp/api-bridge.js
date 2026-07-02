@@ -921,13 +921,20 @@
   DT.actions.addProvider = function (data) {
     var name = (data.name || "").trim();
     if (!name) return;
+    // Never allow provisioning a developer/super-admin from the director UI;
+    // the server enforces this too, but keep the client from ever asking.
+    var role = data.role && data.role !== "developer" ? data.role : "hospitalist";
     var uname = name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 20) || ("dr" + Date.now());
-    api("POST", "/api/director/hospitalists", {
-      username: uname, password: "docturn", displayName: name,
-      specialty: data.specialty || "Hospital Medicine", patientCap: parseInt(data.cap, 10) || 12,
-      shiftType: data.shift || "day", role: "hospitalist",
-    }).then(rehydrate).catch(function () {});
-    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Provider added", msg: name + " added to the group." }; return s; });
+    var body = { username: uname, password: "docturn", displayName: name, role: role };
+    // Specialty/cap/shift only apply to hospitalists (who join the rotation).
+    if (role === "hospitalist") {
+      body.specialty = data.specialty || "Hospital Medicine";
+      body.patientCap = parseInt(data.cap, 10) || 12;
+      body.shiftType = data.shift || "day";
+    }
+    api("POST", "/api/director/hospitalists", body).then(rehydrate).catch(function () {});
+    var roleLabel = { hospitalist: "Provider", er_doctor: "ER doctor", er_director: "ER director", director: "Director" }[role] || "Provider";
+    DT.set(function (s) { s.__toast = { tone: "accepted", title: roleLabel + " added", msg: name + " added to " + (role === "hospitalist" ? "the group." : "the organization.") }; return s; });
   };
   DT.actions.removeProvider = function (id) {
     api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});

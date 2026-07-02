@@ -37,7 +37,13 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const [overId, setOverId] = React.useState(null);
   const [capInput, setCapInput] = React.useState("12");
   const [adding, setAdding] = React.useState(false);
-  const [form, setForm] = React.useState({ name: "", specialty: "Hospital Medicine", cap: "12", shift: "day" });
+  const [form, setForm] = React.useState({ name: "", specialty: "Hospital Medicine", cap: "12", shift: "day", role: "hospitalist" });
+  const ROLE_OPTIONS = [
+    { id: "hospitalist", label: "Hospitalist" },
+    { id: "er_doctor", label: "ER Doctor" },
+    { id: "er_director", label: "ER Director" },
+    { id: "director", label: "Director" },
+  ];
   const working = providers.filter((p) => p.working);
   const rotation = providers.filter((p) => p.working && p.inRotation);
   const totalCensus = providers.reduce((a, p) => a + p.census, 0);
@@ -257,23 +263,37 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
           children={
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <Field label="Full name" icon="user" value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder="Dr. Jane Smith / Priya Shah, NP" />
-              <Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => setForm({ ...form, specialty: v })} placeholder="e.g. Cardiology" />
-              <div style={{ display: "flex", gap: 12 }}>
-                <div style={{ width: 120 }}><Field label="Patient cap" icon="gauge" value={form.cap} onChange={(v) => setForm({ ...form, cap: v.replace(/[^0-9]/g, "") })} /></div>
-                <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Shift</label>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    {shifts.map((s) => (
-                      <button key={s.id} onClick={() => setForm({ ...form, shift: s.id })}
-                        style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
-                          border: form.shift === s.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.shift === s.id ? "#EFF6FF" : "#fff", color: form.shift === s.id ? "var(--primary)" : "var(--foreground)" }}>{s.label}</button>
-                    ))}
-                  </div>
+              <div>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Role</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {ROLE_OPTIONS.map((r) => (
+                    <button key={r.id} onClick={() => setForm({ ...form, role: r.id })}
+                      style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
+                        border: form.role === r.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.role === r.id ? "#EFF6FF" : "#fff", color: form.role === r.id ? "var(--primary)" : "var(--foreground)" }}>{r.label}</button>
+                  ))}
                 </div>
               </div>
+              {form.role === "hospitalist" && (
+                <>
+                  <Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => setForm({ ...form, specialty: v })} placeholder="e.g. Cardiology" />
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <div style={{ width: 120 }}><Field label="Patient cap" icon="gauge" value={form.cap} onChange={(v) => setForm({ ...form, cap: v.replace(/[^0-9]/g, "") })} /></div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Shift</label>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {shifts.map((s) => (
+                          <button key={s.id} onClick={() => setForm({ ...form, shift: s.id })}
+                            style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
+                              border: form.shift === s.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.shift === s.id ? "#EFF6FF" : "#fff", color: form.shift === s.id ? "var(--primary)" : "var(--foreground)" }}>{s.label}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
                 <Button variant="outline" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
-                <Button size="sm" icon="check" onClick={() => { if (form.name.trim()) { onAddProvider(form); setForm({ name: "", specialty: "Hospital Medicine", cap: "12", shift: "day" }); setAdding(false); } else window.DT.actions.toast({ tone: "rejected", title: "Name required", msg: "Enter the provider's name." }); }}>Add provider</Button>
+                <Button size="sm" icon="check" onClick={() => { if (form.name.trim()) { onAddProvider(form); setForm({ name: "", specialty: "Hospital Medicine", cap: "12", shift: "day", role: "hospitalist" }); setAdding(false); } else window.DT.actions.toast({ tone: "rejected", title: "Name required", msg: "Enter the provider's name." }); }}>Add provider</Button>
               </div>
             </div>
           } />
