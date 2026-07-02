@@ -10,25 +10,27 @@
 // Real captured grid — Tarzana ISP hospitalist schedule (amion.com/cgi-bin/ocs).
 // `secure` = "Secure message to Amion app" (onboarded) vs "Not ready to receive
 // secure messages" — the onboarding signal DocTurn uses to invite the rest.
-const SS_HRS = { "7a-7p": ["Day call", "amber"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
+const SS_HRS = { "7a-7p": ["Day call", "amber"], "2p-10p": ["Swing", "blue"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
+// Live Tarzana ISP North on-call roster (captured from Amion OCS grid).
 const SS_ROWS = [
-  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
-  { slot: "Tarzana 2", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
-  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Ahmed, Amir", grp: "ISP North", secure: false },
-  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
-  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
-  { slot: "Tarzana 6", hrs: "7a-7p", prov: "Gideon, Danny", grp: "ISP North", secure: false },
-  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
-  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
-  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
-  { slot: "North Triage", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
-  { slot: "Tarzana 2 PM Swing", hrs: "4p-12a", prov: "Manukian, Naira", grp: "ISP North", secure: false },
+  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Lou, May", grp: "Lead Hospitalist", secure: true },
+  { slot: "Tarzana 2", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
+  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
+  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Rostami, Matt", grp: "ISP North", secure: true },
+  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
+  { slot: "Tarzana 6", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
+  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
+  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
+  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Yu, Allen", grp: "ISP Hospitalist", secure: true },
+  { slot: "North Triage", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
+  { slot: "Tarzana Swing", hrs: "2p-10p", prov: "Kashi, Kioumars", grp: "ISP North", secure: false },
   { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
+  { slot: "Tarzana Night Triage (incoming 7p)", hrs: "7p-7a", prov: "Tabibian, Allen", grp: "ISP North", secure: false },
   { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
 ];
 const SS_MAP = [
   { code: "7a–7p",  shift: "Day call",      tint: "amber" },
-  { code: "4p–12a", shift: "Swing",         tint: "blue" },
+  { code: "2p–10p", shift: "Swing",         tint: "blue" },
   { code: "7p–7a",  shift: "Nights",        tint: "slate" },
   { code: "11p–7a", shift: "Night X-cover", tint: "slate" },
 ];
@@ -37,7 +39,7 @@ function ssName(prov) { const [last, first] = prov.split(", "); return (first ||
 function ssInit(prov) { const [last, first] = prov.split(", "); return ((first || " ")[0] + last[0]).toUpperCase(); }
 
 // Amion hours → DocTurn shift type.
-const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
+const SS_SHIFT = { "7a-7p": "day", "2p-10p": "swing", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
 // On-call schedule sources. Each organization picks its own — different
 // hospitals keep their schedule in different places, so the source is
