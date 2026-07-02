@@ -41,6 +41,16 @@ function ssInit(prov) { const [last, first] = prov.split(", "); return ((first |
 // Amion hours → DocTurn shift type.
 const SS_SHIFT = { "7a-7p": "day", "2p-10p": "swing", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
+// Relative "synced X ago" label for the live-feed bar.
+function ssAgo(iso) {
+  if (!iso) return "never";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + " h ago";
+  return Math.floor(s / 86400) + " d ago";
+}
+
 // On-call schedule sources. Each organization picks its own — different
 // hospitals keep their schedule in different places, so the source is
 // org-scoped AND modular by KIND: a scheduling vendor (API/sign-in capture),
@@ -131,6 +141,15 @@ function ScheduleSync({ org }) {
   const [shiftsAdded, setShiftsAdded] = React.useState(false);
   const [shiftsBusy, setShiftsBusy] = React.useState(false);
 
+  // Live Amion feed status (server-side AMION_OCS_URL env config). Null until
+  // fetched; { configured:false } when the org has no live feed — in which
+  // case everything below behaves exactly like the static snapshot demo.
+  const [amion, setAmion] = React.useState(null);
+  React.useEffect(() => {
+    if (!a.amionStatus) return;
+    Promise.resolve(a.amionStatus()).then((s) => { if (s) setAmion(s); }).catch(() => {});
+  }, []);
+
   const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
   // The captured Amion on-call grid is the REAL Cedars / Tarzana ISP roster, so
   // it only auto-populates for the Cedars org (code ISP*/CEDARS). Any other org
@@ -140,9 +159,28 @@ function ScheduleSync({ org }) {
   const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
   const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
   const notConfigured = srcKey === "none";
-  const people = React.useMemo(() => ssUniqueProviders(SS_ROWS), []);
+
+  // Live feed rows (server-parsed Amion grid) → same shape as SS_ROWS. When
+  // the env var isn't set (or this isn't the Amion org) we keep the snapshot.
+  const liveRows = React.useMemo(() => {
+    if (!amion || !amion.configured || !Array.isArray(amion.providers) || !amion.providers.length) return null;
+    return amion.providers.map((p) => ({ slot: p.slot, hrs: p.hrs, prov: p.name, grp: p.group, secure: !!p.secure }));
+  }, [amion]);
+  const liveOk = !!(amion && amion.configured && amion.lastStatus === "ok" && liveRows);
+  const liveErr = !!(amion && amion.configured && amion.lastStatus === "error");
+  const rows = liveRows || SS_ROWS;
+
+  // A configured live feed connects itself — no fake "sign in & capture" step.
+  React.useEffect(() => {
+    if (amion && amion.configured) {
+      setConnected(true); setRevealed(true);
+      if (amion.lastSyncAt) setLastSync(ssAgo(amion.lastSyncAt));
+    }
+  }, [amion]);
+
+  const people = React.useMemo(() => ssUniqueProviders(rows), [rows]);
   const remaining = people.filter((p) => !added[p.name]);
-  const shiftTypes = React.useMemo(() => ssShiftTypes(SS_ROWS), []);
+  const shiftTypes = React.useMemo(() => ssShiftTypes(rows), [rows]);
 
   const importShifts = () => {
     if (!a.importShiftTypes) return;
@@ -182,7 +220,8 @@ function ScheduleSync({ org }) {
   // Switching the org's source resets the live connection and points the
   // sign-in/API fields at the new vendor's defaults.
   React.useEffect(() => {
-    setConnected(false); setRevealed(false);
+    // A live env-configured Amion feed stays connected regardless of the picker.
+    if (!(amion && amion.configured)) { setConnected(false); setRevealed(false); }
     if (src.api) setBaseUrl(src.api);
     if (src.loginUrl) setLoginUrl(src.loginUrl);
   }, [srcKey]);
@@ -191,17 +230,41 @@ function ScheduleSync({ org }) {
     setBusy(true);
     setTimeout(() => { setBusy(false); setConnected(true); setRevealed(true); setLastSync("just now"); }, 1200);
   };
-  const syncNow = () => { setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900); };
+  const syncNow = () => {
+    // Live feed → real server-side sync (re-pulls Amion, updates the roster).
+    if (amion && amion.configured && a.amionSyncNow) {
+      setBusy(true);
+      Promise.resolve(a.amionSyncNow())
+        .then((s) => { if (s) setAmion(s); setLastSync("just now"); })
+        .catch(() => {})
+        .finally(() => setBusy(false));
+      return;
+    }
+    setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900);
+  };
   const disconnect = () => { setConnected(false); setRevealed(false); };
 
   return (
     <Card style={{ padding: 18, marginBottom: 18 }}>
-      {/* Preview banner — the schedule shown below is a manually-loaded snapshot,
-          not a live automated pull (Amion has no data feed for SSO-only logins). */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
-        <Icon name="info" size={15} color="#92400E" />
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Preview — schedule shown is a loaded snapshot, not a live Amion connection.</span>
-      </div>
+      {/* Feed banner: green when the live Amion feed is connected & healthy;
+          amber "feed error" when the last pull failed (last snapshot shown);
+          amber "Preview" when no live feed is configured (static snapshot). */}
+      {liveOk ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#D1FAE5", border: "1px solid #6EE7B7" }}>
+          <Icon name="circle-check-big" size={15} color="#065F46" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#065F46" }}>Live Amion feed · synced {ssAgo(amion.lastSyncAt)} · {amion.rowCount} slots</span>
+        </div>
+      ) : liveErr ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+          <Icon name="triangle-alert" size={15} color="#92400E" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Amion feed error — showing last snapshot.</span>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+          <Icon name="info" size={15} color="#92400E" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Preview — schedule shown is a loaded snapshot, not a live Amion connection.</span>
+        </div>
+      )}
       {/* header */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
         <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
@@ -330,11 +393,11 @@ function ScheduleSync({ org }) {
                     <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready">Sec</th>
                   </tr></thead>
                   <tbody>
-                    {SS_ROWS.map((r, i) => (
+                    {rows.map((r, i) => (
                       <tr key={i}>
-                        <td style={{ padding: "5px 10px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.slot}<span style={{ color: "var(--muted-foreground)", marginLeft: 5 }}>{r.hrs}</span></td>
-                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.prov}</td>
-                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", textAlign: "center" }}>
+                        <td style={{ padding: "5px 10px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.slot}<span style={{ color: "var(--muted-foreground)", marginLeft: 5 }}>{r.hrs}</span></td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.prov}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", textAlign: "center" }}>
                           <Icon name={r.secure ? "check" : "x"} size={12} color={r.secure ? "var(--status-accepted)" : "var(--status-rejected)"} />
                         </td>
                       </tr>

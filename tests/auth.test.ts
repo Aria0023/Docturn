@@ -63,4 +63,24 @@ describe("auth", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, db: "up" });
   });
+
+  it("never exposes passwordHash in the registration approval queue", async () => {
+    const reg = await supertest(ctx.app).post("/api/register").send({
+      orgCode: "ISPN",
+      username: "qa.pending",
+      password: "qatest123",
+      displayName: "QA Pending",
+      requestedRole: "hospitalist",
+    });
+    expect(reg.status).toBe(201);
+
+    const { agent } = await login(ctx.app, { username: "director" });
+    const res = await agent.get("/api/registrations");
+    expect(res.status).toBe(200);
+    const row = res.body.find((r: { username: string }) => r.username === "qa.pending");
+    expect(row).toBeTruthy();
+    expect(row).not.toHaveProperty("passwordHash");
+    expect(row).not.toHaveProperty("password_hash");
+    expect(JSON.stringify(res.body)).not.toMatch(/passwordHash/);
+  });
 });

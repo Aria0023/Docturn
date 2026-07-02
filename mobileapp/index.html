@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>DocTurn</title>
+
+<!-- PWA -->
+<link rel="manifest" href="/m/manifest.webmanifest">
+<meta name="theme-color" content="#2563EB">
+<link rel="icon" type="image/png" sizes="192x192" href="/m/icons/icon-192.png">
+
+<!-- iOS Add-to-Home-Screen -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DocTurn">
+<link rel="apple-touch-icon" href="/m/icons/apple-touch-icon.png">
+
+<link rel="stylesheet" href="/m/tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body { font-family: var(--font-sans); color: var(--foreground); background: #F2F4F8;
+    -webkit-font-smoothing: antialiased; overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent; }
+  input, textarea, button { font-family: var(--font-sans); }
+  @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
+  ::-webkit-scrollbar { width: 0; height: 0; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+</style>
+
+<!-- Vendored locally (same copies the desktop kit uses) — no external CDN, so
+     the app loads offline and behind hospital firewalls. -->
+<script src="/m/assets/vendor/react.js"></script>
+<script src="/m/assets/vendor/react-dom.js"></script>
+<script src="/m/assets/vendor/babel.min.js"></script>
+<script src="/m/assets/vendor/lucide.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- Live API bridge + store (plain JS, loads before the UI). -->
+<script src="/m/api.js"></script>
+
+<!-- Designer kit primitives (MI icons, badges, avatars, presence dots). -->
+<script type="text/babel" data-presets="react" src="/m/screens.jsx"></script>
+
+<!-- Live app shell — kit look-and-feel wired to the real backend. -->
+<script type="text/babel" data-presets="react" src="/m/app.jsx"></script>
+
+<script>
+  // Service worker: offline app shell. API/WS are never cached (PHI).
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/m/sw.js", { scope: "/m/" }).catch(function () {});
+    });
+  }
+</script>
+</body>
+</html>

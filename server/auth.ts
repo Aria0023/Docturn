@@ -130,7 +130,9 @@ export function registerAuthRoutes(app: Express) {
     requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = req.user as unknown as User;
-      res.json(await storage().listPendingRegistrations(me.organizationId));
+      const rows = await storage().listPendingRegistrations(me.organizationId);
+      // Never expose credential hashes to the approval UI.
+      res.json(rows.map(({ passwordHash: _ph, ...rest }) => rest));
     },
   );
 

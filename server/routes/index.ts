@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { registerAuthRoutes } from "../auth.js";
+import { registerAmionRoutes } from "./amion.js";
 import { registerAssignmentRoutes } from "./assignments.js";
 import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
@@ -40,4 +41,5 @@ export function registerRoutes(app: Express) {
   registerDevRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);
+  registerAmionRoutes(app);
 }

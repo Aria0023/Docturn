@@ -5,6 +5,7 @@ import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 import { ensureDemoTenants, ensurePlatform, seed } from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
+import { startAmionSyncLoop } from "./services/amion.js";
 import { attachWebSocket } from "./ws/index.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -73,6 +74,10 @@ async function main() {
   // Auto-clean: hourly sweep purges patients/assignments older than 24h so stale
   // board and log data clears itself. Manual "Clear" controls call the same path.
   startAutoCleanLoop();
+  // Amion schedule sync: if AMION_OCS_URL is set, pull the live on-call grid
+  // shortly after boot (non-blocking, errors logged + recorded) and then on the
+  // AMION_SYNC_INTERVAL_MIN cadence. No-op when the env var is absent.
+  startAmionSyncLoop();
 
   server.listen(PORT, () => {
     const mode = handle.ephemeral ? "PGlite (in-process)" : "PostgreSQL";

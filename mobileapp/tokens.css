@@ -1,0 +1,177 @@
+/* ============================================================================
+   DocTurn Design System — Colors & Type
+   Source of truth: docturnstyle.pdf (Brand & Design Style Guide v1.0),
+   which is itself grounded in the live codebase (client/src/index.css,
+   tailwind.config.ts, shadcn/ui, manifest.json).
+
+   Light mode only — the product declares color-scheme: light and ships
+   no dark theme. Always reference the SEMANTIC token (e.g. var(--primary)),
+   never a raw hex, so the system stays themeable.
+
+   Color tokens are stored as HSL *channels* (no hsl() wrapper), matching the
+   codebase convention, then composed into ready-to-use colors below.
+   ============================================================================ */
+
+:root {
+  color-scheme: light;
+
+  /* --- Raw HSL channels (codebase convention: "H S% L%", no hsl()) ------- */
+  --primary-ch:              221 83% 53%;   /* brand blue  #2563EB */
+  --primary-foreground-ch:   210 40% 98%;
+  --background-ch:           0 0% 100%;
+  --foreground-ch:           222 84% 5%;
+  --card-ch:                 0 0% 100%;
+  --secondary-ch:            210 40% 96%;   /* == muted == accent */
+  --muted-ch:                210 40% 96%;
+  --accent-ch:               210 40% 96%;
+  --muted-foreground-ch:     215 16% 47%;
+  --border-ch:               214 32% 91%;   /* == input border */
+  --input-ch:                214 32% 91%;
+  --ring-ch:                 221 83% 53%;
+  --destructive-ch:          0 84% 60%;
+
+  /* --- Composed semantic tokens (use these in components) ---------------- */
+  --primary:              hsl(var(--primary-ch));
+  --primary-foreground:   hsl(var(--primary-foreground-ch));
+  --background:           hsl(var(--background-ch));
+  --foreground:           hsl(var(--foreground-ch));
+  --card:                 hsl(var(--card-ch));
+  --card-foreground:      hsl(var(--foreground-ch));
+  --popover:              hsl(var(--background-ch));
+  --secondary:            hsl(var(--secondary-ch));
+  --secondary-foreground: hsl(var(--foreground-ch));
+  --muted:                hsl(var(--muted-ch));
+  --muted-foreground:     hsl(var(--muted-foreground-ch));
+  --accent:               hsl(var(--accent-ch));
+  --border:               hsl(var(--border-ch));
+  --input:                hsl(var(--input-ch));
+  --ring:                 hsl(var(--ring-ch));
+  --destructive:          hsl(var(--destructive-ch));
+  --destructive-foreground: #ffffff;
+
+  /* --- Brand blue + marketing "sky" family ------------------------------ */
+  --brand-blue:  #2563EB;   /* PWA theme_color, brand mark, marketing CTA */
+  --sky-400:     #38BDF8;   /* gradient start, soft accents (landing)     */
+  --sky-500:     #0EA5E9;   /* gradient mid, CTA gradients (landing)      */
+  --sky-700:     #0369A1;   /* gradient end, wordmark gradient (landing)  */
+  --rose-100:    #FFE4E6;   /* warm tail of the sky→white→rose gradient   */
+
+  /* Signature marketing background gradient */
+  --marketing-bg: linear-gradient(160deg, #E0F2FE 0%, #FFFFFF 48%, #FFE4E6 100%);
+  /* Signature CTA / glyph-tile gradient */
+  --sky-gradient: linear-gradient(135deg, var(--sky-400) 0%, var(--sky-500) 50%, var(--sky-700) 100%);
+
+  /* --- Healthcare palette (.bg-medical-* / .text-medical-*) -------------- */
+  --medical-primary:    hsl(210 100% 50%);
+  --medical-secondary:  hsl(159 100% 35%);
+  --medical-accent:     hsl(45 100% 51%);
+  --medical-emergency:  hsl(0 84% 60%);
+  --medical-success:    hsl(142 76% 36%);
+  --medical-warning:    hsl(38 92% 50%);
+
+  /* --- Status color language (§2.4) — meanings are FIXED everywhere ------ */
+  --status-pending:   #D97706;  /* amber  — awaiting response, expiring soon  */
+  --status-pending-bg:#FEF3C7;
+  --status-accepted:  #059669;  /* emerald — accepted / online / available    */
+  --status-accepted-bg:#D1FAE5;
+  --status-active:    #2563EB;  /* blue   — in-flight assignment, just sent   */
+  --status-active-bg: #DBEAFE;
+  --status-rejected:  #DC2626;  /* red    — declined / cancelled / error      */
+  --status-rejected-bg:#FEE2E2;
+  --status-neutral:   #64748B;  /* slate  — inactive / expired / disabled     */
+  --status-neutral-bg:#F1F5F9;
+
+  /* ======================================================================
+     TYPOGRAPHY
+     The system loads NO custom web font (speed, native feel, zero layout
+     shift). Body uses font-sans antialiased.
+     ====================================================================== */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale (Tailwind steps). Product UI lives in sm–2xl; display sizes
+     are reserved for the marketing surface. */
+  --text-xs:   12px;   /* badges, captions, dense stats, helper labels */
+  --text-sm:   14px;   /* DEFAULT UI text, buttons, table cells, inputs */
+  --text-base: 16px;   /* body copy, paragraphs */
+  --text-lg:   18px;   /* card titles, section subheads */
+  --text-xl:   20px;   /* panel headings (product) */
+  --text-2xl:  24px;   /* page headings (product) */
+  --text-4xl:  36px;   /* secondary marketing headings */
+  --text-5xl:  48px;   /* landing hero (mobile) */
+  --text-6xl:  60px;   /* landing hero (desktop) */
+
+  --leading-tight: 1.15;   /* hero headlines */
+  --leading-snug:  1.35;
+  --leading-normal:1.5;    /* body */
+
+  --weight-normal:   400;  /* body / paragraph */
+  --weight-medium:   500;  /* buttons + interactive labels (shadcn default) */
+  --weight-semibold: 600;  /* badges, sub-labels, emphasized inline */
+  --weight-bold:     700;  /* headings, hero, card titles, numeric stats */
+
+  /* ======================================================================
+     SPACING — Tailwind 4px base scale. Compose from these steps.
+     ====================================================================== */
+  --space-1:  4px;
+  --space-1-5:6px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;   /* default card padding, form field gaps */
+  --space-5:  20px;
+  --space-6:  24px;   /* card & panel padding */
+  --space-8:  32px;   /* section padding, large CTA padding */
+  --space-12: 48px;
+  --space-16: 64px;   /* landing section vertical rhythm */
+
+  /* ======================================================================
+     RADIUS — single base token, derived steps. Pills use full rounding.
+     ====================================================================== */
+  --radius: 0.5rem;                        /* 8px base */
+  --radius-sm: calc(var(--radius) - 4px);  /* 4px  — small inner elements */
+  --radius-md: calc(var(--radius) - 2px);  /* 6px  — buttons, inputs */
+  --radius-lg: var(--radius);              /* 8px  — cards, popovers, dialogs */
+  --radius-xl: 12px;                       /* marketing cards */
+  --radius-2xl: 16px;                      /* hero panels */
+  --radius-full: 9999px;                   /* badges, avatars, status dots */
+
+  /* ======================================================================
+     ELEVATION — soft shadows that lift interactive surfaces, not decorate.
+     ====================================================================== */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.10), 0 2px 4px -2px rgb(0 0 0 / 0.10);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.10), 0 4px 6px -4px rgb(0 0 0 / 0.10);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.10), 0 8px 10px -6px rgb(0 0 0 / 0.10);
+  --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  --shadow-glow: 0 10px 30px -5px rgb(14 165 233 / 0.30);  /* sky CTA glow */
+}
+
+/* ===========================================================================
+   SEMANTIC ELEMENT DEFAULTS — opt in by importing this file.
+   =========================================================================== */
+.ds-root {
+  font-family: var(--font-sans);
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Headings in practice (§3.4) */
+.ds-page-title    { font-size: var(--text-2xl); font-weight: var(--weight-bold); color: var(--foreground); line-height: var(--leading-snug); }
+.ds-section-title { font-size: var(--text-lg);  font-weight: var(--weight-bold); color: var(--foreground); }
+.ds-hero          { font-size: var(--text-6xl); font-weight: var(--weight-bold); color: hsl(222 47% 11%); line-height: var(--leading-tight); letter-spacing: -0.02em; }
+.ds-body          { font-size: var(--text-base); font-weight: var(--weight-normal); line-height: var(--leading-normal); color: var(--foreground); }
+.ds-muted         { font-size: var(--text-sm);  color: var(--muted-foreground); }
+.ds-mono          { font-family: var(--font-mono); }
+
+/* Global focus-visible — a 2px primary outline, 2px offset. Never remove. */
+:where(.ds-root) :focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-contrast: high) {
+  :root { --border-ch: 214 32% 70%; --input-ch: 214 32% 70%; }
+}

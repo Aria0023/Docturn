@@ -423,7 +423,21 @@
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
         if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
-        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "PATIENT_BOARD_UPDATED" || ev.type === "BROADCAST_SENT") rehydrate();
+        // Server-emitted event names (see server/services + routes): consult and
+        // care-team changes also re-hydrate so boards/rosters stay live.
+        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
+        else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
+          // Surface an incoming org-wide broadcast live (the sender already has
+          // an optimistic local copy; don't duplicate it for them).
+          var b = ev.broadcast;
+          DT.set(function (s) {
+            if (b.senderId !== meId && !(s.broadcasts || []).some(function (x) { return x.id === b.id; })) {
+              s.broadcasts = [{ id: b.id, title: b.message, sev: b.severity, at: new Date(b.createdAt || Date.now()).getTime(), acked: 0, total: 0, ackReq: false }].concat(s.broadcasts || []);
+              s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "urgent"), msg: b.message };
+            }
+            return s;
+          });
+        }
       };
       sock.onclose = function () { if (ws === sock) ws = null; if (DT.getState().session) setTimeout(connectWs, 3000); };
       sock.onerror = function () { try { sock.close(); } catch (e) {} };
@@ -918,6 +932,22 @@
     api("POST", "/api/round-robin/reset").catch(function () {});
     DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
   };
+  // Emergency broadcast: persist + fan out via the real backend (WS
+  // BROADCAST_CREATED reaches every signed-in member of the org). The kit's
+  // local action still runs for the sender's own list/toast. Severity mapping:
+  // the kit offers info/warning/critical/emergency; the server accepts
+  // info/urgent/critical.
+  var origSendBroadcast = DT.actions.sendBroadcast;
+  DT.actions.sendBroadcast = function (data) {
+    var SEV_MAP = { info: "info", warning: "urgent", critical: "critical", emergency: "critical" };
+    var msg = (data.title || "").trim() + (data.message && data.message.trim() ? " — " + data.message.trim() : "");
+    if (msg) {
+      api("POST", "/api/broadcasts", { message: msg, severity: SEV_MAP[data.severity] || "urgent" }).catch(function (e) {
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: String((e && e.message) || "Server rejected it — it was only shown locally.") }; return s; });
+      });
+    }
+    if (origSendBroadcast) return origSendBroadcast(data);
+  };
   DT.actions.addProvider = function (data) {
     var name = (data.name || "").trim();
     if (!name) return;
@@ -997,6 +1027,13 @@
       throw e;
     });
   };
+
+  // ---- Amion schedule feed (server-side, env-configured) --------------------
+  // Status is readable by any authed role (the server scopes it to the Amion
+  // org); sync-now is director/developer only. The feed URL/token never
+  // reaches the client — these return only the parsed grid + sync metadata.
+  DT.actions.amionStatus = function () { return get("/api/amion/status"); };
+  DT.actions.amionSyncNow = function () { return api("POST", "/api/amion/sync-now", {}); };
 
   // Developer: hydrate real cross-tenant users into the kit's devUsers shape.
   function hydrateDevUsers() {

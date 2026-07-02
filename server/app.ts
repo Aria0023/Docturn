@@ -132,6 +132,34 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   registerRoutes(app);
 
+  // Mobile PWA at /m: the designer's mobile kit wired to the SAME live API and
+  // WebSocket (mobileapp/ = kit copy + api.js bridge + PWA manifest/SW/icons).
+  // Registered BEFORE the desktop kit's SPA catch-all so /m/* is never shadowed.
+  // Resolved from source (tsx) or compiled (dist) via the same cwd fallback.
+  const mobileCandidates = [
+    fileURLToPath(new URL("../mobileapp", import.meta.url)),
+    join(process.cwd(), "mobileapp"),
+  ];
+  const mobileDir = mobileCandidates.find((d) => existsSync(d));
+  if (mobileDir) {
+    app.use(
+      "/m",
+      express.static(mobileDir, {
+        etag: true,
+        lastModified: true,
+        setHeaders: (res) => {
+          // No-cache like the desktop kit: unhashed plain files, always revalidate.
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+        },
+      }),
+    );
+    // SPA fallback: /m and any /m/* route load the mobile shell.
+    app.get(/^\/m(\/.*)?$/, (_req, res) => {
+      res.setHeader("Cache-Control", "no-cache, must-revalidate");
+      res.sendFile(join(mobileDir, "index.html"));
+    });
+  }
+
   // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
   // from design/ui_kits/web-app (its own components, store.js, tokens, assets).
   // This guarantees pixel- and behavior-identical fidelity to the delivered
