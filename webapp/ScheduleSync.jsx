@@ -194,6 +194,12 @@ function ScheduleSync({ org }) {
 
   return (
     <Card style={{ padding: 18, marginBottom: 18 }}>
+      {/* Preview banner — the schedule shown below is a manually-loaded snapshot,
+          not a live automated pull (Amion has no data feed for SSO-only logins). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+        <Icon name="info" size={15} color="#92400E" />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Preview — schedule shown is a loaded snapshot, not a live Amion connection.</span>
+      </div>
       {/* header */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
         <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
