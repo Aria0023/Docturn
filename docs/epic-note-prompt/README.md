@@ -1,6 +1,22 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v7.1 — CURRENT: escaped `\-` dashes (defeat • rendering), chronic problems as full blocks
+## v7.2 — CURRENT: no "If X, then Y" contingency/advisory bullets
+
+**Use `providence-progress-note-v7.2.json`.** Provider feedback: drop the hypothetical
+suggestion lines ("If intolerance develops, then modify therapy", "If persistent BP
+elevation or drop occurs, then adjust medications"). Those were mandated by v7.1 —
+`PROBLEM_BULLETS_MINIMUM_CONTENT_LOCK` required "ONE contingency bullet in 'If X, then
+Y' form" per problem and the worked example ended with one. v7.2:
+
+- Removes the contingency requirement from the minimum-content lock, the template's
+  hardwired format block, the skeleton, and both worked examples.
+- Adds an explicit prohibition in those same places: no hypothetical contingency or
+  advisory lines; document only current, actual orders and monitoring, unless a
+  contingency plan is explicitly stated in the provided input data.
+- Monitoring thresholds tied to real orders (e.g., "repeat cultures if temperature
+  exceeds 38.3 C") remain allowed — the ban targets standalone anticipatory advice.
+
+## v7.1 (superseded) — escaped `\-` dashes (defeat • rendering), chronic problems as full blocks
 
 **Use `providence-progress-note-v7.1.json`.** v7.0 testing showed the model DID output
 `- item` lines, but ChatGPT's markdown renderer converts any `- ` line into a • bullet
