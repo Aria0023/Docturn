@@ -1,0 +1,109 @@
+# Providence Hospitalist Progress Note — ChatGPT Prompt (v6.6)
+
+`providence-progress-note-v6.6.json` is a corrected version of the v6.5 "hyperspace"
+prompt used to generate Epic-ready hospitalist progress notes. v6.5 produced
+inconsistent Assessment & Plan output (headers with bare bullets, missing assessment
+paragraphs, thin plans). This document explains why, and what v6.6 changes.
+
+## Why ChatGPT was not following the Assessment & Plan rules
+
+### 1. The prompt directly contradicted itself (the biggest problem)
+
+The v6.5 template contained this text — pasted **twice**, once in the middle and once
+near the end:
+
+> A/P in problem-based format with NO paragraphs. Each problem = diagnosis header only
+> + bullet points underneath. No assessment text.
+>
+> Format like this:
+> #Sepsis
+> • Continue antibiotics
+> • Monitor labs
+> • Supportive care
+
+This is the exact opposite of `ASSESSMENT_PARAGRAPH_DETAILED_LOCK` and
+`PLAN_DETAIL_WITH_MEDS_REQUIRED_LOCK`. When a prompt says both "write a detailed
+assessment paragraph" and "no paragraphs, no assessment text," the model picks one
+essentially at random — and the bullets-only fragment was the *last* instruction in the
+template, and models weight later instructions heavily. **This alone explains most of
+the misbehavior.** These fragments are deleted in v6.6. Worse, the fragment even
+included its own counter-example (`#Sepsis / • Continue antibiotics`), so the only
+worked example in the whole prompt demonstrated the format you did NOT want.
+
+### 2. The ASSESSMENT & PLAN section was defined three times, nested inside itself
+
+v6.5 opened `## ASSESSMENT & PLAN` three times, with the section-reset rule and coding
+rules restarted mid-sentence (the electrolyte-imbalance rule literally cuts off at
+"Electrolyte imbalances:" and a new `# ASSESSMENT & PLAN` begins). The template also
+contained a second complete copy of the note (a duplicate Hospital Course / Vitals /
+Exam / Labs / Meds block after Disposition) and a hardcoded physician-name disclaimer
+alongside the `@ME@` disclaimer. Malformed, duplicated structure makes the model guess
+which copy is authoritative. v6.6 has exactly one A&P definition, one problem block
+pattern, one disclaimer (`@ME@`), and no trailing duplicate note.
+
+### 3. "Detailed" was not measurable
+
+Models comply far better with countable requirements than with adjectives. v6.6
+replaces "must be detailed" with hard minimums:
+
+- **Assessment** = one paragraph, **3–6 full sentences**, and must contain all five:
+  certainty level → status/trajectory → ≥2 supporting findings with exact numbers →
+  clinical score as a single integer when applicable → treatment response +
+  justification for continued inpatient care.
+- **Plan** = **minimum 4 bullets** (when data supports them), each starting with an
+  action verb, collectively covering: meds (name+dose+route+frequency, antibiotic start
+  date + projected duration), monitoring (parameter + frequency + action threshold),
+  pending diagnostics, and one contingency ("if X then Y") or disposition task.
+- A one-line plan like "Continue antibiotics" is named explicitly as a violation.
+
+### 4. There was no worked example of the format you DO want
+
+v6.6 adds a full worked example (sepsis) in **two places** — a new top-level
+`ASSESSMENT_PLAN_EXAMPLE_FORMAT_LOCK`, and inline in the template immediately before
+the problem-block skeleton, fenced with:
+
+```
+{{FORMAT & DEPTH EXAMPLE — BEGIN ... never copy its diagnoses, values,
+medications, consultant names, or dates ... FORMAT & DEPTH EXAMPLE — END}}
+```
+
+The fencing matters: without "format only, never copy content," few-shot examples leak
+their content into real notes (a fabrication risk in clinical documentation). With it,
+the model copies the *shape and depth* only.
+
+## New / changed locks in v6.6
+
+| Lock | Purpose |
+|---|---|
+| `ASSESSMENT_PLAN_EXAMPLE_FORMAT_LOCK` (new) | Worked sepsis example; every problem block must match its structure and depth; content copying forbidden. |
+| `ASSESSMENT_PARAGRAPH_MINIMUM_CONTENT_LOCK` (new) | 3–6 sentences, five required elements. |
+| `PLAN_MINIMUM_CONTENT_LOCK` (new) | ≥4 action-verb bullets across meds/monitoring/diagnostics/contingency. |
+| `AP_NO_BULLET_ONLY_FORMAT_OVERRIDE_LOCK` (new) | Explicitly voids any "no paragraphs / header + bullets only" instruction from any source — including ChatGPT memory or old custom instructions, which may still carry the old format. |
+| `ASSESSMENT_PARAGRAPH_DETAILED_LOCK` (updated) | Now references the example and the sentence minimum. |
+| `PLAN_DETAIL_WITH_MEDS_REQUIRED_LOCK` (updated) | Now references the example and the 4-bullet minimum. |
+| `NO_ICD_CODES_LOCK` (new) | The "DO not put ICD codes" note was loose text at the bottom of v6.5; now a real lock. The ARU lock's `Z50.89` code was also removed from the rendered title for consistency. |
+
+## Also removed
+
+- The stray trailing lines at the end of v6.5 ("DO not put ICD codes…", the loose
+  bullets-only fragments) — everything is now inside a lock or the template.
+- The duplicate second note body and hardcoded-name disclaimer.
+- Chronic problems now get an explicit lighter rule (1–3 sentence assessment) so the
+  4-bullet minimum doesn't force padding on stable problems.
+
+## One thing to do on the ChatGPT side
+
+If this runs as a Custom GPT or with ChatGPT memory enabled, the old
+"no paragraphs / bullets only" instruction may persist in **memory or custom
+instructions** even after you fix the prompt. Check Settings → Personalization →
+Memory and delete anything about note formatting, or the model will keep receiving
+the contradiction from outside the prompt.
+
+## The Epic SmartPhrase wrapper (`@DAXASSESSMENTPLAN@` template)
+
+The separate Epic-side SmartPhrase (the one with `@NAME@`, `@LABRCNT(...)@`,
+`@DAXASSESSMENTPLAN@`) needs no structural change for this issue — the A&P detail is
+controlled by the ChatGPT prompt above, whose output is pasted where
+`@DAXASSESSMENTPLAN@` sits. The two loose lines at its bottom ("make plan more
+detailed / Make assessment more detailed") can be deleted; they are now enforced by
+the locks in v6.6.
