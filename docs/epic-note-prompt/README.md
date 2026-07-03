@@ -1,6 +1,17 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v7.3 — CURRENT: no interpretation lines; exam uses escaped `\-` dashes
+## v7.4 — CURRENT: extra empty line between A&P problems
+
+**Use `providence-progress-note-v7.4.json`.** Provider wants more breathing room
+between consecutive problem blocks. Chat renderers collapse consecutive blank lines,
+so "two blank lines" wouldn't survive — instead every pair of problems (and the
+`**#Chronic Problems**` header) is now separated by blank line + a line containing
+only `&nbsp;` + blank line, which renders as a full extra empty line in ChatGPT and
+pastes as one into Epic/Word. The separation rule, template format block, both repeat
+instructions, and the worked example (now two problems with the spacer between them)
+were all updated.
+
+## v7.3 (superseded) — no interpretation lines; exam uses escaped `\-` dashes
 
 **Use `providence-progress-note-v7.3.json`.** Two provider requests:
 
