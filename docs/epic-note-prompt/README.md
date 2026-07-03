@@ -1,4 +1,40 @@
-# Providence Hospitalist Progress Note — ChatGPT Prompt
+# Providence Hospitalist Notes — ChatGPT Prompts
+
+Two prompts live here:
+
+- **Progress note** — `providence-progress-note-v7.4.json` (current)
+- **H&P (admission note)** — `providence-hnp-v4.0.json` (current)
+
+# H&P Prompt
+
+## v4.0 — CURRENT: full port of the progress-note conventions
+
+`providence-hnp-v4.0.json` rebuilds the provider's H&P v3.3 prompt with every
+convention converged on for the progress note (v6.5 → v7.4):
+
+- Removed the same structural defects the original progress note had: triple-nested
+  ASSESSMENT & PLAN, a duplicate progress-note body pasted inside the H&P template,
+  loose trailing instructions, hardcoded-name disclaimer (now `@ME@`), and the
+  Confirmed/Likely/Possible confidence hierarchy.
+- A&P: bold `**#Dx [POA]**` titles (no heading marks), escaped `\- ` dash lines tight
+  under the title, `&nbsp;` spacer between problems, evidence-first ordering, ≥4 lines
+  per active problem, no "If X then Y" advisory lines, no interpretation lines,
+  no ICD codes, POA-only titles with the uncertain-diagnosis fallback, chronic
+  problems as full blocks.
+- Escaped-dash format also applied to Physical Exam (8 H&P systems: Gen, HEENT, Resp,
+  Cardio, Abd, Ext, Neuro, Psych) **and** to PMH, PSH, Home Medications, and Active
+  Medications (`HISTORY_AND_MEDS_DASH_LINES_LOCK`).
+- H&P-specific machinery preserved: Two-Midnight status statement (gated, final dash
+  line of the main diagnosis — shown in the worked example; exempt from the
+  no-advisory-lines ban, as is the C. diff prophylaxis statement), GMLOS inference
+  exception, stroke NIHSS lock, CHF GDMT, ROS inference-only (no blanket negatives),
+  provider-voice HPI/ROS with no source attribution, locked statement templates,
+  and the ACP ancillary.
+- 19-section completeness checklist (`FULL_NOTE_ALL_SECTIONS_REQUIRED_LOCK`) adapted
+  to the H&P section order, with the same first-line/last-line anchors and
+  full-rewrite-on-reprompt rule.
+
+# Progress Note Prompt
 
 ## v7.4 — CURRENT: extra empty line between A&P problems
 
