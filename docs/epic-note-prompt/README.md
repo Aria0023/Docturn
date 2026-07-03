@@ -1,6 +1,28 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v6.9 — CURRENT: no certainty/status qualifiers; titles are Dx + [POA] only
+## v7.0 — CURRENT: bold `**#Dx**` titles, literal `-` dashes tight under the title
+
+**Use `providence-progress-note-v7.0.json`.** Provider wants each problem to render as:
+
+```
+**#Acute blood loss anemia, improving post transfusion [POA]**
+- Hemoglobin improved from 6.8 to 8.2 after PRBC transfusion.
+- No active bleeding noted clinically.
+```
+
+Bold title (via `**` only — the `####` heading marks are what were injecting extra
+vertical spacing in Word/Epic), literal `- ` hyphens instead of `•` bullet glyphs, no
+blank line between the title and the first dash, one blank line between problems.
+
+- New `AP_BOLD_TITLE_AND_DASH_LINES_LOCK` with the exact shape spelled out.
+- Removed the two-line "section reset" (`### ​` / `### #`) machinery and the
+  `####` heading title format everywhere (template, example, ARU lock, Chronic
+  Problems header).
+- Title qualifier rule relaxed per the provider's own example: factual, data-supported
+  trajectory phrases ("improving post transfusion", "resolved") are allowed in titles;
+  certainty/hedging words (likely/possible/suspected/confirmed/rule-out) remain banned.
+
+## v6.9 (superseded) — no certainty/status qualifiers; titles are Dx + [POA] only
 
 **Use `providence-progress-note-v6.9.json`.** Provider feedback: diagnosis titles must
 never carry certainty words ("Likely", "Confirmed", "Possible", "Suspected") or
