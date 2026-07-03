@@ -1,6 +1,26 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v6.7 — CURRENT: bullets-only Assessment & Plan
+## v6.8 — CURRENT: full-note completeness checklist
+
+**Use `providence-progress-note-v6.8.json`.** Testing v6.7 produced the correct
+bullets-only A&P but the model output ONLY the A&P, dropping the interval
+update/hospital course, exam, vitals, labs, meds, and disposition. Classic
+tunnel-vision: heavy emphasis on one section makes the model treat a reprompt as
+"redo that section." v6.8 adds:
+
+- `FULL_NOTE_ALL_SECTIONS_REQUIRED_LOCK` — an explicit ordered 13-item section
+  checklist; first output line must be `# PROVIDENCE HEALTH AND SERVICES`, last must
+  be the disclaimer; omitting/truncating any section is a violation; single-section
+  output only when the provider literally writes "output only the [section] section".
+- `FULL_NOTE_SECTION_CHECKLIST_ENF` (hidden_logic) — self-check before finishing.
+- `FULL_NOTE_REWRITE_ON_REPROMPT_LOCK` strengthened — any reprompt or new data
+  regenerates the entire note, never a delta.
+- The inline A&P example now ends with an explicit note that it governs only the
+  A&P section and all other sections must still render.
+- Objective/Hospital Course placeholder now explicitly requires the interval update
+  since the prior note.
+
+## v6.7 (superseded) — bullets-only Assessment & Plan
 
 **Use `providence-progress-note-v6.7.json`.** After testing v6.6, the provider
 confirmed the *desired* A&P format is the bullets-only one: each problem is a bolded
