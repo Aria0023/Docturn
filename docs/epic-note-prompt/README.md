@@ -1,6 +1,17 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v7.2 — CURRENT: no "If X, then Y" contingency/advisory bullets
+## v7.3 — CURRENT: no interpretation lines; exam uses escaped `\-` dashes
+
+**Use `providence-progress-note-v7.3.json`.** Two provider requests:
+
+- Removed the **"Per my interpretation labs show:"** and **"Per my interpretation
+  studies show:"** blocks from LABS & DIAGNOSTICS (template + section checklist; the
+  checklist now explicitly prohibits them).
+- **Physical Exam** now uses the same backslash-escaped `\- ` dash lines as the A&P
+  (template skeleton, exam hard lock, and the Word-safe exception all updated), so the
+  nine system lines render and copy as literal `-` instead of • bullets.
+
+## v7.2 (superseded) — no "If X, then Y" contingency/advisory bullets
 
 **Use `providence-progress-note-v7.2.json`.** Provider feedback: drop the hypothetical
 suggestion lines ("If intolerance develops, then modify therapy", "If persistent BP
