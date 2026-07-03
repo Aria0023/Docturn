@@ -1,6 +1,24 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v7.0 — CURRENT: bold `**#Dx**` titles, literal `-` dashes tight under the title
+## v7.1 — CURRENT: escaped `\-` dashes (defeat • rendering), chronic problems as full blocks
+
+**Use `providence-progress-note-v7.1.json`.** v7.0 testing showed the model DID output
+`- item` lines, but ChatGPT's markdown renderer converts any `- ` line into a • bullet
+glyph, which then pastes into Epic as bullets. v7.1 has the model emit each item as
+`\- item` (backslash-escaped hyphen): markdown renders the backslash-escaped hyphen as
+a literal `-`, so the provider sees and copies plain `- item` lines into Epic. Changes:
+
+- `AP_BOLD_TITLE_AND_DASH_LINES_LOCK`, both examples, the template skeleton, and all
+  enforcement rules now require items to start with the literal three characters `\- `.
+- **Chronic problems now use the same format as active problems** (bold `**#Title**` +
+  escaped dash lines, ≥2 lines when data supports; the 4-line minimum stays
+  active-problems-only). The old one-line `→ stable` arrow format is gone.
+- **Uncertain-diagnosis fallback**: v7.0 output produced `#Possible urinary tract
+  infection` despite the ban. The title lock now gives the model an escape hatch: title
+  the objective finding (`#Pyuria on urinalysis`) instead of `Possible X`, with the
+  workup in the dash lines.
+
+## v7.0 (superseded) — bold `**#Dx**` titles, literal `-` dashes tight under the title
 
 **Use `providence-progress-note-v7.0.json`.** Provider wants each problem to render as:
 
