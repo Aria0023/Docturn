@@ -1,4 +1,34 @@
-# Providence Hospitalist Progress Note — ChatGPT Prompt (v6.6)
+# Providence Hospitalist Progress Note — ChatGPT Prompt
+
+## v6.7 — CURRENT: bullets-only Assessment & Plan
+
+**Use `providence-progress-note-v6.7.json`.** After testing v6.6, the provider
+confirmed the *desired* A&P format is the bullets-only one: each problem is a bolded
+diagnosis title followed by ONE flat bullet list (evidence bullets first — labs,
+imaging, consults — then action bullets), with **no** Assessment paragraph and **no**
+"Dx & Consults"/"Plan" subheaders. v6.6 enforced the opposite (paragraph + subsections)
+and the model followed it exactly — proving the example-lock works — so v6.7 keeps the
+same enforcement machinery and flips the target format:
+
+- `AP_BULLETS_ONLY_NO_PARAGRAPH_LOCK` — title + flat bullets only; voids any
+  paragraph/subheader instruction from any source.
+- `ASSESSMENT_PLAN_EXAMPLE_FORMAT_LOCK` — worked sepsis example rewritten in
+  bullets-only form (in the lock AND inline in the template).
+- `PROBLEM_BULLETS_MINIMUM_CONTENT_LOCK` — ≥4 bullets per problem when data supports:
+  evidence first, then meds (dose/route/frequency verbatim), antibiotic start date +
+  duration, monitoring with thresholds, one "If X, then Y" contingency.
+- `MEDICATION_SPECIFICATION_LOCK` fixed — "dose/route/frequency not provided" may only
+  be written when details are truly absent; v6.6 output appended it to a fully-specified
+  oxycodone order. Verbatim PRN dose ranges are explicitly allowed.
+- Chronic problems: one bullet each ("[problem] → stable, continue [med]").
+- Removed: assessment-paragraph locks; ARU and consult locks reworded for bullet format.
+
+The v6.6 sections below are kept for history — its root-cause analysis of the original
+v6.5 prompt (contradictions, duplicated template, no example) still applies.
+
+---
+
+# v6.6 (superseded) — paragraph-style A&P
 
 `providence-progress-note-v6.6.json` is a corrected version of the v6.5 "hyperspace"
 prompt used to generate Epic-ready hospitalist progress notes. v6.5 produced
