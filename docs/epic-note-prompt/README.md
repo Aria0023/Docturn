@@ -1,6 +1,25 @@
 # Providence Hospitalist Progress Note — ChatGPT Prompt
 
-## v6.8 — CURRENT: full-note completeness checklist
+## v6.9 — CURRENT: no certainty/status qualifiers; titles are Dx + [POA] only
+
+**Use `providence-progress-note-v6.9.json`.** Provider feedback: diagnosis titles must
+never carry certainty words ("Likely", "Confirmed", "Possible", "Suspected") or
+status words ("stable", "improving") — a title is the specific diagnosis plus the
+optional `[POA]` tag, nothing else. That language came from the original
+`GLOBAL_CONFIDENCE_HIERARCHY_PROVIDER_VOICE_LOCK` (which mandated a four-level
+Confirmed/Likely/Possible/Under-evaluation hierarchy). v6.9:
+
+- Removes the confidence-hierarchy lock entirely.
+- Adds `DX_TITLE_POA_ONLY_NO_QUALIFIERS_LOCK` — titles = maximally specific Dx
+  (+ etiology linkage) + optional `[POA]`; explicit violation examples included.
+- Adds `PROVIDER_VOICE_NO_HEDGING_LOCK` — no AI-inserted hedging anywhere in the
+  note (likely/possibly/suspected/appears/cannot exclude); definitive documentation;
+  hedging words reproduced only if verbatim in the source data (e.g., radiology
+  impressions). Keeps the integer-score and verbatim-dose-range rules.
+- Fixes "suspected type/etiology" wording in the pneumonia specificity rule.
+- The template's hardwired A&P format block now restates the title rule inline.
+
+## v6.8 (superseded) — full-note completeness checklist
 
 **Use `providence-progress-note-v6.8.json`.** Testing v6.7 produced the correct
 bullets-only A&P but the model output ONLY the A&P, dropping the interval
