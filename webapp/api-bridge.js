@@ -411,6 +411,7 @@
   // Cookie-authenticated socket at /ws. Refreshes messaging on MESSAGE_RECEIVED
   // and the role's data on assignment/board/broadcast events, so a second device
   // updates live without a manual refresh.
+  var typingExpiry = {}; // convoId -> timeout clearing a lost typing_stop
   function connectWs() {
     try { if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } } catch (e) {}
     if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
@@ -423,6 +424,22 @@
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
         if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
+        // Real typing indicator: a peer relayed typing_start/stop through the
+        // server (see server/ws). Flip the convo's flag, with a 5s safety expiry
+        // in case the stop event is lost.
+        else if (ev.type === "user_typing" && ev.conversationId != null) {
+          var setTypingFlag = function (on) {
+            DT.set(function (s) {
+              s.conversations = (s.conversations || []).map(function (c) {
+                return c.id === ev.conversationId ? Object.assign({}, c, { typing: !!on }) : c;
+              });
+              return s;
+            });
+          };
+          setTypingFlag(ev.typing);
+          clearTimeout(typingExpiry[ev.conversationId]);
+          if (ev.typing) typingExpiry[ev.conversationId] = setTimeout(function () { setTypingFlag(false); }, 5000);
+        }
         // Server-emitted event names (see server/services + routes): consult and
         // care-team changes also re-hydrate so boards/rosters stay live.
         else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
@@ -862,6 +879,21 @@
     api("POST", "/api/messaging/send", { conversationId: Number(id), content: t })
       .then(function () { hydrateConversations(); })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
+  };
+  // Real typing indicator (outbound). Sends typing_start once, then refreshes a
+  // 2.5s idle timer that emits typing_stop — same protocol as the /m mobile kit,
+  // relayed by the server to the other participants only.
+  var typingSendState = {};
+  DT.actions.setTyping = function (convoId, on) {
+    if (convoId == null || !ws || ws.readyState !== 1) return;
+    var convo = (DT.getState().conversations || []).find(function (c) { return c.id === convoId; });
+    if (!convo || !(convo.participantIds || []).length || convo.broadcast) return;
+    var send = function (start) {
+      try { ws.send(JSON.stringify({ type: start ? "typing_start" : "typing_stop", conversationId: Number(convoId), participantIds: convo.participantIds })); } catch (e) {}
+    };
+    if (!!typingSendState[convoId] !== !!on) { typingSendState[convoId] = !!on; send(!!on); }
+    clearTimeout(typingSendState["t" + convoId]);
+    if (on) typingSendState["t" + convoId] = setTimeout(function () { typingSendState[convoId] = false; send(false); }, 2500);
   };
   DT.actions.startConversation = function (participant) {
     var other = (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });

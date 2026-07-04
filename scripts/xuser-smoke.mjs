@@ -87,6 +87,20 @@ await chen.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ con
 await wait(500);
 rec("Chen→ER reply delivered live (bidirectional)", erWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
 
+// REAL typing indicator: Chen's typing_start relays to ER as user_typing (and
+// never echoes back to Chen — the server excludes the sender).
+before = erWs.got.length;
+const chenBefore = chenWs.got.length;
+chenWs.sock.send(JSON.stringify({ type: "typing_start", conversationId: convo.id, participantIds: convo.participantIds }));
+await wait(400);
+rec("typing_start relays to the peer as user_typing (real, not simulated)",
+  erWs.got.slice(before).some((e) => e.type === "user_typing" && e.conversationId === convo.id && e.typing === true && e.userId === chenU.id));
+rec("typing is not echoed back to the sender",
+  !chenWs.got.slice(chenBefore).some((e) => e.type === "user_typing"));
+chenWs.sock.send(JSON.stringify({ type: "typing_stop", conversationId: convo.id, participantIds: convo.participantIds }));
+await wait(400);
+rec("typing_stop relays too", erWs.got.slice(before).some((e) => e.type === "user_typing" && e.typing === false));
+
 // Decline visibility: ER routes a fresh patient to Chen, Chen declines — the ER
 // must SEE the decline live and in its sent feed (and the auto-reroute).
 const patelH = hosps.find((h) => h.specialty && h.userId && h.id !== chenProv.id);

@@ -885,22 +885,10 @@
         pushAudit(s, { action: "send_message", resource: "conversation " + id, risk: "low" });
         return s;
       });
-      // simulated reply + typing
-      var convo = state.conversations.find(function (c) { return c.id === id; });
-      if (convo && !convo.broadcast) {
-        set(function (s) { s.conversations = s.conversations.map(function (c) { return c.id === id ? Object.assign({}, c, { typing: true }) : c; }); return s; });
-        setTimeout(function () {
-          set(function (s) {
-            s.conversations = s.conversations.map(function (c) {
-              if (c.id !== id) return c;
-              s2reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-              return Object.assign({}, c, { typing: false, messages: c.messages.concat([{ me: false, text: s2reply, at: now(), read: false }]) });
-            });
-            return s;
-          });
-        }, 1800 + Math.random() * 1400);
-      }
     },
+    // Typing indicators are REAL (relayed peer-to-peer over the live WebSocket by
+    // the api bridge). This local fallback is a no-op so demo mode never fakes one.
+    setTyping: function () {},
     startConversation: function (participant) {
       set(function (s) {
         var existing = s.conversations.find(function (c) { return c.name === participant.name; });
@@ -1287,12 +1275,6 @@
     /* danger zone */
     resetAll: function () { state = seed(); persist(); emit(); },
   };
-
-  var REPLIES = [
-    "Copy — on it.", "Thanks for the heads up.", "Accepting now.", "Give me 5 minutes.",
-    "Got it, will round shortly.", "Understood. I'll update the chart.", "On my way up.",
-  ];
-  var s2reply;
 
   /* ---- React hooks ------------------------------------------------------- */
   function useStore() {

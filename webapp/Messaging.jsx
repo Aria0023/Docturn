@@ -1,7 +1,8 @@
 /* DocTurn web-app UI kit — secure messaging (conversation list + thread).
    Fully store-backed: conversations and threads persist, unread clears on open,
-   sending posts to the store and triggers a simulated typing + reply, and the
-   header / search / new-thread / attach controls all do real work. */
+   sending posts to the live API, and the typing indicator is REAL — peers'
+   typing_start/stop relayed over the WebSocket (never simulated). Attachments
+   are deliberately absent until encrypted storage + a PHI policy exist. */
 
 function fmtTime(at) {
   // single source of truth — shared with the store's clock + mobile composer
@@ -33,7 +34,7 @@ function Messaging() {
 
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
 
-  const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft); setDraft(""); };
+  const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft); setDraft(""); if (a.setTyping) a.setTyping(active, false); };
   const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
 
   // On a phone, show exactly one pane at a time (list OR thread/compose).
@@ -172,10 +173,11 @@ function Messaging() {
           )}
         </div>
 
+        {/* No attachments: file/photo sharing is deliberately unavailable until
+            encrypted storage + a DLP/PHI policy exist (see SECURITY.md). */}
         <div style={{ flex: "none", padding: 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
-          <Button size="icon" variant="ghost" icon="paperclip" onClick={() => a.toast({ tone: "accepted", title: "Attachment", msg: "File sharing is audited and PHI-scanned." })} />
           <div style={{ flex: 1 }}>
-            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()}
+            <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder={conv.broadcast ? "Replies disabled for broadcasts" : "Type a secure message…"} disabled={conv.broadcast}
               style={{ width: "100%", height: 40, border: "1px solid var(--input)", borderRadius: "var(--radius-md)", padding: "0 14px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#fff" }} />
           </div>
