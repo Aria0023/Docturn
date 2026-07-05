@@ -932,6 +932,31 @@
     }).catch(function () { if (origStartConversation) origStartConversation(participant); });
   };
 
+  // On-call / role addressing: fetch the server-resolved list of addressable
+  // roles (each already resolved to a real messageable userId in our org).
+  DT.actions.listOnCallTargets = function () {
+    return get("/api/messaging/on-call-targets").then(function (targets) {
+      var list = targets || [];
+      DT.set(function (s) { s.onCallTargets = list; return s; });
+      return list;
+    }).catch(function () { DT.set(function (s) { s.onCallTargets = []; return s; }); return []; });
+  };
+  // Start (or reopen, deduped by the resolved userId) a direct conversation with
+  // whoever holds the selected role, naming the thread after the role so it's
+  // clear who was addressed. Reuses the standard conversation endpoint.
+  DT.actions.startRoleConversation = function (target) {
+    if (!target || target.userId == null || meId == null) return Promise.resolve();
+    return get("/api/messaging/conversations").then(function (convos) {
+      var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(target.userId) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
+      if (existing) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.conversations = (s.conversations || []).map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }); });
+      }
+      return api("POST", "/api/messaging/conversations", { type: "direct", name: target.label, participantIds: [target.userId] }).then(function (convo) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+      });
+    }).catch(function () {});
+  };
+
   DT.actions.sendAssignment = function (provider, fields, consults) {
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
     var sentId = "s" + Date.now();

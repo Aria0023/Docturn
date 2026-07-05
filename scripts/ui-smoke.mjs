@@ -401,6 +401,29 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   rec("messaging: receiver sees the sender's message (cross-user)", ok, detail);
 }
 
+// On-call role addressing: the compose picker can address a ROLE (e.g. the next
+// hospitalist by rotation) that resolves to whoever holds it; selecting it opens
+// a direct conversation with the resolved holder (named after the role).
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+{
+  let targets = [];
+  try { targets = await DT.actions.listOnCallTargets(); } catch {}
+  for (let i = 0; i < 8 && (!targets || !targets.length); i++) { await flush(); targets = (DT.getState().onCallTargets || []); }
+  const resolvedOk = !!(targets && targets.length && targets.every((t) => typeof t.userId === "number" && t.userId > 0));
+  rec("on-call targets load and every one resolves to a userId", resolvedOk, "targets=" + JSON.stringify((targets || []).map((t) => t.kind)));
+  const nextH = (targets || []).find((t) => t.kind === "next_hospitalist");
+  let ok = false, detail = "no next-hospitalist target";
+  if (nextH) {
+    await DT.actions.startRoleConversation(nextH);
+    let active = null;
+    for (let i = 0; i < 14 && active == null; i++) { await flush(); active = DT.getState().__activeConvo; }
+    const conv = (DT.getState().conversations || []).find((c) => c.id === active);
+    ok = !!(conv && typeof conv.id === "number");
+    detail = "active=" + active + " conv=" + (conv && conv.name);
+  }
+  rec("selecting an on-call role opens a direct conversation with the holder", ok, detail);
+}
+
 // demo resilience: a wrong/stale org code (e.g. cached "MERCY") still signs in
 // via the role's canonical demo org, so the demo never dead-ends on org code.
 await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();

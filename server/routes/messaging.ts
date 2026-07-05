@@ -8,9 +8,110 @@ import {
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
+import { previewNext } from "../services/rotation.js";
 import { storage } from "../storage.js";
 
+/** A single addressable on-call / role target the compose picker can message. */
+interface OnCallTarget {
+  id: string;
+  label: string;
+  kind: "consult_service" | "next_hospitalist" | "care_team";
+  userId: number;
+}
+
 export function registerMessagingRoutes(app: Express) {
+  // Role/service addressing: resolve on-call roles to whoever currently holds
+  // them, so a user can start a conversation with "the on-call cardiologist"
+  // instead of hunting for a named person. Every read below is scoped to the
+  // caller's own org, and a target is ONLY returned when it resolves to a real
+  // messageable user IN THAT ORG (never invented, never cross-tenant).
+  app.get("/api/messaging/on-call-targets", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+
+    // The org's user roster is the single source of truth for "is this a real,
+    // messageable user in my tenant?" — resolution never looks outside it.
+    const users = await storage().listUsers(me.organizationId);
+    const byId = new Map(users.map((u) => [u.id, u]));
+    const byName = new Map(
+      users.map((u) => [u.displayName.trim().toLowerCase(), u]),
+    );
+
+    const targets: OnCallTarget[] = [];
+    const seen = new Set<string>();
+    function add(
+      kind: OnCallTarget["kind"],
+      id: string,
+      label: string,
+      userId: number | null | undefined,
+    ) {
+      // Must resolve to a real in-org user, must not be the caller (messaging
+      // yourself as "the on-call X" is meaningless), and de-duped per target.
+      if (userId == null || userId === me.id || !byId.has(userId)) return;
+      const key = kind + ":" + userId;
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push({ id, label, kind, userId });
+    }
+
+    // 1) Consult services (org_settings "consultServices"). The on-call entry
+    //    historically carries only a display name + avatar — NOT a userId — so
+    //    resolve by matching that display name to an org user. If a future
+    //    writer stamps a real userId we honor it directly. Unresolvable →
+    //    excluded (we never fabricate a user).
+    const consultServices = await storage().getOrgSetting(
+      me.organizationId,
+      "consultServices",
+    );
+    if (Array.isArray(consultServices)) {
+      for (const svc of consultServices) {
+        const onCall = svc?.onCall;
+        if (!svc?.name || !onCall) continue;
+        let userId: number | null =
+          typeof onCall.userId === "number" ? onCall.userId : null;
+        if (userId == null && typeof onCall.name === "string") {
+          const match = byName.get(onCall.name.trim().toLowerCase());
+          if (match) userId = match.id;
+        }
+        add(
+          "consult_service",
+          "consult_service:" + (svc.id ?? svc.name),
+          "On-call " + svc.name,
+          userId,
+        );
+      }
+    }
+
+    // 2) Next hospitalist by rotation (read-only preview — no state change).
+    const next = await previewNext(storage(), me.organizationId);
+    if (next) {
+      const u = byId.get(next.userId);
+      add(
+        "next_hospitalist",
+        "next_hospitalist",
+        u ? "Next hospitalist (" + u.displayName + ")" : "Next hospitalist",
+        next.userId,
+      );
+    }
+
+    // 3) The caller's own care-team members flagged on-call.
+    const members = await storage().listCareTeamOwnedBy(
+      me.organizationId,
+      me.id,
+    );
+    for (const m of members) {
+      if (!m.onCall) continue;
+      const u = byId.get(m.memberUserId);
+      add(
+        "care_team",
+        "care_team:" + m.memberUserId,
+        u ? "On-call: " + u.displayName : "On-call care-team member",
+        m.memberUserId,
+      );
+    }
+
+    res.json(targets);
+  });
+
   app.get("/api/messaging/conversations", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const convos = await storage().listConversationsForUser(

@@ -900,6 +900,22 @@
       });
     },
 
+    // On-call / role addressing (backend-backed via api-bridge). Local fallback:
+    // no resolvable roster, so return an empty set and start a plainly-named
+    // local thread if asked.
+    listOnCallTargets: function () { set(function (s) { s.onCallTargets = []; return s; }); return Promise.resolve([]); },
+    startRoleConversation: function (target) {
+      if (!target) return;
+      set(function (s) {
+        var existing = s.conversations.find(function (c) { return c.name === target.label; });
+        if (existing) { s.__activeConvo = existing.id; s.conversations = s.conversations.map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }
+        var id = uid("cv");
+        s.conversations = [{ id: id, name: target.label, role: "On-call role", initials: initialsOf(target.label), presence: "online", tint: "blue", unread: 0, typing: false, messages: [] }].concat(s.conversations);
+        s.__activeConvo = id;
+        return s;
+      });
+    },
+
     /* broadcasts */
     sendBroadcast: function (data) {
       set(function (s) {

@@ -123,6 +123,35 @@ rec("sender now sees ackCount=1 on the STAT", (erMsgs.find((m) => m.id === statI
 const bad = await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: convo.id, content: "x", priority: "nope" }) });
 rec("invalid priority is rejected (400)", bad.status === 400, "status=" + bad.status);
 
+// On-call role addressing: a director publishes a consult catalog whose on-call
+// is given by DISPLAY NAME only; the server resolves that name to a real
+// messageable userId in the org. ER then addresses the ROLE (not a named
+// person), and the message reaches whoever holds it — live.
+{
+  const dirA = jar();
+  await login(dirA, "director");
+  const pref = await dirA.f("/api/org/preferences", { method: "PATCH", body: JSON.stringify({
+    consultServices: [{ id: "cs-cardio", name: "Cardiology", onCall: { name: chenU.displayName, avatar: "NA" }, members: [] }],
+  }) });
+  rec("director publishes a consult on-call by display name", pref.status === 200, "status=" + pref.status);
+
+  const targets = (await er.f("/api/messaging/on-call-targets")).json || [];
+  rec("on-call targets all resolve to real userIds", targets.length > 0 && targets.every((t) => typeof t.userId === "number" && t.userId > 0),
+    "targets=" + JSON.stringify(targets.map((t) => t.kind + ":" + t.userId)));
+  rec("next-hospitalist role is exposed and resolves", targets.some((t) => t.kind === "next_hospitalist"));
+  const cardio = targets.find((t) => t.kind === "consult_service" && t.userId === chenU.id);
+  rec("consult on-call display name resolves → messageable userId", !!cardio && cardio.label === "On-call Cardiology", "t=" + JSON.stringify(cardio));
+
+  if (cardio) {
+    before = chenWs.got.length;
+    const roleConvo = (await er.f("/api/messaging/conversations", { method: "POST", body: JSON.stringify({ type: "direct", name: cardio.label, participantIds: [cardio.userId] }) })).json;
+    rec("on-call conversation is named after the role", roleConvo && roleConvo.name === "On-call Cardiology", "name=" + (roleConvo && roleConvo.name));
+    await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: roleConvo.id, content: "On-call Cardiology, please advise" }) });
+    await wait(400);
+    rec("messaging a resolved on-call role reaches the holder live", chenWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
+  }
+}
+
 // Decline visibility: ER routes a fresh patient to Chen, Chen declines — the ER
 // must SEE the decline live and in its sent feed (and the auto-reroute).
 const patelH = hosps.find((h) => h.specialty && h.userId && h.id !== chenProv.id);

@@ -39,6 +39,16 @@ function Messaging() {
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
   const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
 
+  // On-call / role addressing: whenever the compose picker opens, refresh the
+  // server-resolved list of addressable roles (each already resolved to a real
+  // messageable user in our org). Selecting one opens a thread named after the
+  // role so it's clear who was addressed.
+  const onCallTargets = st.onCallTargets || [];
+  React.useEffect(() => { if (composing && a.listOnCallTargets) a.listOnCallTargets(); }, [composing]);
+  const ROLE_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
+  const startRole = (t) => { if (a.startRoleConversation) a.startRoleConversation(t); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+  const rolesShown = onCallTargets.filter((t) => t.label.toLowerCase().includes(q.toLowerCase()));
+
   // On a phone, show exactly one pane at a time (list OR thread/compose).
   const showList = !isMobile || (!composing && mobileView === "list");
   const showThread = !isMobile || composing || mobileView === "thread";
@@ -111,7 +121,32 @@ function Messaging() {
               <Field icon="search" placeholder="Search the directory by name or specialty…" value={q} onChange={setQ} />
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
-              {startable.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No one in the directory matches "{q}".</div>}
+              {rolesShown.length > 0 && (
+                <div>
+                  <div style={{ padding: "10px 24px 6px", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>On-call / roles</div>
+                  {rolesShown.map((t) => {
+                    const existing = convos.some((c) => c.name === t.label);
+                    return (
+                      <button key={t.id} onClick={() => startRole(t)}
+                        onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
+                        style={{ width: "100%", display: "flex", gap: 13, alignItems: "center", padding: "11px 24px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", background: "#fff" }}>
+                        <div style={{ flex: "none", width: 40, height: 40, borderRadius: 99, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <Icon name={ROLE_ICON[t.kind] || "user-check"} size={19} color="var(--primary)" />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 14, fontWeight: 600 }}>{t.label}</div>
+                          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Resolves to whoever currently holds this role</div>
+                        </div>
+                        {existing
+                          ? <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Open thread</span>
+                          : <Button size="sm" variant="outline" icon="message-square">Message</Button>}
+                      </button>
+                    );
+                  })}
+                  <div style={{ padding: "10px 24px 6px", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Directory</div>
+                </div>
+              )}
+              {startable.length === 0 && rolesShown.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No one in the directory matches "{q}".</div>}
               {startable.map((p) => {
                 const existing = convos.some((c) => c.name === p.name);
                 return (
