@@ -3,6 +3,7 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
+import * as Notifications from "expo-notifications";
 import { ApiClient, type MobileUser } from "./src/api";
 import { realtime } from "./src/realtime";
 import { LoginScreen } from "./src/screens/LoginScreen";
@@ -42,6 +43,22 @@ export default function App() {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
+
+  // Register for Expo push after sign-in: content-free wake-ups only (the
+  // server never puts message text or patient data in a push payload).
+  useEffect(() => {
+    if (!user) return;
+    void (async () => {
+      try {
+        const { status } = await Notifications.requestPermissionsAsync();
+        if (status !== "granted") return;
+        const token = (await Notifications.getExpoPushTokenAsync()).data;
+        await ApiClient.registerDeviceToken(token, "expo");
+      } catch {
+        /* push is best-effort; app works without it */
+      }
+    })();
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;

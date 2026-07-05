@@ -283,7 +283,37 @@
       loginError: null, booting: false,
     });
     connectWs();
+    enableWebPush();
     return hydrateAll();
+  }
+
+  // ---- web push: content-free wake-ups when the app is closed ---------------
+  function urlB64ToUint8Array(b64) {
+    var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    var base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function enableWebPush() {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return;
+      if (Notification.permission === "denied") return;
+      Notification.requestPermission().then(function (perm) {
+        if (perm !== "granted") return;
+        Promise.all([navigator.serviceWorker.ready, api("GET", "/api/push/vapid-key")])
+          .then(function (r) {
+            var reg = r[0]; var key = r[1] && r[1].key;
+            if (!reg || !key) return null;
+            return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+          })
+          .then(function (sub) {
+            if (sub) return api("POST", "/api/mobile/device-tokens", { token: JSON.stringify(sub), platform: "webpush" });
+          })
+          .catch(function () { /* push is best-effort */ });
+      });
+    } catch (e) { /* older browsers */ }
   }
 
   actions.login = function (orgCode, username, password) {

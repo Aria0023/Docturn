@@ -171,6 +171,88 @@ export function registerMessagingRoutes(app: Express) {
       type: parsed.data.type,
       name: parsed.data.name ?? null,
       participantIds,
+      patientId: null,
+    });
+    res.status(201).json(convo);
+  });
+
+  // Patient-linked care-team thread: ONE conversation per patient, named after
+  // the patient (minimum-necessary: initials + room), auto-membered with the
+  // current care team — accepted attending, routing ER physician, and accepted
+  // consultants — plus the requester. Idempotent: repeat calls reopen it (and
+  // refresh membership as the care team grows).
+  app.post("/api/messaging/patient-thread", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    const patientId = Number((req.body ?? {}).patientId);
+    if (!Number.isInteger(patientId) || patientId <= 0) {
+      return res.status(400).json({ error: "validation_error" });
+    }
+    const patient = await storage().getPatient(me.organizationId, patientId);
+    if (!patient) return res.status(404).json({ error: "not_found" });
+
+    // Assemble the care team (userIds, in-org by construction).
+    const members = new Set<number>([me.id]);
+    const assignments = await storage().listAssignments(me.organizationId);
+    for (const a of assignments) {
+      if (a.patientId !== patientId) continue;
+      if (a.erDoctorId) members.add(a.erDoctorId);
+      if (a.status === "accepted") {
+        if (a.acceptedByUserId) members.add(a.acceptedByUserId);
+        const h = await storage().getHospitalist(
+          me.organizationId,
+          a.hospitalistId,
+        );
+        if (h?.userId) members.add(h.userId);
+      }
+    }
+    for (const c of await storage().listConsultsForPatient(
+      me.organizationId,
+      patientId,
+    )) {
+      if (c.status === "accepted" && c.consultantUserId)
+        members.add(c.consultantUserId);
+    }
+
+    const existing = await storage().getConversationByPatient(
+      me.organizationId,
+      patientId,
+    );
+    if (existing) {
+      // Membership follows the care team: add anyone new (incl. the requester).
+      for (const uid of members) {
+        if (!existing.participantIds.includes(uid)) {
+          await storage().addConversationParticipant(
+            me.organizationId,
+            existing.id,
+            uid,
+          );
+        }
+      }
+      const fresh = await storage().getConversation(
+        me.organizationId,
+        existing.id,
+      );
+      return res.json(fresh);
+    }
+
+    const convo = await storage().createConversation({
+      organizationId: me.organizationId,
+      type: "group",
+      name:
+        "Patient " +
+        patient.initials +
+        (patient.roomNumber ? " · Rm " + patient.roomNumber : ""),
+      participantIds: [...members],
+      patientId,
+    });
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "messaging.patient_thread_created",
+      resourceType: "conversation",
+      resourceId: convo.id,
+      details: { patientId, participants: convo.participantIds },
+      riskLevel: "low",
     });
     res.status(201).json(convo);
   });
@@ -305,6 +387,18 @@ export function registerMessagingRoutes(app: Express) {
       type: "MESSAGE_RECEIVED",
       message,
     });
+    // Content-free push wake-up so the message reaches a closed phone. Never
+    // includes message text or patient data (push services have no BAA).
+    const pushTitle =
+      parsed.data.priority === "stat"
+        ? "STAT secure message"
+        : parsed.data.priority === "urgent"
+          ? "Urgent secure message"
+          : "New secure message";
+    for (const uid of notifyIds) {
+      if (uid === me.id) continue;
+      void notificationDeps().push.send(uid, { title: pushTitle }).catch(() => {});
+    }
     res.status(201).json({ ...message, forwardedTo });
   });
 

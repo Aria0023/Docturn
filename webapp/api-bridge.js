@@ -402,6 +402,7 @@
               unread: c.unreadCount || 0,
               group: c.type === "group",
               broadcast: c.type === "emergency",
+              patientId: c.patientId != null ? c.patientId : null,
               typing: false,
               participantIds: c.participantIds || [],
               messages: (row.msgs || []).map(mapMessage),
@@ -574,6 +575,7 @@
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
       hydrateMyPrefs();
+      if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
       return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
     }
     function attempt(orgCode) {
@@ -711,9 +713,26 @@
   // /api/settings (read) and /api/settings/me (write).
   function hydrateMyPrefs() {
     get("/api/settings").then(function (r) {
-      if (r && r.me) DT.set(function (s) { s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null }; return s; });
+      if (!r) return;
+      DT.set(function (s) {
+        if (r.me) s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null };
+        if (r.org && typeof r.org.messageRetentionDays === "number") s.orgRetentionDays = r.org.messageRetentionDays;
+        return s;
+      });
     }).catch(function () {});
   }
+  // Director ops report (assignments latency, consult response, message volume).
+  function hydrateOpsReport() {
+    get("/api/reports/ops").then(function (r) {
+      if (r) DT.set(function (s) { s.opsReport = r; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.setOrgRetention = function (days) {
+    DT.set(function (s) { s.orgRetentionDays = days; return s; });
+    return api("PATCH", "/api/settings/org", { key: "messageRetentionDays", value: Number(days) || 0 })
+      .then(function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Retention updated", msg: Number(days) > 0 ? "Messages auto-delete after " + days + " days." : "Messages are kept indefinitely." }; return s; }); })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: "Couldn't update retention." }; return s; }); });
+  };
   DT.actions.setMyPref = function (key, value) {
     DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
     return api("PATCH", "/api/settings/me", { key: key, value: value }).catch(function () {
@@ -931,6 +950,19 @@
     if (!!typingSendState[convoId] !== !!on) { typingSendState[convoId] = !!on; send(!!on); }
     clearTimeout(typingSendState["t" + convoId]);
     if (on) typingSendState["t" + convoId] = setTimeout(function () { typingSendState[convoId] = false; send(false); }, 2500);
+  };
+  // Open (or create) the patient-linked care-team thread and jump to it.
+  DT.actions.openPatientThread = function (patientId) {
+    if (patientId == null) return;
+    return api("POST", "/api/messaging/patient-thread", { patientId: Number(patientId) })
+      .then(function (convo) {
+        return hydrateConversations().then(function () {
+          DT.set(function (s) { s.__activeConvo = convo.id; s.ui.nav = "messages"; return s; });
+        });
+      })
+      .catch(function () {
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open patient thread", msg: "Try again." }; return s; });
+      });
   };
   DT.actions.startConversation = function (participant) {
     var other = (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });

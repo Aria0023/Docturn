@@ -108,6 +108,23 @@ function OrgSettings() {
           <FlagRow icon="calendar-clock" title="Amion schedule sync" desc="External on-call import." on={s.flags.amion} onToggle={() => a.toggleFlag("amion")} last />
         </Card>
 
+        {/* Message retention (server-enforced purge, audited) */}
+        <Card style={{ padding: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <Icon name="clock" size={18} color="var(--primary)" />
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Message retention</h3>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted by an hourly, audited purge. "Keep everything" disables it.</p>
+          <select value={st.orgRetentionDays || 0} onChange={(e) => a.setOrgRetention(Number(e.target.value))}
+            style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            <option value={0}>Keep everything</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
+            <option value={365}>1 year</option>
+          </select>
+        </Card>
+
         {/* Integrations */}
         <Card style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>

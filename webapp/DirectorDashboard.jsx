@@ -85,6 +85,18 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
         <StatTile label="In rotation" value={rotation.length} icon="route" tint="amber" />
         <StatTile label="Total census" value={totalCensus + " / " + totalCap} icon="bed-double" tint="slate" />
       </div>
+      {(() => {
+        const rpt = (typeof useStore === "function" ? useStore() : {}).opsReport;
+        if (!rpt) return null;
+        return (
+          <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
+            <StatTile label="Time to accept (median)" value={rpt.assignments.timeToAcceptMinMedian != null ? rpt.assignments.timeToAcceptMinMedian + " min" : "—"} icon="timer" tint="blue" />
+            <StatTile label="Consult response (avg)" value={rpt.consults.responseMinAvg != null ? rpt.consults.responseMinAvg + " min" : "—"} icon="stethoscope" tint="emerald" />
+            <StatTile label="Messages (7 days)" value={rpt.messaging.last7d} icon="message-square" tint="amber" />
+            <StatTile label="STAT ack (avg)" value={rpt.messaging.statAckMinAvg != null ? rpt.messaging.statAckMinAvg + " min" : "—"} icon="siren" tint="slate" />
+          </div>
+        );
+      })()}
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 18, fontSize: 12, color: "var(--muted-foreground)" }}>
         <Icon name="info" size={13} />
         <span><b style={{ fontWeight: 600, color: "var(--foreground)" }}>{totalCensus}</b> patients across {providers.length} providers · {totalCap - totalCensus} beds open. Census is entered manually for now — automatic <span style={{ fontWeight: 600 }}>EPIC (FHIR)</span> sync is planned.</span>

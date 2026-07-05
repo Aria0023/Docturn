@@ -88,3 +88,35 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+/* ── Web Push ─────────────────────────────────────────────────────────────────
+ * Payloads are CONTENT-FREE by design (a generic title only — never message
+ * text or patient data; push services have no BAA). Tapping the notification
+ * focuses or opens the app, which then fetches the real content over TLS. */
+self.addEventListener("push", (event) => {
+  let title = "DocTurn";
+  try {
+    const data = event.data ? event.data.json() : null;
+    if (data && data.title) title = data.title;
+  } catch (e) { /* keep generic title */ }
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: "Open DocTurn to view.",
+      icon: "/m/icons/icon-192.png",
+      badge: "/m/icons/icon-192.png",
+      tag: "docturn-msg", // collapse repeats instead of stacking
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if (client.url.includes("/m") && "focus" in client) return client.focus();
+      }
+      return self.clients.openWindow("/m/");
+    }),
+  );
+});

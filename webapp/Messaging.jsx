@@ -177,6 +177,7 @@ function Messaging() {
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14.5, fontWeight: 700 }}>{conv.name}</div>
             <div style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 5 }}>
+              {conv.patientId != null && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, color: "var(--primary)", background: "#EFF6FF", border: "1px solid var(--primary)", marginRight: 6 }}><Icon name="clipboard-list" size={11} />Patient thread</span>}
               {conv.typing ? <span style={{ color: "var(--status-active)", fontWeight: 600 }}>typing…</span>
                 : <><StatusDot status={conv.presence} pulse={conv.presence === "online"} />{conv.presence === "online" ? "Online" : conv.role}</>}
             </div>

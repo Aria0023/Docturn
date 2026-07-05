@@ -344,6 +344,14 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
                 <Avatar initials={p.er.avatar} size={26} tint="slate" />
                 <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
               </div>
+              {/* Patient-linked care-team thread */}
+              {p.patientId != null && (
+                <button onClick={() => window.DT.actions.openPatientThread(p.patientId)} title="Message the care team about this patient"
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+                  <Icon name="message-square" size={15} />
+                </button>
+              )}
               {/* Status */}
               <span style={{ width: 132, flex: "none" }}>{canEdit ? <BoardStatusSelect value={p.status} onChange={(v) => onUpdate(p.id, { status: v })} /> : <Badge status={bs.status}>{bs.label}</Badge>}</span>
               {/* Remove */}

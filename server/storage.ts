@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { DbType } from "./db.js";
 import { getDb } from "./db.js";
 import {
@@ -142,6 +142,14 @@ export interface IStorage {
   createConversation(
     c: Omit<Conversation, "id" | "createdAt">,
   ): Promise<Conversation>;
+  getConversationByPatient(
+    orgId: number,
+    patientId: number,
+  ): Promise<Conversation | undefined>;
+  purgeMessagesOlderThan(orgId: number, cutoff: Date): Promise<number>;
+  listConsultsForOrg(orgId: number): Promise<PatientConsult[]>;
+  countMessagesSince(orgId: number, since: Date): Promise<number>;
+  listStatAckLatencies(orgId: number): Promise<number[]>;
   listMessages(orgId: number, conversationId: number): Promise<Message[]>;
   createMessage(m: Omit<Message, "id" | "createdAt" | "deletedAt">): Promise<Message>;
   getMessage(orgId: number, id: number): Promise<Message | undefined>;
@@ -180,7 +188,7 @@ export interface IStorage {
     orgId: number,
     key: string,
     value: unknown,
-    updatedBy: number,
+    updatedBy: number | null,
   ): Promise<void>;
   getUserPreference(userId: number, key: string): Promise<unknown>;
   setUserPreference(
@@ -633,6 +641,80 @@ export class DatabaseStorage implements IStorage {
       .set({ escalatedAt: new Date() })
       .where(eq(messageDeliveryStatus.id, deliveryId));
   }
+  /**
+   * Hard-delete messages older than the cutoff (plus their delivery rows) for
+   * one org — the auditable retention purge. Returns the number purged.
+   */
+  async purgeMessagesOlderThan(orgId: number, cutoff: Date) {
+    const old = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(eq(messages.organizationId, orgId), lt(messages.createdAt, cutoff)),
+      );
+    const ids = old.map((m) => m.id);
+    if (ids.length === 0) return 0;
+    await this.db
+      .delete(messageDeliveryStatus)
+      .where(inArray(messageDeliveryStatus.messageId, ids));
+    await this.db.delete(messages).where(inArray(messages.id, ids));
+    return ids.length;
+  }
+  /** All consult rows for an org (analytics). */
+  async listConsultsForOrg(orgId: number) {
+    return this.db
+      .select()
+      .from(patientConsults)
+      .where(eq(patientConsults.organizationId, orgId));
+  }
+  /** Message count since a moment (analytics). */
+  async countMessagesSince(orgId: number, since: Date) {
+    const rows = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(eq(messages.organizationId, orgId), gte(messages.createdAt, since)),
+      );
+    return rows.length;
+  }
+  /** Ack latencies (ms) for acknowledged STAT deliveries, excluding senders. */
+  async listStatAckLatencies(orgId: number) {
+    const rows = await this.db
+      .select({
+        createdAt: messages.createdAt,
+        acknowledgedAt: messageDeliveryStatus.acknowledgedAt,
+        userId: messageDeliveryStatus.userId,
+        senderId: messages.senderId,
+      })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messageDeliveryStatus.messageId, messages.id))
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          eq(messages.priority, "stat"),
+        ),
+      );
+    return rows
+      .filter((r) => r.acknowledgedAt && r.userId !== r.senderId)
+      .map(
+        (r) =>
+          new Date(r.acknowledgedAt as Date).getTime() -
+          new Date(r.createdAt).getTime(),
+      );
+  }
+  /** The (single) patient-linked care-team thread for a patient, if it exists. */
+  async getConversationByPatient(orgId: number, patientId: number) {
+    const [row] = await this.db
+      .select()
+      .from(conversations)
+      .where(
+        and(
+          eq(conversations.organizationId, orgId),
+          eq(conversations.patientId, patientId),
+        ),
+      );
+    return row;
+  }
   /** Idempotently add a user to a conversation's participant list. */
   async addConversationParticipant(
     orgId: number,
@@ -668,7 +750,7 @@ export class DatabaseStorage implements IStorage {
     orgId: number,
     key: string,
     value: unknown,
-    updatedBy: number,
+    updatedBy: number | null,
   ) {
     await this.db
       .insert(orgSettings)

@@ -19,6 +19,8 @@ export function registerSettingsRoutes(app: Express) {
     const org = await storage().getOrganization(me.organizationId);
     const autoReassignOnDecline =
       (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
+    const retentionRaw = await storage().getOrgSetting(me.organizationId, "messageRetentionDays");
+    const messageRetentionDays = typeof retentionRaw === "number" ? retentionRaw : 0;
     const [dnd, coveringUserId] = await Promise.all([
       storage().getUserPreference(me.id, "dnd"),
       storage().getUserPreference(me.id, "coveringUserId"),
@@ -29,6 +31,7 @@ export function registerSettingsRoutes(app: Express) {
         roundRobinShiftTypes: org?.roundRobinShiftTypes,
         rotationMode: org?.rotationMode,
         autoReassignOnDecline,
+        messageRetentionDays,
       },
       me: {
         dnd: dnd === true,

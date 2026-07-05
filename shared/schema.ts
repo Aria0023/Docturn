@@ -164,6 +164,8 @@ export const conversations = pgTable("conversations", {
   type: text("type", { enum: CONVERSATION_TYPE }).notNull().default("direct"),
   name: text("name"),
   participantIds: jsonb("participant_ids").$type<number[]>().notNull(),
+  // Patient-linked thread: the care-team conversation for one patient.
+  patientId: integer("patient_id").references(() => patients.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -491,7 +493,7 @@ export const deviceTokens = pgTable(
       .notNull()
       .references(() => users.id),
     token: text("token").notNull(),
-    platform: text("platform", { enum: ["ios", "android", "web"] })
+    platform: text("platform", { enum: ["ios", "android", "web", "webpush", "expo"] })
       .notNull()
       .default("ios"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -737,7 +739,7 @@ export const devCreateUserSchema = z.object({
 
 export const deviceTokenSchema = z.object({
   token: z.string().min(1),
-  platform: z.enum(["ios", "android", "web"]).default("ios"),
+  platform: z.enum(["ios", "android", "web", "webpush", "expo"]).default("ios"),
 });
 
 export const notificationProfileSchema = z.object({

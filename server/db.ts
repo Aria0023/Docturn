@@ -238,8 +238,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   type TEXT NOT NULL DEFAULT 'direct',
   name TEXT,
   participant_ids JSONB NOT NULL,
+  patient_id INTEGER REFERENCES patients(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS patient_id INTEGER REFERENCES patients(id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id SERIAL PRIMARY KEY,

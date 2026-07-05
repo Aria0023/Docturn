@@ -7,6 +7,9 @@ import { ensureDemoTenants, ensurePlatform, seed } from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { startAmionSyncLoop } from "./services/amion.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
+import { startRetentionLoop } from "./services/retention.js";
+import { initWebPush, LivePushTransport } from "./services/push.js";
+import { configureNotifications } from "./services/notifications.js";
 import { attachWebSocket } from "./ws/index.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -82,6 +85,13 @@ async function main() {
   // STAT non-response loop: unacked STAT → re-alert (2 min) → covering-provider
   // escalation (5 min). Tunable via STAT_REALERT_MS / STAT_ESCALATE_MS.
   startStatEscalationLoop();
+  // Per-org message retention purge (org setting messageRetentionDays; hourly).
+  startRetentionLoop();
+  // Real push: web-push (VAPID; generated + persisted on first boot) for the
+  // PWA/browsers, Expo push for the native app. Content-free payloads only.
+  const vapidKey = await initWebPush();
+  configureNotifications({ push: new LivePushTransport() });
+  if (vapidKey) console.log("[push] web push ready (VAPID configured)");
 
   server.listen(PORT, () => {
     const mode = handle.ephemeral ? "PGlite (in-process)" : "PostgreSQL";
