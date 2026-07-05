@@ -198,6 +198,10 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
   readAt: timestamp("read_at"),
   // Explicit acknowledgement (distinct from read) — required for STAT messages.
   acknowledgedAt: timestamp("acknowledged_at"),
+  // Escalation bookkeeping for unacknowledged STATs (set by the sweep so each
+  // step fires exactly once): re-alert nudge, then covering-provider escalation.
+  realertedAt: timestamp("realerted_at"),
+  escalatedAt: timestamp("escalated_at"),
 });
 
 /* ── Audit, PHI access & security ──────────────────────────────────────────── */

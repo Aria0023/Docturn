@@ -212,6 +212,9 @@
       // Test-only by default until an operator deliberately turns it off for a
       // compliant real-PHI deployment (server: SYNTHETIC_DATA=false).
       syntheticData: true,
+      // Personal availability: do-not-disturb + designated covering provider
+      // (server-backed; DND without covering makes on-call roles unreachable).
+      myPrefs: { dnd: false, coveringUserId: null },
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
@@ -466,6 +469,7 @@
       // crash the developer settings pages.
       if (!s.enterprise) s.enterprise = seed().enterprise;
       if (!s.enterprise.platform) s.enterprise.platform = seed().enterprise.platform;
+      if (!s.myPrefs) s.myPrefs = { dnd: false, coveringUserId: null };
       if (!s.orgConfigs) s.orgConfigs = {};
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };

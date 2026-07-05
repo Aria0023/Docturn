@@ -573,6 +573,7 @@
       });
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrateMyPrefs();
       return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
     }
     function attempt(orgCode) {
@@ -706,6 +707,19 @@
     });
   };
   // Self-service password change. Returns a promise so the UI can await + report.
+  // Personal availability prefs (DND + covering provider). Server-backed via
+  // /api/settings (read) and /api/settings/me (write).
+  function hydrateMyPrefs() {
+    get("/api/settings").then(function (r) {
+      if (r && r.me) DT.set(function (s) { s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null }; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.setMyPref = function (key, value) {
+    DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
+    return api("PATCH", "/api/settings/me", { key: key, value: value }).catch(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Setting not saved", msg: "Couldn\u2019t reach the server." }; return s; });
+    });
+  };
   DT.actions.changePassword = function (currentPassword, newPassword) {
     return api("PATCH", "/api/account/password", { currentPassword: currentPassword, newPassword: newPassword })
       .then(function () {

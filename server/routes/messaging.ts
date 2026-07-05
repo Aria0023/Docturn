@@ -7,6 +7,7 @@ import {
 } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
+import { isDnd, resolveCovering } from "../services/escalation.js";
 import { notificationDeps } from "../services/notifications.js";
 import { previewNext } from "../services/rotation.js";
 import { storage } from "../storage.js";
@@ -38,7 +39,7 @@ export function registerMessagingRoutes(app: Express) {
 
     const targets: OnCallTarget[] = [];
     const seen = new Set<string>();
-    function add(
+    async function add(
       kind: OnCallTarget["kind"],
       id: string,
       label: string,
@@ -47,6 +48,20 @@ export function registerMessagingRoutes(app: Express) {
       // Must resolve to a real in-org user, must not be the caller (messaging
       // yourself as "the on-call X" is meaningless), and de-duped per target.
       if (userId == null || userId === me.id || !byId.has(userId)) return;
+      // DND-aware: if the holder is do-not-disturb, address their designated
+      // covering provider instead; with no covering, the role is unreachable
+      // and is excluded rather than silently routing into a muted inbox.
+      if (await isDnd(storage(), userId)) {
+        const coveringId = await resolveCovering(
+          storage(),
+          me.organizationId,
+          userId,
+        );
+        if (coveringId == null || coveringId === me.id) return;
+        const cu = byId.get(coveringId);
+        userId = coveringId;
+        label = label + (cu ? " · covering: " + cu.displayName : " · covering");
+      }
       const key = kind + ":" + userId;
       if (seen.has(key)) return;
       seen.add(key);
@@ -72,7 +87,7 @@ export function registerMessagingRoutes(app: Express) {
           const match = byName.get(onCall.name.trim().toLowerCase());
           if (match) userId = match.id;
         }
-        add(
+        await add(
           "consult_service",
           "consult_service:" + (svc.id ?? svc.name),
           "On-call " + svc.name,
@@ -85,7 +100,7 @@ export function registerMessagingRoutes(app: Express) {
     const next = await previewNext(storage(), me.organizationId);
     if (next) {
       const u = byId.get(next.userId);
-      add(
+      await add(
         "next_hospitalist",
         "next_hospitalist",
         u ? "Next hospitalist (" + u.displayName + ")" : "Next hospitalist",
@@ -101,7 +116,7 @@ export function registerMessagingRoutes(app: Express) {
     for (const m of members) {
       if (!m.onCall) continue;
       const u = byId.get(m.memberUserId);
-      add(
+      await add(
         "care_team",
         "care_team:" + m.memberUserId,
         u ? "On-call: " + u.displayName : "On-call care-team member",
@@ -223,6 +238,8 @@ export function registerMessagingRoutes(app: Express) {
         deliveredAt: new Date(),
         readAt: uid === me.id ? new Date() : null,
         acknowledgedAt: uid === me.id ? new Date() : null,
+        realertedAt: null,
+        escalatedAt: null,
       })),
     );
 
@@ -238,11 +255,57 @@ export function registerMessagingRoutes(app: Express) {
       });
     }
 
-    notificationDeps().ws.sendToUsers(convo.participantIds, {
+    // DND forwarding: a recipient who is off/do-not-disturb with a designated
+    // covering provider gets their messages forwarded — the covering provider is
+    // added to the conversation and delivered THIS message, so nothing sits
+    // unseen behind a DND flag (DND without forwarding is clinically unsafe).
+    let notifyIds = [...convo.participantIds];
+    const forwardedTo: number[] = [];
+    for (const uid of convo.participantIds) {
+      if (uid === me.id) continue;
+      if (!(await isDnd(storage(), uid))) continue;
+      const coveringId = await resolveCovering(storage(), me.organizationId, uid);
+      if (
+        coveringId == null ||
+        coveringId === me.id ||
+        notifyIds.includes(coveringId) ||
+        forwardedTo.includes(coveringId)
+      )
+        continue;
+      await storage().addConversationParticipant(
+        me.organizationId,
+        convo.id,
+        coveringId,
+      );
+      await storage().createDeliveryStatuses([
+        {
+          messageId: message.id,
+          userId: coveringId,
+          deliveredAt: new Date(),
+          readAt: null,
+          acknowledgedAt: null,
+          realertedAt: null,
+          escalatedAt: null,
+        },
+      ]);
+      forwardedTo.push(coveringId);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "message.dnd_forwarded",
+        resourceType: "message",
+        resourceId: message.id,
+        details: { dndUserId: uid, coveringUserId: coveringId },
+        riskLevel: "medium",
+      });
+    }
+    notifyIds = notifyIds.concat(forwardedTo);
+
+    notificationDeps().ws.sendToUsers(notifyIds, {
       type: "MESSAGE_RECEIVED",
       message,
     });
-    res.status(201).json(message);
+    res.status(201).json({ ...message, forwardedTo });
   });
 
   // Acknowledge STAT/urgent messages — a stronger signal than "read". Notifies

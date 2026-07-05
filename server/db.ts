@@ -260,9 +260,13 @@ CREATE TABLE IF NOT EXISTS message_delivery_status (
   user_id INTEGER NOT NULL REFERENCES users(id),
   delivered_at TIMESTAMP,
   read_at TIMESTAMP,
-  acknowledged_at TIMESTAMP
+  acknowledged_at TIMESTAMP,
+  realerted_at TIMESTAMP,
+  escalated_at TIMESTAMP
 );
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS realerted_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,

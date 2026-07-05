@@ -19,12 +19,21 @@ export function registerSettingsRoutes(app: Express) {
     const org = await storage().getOrganization(me.organizationId);
     const autoReassignOnDecline =
       (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
+    const [dnd, coveringUserId] = await Promise.all([
+      storage().getUserPreference(me.id, "dnd"),
+      storage().getUserPreference(me.id, "coveringUserId"),
+    ]);
     res.json({
       org: {
         assignmentTimeoutMin: org?.assignmentTimeoutMin,
         roundRobinShiftTypes: org?.roundRobinShiftTypes,
         rotationMode: org?.rotationMode,
         autoReassignOnDecline,
+      },
+      me: {
+        dnd: dnd === true,
+        coveringUserId:
+          typeof coveringUserId === "number" ? coveringUserId : null,
       },
     });
   });

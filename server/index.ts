@@ -6,6 +6,7 @@ import { DatabaseStorage, setStorage } from "./storage.js";
 import { ensureDemoTenants, ensurePlatform, seed } from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { startAmionSyncLoop } from "./services/amion.js";
+import { startStatEscalationLoop } from "./services/escalation.js";
 import { attachWebSocket } from "./ws/index.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -78,6 +79,9 @@ async function main() {
   // shortly after boot (non-blocking, errors logged + recorded) and then on the
   // AMION_SYNC_INTERVAL_MIN cadence. No-op when the env var is absent.
   startAmionSyncLoop();
+  // STAT non-response loop: unacked STAT → re-alert (2 min) → covering-provider
+  // escalation (5 min). Tunable via STAT_REALERT_MS / STAT_ESCALATE_MS.
+  startStatEscalationLoop();
 
   server.listen(PORT, () => {
     const mode = handle.ephemeral ? "PGlite (in-process)" : "PostgreSQL";

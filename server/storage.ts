@@ -153,6 +153,26 @@ export interface IStorage {
   listDeliveryForMessages(
     messageIds: number[],
   ): Promise<MessageDeliveryStatus[]>;
+  listUnackedStatDeliveries(): Promise<
+    Array<{
+      deliveryId: number;
+      userId: number;
+      realertedAt: Date | null;
+      escalatedAt: Date | null;
+      messageId: number;
+      conversationId: number;
+      organizationId: number;
+      senderId: number;
+      createdAt: Date;
+    }>
+  >;
+  markDeliveryRealerted(deliveryId: number): Promise<void>;
+  markDeliveryEscalated(deliveryId: number): Promise<void>;
+  addConversationParticipant(
+    orgId: number,
+    conversationId: number,
+    userId: number,
+  ): Promise<Conversation | undefined>;
 
   // config
   getOrgSetting(orgId: number, key: string): Promise<unknown>;
@@ -572,6 +592,66 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(messageDeliveryStatus)
       .where(inArray(messageDeliveryStatus.messageId, messageIds));
+  }
+  /**
+   * Recipient delivery rows for STAT messages still awaiting acknowledgement,
+   * joined with the message so the escalation sweep can age + route them.
+   * (Sender rows are auto-acked at send time, so they never appear here.)
+   */
+  async listUnackedStatDeliveries() {
+    return this.db
+      .select({
+        deliveryId: messageDeliveryStatus.id,
+        userId: messageDeliveryStatus.userId,
+        realertedAt: messageDeliveryStatus.realertedAt,
+        escalatedAt: messageDeliveryStatus.escalatedAt,
+        messageId: messages.id,
+        conversationId: messages.conversationId,
+        organizationId: messages.organizationId,
+        senderId: messages.senderId,
+        createdAt: messages.createdAt,
+      })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messageDeliveryStatus.messageId, messages.id))
+      .where(
+        and(
+          eq(messages.priority, "stat"),
+          isNull(messages.deletedAt),
+          isNull(messageDeliveryStatus.acknowledgedAt),
+        ),
+      );
+  }
+  async markDeliveryRealerted(deliveryId: number) {
+    await this.db
+      .update(messageDeliveryStatus)
+      .set({ realertedAt: new Date() })
+      .where(eq(messageDeliveryStatus.id, deliveryId));
+  }
+  async markDeliveryEscalated(deliveryId: number) {
+    await this.db
+      .update(messageDeliveryStatus)
+      .set({ escalatedAt: new Date() })
+      .where(eq(messageDeliveryStatus.id, deliveryId));
+  }
+  /** Idempotently add a user to a conversation's participant list. */
+  async addConversationParticipant(
+    orgId: number,
+    conversationId: number,
+    userId: number,
+  ) {
+    const convo = await this.getConversation(orgId, conversationId);
+    if (!convo || convo.participantIds.includes(userId)) return convo;
+    const [row] = await this.db
+      .update(conversations)
+      .set({ participantIds: [...convo.participantIds, userId] })
+      .where(
+        and(
+          eq(conversations.organizationId, orgId),
+          eq(conversations.id, conversationId),
+        ),
+      )
+      .returning();
+    return row;
   }
 
   // ── config ───────────────────────────────────────────────────────────────────

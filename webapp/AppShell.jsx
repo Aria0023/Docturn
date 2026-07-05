@@ -52,6 +52,7 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
             </div>
             <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
           </div>}
+          {!compact && <DndButton />}
           {!compact && <ChangePasswordButton />}
           {!compact && <button onClick={onLogout} title="Sign out"
             onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
@@ -61,6 +62,58 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
         </div>
       </div>
     </aside>
+  );
+}
+
+// Do-not-disturb with covering-provider forwarding. DND alone is clinically
+// unsafe, so enabling it asks who covers: messages to you forward to them, and
+// on-call roles you hold resolve to them while you're away.
+function DndButton() {
+  const st = useStore();
+  const a = useActions();
+  const prefs = st.myPrefs || { dnd: false, coveringUserId: null };
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState("");
+  const people = (st.directory || []).filter((d) => d.id !== (st.me && st.me.id) &&
+    (!q || (d.name || "").toLowerCase().includes(q.toLowerCase()) || (d.specialty || "").toLowerCase().includes(q.toLowerCase())));
+  const coveringName = (() => { const c = (st.directory || []).find((d) => d.id === prefs.coveringUserId); return c ? c.name : null; })();
+  function enable(coverId) {
+    if (coverId != null) a.setMyPref("coveringUserId", coverId);
+    a.setMyPref("dnd", true);
+    setOpen(false);
+    a.toast({ tone: "accepted", title: "Do not disturb on", msg: coverId != null || prefs.coveringUserId != null ? "Messages forward to your covering provider." : "No covering provider set — on-call roles you hold will be unreachable." });
+  }
+  function disable() { a.setMyPref("dnd", false); a.toast({ tone: "accepted", title: "Do not disturb off", msg: "You're receiving messages directly again." }); }
+  return (
+    <React.Fragment>
+      <button onClick={() => (prefs.dnd ? disable() : setOpen(true))} title={prefs.dnd ? "DND on — tap to turn off" + (coveringName ? " (covering: " + coveringName + ")" : "") : "Do not disturb"}
+        onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = prefs.dnd ? "#FEF3C7" : "transparent"}
+        style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: prefs.dnd ? "#FEF3C7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: prefs.dnd ? "#B45309" : "var(--muted-foreground)" }}>
+        <Icon name="moon" size={16} />
+      </button>
+      {open && (
+        <Modal title="Do not disturb" subtitle="Pick who covers for you — your messages and on-call roles route to them while you're away." icon="moon" onClose={() => setOpen(false)}
+          children={
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <Field icon="search" value={q} onChange={setQ} placeholder="Search colleagues…" />
+              <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                {people.map((d) => (
+                  <button key={d.id} onClick={() => enable(d.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (prefs.coveringUserId === d.id ? "var(--primary)" : "var(--border)"), background: prefs.coveringUserId === d.id ? "#EFF6FF" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                    <Avatar initials={(d.avatar) || (d.name || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()} size={30} tint={d.working ? "emerald" : "slate"} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{d.name}</span>
+                      <span style={{ display: "block", fontSize: 11.5, color: "var(--muted-foreground)" }}>{d.specialty || "Provider"}{d.working ? " · on shift" : ""}</span>
+                    </span>
+                  </button>
+                ))}
+                {people.length === 0 && <div style={{ padding: 14, fontSize: 12.5, color: "var(--muted-foreground)", textAlign: "center" }}>No colleagues found.</div>}
+              </div>
+              <Button variant="outline" size="sm" icon="moon" onClick={() => enable(null)}>Turn on without covering (not recommended)</Button>
+            </div>
+          } />
+      )}
+    </React.Fragment>
   );
 }
 
