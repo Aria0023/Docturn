@@ -18,6 +18,7 @@ function Messaging() {
   const isMobile = useIsMobile();
   const [active, setActive] = React.useState(st.__activeConvo || (convos[0] && convos[0].id));
   const [draft, setDraft] = React.useState("");
+  const [priority, setPriority] = React.useState("routine"); // routine | urgent | stat
   const [q, setQ] = React.useState("");
   const [composing, setComposing] = React.useState(false);
   const [mobileView, setMobileView] = React.useState("list"); // phone: "list" | "thread"
@@ -34,7 +35,8 @@ function Messaging() {
 
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
 
-  const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft); setDraft(""); if (a.setTyping) a.setTyping(active, false); };
+  const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft, priority); setDraft(""); setPriority("routine"); if (a.setTyping) a.setTyping(active, false); };
+  const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
   const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
 
   // On a phone, show exactly one pane at a time (list OR thread/compose).
@@ -80,7 +82,10 @@ function Messaging() {
                   </div>
                   <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{c.role}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3, gap: 8 }}>
-                    <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: .8 }}>{c.typing ? "typing…" : (last ? (last.me ? "You: " : "") + last.text : "No messages yet")}</span>
+                    <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: .8, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                      {last && (last.priority === "stat" || last.priority === "urgent") && <span style={{ flex: "none", fontSize: 9.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4, color: "#fff", background: last.priority === "stat" ? "#B91C1C" : "#B45309" }}>{last.priority === "stat" ? "STAT" : "URGENT"}</span>}
+                      <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.typing ? "typing…" : (last ? (last.me ? "You: " : "") + last.text : "No messages yet")}</span>
+                    </span>
                     {c.unread > 0 && <span style={{ flex: "none", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 99, background: "var(--primary)", color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{c.unread}</span>}
                   </div>
                 </div>
@@ -151,19 +156,40 @@ function Messaging() {
               <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />End-to-end encrypted · auto-deletes in 30 days
             </span>
           </div>
-          {conv.messages.map((m, i) => (
+          {conv.messages.map((m, i) => {
+            const prio = PRIO[m.priority];
+            return (
             <div key={i} style={{ display: "flex", justifyContent: m.me ? "flex-end" : "flex-start" }}>
               <div style={{ maxWidth: "62%" }}>
-                <div style={{ padding: "9px 13px", borderRadius: 14, fontSize: 13.5, lineHeight: 1.45,
+                {prio && (
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 4, padding: "2px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 800, letterSpacing: ".03em", color: prio.color, background: prio.bg, border: "1px solid " + prio.color + "55", float: m.me ? "right" : "left" }}>
+                    <Icon name={prio.icon} size={11} />{prio.label}
+                  </div>
+                )}
+                <div style={{ clear: "both", padding: "9px 13px", borderRadius: 14, fontSize: 13.5, lineHeight: 1.45,
                   background: m.me ? "var(--primary)" : "#fff", color: m.me ? "#fff" : "var(--foreground)",
-                  border: m.me ? "none" : "1px solid var(--border)",
+                  border: m.me ? "none" : (prio ? "1px solid " + prio.color + "88" : "1px solid var(--border)"),
                   borderBottomRightRadius: m.me ? 4 : 14, borderBottomLeftRadius: m.me ? 14 : 4 }}>{m.text}</div>
+                {/* Recipient: acknowledge an unacked STAT/urgent message. */}
+                {!m.me && prio && !m.ackedByMe && m.id && (
+                  <button onClick={() => a.acknowledgeMessage(conv.id, m.id)}
+                    style={{ marginTop: 5, display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 99, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", color: "#fff", background: prio.color, border: "none" }}>
+                    <Icon name="check" size={12} />Acknowledge
+                  </button>
+                )}
                 <div style={{ fontSize: 10.5, color: "var(--muted-foreground)", marginTop: 3, textAlign: m.me ? "right" : "left", display: "flex", gap: 4, justifyContent: m.me ? "flex-end" : "flex-start", alignItems: "center" }}>
-                  {fmtTime(m.at)}{m.me && <Icon name={m.read ? "check-check" : "check"} size={12} color={m.read ? "var(--status-active)" : "var(--muted-foreground)"} />}
+                  {fmtTime(m.at)}
+                  {/* Sender: show ack status for STAT/urgent. */}
+                  {m.me && prio && (m.ackCount > 0
+                    ? <span style={{ color: "var(--status-active)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="check-check" size={12} />Acknowledged</span>
+                    : <span style={{ color: prio.color, fontWeight: 600 }}>Awaiting ack…</span>)}
+                  {m.me && !prio && <Icon name={m.read ? "check-check" : "check"} size={12} color={m.read ? "var(--status-active)" : "var(--muted-foreground)"} />}
+                  {!m.me && m.ackedByMe && prio && <span style={{ color: "var(--status-active)", fontWeight: 600 }}>✓ You acknowledged</span>}
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
           {conv.typing && (
             <div style={{ display: "flex", justifyContent: "flex-start" }}>
               <div style={{ padding: "11px 15px", borderRadius: 14, borderBottomLeftRadius: 4, background: "#fff", border: "1px solid var(--border)", display: "flex", gap: 4 }}>
@@ -175,11 +201,22 @@ function Messaging() {
 
         {/* No attachments: file/photo sharing is deliberately unavailable until
             encrypted storage + a DLP/PHI policy exist (see SECURITY.md). */}
+        {!conv.broadcast && (
+          <div style={{ flex: "none", padding: "8px 16px 0", background: "#fff", display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginRight: 2 }}>Priority</span>
+            {[["routine", "Routine", "var(--muted-foreground)"], ["urgent", "Urgent", "#B45309"], ["stat", "STAT", "#B91C1C"]].map(([id, label, color]) => (
+              <button key={id} onClick={() => setPriority(id)}
+                style={{ padding: "3px 11px", borderRadius: 99, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit",
+                  color: priority === id ? "#fff" : color, background: priority === id ? color : "transparent",
+                  border: "1px solid " + (priority === id ? color : "var(--border)") }}>{label}</button>
+            ))}
+          </div>
+        )}
         <div style={{ flex: "none", padding: 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
           <div style={{ flex: 1 }}>
             <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder={conv.broadcast ? "Replies disabled for broadcasts" : "Type a secure message…"} disabled={conv.broadcast}
-              style={{ width: "100%", height: 40, border: "1px solid var(--input)", borderRadius: "var(--radius-md)", padding: "0 14px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#fff" }} />
+              placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
+              style={{ width: "100%", height: 40, border: "1px solid " + (priority === "stat" ? "#B91C1C" : priority === "urgent" ? "#B45309" : "var(--input)"), borderRadius: "var(--radius-md)", padding: "0 14px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#fff" }} />
           </div>
           <Button icon="send" onClick={send}>Send</Button>
         </div>

@@ -369,7 +369,13 @@
     return (DT.getState().directory || []).find(function (x) { return x.id === uid; }) || null;
   }
   function mapMessage(m) {
-    return { id: m.id, me: m.senderId === meId, text: m.content, at: new Date(m.createdAt || Date.now()).getTime(), read: true };
+    return {
+      id: m.id, me: m.senderId === meId, text: m.content,
+      at: new Date(m.createdAt || Date.now()).getTime(), read: true,
+      priority: m.priority || "routine",
+      ackCount: m.ackCount || 0,
+      ackedByMe: !!m.acknowledgedByMe,
+    };
   }
   // Pull the user's conversations + their messages from the backend into the
   // kit's conversation shape. Shared server state → both devices see the same.
@@ -424,6 +430,8 @@
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
         if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
+        // A STAT/urgent message was acknowledged — refresh so ack counts update.
+        else if (ev.type === "MESSAGE_ACK") hydrateConversations();
         // Real typing indicator: a peer relayed typing_start/stop through the
         // server (see server/ws). Flip the convo's flag, with a 5s safety expiry
         // in case the stop event is lost.
@@ -867,18 +875,33 @@
       if (ids.length) api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {});
     }
   };
-  DT.actions.sendMessage = function (id, text) {
+  DT.actions.sendMessage = function (id, text, priority) {
     if (!text || !text.trim()) return;
     var t = text.trim();
+    var pri = priority === "stat" || priority === "urgent" ? priority : "routine";
     DT.set(function (s) {
       s.conversations = (s.conversations || []).map(function (c) {
-        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true }]), unread: 0 }) : c;
+        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true, priority: pri, ackCount: 0 }]), unread: 0 }) : c;
       });
       return s;
     });
-    api("POST", "/api/messaging/send", { conversationId: Number(id), content: t })
+    api("POST", "/api/messaging/send", { conversationId: Number(id), content: t, priority: pri })
       .then(function () { hydrateConversations(); })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
+  };
+  // Acknowledge a STAT/urgent message (stronger than read). Optimistic, then syncs.
+  DT.actions.acknowledgeMessage = function (convoId, messageId) {
+    if (messageId == null) return;
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (c.id !== convoId) return c;
+        return Object.assign({}, c, { messages: (c.messages || []).map(function (m) { return m.id === messageId ? Object.assign({}, m, { ackedByMe: true }) : m; }) });
+      });
+      return s;
+    });
+    api("POST", "/api/messaging/messages/ack", { messageIds: [messageId] })
+      .then(function () { hydrateConversations(); })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't acknowledge", msg: "Try again." }; return s; }); });
   };
   // Real typing indicator (outbound). Sends typing_start once, then refreshes a
   // 2.5s idle timer that emits typing_stop — same protocol as the /m mobile kit,

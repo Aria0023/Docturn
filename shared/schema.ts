@@ -179,6 +179,9 @@ export const messages = pgTable("messages", {
     .notNull()
     .references(() => users.id),
   content: text("content").notNull(),
+  // routine | urgent | stat — STAT messages demand an explicit acknowledgement
+  // (see messageDeliveryStatus.acknowledgedAt), mirroring clinical-comms tools.
+  priority: text("priority").notNull().default("routine"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });
@@ -193,6 +196,8 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
     .references(() => users.id),
   deliveredAt: timestamp("delivered_at"),
   readAt: timestamp("read_at"),
+  // Explicit acknowledgement (distinct from read) — required for STAT messages.
+  acknowledgedAt: timestamp("acknowledged_at"),
 });
 
 /* ── Audit, PHI access & security ──────────────────────────────────────────── */
@@ -662,12 +667,19 @@ export const createConversationSchema = z.object({
   participantIds: z.array(z.number().int().positive()).min(1),
 });
 
+export const MESSAGE_PRIORITY = ["routine", "urgent", "stat"] as const;
+
 export const sendMessageSchema = z.object({
   conversationId: z.number().int().positive(),
   content: z.string().min(1),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
 });
 
 export const markReadSchema = z.object({
+  messageIds: z.array(z.number().int().positive()).min(1),
+});
+
+export const acknowledgeSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),
 });
 

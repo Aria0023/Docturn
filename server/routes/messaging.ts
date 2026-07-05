@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import {
+  acknowledgeSchema,
   createConversationSchema,
   markReadSchema,
   sendMessageSchema,
@@ -69,7 +70,24 @@ export function registerMessagingRoutes(app: Express) {
       if (!convo.participantIds.includes(me.id)) {
         return res.status(403).json({ error: "forbidden" });
       }
-      res.json(await storage().listMessages(me.organizationId, id));
+      const msgs = await storage().listMessages(me.organizationId, id);
+      // Decorate each message with acknowledgement info so STAT senders can see
+      // it was acknowledged and recipients know if they still owe an ack.
+      const delivery = await storage().listDeliveryForMessages(
+        msgs.map((m) => m.id),
+      );
+      const out = msgs.map((m) => {
+        const rows = delivery.filter((d) => d.messageId === m.id);
+        return {
+          ...m,
+          ackCount: rows.filter((d) => d.userId !== m.senderId && d.acknowledgedAt)
+            .length,
+          acknowledgedByMe: rows.some(
+            (d) => d.userId === me.id && !!d.acknowledgedAt,
+          ),
+        };
+      });
+      res.json(out);
     },
   );
 
@@ -91,23 +109,78 @@ export function registerMessagingRoutes(app: Express) {
       organizationId: me.organizationId,
       senderId: me.id,
       content: parsed.data.content,
+      priority: parsed.data.priority,
     });
 
-    // A delivery row per participant; delivered_at=now for everyone (stub).
+    // A delivery row per participant; delivered_at=now for everyone (stub). The
+    // sender's own copy is auto-read AND auto-acknowledged (you don't ack your
+    // own STAT), so ackCount reflects only the recipients.
     await storage().createDeliveryStatuses(
       convo.participantIds.map((uid) => ({
         messageId: message.id,
         userId: uid,
         deliveredAt: new Date(),
         readAt: uid === me.id ? new Date() : null,
+        acknowledgedAt: uid === me.id ? new Date() : null,
       })),
     );
+
+    if (parsed.data.priority === "stat") {
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "message.stat_sent",
+        resourceType: "message",
+        resourceId: message.id,
+        details: { conversationId: convo.id },
+        riskLevel: "medium",
+      });
+    }
 
     notificationDeps().ws.sendToUsers(convo.participantIds, {
       type: "MESSAGE_RECEIVED",
       message,
     });
     res.status(201).json(message);
+  });
+
+  // Acknowledge STAT/urgent messages — a stronger signal than "read". Notifies
+  // the whole conversation so the sender sees the ack land live.
+  app.post("/api/messaging/messages/ack", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    const parsed = acknowledgeSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    // Only allow acking messages in conversations the user participates in.
+    const owned: number[] = [];
+    for (const mid of parsed.data.messageIds) {
+      const msg = await storage().getMessage(me.organizationId, mid);
+      if (!msg) continue;
+      const convo = await storage().getConversation(
+        me.organizationId,
+        msg.conversationId,
+      );
+      if (convo && convo.participantIds.includes(me.id)) owned.push(mid);
+    }
+    if (owned.length === 0) return res.status(404).json({ error: "not_found" });
+    await storage().acknowledgeMessages(me.id, owned);
+    // Tell participants (sender included) so the ack reflects live.
+    for (const mid of owned) {
+      const msg = await storage().getMessage(me.organizationId, mid);
+      if (!msg) continue;
+      const convo = await storage().getConversation(
+        me.organizationId,
+        msg.conversationId,
+      );
+      if (convo) {
+        notificationDeps().ws.sendToUsers(convo.participantIds, {
+          type: "MESSAGE_ACK",
+          messageId: mid,
+          conversationId: msg.conversationId,
+          userId: me.id,
+        });
+      }
+    }
+    res.status(204).end();
   });
 
   app.post("/api/messaging/messages/mark-read", requireAuth, async (req, res) => {

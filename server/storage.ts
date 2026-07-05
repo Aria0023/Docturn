@@ -552,6 +552,20 @@ export class DatabaseStorage implements IStorage {
         ),
       );
   }
+  async acknowledgeMessages(userId: number, messageIds: number[]) {
+    if (messageIds.length === 0) return;
+    // Acknowledging also marks read (a STAT you acked was, by definition, seen).
+    await this.db
+      .update(messageDeliveryStatus)
+      .set({ acknowledgedAt: new Date(), readAt: new Date() })
+      .where(
+        and(
+          eq(messageDeliveryStatus.userId, userId),
+          inArray(messageDeliveryStatus.messageId, messageIds),
+          isNull(messageDeliveryStatus.acknowledgedAt),
+        ),
+      );
+  }
   async listDeliveryForMessages(messageIds: number[]) {
     if (messageIds.length === 0) return [];
     return this.db

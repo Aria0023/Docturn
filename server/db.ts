@@ -247,17 +247,22 @@ CREATE TABLE IF NOT EXISTS messages (
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   sender_id INTEGER NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMP
 );
+-- Additive columns for stores created before these fields existed (no-op on new).
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'routine';
 
 CREATE TABLE IF NOT EXISTS message_delivery_status (
   id SERIAL PRIMARY KEY,
   message_id INTEGER NOT NULL REFERENCES messages(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
   delivered_at TIMESTAMP,
-  read_at TIMESTAMP
+  read_at TIMESTAMP,
+  acknowledged_at TIMESTAMP
 );
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,

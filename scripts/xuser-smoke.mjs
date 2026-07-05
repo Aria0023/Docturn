@@ -101,6 +101,28 @@ chenWs.sock.send(JSON.stringify({ type: "typing_stop", conversationId: convo.id,
 await wait(400);
 rec("typing_stop relays too", erWs.got.slice(before).some((e) => e.type === "user_typing" && e.typing === false));
 
+// STAT / priority messaging + acknowledgement.
+before = chenWs.got.length;
+const stat = await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: convo.id, content: "STAT: rapid response, bed 4", priority: "stat" }) });
+rec("STAT message sends with priority=stat", stat.status === 201 && stat.json.priority === "stat", "status=" + stat.status + " pri=" + (stat.json || {}).priority);
+await wait(400);
+rec("STAT delivered live carries its priority", chenWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED" && e.message && e.message.priority === "stat"));
+const statId = stat.json.id;
+// Chen (recipient) sees it unacknowledged, then acknowledges it.
+let cmsgs = (await chen.f("/api/messaging/conversations/" + convo.id + "/messages")).json || [];
+let statRow = cmsgs.find((m) => m.id === statId) || {};
+rec("recipient sees STAT unacknowledged (ackCount 0)", statRow.priority === "stat" && statRow.ackCount === 0 && statRow.acknowledgedByMe === false, "row=" + JSON.stringify({ p: statRow.priority, a: statRow.ackCount, m: statRow.acknowledgedByMe }));
+before = erWs.got.length;
+const ack = await chen.f("/api/messaging/messages/ack", { method: "POST", body: JSON.stringify({ messageIds: [statId] }) });
+rec("acknowledge returns 204", ack.status === 204, "status=" + ack.status);
+await wait(400);
+rec("sender is notified of the ack live (MESSAGE_ACK)", erWs.got.slice(before).some((e) => e.type === "MESSAGE_ACK" && e.messageId === statId && e.userId === chenU.id));
+const erMsgs = (await er.f("/api/messaging/conversations/" + convo.id + "/messages")).json || [];
+rec("sender now sees ackCount=1 on the STAT", (erMsgs.find((m) => m.id === statId) || {}).ackCount === 1);
+// Bad priority is rejected.
+const bad = await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: convo.id, content: "x", priority: "nope" }) });
+rec("invalid priority is rejected (400)", bad.status === 400, "status=" + bad.status);
+
 // Decline visibility: ER routes a fresh patient to Chen, Chen declines — the ER
 // must SEE the decline live and in its sent feed (and the auto-reroute).
 const patelH = hosps.find((h) => h.specialty && h.userId && h.id !== chenProv.id);
