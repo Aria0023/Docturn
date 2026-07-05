@@ -196,9 +196,9 @@
             sub: other ? (roleLabel(other.role) + (other.credential ? " · " + other.credential : "")) : (c.type === "group" ? (c.participantIds || []).length + " members" : ""),
             participantIds: c.participantIds || [],
             unread: c.unreadCount || 0,
-            last: c.lastMessage ? { text: c.lastMessage.content, at: new Date(c.lastMessage.createdAt).getTime(), me: c.lastMessage.senderId === me } : null,
+            last: c.lastMessage ? { text: c.lastMessage.content, at: new Date(c.lastMessage.createdAt).getTime(), me: c.lastMessage.senderId === me, priority: c.lastMessage.priority || "routine" } : null,
             messages: row.msgs.map(function (m) {
-              return { id: m.id, me: m.senderId === me, senderId: m.senderId, text: m.content, at: new Date(m.createdAt || Date.now()).getTime() };
+              return { id: m.id, me: m.senderId === me, senderId: m.senderId, text: m.content, at: new Date(m.createdAt || Date.now()).getTime(), priority: m.priority || "routine", ackCount: m.ackCount || 0, ackedByMe: !!m.acknowledgedByMe };
             }),
           };
         });
@@ -232,6 +232,8 @@
       var ev; try { ev = JSON.parse(e.data); } catch (err) { return; }
       if (!ev || !ev.type) return;
       if (ev.type === "MESSAGE_RECEIVED") {
+        hydrateConversations();
+      } else if (ev.type === "MESSAGE_ACK") {
         hydrateConversations();
       } else if (ev.type === "USER_PRESENCE_CHANGED") {
         var online = Object.assign({}, state.online);
@@ -326,22 +328,34 @@
     }
   };
   actions.closeConversation = function () { set({ activeConvo: null }); };
+  // Acknowledge a STAT/urgent message (stronger than read).
+  actions.acknowledgeMessage = function (convoId, messageId) {
+    if (messageId == null) return Promise.resolve(false);
+    set({ conversations: state.conversations.map(function (c) {
+      if (c.id !== convoId) return c;
+      return Object.assign({}, c, { messages: c.messages.map(function (m) { return m.id === messageId ? Object.assign({}, m, { ackedByMe: true }) : m; }) });
+    }) });
+    return api("POST", "/api/messaging/messages/ack", { messageIds: [messageId] })
+      .then(function () { return hydrateConversations().then(function () { return true; }); })
+      .catch(function () { toast("Couldn't acknowledge — try again", "err"); return false; });
+  };
 
-  actions.sendMessage = function (convoId, text) {
+  actions.sendMessage = function (convoId, text, priority) {
     var t = String(text || "").trim();
     if (!t) return Promise.resolve(false);
+    var pri = priority === "stat" || priority === "urgent" ? priority : "routine";
     // optimistic append
     set({
       conversations: state.conversations.map(function (c) {
         if (c.id !== convoId) return c;
         return Object.assign({}, c, {
-          messages: c.messages.concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), pending: true }]),
-          last: { text: t, at: Date.now(), me: true },
+          messages: c.messages.concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), pending: true, priority: pri, ackCount: 0 }]),
+          last: { text: t, at: Date.now(), me: true, priority: pri },
         });
       }),
     });
     actions.setTyping(convoId, false);
-    return api("POST", "/api/messaging/send", { conversationId: Number(convoId), content: t })
+    return api("POST", "/api/messaging/send", { conversationId: Number(convoId), content: t, priority: pri })
       .then(function () { return hydrateConversations().then(function () { return true; }); })
       .catch(function () {
         toast("Message not sent — check connection", "err");
