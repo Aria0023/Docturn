@@ -25,7 +25,6 @@ function Directory({ providers, onMessage }) {
             </span>
             <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
               <Button size="icon" variant="outline" icon="message-square" onClick={() => onMessage && onMessage({ name: p.name, role: p.specialty, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" })} />
-              <Button size="icon" variant="ghost" icon="phone" onClick={() => window.DT.actions.toast({ tone: "sent", title: "Calling " + p.name, msg: "Connecting on the secure line…" })} />
             </div>
           </div>
         ))}

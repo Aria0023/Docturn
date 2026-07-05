@@ -409,10 +409,12 @@ function App() {
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
                 <Sidebar role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
               </div>
+              {st.syntheticData !== false && (
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
               </div>
+              )}
             </div>
           </React.Fragment>
         )}
@@ -436,7 +438,7 @@ function App() {
           notifCount={DT.unreadNotifs()}
           onBell={() => a.toggleNotif()}
           onLock={() => setLocked(true)}
-          right={<RoleSwitcher role={role} onChange={a.setRole} />} />
+          right={st.syntheticData !== false ? <RoleSwitcher role={role} onChange={a.setRole} /> : null} />
         {impersonationBanner}
         <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>

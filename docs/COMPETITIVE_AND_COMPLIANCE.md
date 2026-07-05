@@ -1,5 +1,23 @@
 # DocTurn — Competitive Gap Analysis & Compliance Readiness
 
+## 0. Deliberately frozen / cut (focus decisions, 2026-07)
+
+To concentrate effort on the go-to-market table stakes (push, escalation,
+patient threads, schedule roles, retention, analytics), the following are
+**frozen** (kept working, zero further investment) or **cut**:
+
+- **Frozen:** beds/equipment/departments resource tracking; per-org theming
+  (Appearance); customizable dashboard widgets; CMS/landing/contact page
+  settings. None of these win clinical-comms deals; revisit only if a routing
+  use-case demands the resource data.
+- **Cut:** fake voice-call buttons (no fake affordances — voice/video is Tier 3);
+  external-AI intake beyond the local parser (PHI risk ≫ typing-time saved).
+- **Honesty pass applied:** thread banner now says "Encrypted in transit ·
+  access audited" (was falsely claiming end-to-end encryption + 30-day
+  auto-delete); login badge says "HIPAA-aligned design · MFA available";
+  demo affordances (role switcher, demo hints, /api/demo/login) only exist in
+  synthetic-data mode.
+
 *Benchmarked against TigerConnect (TigerText) and PerfectServe. Written 2026-07.*
 
 ## 1. Where DocTurn already matches the market

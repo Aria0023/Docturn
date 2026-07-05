@@ -85,6 +85,11 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // in an iframe with ?token=<t>. Requires the demo password, like normal login.
   if (!isProd) {
     app.post("/api/demo/login", async (req, res) => {
+      // Demo tokens are a synthetic-data affordance: refuse when the operator
+      // has deliberately switched the instance to real-PHI mode.
+      if (process.env.SYNTHETIC_DATA === "false") {
+        return res.status(403).json({ error: "demo_disabled" });
+      }
       const { orgCode, username, password } = (req.body ?? {}) as {
         orgCode?: string; username?: string; password?: string;
       };

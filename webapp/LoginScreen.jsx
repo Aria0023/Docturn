@@ -3,7 +3,11 @@
 function LoginScreen({ onLogin, appName }) {
   const brand = appName || "DocTurn";
   const mobile = useIsMobile();
-  const loginError = (typeof useStore === "function") ? useStore().loginError : null;
+  const _st = (typeof useStore === "function") ? useStore() : {};
+  const loginError = _st.loginError || null;
+  // Demo affordances (role picker, "any password" hint) exist ONLY in
+  // synthetic-data mode — a real deployment shows a plain username/password form.
+  const demoMode = _st.syntheticData !== false;
   const [org, setOrg] = React.useState("ISPN");
   const [user, setUser] = React.useState("chen");
   const [pass, setPass] = React.useState("••••••••");
@@ -61,6 +65,7 @@ function LoginScreen({ onLogin, appName }) {
             <Field label="Username" icon="user" value={user} onChange={setUser} />
             <Field label="Password" icon="lock" type="password" value={pass} onChange={setPass} />
 
+            {demoMode && (
             <div>
               <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Demo as role</label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
@@ -76,6 +81,7 @@ function LoginScreen({ onLogin, appName }) {
                 ))}
               </div>
             </div>
+            )}
 
             {loginError && (
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
@@ -87,10 +93,11 @@ function LoginScreen({ onLogin, appName }) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center" }}>
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />
-              HIPAA‑compliant · MFA enabled · 15‑min sessions
+              HIPAA-aligned design · MFA available · 15-min sessions
             </div>
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
-              Demo — pick a role and sign in. Org <b style={{ color: "var(--foreground)", fontWeight: 600 }}>ISPN</b> · any password. New here? <button onClick={() => { setMode("register"); setRegMsg(null); setRegErr(null); }} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Create an account</button>.
+              {demoMode && <React.Fragment>Demo — pick a role and sign in. Org <b style={{ color: "var(--foreground)", fontWeight: 600 }}>ISPN</b> · any password. </React.Fragment>}
+              New here? <button onClick={() => { setMode("register"); setRegMsg(null); setRegErr(null); }} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Create an account</button>.
             </div>
           </div>
           ) : (

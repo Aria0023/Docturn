@@ -181,7 +181,6 @@ function ChatThread({ convo, onBack }) {
           <div style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{convo.name}</div>
           <div style={{ fontSize: 12, color: "var(--status-accepted)" }}>{convo.group ? (convo.members ? convo.members.length + " members · " + sentenceMembers(convo) : "Group") : "Online"}</div>
         </div>
-        <button onClick={() => window.__mtoast && window.__mtoast("Calling " + convo.name + "…")} style={{ width: 36, height: 36, borderRadius: 99, border: "1px solid var(--border)", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><MI name="phone" size={16} color="var(--primary)" /></button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 9 }}>
         <div style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 5, background: "var(--secondary)", color: "var(--muted-foreground)", fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 99, marginBottom: 4 }}>
@@ -433,7 +432,6 @@ function DirectoryScreen({ providers }) {
               <div style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.role}</div>
             </div>
             <span style={{ fontSize: 11, fontWeight: 600, color: p.on ? "var(--status-accepted)" : "var(--muted-foreground)", flex: "none" }}>{p.on ? "On" : "Off"}</span>
-            <button onClick={() => window.__mtoast("Calling " + p.name + "…")} style={{ width: 32, height: 32, borderRadius: 99, border: "1px solid var(--border)", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none", cursor: "pointer" }}><MI name="phone" size={14} color="var(--primary)" /></button>
           </div>
         ))}
         {list.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "var(--muted-foreground)", fontSize: 14 }}>No matches for "{q}".</div>}

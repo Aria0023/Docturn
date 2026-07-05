@@ -181,14 +181,14 @@ function Messaging() {
                 : <><StatusDot status={conv.presence} pulse={conv.presence === "online"} />{conv.presence === "online" ? "Online" : conv.role}</>}
             </div>
           </div>
-          <Button size="icon" variant="ghost" icon="phone" onClick={() => a.toast({ tone: "sent", title: "Calling " + conv.name, msg: "Connecting on the secure line…" })} />
-          <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages · end-to-end audited." })} />
+          {/* No call button: voice isn't a real capability yet — no fake affordances. */}
+          <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages · access audited." })} />
         </div>
 
         <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
             <span style={{ background: "#fff", padding: "3px 12px", borderRadius: 99, border: "1px solid var(--border)" }}>
-              <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />End-to-end encrypted · auto-deletes in 30 days
+              <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />Encrypted in transit · access audited
             </span>
           </div>
           {conv.messages.map((m, i) => {
