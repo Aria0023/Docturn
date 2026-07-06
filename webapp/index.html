@@ -413,6 +413,9 @@ function App() {
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
+                <a href="/m" target="_blank" rel="noopener" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12.5, fontWeight: 600, color: "var(--primary)", textDecoration: "none" }}>
+                  <Icon name="smartphone" size={14} />Open mobile app (/m)
+                </a>
               </div>
               )}
             </div>
@@ -438,7 +441,13 @@ function App() {
           notifCount={DT.unreadNotifs()}
           onBell={() => a.toggleNotif()}
           onLock={() => setLocked(true)}
-          right={st.syntheticData !== false ? <RoleSwitcher role={role} onChange={a.setRole} /> : null} />
+          right={st.syntheticData !== false ? <React.Fragment>
+            <a href="/m" target="_blank" rel="noopener" title="Open the mobile app (/m) in a new tab"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, textDecoration: "none", fontFamily: "inherit" }}>
+              <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
+            </a>
+            <RoleSwitcher role={role} onChange={a.setRole} />
+          </React.Fragment> : null} />
         {impersonationBanner}
         <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
