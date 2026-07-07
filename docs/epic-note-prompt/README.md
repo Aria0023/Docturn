@@ -36,7 +36,14 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.5 — CURRENT: patient demographics header block
+## v7.6 — CURRENT: demographics header without Unit/Room
+
+**Use `providence-progress-note-v7.6.json`.** Same as v7.5 but the Unit/Room line is
+removed from the PATIENT INFORMATION block, the input schema, and the section-checklist
+wording. Remaining demographics: Patient Name, Age, DOB, MRN, Date of Admission, Date of
+Service, Attending, Primary Care Physician.
+
+## v7.5 (superseded) — patient demographics header block
 
 **Use `providence-progress-note-v7.5.json`.** In Doximity/ChatGPT the note came out
 with no patient Name / Age / DOB / MRN because the JSON `template` had no demographics
