@@ -36,7 +36,29 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.4 — CURRENT: extra empty line between A&P problems
+## v7.5 — CURRENT: patient demographics header block
+
+**Use `providence-progress-note-v7.5.json`.** In Doximity/ChatGPT the note came out
+with no patient Name / Age / DOB / MRN because the JSON `template` had no demographics
+section — it jumped from the "Benchmark Hospitalists Group" letterhead straight to the
+Chief Complaint (the demographics in the Epic wrapper are Epic `@NAME@` tokens, which
+ChatGPT never sees or fills). v7.5 adds a **PATIENT INFORMATION** block right after the
+letterhead:
+
+- Escaped-dash lines (same reliable `\- ` format) for Patient Name, Age, DOB, MRN,
+  Unit/Room, Date of Admission, Date of Service, Attending, Primary Care Physician.
+- `PATIENT_DEMOGRAPHICS_HEADER_LOCK`: populate ONLY from provided input; omit any field
+  not provided (no "not provided"); never fabricate a name/DOB/MRN; omit the whole block
+  if no demographics are given.
+- `input_data_expected` gains `patient.age` and `encounter.attending_physician`,
+  `primary_care_physician`, `unit_room`.
+- Completeness checklist is now 14 sections (PATIENT INFORMATION is item 2).
+
+**Provide the demographics as input** (Doximity won't pull them from Epic). If instead
+you want the note to keep literal Epic tokens (`@NAME@`, `@BDAY@`, …) so Epic fills them
+on paste, tell me and I'll swap the placeholders for those tokens.
+
+## v7.4 (superseded) — extra empty line between A&P problems
 
 **Use `providence-progress-note-v7.4.json`.** Provider wants more breathing room
 between consecutive problem blocks. Chat renderers collapse consecutive blank lines,
