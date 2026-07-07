@@ -36,7 +36,23 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.8 — CURRENT: no letterhead; demographics flush-left, no dashes
+## v7.9 — CURRENT: three-line title header
+
+**Use `providence-progress-note-v7.9.json`.** Adds a flush-left, three-line title header
+at the very top (no markdown heading marks), then the demographics:
+
+```
+**Hospitalist Progress Note**
+Providence Saint Joseph's Medical Center
+Benchmark Hospitalist Group
+```
+
+`NOTE_TITLE_HEADER_LOCK` pins the exact wording/order and forbids the old
+`PROVIDENCE HEALTH AND SERVICES` letterhead; `FULL_NOTE_ALL_SECTIONS_REQUIRED_LOCK` is
+back to 14 sections with the title header as section 1. Everything else (flush-left
+dashless demographics, APSO order, escaped-dash A&P/exam) unchanged from v7.8.
+
+## v7.8 (superseded) — no letterhead; demographics flush-left, no dashes
 
 **Use `providence-progress-note-v7.8.json`.** Provider wants the note to start clean at
 the left margin with no Providence letterhead. v7.8:
