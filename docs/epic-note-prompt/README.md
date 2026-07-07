@@ -7,7 +7,19 @@ Two prompts live here:
 
 # H&P Prompt
 
-## v4.0 — CURRENT: full port of the progress-note conventions
+## v4.1 — CURRENT: three-line title header + flush-left demographics
+
+**Use `providence-hnp-v4.1.json`.** Brings the H&P top in line with progress note v7.9:
+removes the Providence letterhead, adds the flush-left three-line title header
+(`**History & Physical Note**` / `Providence Saint Joseph's Medical Center` /
+`Benchmark Hospitalist Group`) and a flush-left dashless demographics block
+(Name/Age/DOB/MRN/Admission/Service/Attending/PCP). Adds `patient.age`,
+`encounter.attending_physician`, `encounter.primary_care_physician` to the schema, and
+the `NOTE_TITLE_HEADER_LOCK` + `PATIENT_DEMOGRAPHICS_HEADER_LOCK`. Section checklist is
+now 20 items. All H&P-specific logic (Two-Midnight, NIHSS, C. diff, GMLOS inference,
+provider-voice HPI) is unchanged.
+
+## v4.0 (superseded) — full port of the progress-note conventions
 
 `providence-hnp-v4.0.json` rebuilds the provider's H&P v3.3 prompt with every
 convention converged on for the progress note (v6.5 → v7.4):
