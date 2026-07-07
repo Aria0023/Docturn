@@ -36,7 +36,25 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.7 — CURRENT: APSO order (A&P + Disposition above the objective data)
+## v7.8 — CURRENT: no letterhead; demographics flush-left, no dashes
+
+**Use `providence-progress-note-v7.8.json`.** Provider wants the note to start clean at
+the left margin with no Providence letterhead. v7.8:
+
+- Removes the entire top letterhead — `PROVIDENCE HEALTH AND SERVICES`, hospital
+  location, `HOSPITAL MEDICINE PROGRESS NOTE`, `Benchmark Hospitalists Group` — and the
+  leftover `<!-- Licensed... -->` HTML comment. The note now begins directly with the
+  patient demographics.
+- Patient demographics are now plain flush-left `**Label:** value` lines (bold label,
+  **no** leading `-`/bullet, no `PATIENT INFORMATION` heading). Provided fields only;
+  missing fields omitted; never fabricated.
+- `FULL_NOTE_ALL_SECTIONS_REQUIRED_LOCK` rewritten to 13 sections with no letterhead and
+  the demographics as section 1; the first-line/"starting with PROVIDENCE" anchors in the
+  rewrite/checklist locks were repointed to the demographics.
+- A&P and Physical Exam still use escaped `\-` dash lines (unchanged); only the
+  demographics lost their dashes.
+
+## v7.7 (superseded) — APSO order (A&P + Disposition above the objective data)
 
 **Use `providence-progress-note-v7.7.json`.** Provider reordered the Epic wrapper so the
 note reads Assessment & Plan first, then Disposition, with the objective data and MDM
