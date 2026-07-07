@@ -36,7 +36,29 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.6 — CURRENT: demographics header without Unit/Room
+## v7.7 — CURRENT: APSO order (A&P + Disposition above the objective data)
+
+**Use `providence-progress-note-v7.7.json`.** Provider reordered the Epic wrapper so the
+note reads Assessment & Plan first, then Disposition, with the objective data and MDM
+time statement at the bottom. v7.7 reorders the ChatGPT template to match, keeping the
+v7.6 demographics block (no Unit/Room). New section order:
+
+1. Header → 2. PATIENT INFORMATION → 3. CC → 4. HOSPITAL COURSE (interval narrative) →
+5. Overnight Events + Therapy Updates → **6. ASSESSMENT & PLAN → 7. Chronic Problems →
+8. DVT / Code / Disposition** → 9. VITAL SIGNS → 10. PHYSICAL EXAM → 11. LABS &
+DIAGNOSTICS → 12. ACTIVE MEDS → 13. 50-minute MDM line → 14. disclaimer.
+
+- The top narrative header was renamed `OBJECTIVE / HOSPITAL COURSE` → `HOSPITAL COURSE`
+  (the real objective data now lives lower, so the "OBJECTIVE" label there would
+  double up). Each objective section keeps its own header (VITAL SIGNS, PHYSICAL EXAM,
+  LABS & DIAGNOSTICS, ACTIVE MEDS); say the word if you want an umbrella `### OBJECTIVE`
+  header above them.
+- `FULL_NOTE_ALL_SECTIONS_REQUIRED_LOCK` rewritten to the new 14-section order.
+- Epic-only interactive fields in your wrapper (`{Medically Ready for Discharge}`,
+  `{Dispo location}`) are Epic SmartList tokens, not something ChatGPT generates, so
+  they stay in the Epic wrapper and are not added to the prompt.
+
+## v7.6 (superseded) — demographics header without Unit/Room
 
 **Use `providence-progress-note-v7.6.json`.** Same as v7.5 but the Unit/Room line is
 removed from the PATIENT INFORMATION block, the input schema, and the section-checklist
