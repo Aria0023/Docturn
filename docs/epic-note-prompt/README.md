@@ -7,7 +7,13 @@ Two prompts live here:
 
 # H&P Prompt
 
-## v4.1 — CURRENT: three-line title header + flush-left demographics
+## v4.2 — CURRENT: Epic-proof spacing
+
+**Use `providence-hnp-v4.2.json`.** Same Epic-proof spacing pass as progress note v7.10
+(markdown headings → bold labels, no `&nbsp;`/`---`/HTML, single blank lines,
+`EPIC_PROOF_SPACING_LOCK`). H&P-specific logic unchanged.
+
+## v4.1 (superseded) — three-line title header + flush-left demographics
 
 **Use `providence-hnp-v4.1.json`.** Brings the H&P top in line with progress note v7.9:
 removes the Providence letterhead, adds the flush-left three-line title header
@@ -48,7 +54,26 @@ convention converged on for the progress note (v6.5 → v7.4):
 
 # Progress Note Prompt
 
-## v7.9 — CURRENT: three-line title header
+## v7.10 — CURRENT: Epic-proof spacing (no headings, no &nbsp;, no HTML)
+
+**Use `providence-progress-note-v7.10.json`.** Fixes Epic paste spacing (e.g. Enter
+"skipping a row" when adding a plan line — caused by heading/paragraph space-after from
+the rich paste). Changes:
+
+- **No markdown headings** — every section label (`HOSPITAL COURSE`, `VITAL SIGNS`,
+  `ASSESSMENT & PLAN`, etc.) is now a plain **bold** text line, not `##`/`###`. Heading
+  styles carried the big space-before/after into Epic.
+- **No `&nbsp;` spacer lines, no `---` rules, no HTML `<p>`** — the disclaimer is now
+  plain italic (`*...*`). Sections/problems are separated by exactly one blank line.
+- New `EPIC_PROOF_SPACING_LOCK` enforces all of the above.
+- A&P/exam still use escaped `\-` dash lines; demographics still flush-left, bold labels.
+
+Note: the guaranteed fix for Epic's Enter-skip is Epic's own paragraph "space after"
+setting (or pasting as plain text). This version removes every template-side trigger,
+which resolves the heading/spacer artifacts; if a residual gap remains it is Epic's
+paragraph-spacing default, set once in the SmartPhrase.
+
+## v7.9 (superseded) — three-line title header
 
 **Use `providence-progress-note-v7.9.json`.** Adds a flush-left, three-line title header
 at the very top (no markdown heading marks), then the demographics:
