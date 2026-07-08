@@ -5,6 +5,23 @@ Two prompts live here:
 - **Progress note** — `providence-progress-note-v7.4.json` (current)
 - **H&P (admission note)** — `providence-hnp-v4.0.json` (current)
 
+# Consult Note Prompt
+
+## v4.0 — CURRENT
+
+`providence-consult-v4.0.json` — the consult note rebuilt with every convention (derived
+from H&P v4.2): three-line title header (`**Hospitalist Consult Note**` / Providence
+Saint Joseph's Medical Center / Benchmark Hospitalist Group), flush-left dashless
+demographics, a **Consult Information** block (Requesting Service/Provider, Reason for
+Consult, Date/Time of Consult), bullets-only **ASSESSMENT & RECOMMENDATIONS**
+(bold `**#Dx [POA]**` titles, escaped `\-` dash lines, evidence-first, ≥4 lines, no
+interpretation lines, no ICD codes, uncertain-dx fallback), escaped-dash exam +
+PMH/PSH/meds, Epic-proof spacing (no headings/`&nbsp;`/HTML), plain-italic disclaimer,
+and an **85-minute** MDM line. Consult-specific: Two-Midnight statement gating
+(**suppressed on the ARU**), Barriers-only disposition (no GMLOS/EDD), provider-voice
+HPI/ROS with no source attribution. Dropped the H&P-only NIHSS/CHF-GDMT/C.diff/GMLOS
+logic that wasn't in the consult.
+
 # H&P Prompt
 
 ## v4.2 — CURRENT: Epic-proof spacing
