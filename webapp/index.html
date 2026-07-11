@@ -2,8 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DocTurn — Clinical Web App (Extended UI Kit)</title>
+<!-- PWA: the full web app is installable to a phone home screen and push-capable. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563EB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DocTurn">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+    });
+  }
+</script>
 <link rel="stylesheet" href="tokens.css">
 <style>
   * { box-sizing: border-box; }
@@ -413,9 +428,9 @@ function App() {
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
-                <a href="/m" target="_blank" rel="noopener" style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12.5, fontWeight: 600, color: "var(--primary)", textDecoration: "none" }}>
-                  <Icon name="smartphone" size={14} />Open slim companion app (/m)
-                </a>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12, color: "var(--muted-foreground)" }}>
+                  <Icon name="smartphone" size={14} color="var(--primary)" />Install this app: your browser's "Add to Home Screen".
+                </div>
               </div>
               )}
             </div>
@@ -443,7 +458,7 @@ function App() {
           onLock={() => setLocked(true)}
           right={st.syntheticData !== false ? <React.Fragment>
             <button onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
-              title="Preview THIS app at phone size — the full, responsive web app (every feature), not the slim /m companion"
+              title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"
               style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
               <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
             </button>

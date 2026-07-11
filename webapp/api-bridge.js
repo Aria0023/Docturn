@@ -575,6 +575,7 @@
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
       hydrateMyPrefs();
+      enableWebPush();
       if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
       return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
     }
@@ -720,6 +721,39 @@
         return s;
       });
     }).catch(function () {});
+  }
+  // Web Push: subscribe this browser/PWA so STAT + new-message wake-ups reach a
+  // closed phone (content-free payloads; the SW shows a generic title). Best-
+  // effort + permission-gated — the app works fully without it.
+  function urlB64ToUint8Array(b64) {
+    var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    var base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  function enableWebPush() {
+    try {
+      if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+      if (typeof window === "undefined" || !("PushManager" in window) || !("Notification" in window)) return;
+      if (Notification.permission === "denied") return;
+      Notification.requestPermission().then(function (perm) {
+        if (perm !== "granted") return;
+        Promise.all([navigator.serviceWorker.ready, rawApi("GET", "/api/push/vapid-key")])
+          .then(function (r) {
+            var reg = r[0], key = r[1] && r[1].key;
+            if (!reg || !key) return null;
+            return reg.pushManager.getSubscription().then(function (existing) {
+              return existing || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+            });
+          })
+          .then(function (sub) {
+            if (sub) return api("POST", "/api/mobile/device-tokens", { token: JSON.stringify(sub), platform: "webpush" });
+          })
+          .catch(function () { /* push is optional */ });
+      }).catch(function () {});
+    } catch (e) { /* older browsers */ }
   }
   // Director ops report (assignments latency, consult response, message volume).
   function hydrateOpsReport() {
