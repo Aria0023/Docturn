@@ -260,8 +260,11 @@
       // is director-only, so we derive names from the directory instead.
       get("/api/physicians/directory").catch(function () { return null; }),
       get("/api/patients").catch(function () { return null; }),
+      // EVERY org user (all roles) for name resolution — so a DM with an ER
+      // physician or director shows their real name, not "Conversation".
+      get("/api/care-team/candidates").catch(function () { return null; }),
     ]).then(function (res) {
-      var hosps = res[0], directory = res[1], patients = res[2];
+      var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3];
       var usersById = {};
       (directory || []).forEach(function (d) {
         usersById[d.userId] = { displayName: d.displayName, credential: d.credential };
@@ -312,6 +315,22 @@
           if (directory) s.directory = (directory || []).map(function (d) {
             return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
+          // Org-wide people map for NAME RESOLUTION in messaging. The directory
+          // above only carries hospitalists, so a DM with an ER physician or a
+          // director would otherwise show "Conversation". Merge in the care-team
+          // candidate roster (every org user except me + already-linked), so any
+          // conversation partner resolves to a real name + role/specialty. Never
+          // clobber a richer directory entry with a thinner candidate one.
+          if (directory || candidates) {
+            var people = Object.assign({}, s.orgPeople || {});
+            (directory || []).forEach(function (d) {
+              people[d.userId] = { id: d.userId, name: d.displayName, credential: d.credential || "", specialty: d.specialty || "", working: !!d.working, role: "hospitalist" };
+            });
+            (candidates || []).forEach(function (c) {
+              if (!people[c.userId]) people[c.userId] = { id: c.userId, name: c.displayName, credential: c.credential || "", specialty: roleLabel(c.role), working: false, role: c.role };
+            });
+            s.orgPeople = people;
+          }
           // Consultants per patient come off the live board so census/sent rows
           // can show who was consulted, their status, and when they responded.
           var consultByPid = {}, consultDetailByPid = {};
@@ -361,12 +380,26 @@
   }
 
   // ---- messaging (real, cross-device) --------------------------------------
-  function nameForUserId(uid) {
+  // Human label for a raw role code (used when a conversation partner is not a
+  // hospitalist, so the directory has no specialty for them).
+  function roleLabel(role) {
+    return ({ hospitalist: "Provider", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Admin" })[role] || "Provider";
+  }
+  // Resolve a userId to a person, preferring the rich directory entry and
+  // falling back to the org-wide people map (covers ER physicians, directors,
+  // and anyone else not in the hospitalist directory).
+  function personForUserId(uid) {
     var d = (DT.getState().directory || []).find(function (x) { return x.id === uid; });
-    return d ? d.name : null;
+    if (d) return d;
+    var p = (DT.getState().orgPeople || {})[uid];
+    return p || null;
+  }
+  function nameForUserId(uid) {
+    var p = personForUserId(uid);
+    return p ? p.name : null;
   }
   function dirByUserId(uid) {
-    return (DT.getState().directory || []).find(function (x) { return x.id === uid; }) || null;
+    return personForUserId(uid);
   }
   function mapMessage(m) {
     return {
