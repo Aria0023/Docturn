@@ -139,9 +139,26 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Unified mobile: the installable PWA IS the full, responsive web app served
   // at "/" (manifest + service worker live in webapp/). The old slim /m kit is
-  // retired — redirect /m and any /m/* to "/" so existing links, bookmarks, and
-  // home-screen installs land on the unified app. Registered BEFORE the web
-  // app's SPA catch-all so it wins.
+  // retired.
+  //
+  // Old /m installs registered a service worker at /m/sw.js that CACHES the
+  // retired slim app and intercepts /m navigations (so a plain redirect never
+  // reaches them). Serve a self-destructing SW there: on activate it clears all
+  // caches, unregisters itself, and reloads open windows into the unified app.
+  // This heals stale devices on their next visit. Must precede the redirect.
+  app.get("/m/sw.js", (_req, res) => {
+    res.type("application/javascript").set("Cache-Control", "no-cache");
+    res.send(
+      'self.addEventListener("install",function(){self.skipWaiting();});\n' +
+        'self.addEventListener("activate",function(e){e.waitUntil((async function(){' +
+        'try{var k=await caches.keys();await Promise.all(k.map(function(x){return caches.delete(x);}));}catch(_){}' +
+        'try{await self.registration.unregister();}catch(_){}' +
+        'try{var cs=await self.clients.matchAll({type:"window"});cs.forEach(function(c){try{c.navigate("/");}catch(_){}});}catch(_){}' +
+        "})());});\n",
+    );
+  });
+  // Redirect /m and any /m/* to "/" so existing links, bookmarks, and home-screen
+  // installs land on the unified app. Registered BEFORE the SPA catch-all.
   app.get(/^\/m(\/.*)?$/, (_req, res) => res.redirect(302, "/"));
 
   // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
