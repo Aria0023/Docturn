@@ -5,6 +5,32 @@ Two prompts live here:
 - **Progress note** — `providence-progress-note-v7.4.json` (current)
 - **H&P (admission note)** — `providence-hnp-v4.0.json` (current)
 
+# SNF H&P Prompt
+
+## v1.0 — CURRENT
+
+`providence-snf-hnp-v1.0.json` — Skilled Nursing Facility admission H&P, built on the
+same conventions (bullets-only A&P with bold `**#Dx [POA]**` titles + escaped `\-` dash
+lines, no hedging, uncertain-dx fallback, no "If X then Y" lines, no ICD codes,
+EMR-proof spacing with no headings/`&nbsp;`/HTML, no internal-clock dates) plus
+SNF-specific machinery:
+
+- `SNF_DEBILITY_FIRST_PROBLEM_LOCK` — first problem is always the debility/weakness
+  requiring-skilled-rehab diagnosis, titled with the qualifying-stay etiology, covering
+  the hospital stay, prior level of function, PT/OT/SLP findings with measures, and the
+  skilled therapy plan.
+- `SNF_STANDING_PLAN_ITEMS_LOCK` — "Maintain fall and aspiration precautions." and
+  "Patient care discussed with nursing staff." are verbatim required closers of the
+  first problem's plan.
+- `REHAB_POTENTIAL_LOCK` — single word Good/Fair/Poor from provided therapy
+  documentation (or "To be determined pending PT/OT evaluation").
+- SNF HPI synthesized from the hospital discharge summary/records (provider voice, no
+  source attribution) ending with a fixed records-review attestation line; fixed
+  comprehensive-10-system ROS closer; vitals default "Please see PCC"; Date of Service
+  only from provided input (PCC has no @TD@ token); PMH folds in surgical history;
+  Code Status line omitted unless provided. No MDM time statement (matches the
+  provider's PCC wrapper).
+
 # Consult Note Prompt
 
 ## v4.0 — CURRENT
