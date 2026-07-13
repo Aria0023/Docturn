@@ -344,7 +344,7 @@ function App() {
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
-  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} domainPortals={dirDomain.portals} />;
   else if (nav === "consult") screen = <ConsultServices />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
   else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;

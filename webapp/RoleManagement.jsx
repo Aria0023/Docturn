@@ -149,7 +149,16 @@ function Tag({ children, tone }) {
 function RoleManagement({ roles, onCreate, onUpdate, onDelete, domainPortals }) {
   const [editing, setEditing] = React.useState(null); // null | "new" | roleObject
   const portalList = domainPortals ? PORTALS.filter((p) => domainPortals.includes(p[0])) : PORTALS;
-  const shownRoles = domainPortals ? roles.filter((r) => r.portals.some((p) => domainPortals.includes(p))) : roles;
+  // Domain isolation: a domain admin (hospitalist director / ER director) may see
+  // and manage ONLY roles whose portal access is ENTIRELY within their domain.
+  // "some overlap" is not enough — Super Admin lists the hospitalist portal too,
+  // so overlap would leak it to a hospitalist director. Require every portal to be
+  // in-domain, so cross-domain and super-admin roles are hidden and uneditable:
+  //   • Hospitalist director → no Super Admin, ER Director or ER Physician roles.
+  //   • ER director          → no Super Admin, Hospitalist Director or Hospitalist roles.
+  const shownRoles = domainPortals
+    ? roles.filter((r) => r.portals.length > 0 && r.portals.every((p) => domainPortals.includes(p)))
+    : roles;
   const totalUsers = shownRoles.reduce((a, r) => a + r.users, 0);
   const customCount = shownRoles.filter((r) => !r.system).length;
 
