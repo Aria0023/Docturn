@@ -240,10 +240,50 @@ function hexToHsl(hex) {
   return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
 }
 
+// Color-scheme presets ("palettes"). These soften the whole CANVAS (page
+// background, borders, ink) while cards stay white and float — the classic
+// low-glare look (Linear/Notion/Stripe) that's easier on the eyes for long
+// shifts. Values are raw HSL channels; because tokens.css composes every
+// semantic token from its "-ch" channel (e.g. --background: hsl(var(--background-ch))),
+// overriding the channel recolors the whole app, and removing it restores the
+// shipped default. "classic" === the current product look (null → no override).
+var PALETTES = {
+  classic: null,
+  calm: { // cool, soft slate — matches the blue accent
+    "--background-ch": "215 28% 96%",
+    "--foreground-ch": "217 33% 18%",
+    "--secondary-ch": "215 28% 92%",
+    "--muted-ch": "215 28% 92%",
+    "--accent-ch": "215 28% 92%",
+    "--muted-foreground-ch": "215 18% 42%",
+    "--border-ch": "214 24% 87%",
+    "--input-ch": "214 24% 87%",
+  },
+  warm: { // warm paper — lowest blue-light, sepia-adjacent
+    "--background-ch": "40 30% 96%",
+    "--foreground-ch": "28 22% 18%",
+    "--secondary-ch": "40 26% 91%",
+    "--muted-ch": "40 26% 91%",
+    "--accent-ch": "40 26% 91%",
+    "--muted-foreground-ch": "30 12% 42%",
+    "--border-ch": "38 22% 85%",
+    "--input-ch": "38 22% 85%",
+  },
+};
+var PALETTE_KEYS = ["--background-ch", "--foreground-ch", "--secondary-ch", "--muted-ch", "--accent-ch", "--muted-foreground-ch", "--border-ch", "--input-ch"];
+
 // Imperatively apply the theme to :root CSS variables (whole-app recolor).
 function applyTheme(theme) {
   if (!theme) return;
   var root = document.documentElement.style;
+  // Palette (color scheme): override or clear the surface channels. Clearing
+  // (classic) falls back to the shipped tokens.css defaults — the "return to
+  // current state" the operator can always get back to.
+  var palette = PALETTES[theme.palette || "classic"];
+  PALETTE_KEYS.forEach(function (k) {
+    if (palette && palette[k]) root.setProperty(k, palette[k]);
+    else root.removeProperty(k);
+  });
   var hsl = hexToHsl(theme.accent || "#2563EB");
   var ch = hsl.h + " " + hsl.s + "% " + hsl.l + "%";
   root.setProperty("--primary-ch", ch);
@@ -259,7 +299,7 @@ function applyTheme(theme) {
 }
 
 function ThemeStyle({ theme }) {
-  React.useEffect(function () { applyTheme(theme); }, [theme && theme.accent, theme && theme.radius, theme && theme.contentWidth]);
+  React.useEffect(function () { applyTheme(theme); }, [theme && theme.accent, theme && theme.radius, theme && theme.contentWidth, theme && theme.palette]);
   return null;
 }
 

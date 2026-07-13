@@ -9,6 +9,8 @@ const ACCENTS = [
   ["#0891B2", "Cyan"], ["#475569", "Slate"],
 ];
 const RADII = [["Sharp", 4], ["Rounded", 8], ["Soft", 14]];
+// Whole-app canvas palettes (see applyTheme). Classic = the shipped look.
+const COLOR_SCHEMES = [["Classic", "classic"], ["Calm", "calm"], ["Warm", "warm"]];
 const WIDTHS = [["Standard", "standard"], ["Wide", "wide"], ["Full", "full"]];
 const SIDEBARS = [["Expanded", "expanded", "panel-left"], ["Compact", "compact", "panel-left-close"]];
 
@@ -84,6 +86,9 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                   </button>
                 ))}
               </div>
+            </Row>
+            <Row label="Color scheme" sub="Canvas tone. Calm & Warm are lower-glare — easier on the eyes on long shifts. Classic restores the current look.">
+              <Seg options={COLOR_SCHEMES} value={theme.palette || "classic"} onChange={(v) => onSetTheme({ palette: v })} />
             </Row>
             <Row label="Corner radius" sub="Roundness of cards, buttons and inputs.">
               <Seg options={RADII} value={theme.radius} onChange={(v) => onSetTheme({ radius: v })} />
