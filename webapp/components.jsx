@@ -12,7 +12,7 @@ function Icon({ name, size = 16, color, strokeWidth = 2, style, className }) {
   return <span ref={ref} className={className} style={{ display: "inline-flex", alignItems: "center", color, flex: "none", ...style }} />;
 }
 
-function Button({ variant = "default", size = "default", icon, children, onClick, type, full, style }) {
+function Button({ variant = "default", size = "default", icon, children, onClick, type, full, style, title, "aria-label": ariaLabel }) {
   const base = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
     fontFamily: "var(--font-sans)", fontWeight: 500, borderRadius: "var(--radius-md)",
@@ -35,7 +35,7 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     link: { background: "transparent", color: "var(--primary)", textDecoration: "underline", height: "auto", padding: 0 },
   };
   return (
-    <button type={type || "button"} onClick={onClick}
+    <button type={type || "button"} onClick={onClick} title={title} aria-label={ariaLabel || title}
       onMouseEnter={(e) => { if (variant === "ghost" || variant === "secondary") e.currentTarget.style.background = "var(--secondary)"; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-md)"; if (variant === "outline") e.currentTarget.style.background = "var(--secondary)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = variants[variant].background; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
       style={{ ...base, ...sizes[size], ...variants[variant], ...style }}>

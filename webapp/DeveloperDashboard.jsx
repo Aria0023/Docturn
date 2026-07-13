@@ -366,11 +366,58 @@ function OrgAutocomplete({ value, onText, onPick }) {
   );
 }
 
+// Irreversible-delete guard: the operator types the org name to confirm before
+// the tenant (and all its cascaded data) is removed. Same safety pattern as the
+// per-org Settings danger zone, surfaced here on the Organizations list so a
+// developer can actually delete a tenant from where they see them.
+function DeleteOrgModal({ org, onClose, onConfirm }) {
+  const [typed, setTyped] = React.useState("");
+  const [status, setStatus] = React.useState(null); // null | "deleting" | error string
+  const match = typed.trim().toLowerCase() === (org.name || "").trim().toLowerCase();
+  function doDelete() {
+    if (!match || status === "deleting") return;
+    setStatus("deleting");
+    Promise.resolve(onConfirm(org))
+      .then(function () { onClose(); })
+      .catch(function (e) { setStatus((e && e.message) || "Delete failed."); });
+  }
+  return (
+    <Modal title="Delete organization" subtitle={"Permanently remove " + org.name + " and everything in it."} icon="alert-triangle" width={480} onClose={onClose}
+      children={
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: "var(--status-rejected-bg)", border: "1px solid var(--destructive)", borderRadius: "var(--radius-md)", padding: 13, fontSize: 12.5, lineHeight: 1.5, color: "var(--foreground)" }}>
+            This permanently deletes every user, patient, message and assignment in <b>{org.name}</b> (<span className="ds-mono">{org.code}</span>). It cannot be undone.
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Type the organization name to confirm</label>
+            <Field icon="building-2" value={typed} onChange={setTyped} placeholder={org.name} />
+          </div>
+          {typeof status === "string" && status !== "deleting" && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--destructive)", color: "var(--destructive)", fontSize: 12.5 }}>
+              <Icon name="alert-triangle" size={15} style={{ marginTop: 1, flex: "none" }} /><span>{status}</span>
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" icon="trash-2" onClick={doDelete}
+              style={{ background: "var(--destructive)", borderColor: "var(--destructive)", opacity: match && status !== "deleting" ? 1 : 0.5, pointerEvents: match && status !== "deleting" ? "auto" : "none" }}>
+              {status === "deleting" ? "Deleting…" : "Delete organization"}
+            </Button>
+          </div>
+        </div>
+      } />
+  );
+}
+
 function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, audit = [], onSelectOrg, onManageOrg, onAddUser, onRemoveUser, onSetRoleColor, onAddTenant, onToggleTenant, onDeleteTenant, onDiagnostics, onImpersonate }) {
   const [query, setQuery] = React.useState("");
   const [newTenant, setNewTenant] = React.useState(false);
+  const [delOrg, setDelOrg] = React.useState(null); // org pending type-to-confirm delete
   const detected = React.useMemo(detectLocation, []);
   const [tform, setTform] = React.useState({ name: "", code: "", timezone: detected.timezone, autoLoc: true });
+  // The developer's own tenant can't be deleted (it holds their session); the
+  // server refuses it too. Hide the action for that row.
+  const myOrgCode = String((((window.DT && window.DT.getState()) || {}).session || {}).org || "").toUpperCase();
   const orgs = organizations.filter((o) =>
     o.name.toLowerCase().includes(query.toLowerCase()) || o.code.toLowerCase().includes(query.toLowerCase()));
 
@@ -432,6 +479,10 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                 {/* Config = per-org rules/permissions; Manage = enter the org's full portal */}
                 <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => onSelectOrg && onSelectOrg(o)}>Config</Button>
                 <Button size="sm" icon="log-in" onClick={() => onManageOrg && onManageOrg(o)}>Manage</Button>
+                {onDeleteTenant && o.code.toUpperCase() !== myOrgCode && (
+                  <Button size="sm" variant="ghost" icon="trash-2" title={"Delete " + o.name}
+                    style={{ color: "var(--destructive)" }} onClick={() => setDelOrg(o)} />
+                )}
               </div>
             ))}
           </Card>
@@ -471,6 +522,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
       <AddUserPanel organizations={organizations} devUsers={devUsers} roleColors={roleColors} onAddUser={onAddUser} onRemoveUser={onRemoveUser} onImpersonate={onImpersonate} />
 
       {/* System logs now live in the consolidated Compliance menu */}
+      {delOrg && <DeleteOrgModal org={delOrg} onClose={() => setDelOrg(null)} onConfirm={onDeleteTenant} />}
       {newTenant && (
         <Modal title="New organization" subtitle="Provision a new hospital tenant. Data is isolated by organizationId." icon="building-2" onClose={() => setNewTenant(false)}
           children={
