@@ -61,6 +61,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
 
   return (
     <PageWrap>
+      <SettingsTabs />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Appearance &amp; layout</div>

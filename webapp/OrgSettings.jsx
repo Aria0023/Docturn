@@ -43,6 +43,7 @@ function OrgSettings() {
 
   return (
     <PageWrap>
+      <SettingsTabs />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
         <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>{org.code.slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>

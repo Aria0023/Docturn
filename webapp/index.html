@@ -146,8 +146,7 @@ const NAV = {
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
   ],
   director: [
@@ -160,8 +159,7 @@ const NAV = {
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
   ],
   developer: [
@@ -397,15 +395,24 @@ function App() {
   );
 
   if (isMobile) {
+    // Bottom tab bar (TigerConnect/native style): the primary destinations as
+    // icon tabs, plus "More" for everything else + the role switcher & sign-out
+    // (which live in the drawer). Messages is always promoted so it's one tap.
+    const MOBILE_PRIMARY = ["dashboard", "messages", "board", "directory"];
+    const MOBILE_LABEL = { dashboard: "Home", messages: "Messages", board: "Board", directory: "Directory" };
+    const primaryTabs = MOBILE_PRIMARY.map((id) => navItems.find((n) => n.id === id)).filter(Boolean).slice(0, 4);
+    const primaryIds = primaryTabs.map((t) => t.id);
+    const moreActive = !primaryIds.includes(nav);
+    const msgUnread = (st.conversations || []).some((c) => c.unread > 0);
+    const TABBAR_H = 58;
     return (
       <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
-        {/* mobile top bar */}
-        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 12px" }}>
-          <button onClick={() => setDrawer(true)} title="Menu" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="menu" size={20} /></button>
+        {/* mobile top bar (nav lives in the bottom tab bar) */}
+        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
           </div>
           <button onClick={() => a.toggleNotif()} title="Notifications" style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
             <Icon name="bell" size={18} />
@@ -414,7 +421,29 @@ function App() {
           <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? 0 : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+
+        {/* Bottom tab bar */}
+        <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_H, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          {primaryTabs.map((t) => {
+            const on = nav === t.id;
+            return (
+              <button key={t.id} onClick={() => a.setNav(t.id)}
+                style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative" }}>
+                <div style={{ position: "relative" }}>
+                  <Icon name={t.icon} size={22} />
+                  {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid #fff" }} />}
+                </div>
+                <span style={{ fontSize: 10.5, fontWeight: 600 }}>{MOBILE_LABEL[t.id] || t.label}</span>
+              </button>
+            );
+          })}
+          <button onClick={() => setDrawer(true)}
+            style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit" }}>
+            <Icon name="menu" size={22} />
+            <span style={{ fontSize: 10.5, fontWeight: 600 }}>More</span>
+          </button>
+        </nav>
 
         {/* slide-out nav drawer */}
         {drawer && (

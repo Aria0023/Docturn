@@ -95,7 +95,7 @@ function Messaging() {
     p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <div style={{ display: "flex", height: isMobile ? "calc(100vh - 56px)" : "calc(100vh - 64px)" }}>
+    <div style={{ display: "flex", height: isMobile ? "calc(100vh - 56px - 58px)" : "calc(100vh - 64px)" }}>
       {/* List */}
       {showList && (
       <div style={{ width: isMobile ? "100%" : 312, flex: isMobile ? "1 1 auto" : "none", borderRight: isMobile ? "none" : "1px solid var(--border)", background: "#fff", display: "flex", flexDirection: "column" }}>

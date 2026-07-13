@@ -70,6 +70,7 @@ function Compliance({ audit = [], phiLog = [], incidents = [], onResolve, onClea
 
   return (
     <PageWrap>
+      <SettingsTabs />
       <div style={{ display: "flex", gap: 14, marginBottom: 22 }}>
         <StatTile label="Audit events" value={audit.length} icon="scroll-text" tint="blue" />
         <StatTile label="PHI accesses" value={phiLog.length} icon="file-lock-2" tint="emerald" />

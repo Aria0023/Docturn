@@ -303,4 +303,32 @@ function ThemeStyle({ theme }) {
   return null;
 }
 
-Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, applyTheme, ThemeStyle, hexToHsl, useIsMobile });
+// Shared sub-nav for the consolidated Settings area. Compliance & Appearance
+// were pulled OUT of the sidebar (declutter) and now live as tabs alongside the
+// organization settings, reusing the existing nav ids. Only rendered for the
+// roles whose sidebar carried all three (director / ER director); other roles
+// still reach Compliance from their own sidebar item, so this renders nothing.
+function SettingsTabs() {
+  var st = useStore();
+  var a = useActions();
+  var role = st.session && st.session.role;
+  if (role !== "director" && role !== "er_director") return null;
+  var nav = (st.ui && st.ui.nav) || "settings";
+  var tabs = [["settings", "Organization", "sliders-horizontal"], ["appearance", "Appearance", "palette"], ["compliance", "Compliance", "shield-check"]];
+  return (
+    <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", marginBottom: 18, maxWidth: "100%", overflowX: "auto" }}>
+      {tabs.map(function (t) {
+        var id = t[0], label = t[1], icon = t[2], on = nav === id;
+        return (
+          <button key={id} onClick={function () { a.setNav(id); }}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
+              background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+            <Icon name={icon} size={15} />{label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, SettingsTabs, applyTheme, ThemeStyle, hexToHsl, useIsMobile });
