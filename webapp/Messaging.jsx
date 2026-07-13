@@ -36,6 +36,18 @@ function Messaging() {
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
 
   const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft, priority); setDraft(""); setPriority("routine"); if (a.setTyping) a.setTyping(active, false); };
+  // Quick-reply templates — role-aware canned phrases (TigerConnect/PerfectServe
+  // ship configurable message templates). Tapping one fills the draft so it can
+  // still be edited or re-prioritized before sending; only shown while the draft
+  // is empty so it never gets in the way of typing.
+  const QUICK_REPLIES = {
+    hospitalist: ["Accepting — will see within 30 min.", "At cap — please route to the next hospitalist.", "Please call me re: this patient.", "Plan updated in the chart."],
+    er_doctor: ["New admit ready for sign-out.", "Consult requested — please advise.", "Please call me re: this patient.", "Bed assignment needed."],
+    er_director: ["Please call me re: this patient.", "Consult requested — please advise.", "Coverage question — can you take this?"],
+    director: ["Please call me re: this patient.", "Coverage question — can you take this?", "Thanks — received."],
+    _default: ["Please call me re: this patient.", "Thanks — received.", "Will do.", "Acknowledged."],
+  };
+  const quickReplies = QUICK_REPLIES[(st.session && st.session.role)] || QUICK_REPLIES._default;
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
   const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
 
@@ -237,6 +249,16 @@ function Messaging() {
 
         {/* No attachments: file/photo sharing is deliberately unavailable until
             encrypted storage + a DLP/PHI policy exist (see SECURITY.md). */}
+        {/* Quick replies — tap to fill the draft (still editable before send).
+            Hidden once the user starts typing so it never blocks the composer. */}
+        {!conv.broadcast && !draft.trim() && (
+          <div style={{ flex: "none", padding: isMobile ? "8px 12px 0" : "8px 16px 0", background: "#fff", display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+            {quickReplies.map((t) => (
+              <button key={t} onClick={() => { setDraft(t); if (a.setTyping) a.setTyping(conv.id, true); }} title="Insert quick reply"
+                style={{ flex: "none", padding: isMobile ? "7px 13px" : "5px 11px", borderRadius: 99, cursor: "pointer", fontSize: isMobile ? 13 : 12, fontWeight: 500, fontFamily: "inherit", whiteSpace: "nowrap", color: "var(--foreground)", background: "var(--secondary)", border: "1px solid var(--border)" }}>{t}</button>
+            ))}
+          </div>
+        )}
         {!conv.broadcast && (
           <div style={{ flex: "none", padding: "8px 16px 0", background: "#fff", display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginRight: 2 }}>Priority</span>

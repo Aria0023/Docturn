@@ -1,10 +1,45 @@
 /* DocTurn web-app UI kit — provider directory (compact single-row list) */
 
+// "On call right now" — the live roster of addressable roles / consult services
+// resolved to whoever holds each one this minute (DND already redirected to the
+// covering provider by the server). Both TigerConnect and PerfectServe sell this
+// at-a-glance "who's on call" view. Read-only; one tap opens a thread addressed
+// to the role. Hidden when nothing is resolvable.
+function OnCallNow() {
+  const st = useStore();
+  const a = useActions();
+  const targets = st.onCallTargets || [];
+  React.useEffect(() => { if (a.listOnCallTargets) a.listOnCallTargets(); }, []);
+  if (!targets.length) return null;
+  const KIND_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
+  const openRole = (t) => { if (!a.startRoleConversation) return; Promise.resolve(a.startRoleConversation(t)).then(() => a.setNav && a.setNav("messages")); };
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <SectionTitle>On call right now</SectionTitle>
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        {targets.map((t, i) => (
+          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+              <Icon name={KIND_ICON[t.kind] || "user"} size={17} />
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</div>
+              {t.holder ? <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.holder}</div> : null}
+            </div>
+            <Button size="sm" variant="outline" icon="message-square" onClick={() => openRole(t)}>Message</Button>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
 function Directory({ providers, onMessage }) {
   const [q, setQ] = React.useState("");
   const list = providers.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.specialty.toLowerCase().includes(q.toLowerCase()));
   return (
     <PageWrap>
+      <OnCallNow />
       <SectionTitle action={<div style={{ width: 240 }}><Field icon="search" placeholder="Search name or specialty…" value={q} onChange={setQ} /></div>}>
         Provider directory
       </SectionTitle>

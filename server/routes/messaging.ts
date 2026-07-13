@@ -18,6 +18,9 @@ interface OnCallTarget {
   label: string;
   kind: "consult_service" | "next_hospitalist" | "care_team";
   userId: number;
+  /** Display name of the user who currently holds this on-call role (after any
+   *  DND→covering redirect), so a "who's on call now" view can name the person. */
+  holder: string;
 }
 
 export function registerMessagingRoutes(app: Express) {
@@ -65,7 +68,13 @@ export function registerMessagingRoutes(app: Express) {
       const key = kind + ":" + userId;
       if (seen.has(key)) return;
       seen.add(key);
-      targets.push({ id, label, kind, userId });
+      targets.push({
+        id,
+        label,
+        kind,
+        userId,
+        holder: byId.get(userId)?.displayName ?? "",
+      });
     }
 
     // 1) Consult services (org_settings "consultServices"). The on-call entry
