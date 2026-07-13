@@ -1057,6 +1057,15 @@
       return list;
     }).catch(function () { DT.set(function (s) { s.onCallTargets = []; return s; }); return []; });
   };
+  // Availability of a 1:1 peer (DND + covering + on-shift) for the thread's
+  // auto-response banner. Cached per userId in s.peerAvail.
+  DT.actions.loadPeerAvailability = function (userId) {
+    if (userId == null) return Promise.resolve(null);
+    return get("/api/messaging/availability/" + userId).then(function (info) {
+      DT.set(function (s) { var m = Object.assign({}, s.peerAvail || {}); m[userId] = info; s.peerAvail = m; return s; });
+      return info;
+    }).catch(function () { return null; });
+  };
   // Start (or reopen, deduped by the resolved userId) a direct conversation with
   // whoever holds the selected role, naming the thread after the role so it's
   // clear who was addressed. Reuses the standard conversation endpoint.

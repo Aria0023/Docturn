@@ -21,6 +21,7 @@ function Messaging() {
   const [priority, setPriority] = React.useState("routine"); // routine | urgent | stat
   const [q, setQ] = React.useState("");
   const [composing, setComposing] = React.useState(false);
+  const [forwarding, setForwarding] = React.useState(null); // message being forwarded, or null
   const [mobileView, setMobileView] = React.useState("list"); // phone: "list" | "thread"
   const threadRef = React.useRef(null);
   const openThread = (id) => { setActive(id); if (isMobile) setMobileView("thread"); };
@@ -31,6 +32,17 @@ function Messaging() {
   React.useEffect(() => { if (active) a.openConversation(active); }, [active]);
   // keep the thread pinned to the latest message
   const conv = convos.find((c) => c.id === active) || convos[0];
+  // 1:1 peer availability → auto-response banner (DND / covering / off-shift).
+  // Only for a TRUE one-to-one: if a covering provider has joined (DND forward
+  // adds them), the thread has >1 other participant and is no longer a 1:1, so
+  // no peer banner.
+  const meId = st.me && st.me.id;
+  const peerOthers = conv && !conv.group && !conv.broadcast
+    ? (conv.participantIds || []).filter((id) => id !== meId)
+    : [];
+  const peerId = peerOthers.length === 1 ? peerOthers[0] : null;
+  React.useEffect(() => { if (peerId != null && a.loadPeerAvailability) a.loadPeerAvailability(peerId); }, [peerId]);
+  const peerAvail = peerId != null ? (st.peerAvail || {})[peerId] : null;
   React.useEffect(() => { const el = threadRef.current; if (el) el.scrollTop = el.scrollHeight; }, [conv && conv.messages.length, conv && conv.typing]);
 
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
@@ -49,7 +61,16 @@ function Messaging() {
   };
   const quickReplies = QUICK_REPLIES[(st.session && st.session.role)] || QUICK_REPLIES._default;
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
-  const startWith = (p) => { a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+  // When forwarding, open the chosen thread (person or role) and then send the
+  // forwarded text into it once the conversation resolves (__activeConvo).
+  const FWD_PREFIX = "↪ Forwarded:\n";
+  const completeForward = (openerResult) => {
+    Promise.resolve(openerResult).then(() => {
+      const id = window.DT.getState().__activeConvo;
+      if (id && forwarding && forwarding.text) a.sendMessage(id, FWD_PREFIX + forwarding.text, "routine");
+    }).finally(() => setForwarding(null));
+  };
+  const startWith = (p) => { const r = a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); if (forwarding) completeForward(r); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
 
   // On-call / role addressing: whenever the compose picker opens, refresh the
   // server-resolved list of addressable roles (each already resolved to a real
@@ -58,7 +79,7 @@ function Messaging() {
   const onCallTargets = st.onCallTargets || [];
   React.useEffect(() => { if (composing && a.listOnCallTargets) a.listOnCallTargets(); }, [composing]);
   const ROLE_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
-  const startRole = (t) => { if (a.startRoleConversation) a.startRoleConversation(t); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+  const startRole = (t) => { const r = a.startRoleConversation ? a.startRoleConversation(t) : null; if (forwarding) completeForward(r); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
   const rolesShown = onCallTargets.filter((t) => t.label.toLowerCase().includes(q.toLowerCase()));
 
   // On a phone, show exactly one pane at a time (list OR thread/compose).
@@ -81,7 +102,7 @@ function Messaging() {
         <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Messages</h2>
-            <Button size="icon" variant={composing ? "secondary" : "outline"} icon={composing ? "x" : "pen-square"} onClick={() => setComposing(!composing)} />
+            <Button size="icon" variant={composing ? "secondary" : "outline"} icon={composing ? "x" : "pen-square"} onClick={() => { const n = !composing; setComposing(n); if (!n) setForwarding(null); }} />
           </div>
           <Field icon="search" placeholder="Search conversations…" value={q} onChange={setQ} />
         </div>
@@ -125,10 +146,19 @@ function Messaging() {
         {composing && (
           <div style={{ position: "absolute", inset: 0, zIndex: 5, background: "#fff", display: "flex", flexDirection: "column" }}>
             <div style={{ height: 60, flex: "none", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, padding: "0 20px" }}>
-              <Icon name="pen-square" size={18} color="var(--primary)" />
-              <div style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>New message</div>
-              <Button size="sm" variant="ghost" icon="x" onClick={() => { setComposing(false); setQ(""); }}>Close</Button>
+              <Icon name={forwarding ? "forward" : "pen-square"} size={18} color="var(--primary)" />
+              <div style={{ fontSize: 15, fontWeight: 700, flex: 1 }}>{forwarding ? "Forward to…" : "New message"}</div>
+              <Button size="sm" variant="ghost" icon="x" onClick={() => { setComposing(false); setForwarding(null); setQ(""); }}>Close</Button>
             </div>
+            {forwarding && (
+              <div style={{ flex: "none", padding: "10px 20px", borderBottom: "1px solid var(--border)", background: "var(--secondary)", display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <Icon name="forward" size={13} color="var(--muted-foreground)" style={{ marginTop: 2, flex: "none" }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em" }}>Forwarding</div>
+                  <div style={{ fontSize: 12.5, color: "var(--foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 460 }}>{forwarding.text}</div>
+                </div>
+              </div>
+            )}
             <div style={{ padding: "12px 20px", flex: "none", borderBottom: "1px solid var(--border)" }}>
               <Field icon="search" placeholder="Search the directory by name or specialty…" value={q} onChange={setQ} />
             </div>
@@ -198,6 +228,21 @@ function Messaging() {
           <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages · access audited." })} />
         </div>
 
+        {/* Auto-response availability banner for a 1:1 peer. */}
+        {peerAvail && (peerAvail.dnd || peerAvail.working === false) && (
+          <div style={{ flex: "none", padding: "9px 16px", display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, lineHeight: 1.4,
+            background: peerAvail.dnd ? "#FEF3C7" : "var(--secondary)", color: peerAvail.dnd ? "#92400E" : "var(--muted-foreground)", borderBottom: "1px solid " + (peerAvail.dnd ? "#FCD34D" : "var(--border)") }}>
+            <Icon name={peerAvail.dnd ? "moon" : "clock"} size={14} style={{ flex: "none" }} />
+            <span>
+              {peerAvail.dnd
+                ? (peerAvail.covering
+                    ? conv.name + " is do-not-disturb — messages are covered by " + peerAvail.covering.displayName + "."
+                    : conv.name + " is do-not-disturb. STAT messages will still alert them.")
+                : conv.name + " is off shift."}
+            </span>
+          </div>
+        )}
+
         <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: isMobile ? "14px 12px" : 20, display: "flex", flexDirection: "column", gap: isMobile ? 10 : 12 }}>
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
             <span style={{ background: "#fff", padding: "3px 12px", borderRadius: 99, border: "1px solid var(--border)" }}>
@@ -233,6 +278,13 @@ function Messaging() {
                     : <span style={{ color: prio.color, fontWeight: 600 }}>Awaiting ack…</span>)}
                   {m.me && !prio && <Icon name={m.read ? "check-check" : "check"} size={12} color={m.read ? "var(--status-active)" : "var(--muted-foreground)"} />}
                   {!m.me && m.ackedByMe && prio && <span style={{ color: "var(--status-active)", fontWeight: 600 }}>✓ You acknowledged</span>}
+                  {/* Forward this message to another person or on-call role. */}
+                  {!conv.broadcast && m.text && (
+                    <button onClick={() => { setForwarding(m); setComposing(true); setQ(""); }} title="Forward"
+                      style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", padding: 0, marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "inherit", fontSize: 10.5 }}>
+                      <Icon name="forward" size={12} />Forward
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

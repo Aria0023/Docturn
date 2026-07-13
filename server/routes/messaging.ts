@@ -136,6 +136,43 @@ export function registerMessagingRoutes(app: Express) {
     res.json(targets);
   });
 
+  // Availability of a peer, so a 1:1 thread can show an auto-response status:
+  // whether they're do-not-disturb and, if so, who covers them. Operational
+  // (not PHI); scoped to the caller's org. "off shift" comes from their
+  // hospitalist working flag when they have one.
+  app.get(
+    "/api/messaging/availability/:userId",
+    requireAuth,
+    async (req, res) => {
+      const me = currentUser(req);
+      const userId = Number(req.params.userId);
+      if (!Number.isInteger(userId)) {
+        return res.status(400).json({ error: "bad_user" });
+      }
+      const user = await storage().getUser(me.organizationId, userId);
+      if (!user) return res.status(404).json({ error: "not_found" });
+      const dnd = await isDnd(storage(), userId);
+      let covering: { userId: number; displayName: string } | null = null;
+      if (dnd) {
+        const coveringId = await resolveCovering(
+          storage(),
+          me.organizationId,
+          userId,
+        );
+        if (coveringId != null) {
+          const cu = await storage().getUser(me.organizationId, coveringId);
+          if (cu) covering = { userId: cu.id, displayName: cu.displayName };
+        }
+      }
+      const hospitalist = await storage().getHospitalistByUser(
+        me.organizationId,
+        userId,
+      );
+      const working = hospitalist ? !!hospitalist.working : null;
+      res.json({ userId, dnd, covering, working });
+    },
+  );
+
   app.get("/api/messaging/conversations", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const convos = await storage().listConversationsForUser(

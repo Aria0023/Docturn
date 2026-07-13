@@ -203,6 +203,29 @@ describe("stat escalation + dnd forwarding", () => {
     expect(audit.some((a) => a.action === "message.dnd_forwarded")).toBe(true);
   });
 
+  it("exposes a peer's availability (DND + covering) for the 1:1 banner", async () => {
+    const chenId = ctx.seedResult.userIds.chen!;
+    const patelId = ctx.seedResult.userIds.patel!;
+    const { agent: chenAgent } = await login(ctx.app, { username: "chen" });
+    await chenAgent.patch("/api/settings/me").send({ key: "dnd", value: true }).expect(200);
+    await chenAgent
+      .patch("/api/settings/me")
+      .send({ key: "coveringUserId", value: patelId })
+      .expect(200);
+
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const res = await er.get(`/api/messaging/availability/${chenId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.dnd).toBe(true);
+    expect(res.body.covering?.userId).toBe(patelId);
+
+    // Clearing DND clears the covering in the response.
+    await chenAgent.patch("/api/settings/me").send({ key: "dnd", value: false }).expect(200);
+    const res2 = await er.get(`/api/messaging/availability/${chenId}`);
+    expect(res2.body.dnd).toBe(false);
+    expect(res2.body.covering).toBe(null);
+  });
+
   it("on-call targets substitute the covering provider for a DND holder", async () => {
     const orgId = ctx.seedResult.orgId;
     const chenId = ctx.seedResult.userIds.chen!;
