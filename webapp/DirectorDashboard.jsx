@@ -155,7 +155,12 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
             </div>
             <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap} · {rotMode === "lowest_census" ? "lowest census first" : "sequential"}</div>
           </div>
-          <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onResetRotation}>Reset rotation</Button>
+          {/* "Reset rotation" only means something in SEQUENTIAL mode (it zeroes the
+              rotation index). In lowest-census mode next-up is driven purely by
+              census, so the index — and this button — do nothing; hide it. */}
+          {rotMode === "sequential" && (
+            <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onResetRotation}>Reset rotation</Button>
+          )}
         </Card>
       )}
 
@@ -260,7 +265,12 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                 <span style={{ position: "absolute", top: 3, left: (settings && settings.autoReassign) ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
               </button>
             </div>
-            <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={onResetRotation}>Reset rotation index</Button>
+            {rotMode === "sequential"
+              ? <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={onResetRotation}>Reset rotation index</Button>
+              : <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "flex-start", gap: 6, padding: "2px 2px" }}>
+                  <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />
+                  <span>Next-up follows live census — no rotation index to reset. Switch to sequential rotation to control order manually.</span>
+                </div>}
           </div>
         </div>
         {working.length > rotation.length && (

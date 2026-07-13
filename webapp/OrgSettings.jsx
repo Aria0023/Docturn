@@ -69,9 +69,13 @@ function OrgSettings() {
             <FlagRow icon="activity" title="Active (on-shift) only" desc="Skip providers not working today." on={s.activeOnly} onToggle={() => a.setSetting("activeOnly", !s.activeOnly)} />
             <FlagRow icon="message-circle" title="STAT SMS fallback" desc="If a STAT message stays unacknowledged after escalation, send a PHI-free SMS nudge as a last resort. Requires an SMS carrier under a BAA." on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} last />
           </div>
-          <div style={{ marginTop: 14 }}>
-            <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={a.resetRotation}>Reset rotation index</Button>
-          </div>
+          {/* Resetting the index only affects SEQUENTIAL rotation; in lowest-census
+              mode next-up is census-driven, so the button would be a no-op. */}
+          {s.rotationMode === "sequential" && (
+            <div style={{ marginTop: 14 }}>
+              <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={a.resetRotation}>Reset rotation index</Button>
+            </div>
+          )}
         </Card>
 
         {/* Custom shift types */}
