@@ -1,7 +1,43 @@
 import type { IStorage } from "../storage.js";
 import { storage } from "../storage.js";
 import { appendAudit } from "../audit.js";
+import { getNotificationProfile } from "../config.js";
 import { notificationDeps } from "./notifications.js";
+
+/**
+ * PHI-free SMS fallback — the last-resort nudge when a STAT message is still
+ * unacknowledged at the escalate step. Sent to the unresponsive recipient's
+ * phone; the body carries NO PHI (a generic wake-up). Gated per-org by the
+ * `statSmsFallback` setting (default ON) so the operator/developer can turn it
+ * off. Without SMS credentials the carrier adapter is a no-op stub, so this is
+ * always safe to call. Errors never interrupt the sweep.
+ */
+async function sendStatSmsFallback(
+  s: IStorage,
+  orgId: number,
+  userId: number,
+): Promise<boolean> {
+  if ((await s.getOrgSetting(orgId, "statSmsFallback")) === false) return false;
+  try {
+    const user = await s.getUser(orgId, userId);
+    if (!user?.phone) return false;
+    const profile = await getNotificationProfile(orgId);
+    const sms = notificationDeps().smsFor(profile.smsCarrier);
+    const body = "Urgent DocTurn message needs your acknowledgement — open the app";
+    await sms.send(user.phone, body);
+    await storage().appendSmsHistory({
+      organizationId: orgId,
+      userId,
+      toPhone: user.phone,
+      body,
+      carrier: sms.carrier,
+    });
+    return true;
+  } catch (err) {
+    console.error("[escalation] STAT SMS fallback failed", err);
+    return false;
+  }
+}
 
 /**
  * STAT escalation sweep — the PerfectServe-style non-response loop, driven by
@@ -118,6 +154,13 @@ export async function runStatEscalationSweep(
           .catch(() => {});
         escalated++;
       }
+      // Last-resort PHI-free SMS nudge to the unresponsive recipient (default
+      // on; developer/operator can disable per org). No-op stub without creds.
+      const smsSent = await sendStatSmsFallback(
+        s,
+        row.organizationId,
+        row.userId,
+      );
       // Mark even when no covering exists so the sweep doesn't retry forever;
       // the audit row records whether it went anywhere.
       await s.markDeliveryEscalated(row.deliveryId);
@@ -130,7 +173,11 @@ export async function runStatEscalationSweep(
             : "message.stat_escalation_no_covering",
         resourceType: "message",
         resourceId: row.messageId,
-        details: { unresponsiveUserId: row.userId, coveringUserId: coveringId },
+        details: {
+          unresponsiveUserId: row.userId,
+          coveringUserId: coveringId,
+          smsFallback: smsSent,
+        },
         riskLevel: "high",
       });
     }

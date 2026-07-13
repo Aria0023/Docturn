@@ -354,7 +354,7 @@
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
             return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
           });
-          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
+          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false });
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
             var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
@@ -871,6 +871,9 @@
   DT.actions.setSetting = function (key, value) {
     if (key === "autoReassign") {
       api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
+    }
+    if (key === "statSmsFallback") {
+      api("PATCH", "/api/settings/org", { key: "statSmsFallback", value: !!value }).catch(function () {});
     }
     if (origSetSetting) return origSetSetting(key, value);
   };

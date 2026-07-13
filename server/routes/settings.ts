@@ -21,6 +21,9 @@ export function registerSettingsRoutes(app: Express) {
       (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
     const retentionRaw = await storage().getOrgSetting(me.organizationId, "messageRetentionDays");
     const messageRetentionDays = typeof retentionRaw === "number" ? retentionRaw : 0;
+    // STAT SMS fallback defaults ON; the operator/developer can disable it.
+    const statSmsFallback =
+      (await storage().getOrgSetting(me.organizationId, "statSmsFallback")) !== false;
     const [dnd, coveringUserId] = await Promise.all([
       storage().getUserPreference(me.id, "dnd"),
       storage().getUserPreference(me.id, "coveringUserId"),
@@ -32,6 +35,7 @@ export function registerSettingsRoutes(app: Express) {
         rotationMode: org?.rotationMode,
         autoReassignOnDecline,
         messageRetentionDays,
+        statSmsFallback,
       },
       me: {
         dnd: dnd === true,

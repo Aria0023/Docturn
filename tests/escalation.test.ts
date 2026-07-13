@@ -93,6 +93,39 @@ describe("stat escalation + dnd forwarding", () => {
     expect(out.realerted + out.escalated).toBe(0);
   });
 
+  it("sends a PHI-free SMS fallback on escalation, and honors the org off-switch", async () => {
+    const chenId = ctx.seedResult.userIds.chen!;
+    await ctx.storage.updateUser(chenId, { phone: "+15550001111" });
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+
+    // Default ON → escalating an unacked STAT sends a content-free SMS nudge.
+    const convo = await directConvo(er, chenId);
+    await er
+      .post("/api/messaging/send")
+      .send({ conversationId: convo.id, content: "STAT bed 4 GSW", priority: "stat" })
+      .expect(201);
+    ctx.sms.sent = [];
+    await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    const nudge = ctx.sms.sent.find((m) => m.to === "+15550001111");
+    expect(nudge).toBeTruthy();
+    expect(nudge!.body).not.toMatch(/bed|GSW|STAT|patient/i); // no PHI / no content
+
+    // Developer/operator turns it off for the org → no SMS on the next escalation.
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    await director
+      .patch("/api/settings/org")
+      .send({ key: "statSmsFallback", value: false })
+      .expect(200);
+    const convo2 = await directConvo(er, chenId);
+    await er
+      .post("/api/messaging/send")
+      .send({ conversationId: convo2.id, content: "STAT again", priority: "stat" })
+      .expect(201);
+    ctx.sms.sent = [];
+    await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(ctx.sms.sent.length).toBe(0);
+  });
+
   it("acknowledged STATs never re-alert or escalate", async () => {
     const { agent: er } = await login(ctx.app, { username: "er.doc" });
     const orgId = ctx.seedResult.orgId;
