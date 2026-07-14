@@ -242,6 +242,9 @@ export function registerMessagingRoutes(app: Express) {
     });
 
     res.setHeader("Content-Type", att.mimeType);
+    // Never let a browser MIME-sniff user-uploaded bytes into something
+    // executable, even though the upload allowlist already excludes HTML/JS.
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader(
       "Content-Disposition",
       'inline; filename="' + att.fileName.replace(/"/g, "") + '"',
