@@ -39,7 +39,17 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       contentSecurityPolicy: false, // SPA served separately; relax for dev.
     }),
   );
-  app.use(express.json({ limit: "1mb" }));
+  // Global JSON body parser (1 MB). The attachment-upload route needs a larger
+  // limit for base64 file bodies, so it is excluded here and mounts its OWN
+  // express.json({ limit: "12mb" }) — otherwise this 1 MB cap would reject the
+  // upload before the route-level parser could run.
+  const globalJson = express.json({ limit: "1mb" });
+  app.use((req, res, next) => {
+    if (req.method === "POST" && req.path === "/api/messaging/attachments") {
+      return next();
+    }
+    return globalJson(req, res, next);
+  });
 
   // Session store: real Postgres uses connect-pg-simple; otherwise in-memory.
   const MemoryStore = createMemoryStore(session);

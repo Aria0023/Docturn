@@ -270,6 +270,22 @@ ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIM
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS realerted_at TIMESTAMP;
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
 
+-- Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: the bytes are
+-- stored inline as base64 in the row. Production PHI requires encrypted object
+-- storage (S3/GCS with a BAA), server-side AV scanning, and a signed-URL fetch
+-- path — DO NOT ship this inline-base64 store for real patient data.
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  message_id INTEGER REFERENCES messages(id),
+  uploader_id INTEGER NOT NULL REFERENCES users(id),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  data_base64 TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER REFERENCES organizations(id),

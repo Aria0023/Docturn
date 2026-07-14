@@ -1,6 +1,7 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
 import {
   acknowledgeSchema,
+  attachmentUploadSchema,
   createConversationSchema,
   markReadSchema,
   sendMessageSchema,
@@ -11,6 +12,28 @@ import { isDnd, resolveCovering } from "../services/escalation.js";
 import { notificationDeps } from "../services/notifications.js";
 import { previewNext } from "../services/rotation.js";
 import { storage } from "../storage.js";
+
+// Attachment mime allowlist — only these types can be uploaded. Anything else is
+// rejected (400 bad_type) so we never store arbitrary executable/unknown blobs.
+const ATTACHMENT_ALLOWED_MIME = new Set<string>([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+  "video/mp4",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+/** Max decoded attachment size (8 MB). */
+const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Decoded byte length of a base64 string without allocating the buffer. */
+function base64ByteSize(b64: string): number {
+  const clean = b64.replace(/=+$/, "");
+  return Math.floor((clean.length * 3) / 4);
+}
 
 /** A single addressable on-call / role target the compose picker can message. */
 interface OnCallTarget {
@@ -134,6 +157,96 @@ export function registerMessagingRoutes(app: Express) {
     }
 
     res.json(targets);
+  });
+
+  // Upload an attachment (image/file) as base64. Route-level 12 MB JSON parser
+  // (the global cap is 1 MB — too small for uploads). Stored UNLINKED (message_id
+  // NULL) until it's attached to a message at send time. SYNTHETIC-DATA PILOT
+  // ONLY — production PHI needs encrypted object storage + AV scanning + a BAA.
+  app.post(
+    "/api/messaging/attachments",
+    express.json({ limit: "12mb" }),
+    requireAuth,
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = attachmentUploadSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      if (!ATTACHMENT_ALLOWED_MIME.has(parsed.data.mimeType)) {
+        return res.status(400).json({ error: "bad_type" });
+      }
+      const byteSize = base64ByteSize(parsed.data.dataBase64);
+      if (byteSize > ATTACHMENT_MAX_BYTES) {
+        return res.status(400).json({ error: "too_large" });
+      }
+      const { id } = await storage().createAttachment({
+        organizationId: me.organizationId,
+        uploaderId: me.id,
+        fileName: parsed.data.fileName,
+        mimeType: parsed.data.mimeType,
+        byteSize,
+        dataBase64: parsed.data.dataBase64,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "message.attachment_upload",
+        resourceType: "attachment",
+        resourceId: id,
+        details: { mimeType: parsed.data.mimeType, byteSize },
+        riskLevel: "low",
+      });
+      res.status(201).json({
+        id,
+        fileName: parsed.data.fileName,
+        mimeType: parsed.data.mimeType,
+        byteSize,
+      });
+    },
+  );
+
+  // Fetch attachment bytes. Access control: if the attachment is linked to a
+  // message, only participants of that message's conversation may fetch it; if
+  // still unlinked, only the uploader may. Same-origin cookie auth means <img>
+  // and <a download> requests carry the session automatically.
+  app.get("/api/messaging/attachments/:id", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(404).json({ error: "not_found" });
+    const att = await storage().getAttachment(me.organizationId, id);
+    if (!att) return res.status(404).json({ error: "not_found" });
+
+    if (att.messageId != null) {
+      const msg = await storage().getMessage(me.organizationId, att.messageId);
+      if (!msg) return res.status(404).json({ error: "not_found" });
+      const convo = await storage().getConversation(
+        me.organizationId,
+        msg.conversationId,
+      );
+      if (!convo || !convo.participantIds.includes(me.id)) {
+        return res.status(403).json({ error: "forbidden" });
+      }
+    } else if (att.uploaderId !== me.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "message.attachment_view",
+      resourceType: "attachment",
+      resourceId: att.id,
+      details: { messageId: att.messageId },
+      riskLevel: "low",
+    });
+
+    res.setHeader("Content-Type", att.mimeType);
+    res.setHeader(
+      "Content-Disposition",
+      'inline; filename="' + att.fileName.replace(/"/g, "") + '"',
+    );
+    res.send(Buffer.from(att.dataBase64, "base64"));
   });
 
   // Availability of a peer, so a 1:1 thread can show an auto-response status:
@@ -320,6 +433,17 @@ export function registerMessagingRoutes(app: Express) {
       const delivery = await storage().listDeliveryForMessages(
         msgs.map((m) => m.id),
       );
+      // Attach per-message attachment metadata (never the bytes) so the thread
+      // can render thumbnails / download chips; bytes are fetched per-attachment.
+      const atts = await storage().listAttachmentsForMessages(
+        me.organizationId,
+        msgs.map((m) => m.id),
+      );
+      const byMsg: Record<number, typeof atts> = {};
+      for (const a of atts) {
+        if (a.messageId == null) continue;
+        (byMsg[a.messageId] ||= []).push(a);
+      }
       const out = msgs.map((m) => {
         const rows = delivery.filter((d) => d.messageId === m.id);
         return {
@@ -329,6 +453,13 @@ export function registerMessagingRoutes(app: Express) {
           acknowledgedByMe: rows.some(
             (d) => d.userId === me.id && !!d.acknowledgedAt,
           ),
+          attachments: (byMsg[m.id] || []).map((a) => ({
+            id: a.id,
+            fileName: a.fileName,
+            mimeType: a.mimeType,
+            byteSize: a.byteSize,
+            isImage: a.mimeType.startsWith("image/"),
+          })),
         };
       });
       res.json(out);
@@ -347,6 +478,10 @@ export function registerMessagingRoutes(app: Express) {
     if (!convo.participantIds.includes(me.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
+    // A message must carry something: text or at least one attachment.
+    if (!parsed.data.content.trim() && !parsed.data.attachmentIds?.length) {
+      return res.status(400).json({ error: "empty_message" });
+    }
 
     const message = await storage().createMessage({
       conversationId: convo.id,
@@ -355,6 +490,17 @@ export function registerMessagingRoutes(app: Express) {
       content: parsed.data.content,
       priority: parsed.data.priority,
     });
+
+    // Link any pre-uploaded attachments to this message (only the uploader's own
+    // still-unlinked attachments in this org are claimed).
+    if (parsed.data.attachmentIds?.length) {
+      await storage().linkAttachmentsToMessage(
+        me.organizationId,
+        message.id,
+        parsed.data.attachmentIds,
+        me.id,
+      );
+    }
 
     // A delivery row per participant; delivered_at=now for everyone (stub). The
     // sender's own copy is auto-read AND auto-acknowledged (you don't ack your

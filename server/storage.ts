@@ -18,6 +18,7 @@ import {
   landingPageSettings,
   mfaBackupCodes,
   mfaCredentials,
+  messageAttachments,
   messageDeliveryStatus,
   messages,
   orgSettings,
@@ -45,6 +46,7 @@ import {
   type Hospitalist,
   type InsertHospitalist,
   type Message,
+  type MessageAttachment,
   type MessageDeliveryStatus,
   type Organization,
   type PatientConsult,
@@ -176,6 +178,39 @@ export interface IStorage {
   >;
   markDeliveryRealerted(deliveryId: number): Promise<void>;
   markDeliveryEscalated(deliveryId: number): Promise<void>;
+
+  // message attachments
+  createAttachment(a: {
+    organizationId: number;
+    uploaderId: number;
+    fileName: string;
+    mimeType: string;
+    byteSize: number;
+    dataBase64: string;
+  }): Promise<{ id: number }>;
+  getAttachment(
+    orgId: number,
+    id: number,
+  ): Promise<MessageAttachment | undefined>;
+  linkAttachmentsToMessage(
+    orgId: number,
+    messageId: number,
+    ids: number[],
+    uploaderId: number,
+  ): Promise<void>;
+  listAttachmentsForMessages(
+    orgId: number,
+    messageIds: number[],
+  ): Promise<
+    Array<{
+      id: number;
+      messageId: number | null;
+      fileName: string;
+      mimeType: string;
+      byteSize: number;
+    }>
+  >;
+
   addConversationParticipant(
     orgId: number,
     conversationId: number,
@@ -640,6 +675,77 @@ export class DatabaseStorage implements IStorage {
       .update(messageDeliveryStatus)
       .set({ escalatedAt: new Date() })
       .where(eq(messageDeliveryStatus.id, deliveryId));
+  }
+
+  // ── Message attachments ──────────────────────────────────────────────────
+  // SYNTHETIC-DATA PILOT ONLY: bytes are stored inline as base64. Production PHI
+  // needs encrypted object storage (behind a BAA), AV scanning, and signed-URL
+  // fetch — never this inline store.
+  async createAttachment(a: {
+    organizationId: number;
+    uploaderId: number;
+    fileName: string;
+    mimeType: string;
+    byteSize: number;
+    dataBase64: string;
+  }) {
+    const [row] = await this.db
+      .insert(messageAttachments)
+      .values({ ...a, messageId: null })
+      .returning({ id: messageAttachments.id });
+    return row!;
+  }
+  async getAttachment(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(messageAttachments)
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          eq(messageAttachments.id, id),
+        ),
+      );
+    return row;
+  }
+  async linkAttachmentsToMessage(
+    orgId: number,
+    messageId: number,
+    ids: number[],
+    uploaderId: number,
+  ) {
+    if (ids.length === 0) return;
+    // Only claim attachments that belong to this org + uploader and are still
+    // unlinked — so an id can't be re-pointed at another message or stolen.
+    await this.db
+      .update(messageAttachments)
+      .set({ messageId })
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          eq(messageAttachments.uploaderId, uploaderId),
+          isNull(messageAttachments.messageId),
+          inArray(messageAttachments.id, ids),
+        ),
+      );
+  }
+  async listAttachmentsForMessages(orgId: number, messageIds: number[]) {
+    if (messageIds.length === 0) return [];
+    // Metadata only — never selects dataBase64 into a list response.
+    return this.db
+      .select({
+        id: messageAttachments.id,
+        messageId: messageAttachments.messageId,
+        fileName: messageAttachments.fileName,
+        mimeType: messageAttachments.mimeType,
+        byteSize: messageAttachments.byteSize,
+      })
+      .from(messageAttachments)
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          inArray(messageAttachments.messageId, messageIds),
+        ),
+      );
   }
   /**
    * Hard-delete messages older than the cutoff (plus their delivery rows) for

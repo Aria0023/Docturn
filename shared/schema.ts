@@ -206,6 +206,26 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
   escalatedAt: timestamp("escalated_at"),
 });
 
+// Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: bytes live
+// inline as base64 in `dataBase64`. Production PHI needs encrypted object storage
+// (S3/GCS behind a BAA), AV scanning, and signed-URL fetch — not this inline store.
+export const messageAttachments = pgTable("message_attachments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  // NULL until the attachment is linked to a message at send time.
+  messageId: integer("message_id").references(() => messages.id),
+  uploaderId: integer("uploader_id")
+    .notNull()
+    .references(() => users.id),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  dataBase64: text("data_base64").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 /* ── Audit, PHI access & security ──────────────────────────────────────────── */
 
 export const auditLogs = pgTable("audit_logs", {
@@ -609,6 +629,8 @@ export type InsertAssignment = z.infer<typeof insertAssignmentSchema>;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
+export type MessageAttachment = typeof messageAttachments.$inferSelect;
+export type InsertMessageAttachment = typeof messageAttachments.$inferInsert;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type OrgSetting = typeof orgSettings.$inferSelect;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
@@ -677,8 +699,19 @@ export const MESSAGE_PRIORITY = ["routine", "urgent", "stat"] as const;
 
 export const sendMessageSchema = z.object({
   conversationId: z.number().int().positive(),
-  content: z.string().min(1),
+  // Empty allowed so a message can be attachment-only. The send route rejects a
+  // message that has NEITHER text nor attachments (400 empty_message).
+  content: z.string().default(""),
   priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  attachmentIds: z.array(z.number().int().positive()).max(10).optional(),
+});
+
+// Base64 upload of a single attachment (see the attachments route's mime
+// allowlist + 8 MB decoded-size cap).
+export const attachmentUploadSchema = z.object({
+  fileName: z.string().min(1).max(255),
+  mimeType: z.string().min(1),
+  dataBase64: z.string().min(1),
 });
 
 export const markReadSchema = z.object({

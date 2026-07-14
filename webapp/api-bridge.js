@@ -408,6 +408,7 @@
       priority: m.priority || "routine",
       ackCount: m.ackCount || 0,
       ackedByMe: !!m.acknowledgedByMe,
+      attachments: m.attachments || [],
     };
   }
   // Pull the user's conversations + their messages from the backend into the
@@ -978,17 +979,41 @@
       if (ids.length) api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {});
     }
   };
-  DT.actions.sendMessage = function (id, text, priority) {
-    if (!text || !text.trim()) return;
-    var t = text.trim();
+  // Upload a File as a base64 attachment; resolves to {id, fileName, mimeType,
+  // byteSize}. The bytes are stored server-side unlinked until sendMessage
+  // references the id. (Synthetic-data pilot: no encrypted object store yet.)
+  DT.actions.uploadAttachment = function (file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) return reject(new Error("no file"));
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("read failed")); };
+      reader.onload = function () {
+        var result = String(reader.result || "");
+        var comma = result.indexOf(",");
+        var b64 = comma >= 0 ? result.slice(comma + 1) : result; // strip data: prefix
+        api("POST", "/api/messaging/attachments", {
+          fileName: file.name || "attachment",
+          mimeType: file.type || "application/octet-stream",
+          dataBase64: b64,
+        }).then(resolve, reject);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+  DT.actions.sendMessage = function (id, text, priority, attachmentIds) {
+    var t = (text || "").trim();
+    var atts = Array.isArray(attachmentIds) ? attachmentIds.filter(function (n) { return n != null; }) : [];
+    if (!t && !atts.length) return;
     var pri = priority === "stat" || priority === "urgent" ? priority : "routine";
     DT.set(function (s) {
       s.conversations = (s.conversations || []).map(function (c) {
-        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true, priority: pri, ackCount: 0 }]), unread: 0 }) : c;
+        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true, priority: pri, ackCount: 0, attachments: [] }]), unread: 0 }) : c;
       });
       return s;
     });
-    api("POST", "/api/messaging/send", { conversationId: Number(id), content: t, priority: pri })
+    var body = { conversationId: Number(id), content: t, priority: pri };
+    if (atts.length) body.attachmentIds = atts;
+    api("POST", "/api/messaging/send", body)
       .then(function () { hydrateConversations(); })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
   };

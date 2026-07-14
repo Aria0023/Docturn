@@ -11,6 +11,14 @@ function fmtTime(at) {
   return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
+// Human-readable byte size for an attachment download chip.
+function fmtBytes(n) {
+  if (n == null) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
 function Messaging() {
   const st = useStore();
   const a = useActions();
@@ -19,6 +27,8 @@ function Messaging() {
   const [active, setActive] = React.useState(st.__activeConvo || (convos[0] && convos[0].id));
   const [draft, setDraft] = React.useState("");
   const [priority, setPriority] = React.useState("routine"); // routine | urgent | stat
+  const [pending, setPending] = React.useState([]); // uploaded-but-unsent attachments
+  const fileInputRef = React.useRef(null);
   const [q, setQ] = React.useState("");
   const [composing, setComposing] = React.useState(false);
   const [forwarding, setForwarding] = React.useState(null); // message being forwarded, or null
@@ -29,7 +39,7 @@ function Messaging() {
   // follow a store-initiated conversation switch (e.g. "Message" from another screen)
   React.useEffect(() => { if (st.__activeConvo && st.__activeConvo !== active) setActive(st.__activeConvo); }, [st.__activeConvo]);
   // clear unread whenever the open thread changes
-  React.useEffect(() => { if (active) a.openConversation(active); }, [active]);
+  React.useEffect(() => { if (active) a.openConversation(active); setPending([]); }, [active]);
   // keep the thread pinned to the latest message
   const conv = convos.find((c) => c.id === active) || convos[0];
   // 1:1 peer availability → auto-response banner (DND / covering / off-shift).
@@ -47,7 +57,23 @@ function Messaging() {
 
   const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
 
-  const send = () => { if (!draft.trim()) return; a.sendMessage(active, draft, priority); setDraft(""); setPriority("routine"); if (a.setTyping) a.setTyping(active, false); };
+  const send = () => {
+    if (!draft.trim() && pending.length === 0) return;
+    a.sendMessage(active, draft, priority, pending.map((p) => p.id));
+    setDraft(""); setPriority("routine"); setPending([]);
+    if (a.setTyping) a.setTyping(active, false);
+  };
+  // Upload each chosen file, appending it to the pending chips as it lands.
+  const onPickFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // allow re-picking the same file later
+    files.forEach((f) => {
+      Promise.resolve(a.uploadAttachment && a.uploadAttachment(f))
+        .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
+        .catch(() => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: f.name }); });
+    });
+  };
+  const removePending = (id) => setPending((prev) => prev.filter((p) => p.id !== id));
   // Quick-reply templates — role-aware canned phrases (TigerConnect/PerfectServe
   // ship configurable message templates). Tapping one fills the draft so it can
   // still be edited or re-prioritized before sending; only shown while the draft
@@ -259,10 +285,30 @@ function Messaging() {
                     <Icon name={prio.icon} size={11} />{prio.label}
                   </div>
                 )}
+                {m.text && (
                 <div style={{ clear: "both", padding: isMobile ? "10px 14px" : "9px 13px", borderRadius: isMobile ? 16 : 14, fontSize: isMobile ? 15.5 : 13.5, lineHeight: 1.45,
                   background: m.me ? "var(--primary)" : "#fff", color: m.me ? "#fff" : "var(--foreground)",
                   border: m.me ? "none" : (prio ? "1px solid " + prio.color + "88" : "1px solid var(--border)"),
                   borderBottomRightRadius: m.me ? 4 : 14, borderBottomLeftRadius: m.me ? 14 : 4 }}>{m.text}</div>
+                )}
+                {/* Attachments: inline image thumbnails + file download chips. The
+                    <img>/<a> requests carry the session cookie (same-origin), and
+                    each fetch is access-checked + audited server-side. */}
+                {(m.attachments || []).map((at) => (
+                  at.isImage
+                    ? <img key={at.id} src={"/api/messaging/attachments/" + at.id} alt={at.fileName}
+                        onClick={() => window.open("/api/messaging/attachments/" + at.id, "_blank")}
+                        style={{ clear: "both", maxWidth: 220, maxHeight: 220, borderRadius: 10, cursor: "pointer", marginTop: 6, display: "block", border: "1px solid var(--border)" }} />
+                    : <a key={at.id} href={"/api/messaging/attachments/" + at.id} target="_blank" rel="noreferrer" download={at.fileName}
+                        style={{ clear: "both", marginTop: 6, display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "11px 13px" : "9px 12px", borderRadius: 12, textDecoration: "none",
+                          background: "#fff", border: "1px solid var(--border)", color: "var(--foreground)", maxWidth: 260 }}>
+                        <Icon name="paperclip" size={16} color="var(--muted-foreground)" />
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: "block", fontSize: isMobile ? 14 : 12.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{at.fileName}</span>
+                          <span style={{ display: "block", fontSize: 11, color: "var(--muted-foreground)" }}>{fmtBytes(at.byteSize)}</span>
+                        </span>
+                      </a>
+                ))}
                 {/* Recipient: acknowledge an unacked STAT/urgent message. */}
                 {!m.me && prio && !m.ackedByMe && m.id && (
                   <button onClick={() => a.acknowledgeMessage(conv.id, m.id)}
@@ -299,8 +345,19 @@ function Messaging() {
           )}
         </div>
 
-        {/* No attachments: file/photo sharing is deliberately unavailable until
-            encrypted storage + a DLP/PHI policy exist (see SECURITY.md). */}
+        {/* Pending attachments (uploaded, not yet sent) — removable chips shown
+            above the Priority row. Synthetic-data pilot only: no PHI in filenames. */}
+        {!conv.broadcast && pending.length > 0 && (
+          <div style={{ flex: "none", padding: isMobile ? "8px 12px 0" : "8px 16px 0", background: "#fff", display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {pending.map((p) => (
+              <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "7px 10px" : "5px 9px", borderRadius: 99, fontSize: isMobile ? 13 : 12, fontWeight: 500, color: "var(--foreground)", background: "var(--secondary)", border: "1px solid var(--border)", maxWidth: 220 }}>
+                <Icon name="paperclip" size={13} color="var(--muted-foreground)" />
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.fileName}</span>
+                <button onClick={() => removePending(p.id)} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", padding: 0, display: "inline-flex", alignItems: "center" }}><Icon name="x" size={13} /></button>
+              </span>
+            ))}
+          </div>
+        )}
         {/* Quick replies — tap to fill the draft (still editable before send).
             Hidden once the user starts typing so it never blocks the composer. */}
         {!conv.broadcast && !draft.trim() && (
@@ -323,6 +380,11 @@ function Messaging() {
           </div>
         )}
         <div style={{ flex: "none", padding: isMobile ? "10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px)" : 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
+          <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,video/mp4" onChange={onPickFiles} style={{ display: "none" }} />
+          <button onClick={() => fileInputRef.current && fileInputRef.current.click()} title="Attach a file" disabled={conv.broadcast}
+            style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: conv.broadcast ? "default" : "pointer" }}>
+            <Icon name="paperclip" size={isMobile ? 20 : 18} />
+          </button>
           <div style={{ flex: 1 }}>
             <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
