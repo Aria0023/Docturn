@@ -5,6 +5,29 @@ Two prompts live here:
 - **Progress note** — `providence-progress-note-v7.4.json` (current)
 - **H&P (admission note)** — `providence-hnp-v4.0.json` (current)
 
+# Discharge Summary Prompt (ISP Tarzana)
+
+## v1.0 — CURRENT
+
+`tarzana-discharge-summary-v1.0.json` — rebuild of the provider's v3.9 discharge
+summary onto the shared conventions, following the ISP Tarzana wrapper layout:
+flush-left demographics → dates (Date of Service = `@TD@`) → two-line title
+(`**Hospitalist Discharge Summary**` / ISP Tarzana Hospitalist Group) → treatment team
+→ procedures → POA-tagged Discharge Diagnoses → "In brief…" narrative ending with the
+day-of-discharge evaluation + most recent vitals → **Hospital Course By Problem**
+(bold `**#Dx [present on admission]**` titles + escaped `\-` dash lines, ≥5 lines,
+mirrors the diagnosis list, bolds critical items/warning signs) → New/Changed/
+Continued/Stopped discharge meds with verbatim sigs (EMR-recon fallback) → condition/
+disposition/code status → bolded pending studies → follow-up → **MIPS v1.1 checklist**
+(verbatim content, exactly one character-for-character answer per item, kept always-on
+from v3.9) → time statement (33-minute counseling sentence verbatim; 15-minute AMA/
+expired branch) → plain-italic `@ME@` disclaimer. Epic-proof spacing throughout.
+Preserved v3.9 logic: AMA/deceased branching, CHF-GDMT, stroke quality measures
+(STK-2/3/6/8/10), pending-biopsy bolding, full-rewrite-on-reprompt. POA tag refined:
+appended when present on admission, omitted for conditions that developed in-house.
+Old standalone discharge vitals/exam/diet sections were folded into the narrative per
+the new layout. ACP + Discharge Instructions remain recall-only ancillaries.
+
 # SNF H&P Prompt
 
 ## v1.0 — CURRENT
