@@ -5,6 +5,20 @@ Two prompts live here:
 - **Progress note** — `providence-progress-note-v7.4.json` (current)
 - **H&P (admission note)** — `providence-hnp-v4.0.json` (current)
 
+# Strict Data Isolation (all five prompts)
+
+Doximity/ChatGPT was bleeding information from prior queries into new notes. All five
+prompts gained `STRICT_DATA_ISOLATION_LOCK` (placed right after the role lock) plus a
+first-position `STRICT_DATA_ISOLATION_ENF` hidden-logic entry: every request is a
+brand-new patient; only facts stated for this patient in this prompt may be used; no
+inference from prior notes/memory/earlier turns; nothing carries forward unless
+restated today; when uncertain, omit. The progress note's carry-forward and
+GMLOS-ignore locks were harmonized ("prior note data" = only prior-note content pasted
+into the current prompt). Current versions: progress **v7.12**, H&P **v4.4**, consult
+**v4.4**, SNF **v1.1**, discharge summary **v1.1**. Note: the lock reduces but cannot
+eliminate context bleed — a fresh chat per patient (and clearing ChatGPT memory)
+remains the reliable fix.
+
 # Discharge Summary Prompt (ISP Tarzana)
 
 ## v1.0 — CURRENT
