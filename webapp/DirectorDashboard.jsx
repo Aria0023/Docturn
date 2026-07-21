@@ -33,6 +33,11 @@ function ShiftSelect({ shifts, value, onChange }) {
 }
 
 function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions }) {
+  // Live comms KPIs (org-scoped, server-computed). Fetch once on mount.
+  const dashActions = useActions();
+  const commsMetrics = useStore().commsMetrics;
+  React.useEffect(() => { dashActions.loadCommsMetrics(); }, []);
+
   const [dragId, setDragId] = React.useState(null);
   const [overId, setOverId] = React.useState(null);
   const [capInput, setCapInput] = React.useState("12");
@@ -79,12 +84,13 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const Wrap = bare ? React.Fragment : PageWrap;
   return (
     <Wrap>
-      <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
-        <StatTile label="Total providers" value={providers.length} icon="users" tint="blue" />
-        <StatTile label="Active (on shift)" value={working.length} icon="activity" tint="emerald" />
-        <StatTile label="In rotation" value={rotation.length} icon="route" tint="amber" />
-        <StatTile label="Total census" value={totalCensus + " / " + totalCap} icon="bed-double" tint="slate" />
-      </div>
+      <CustomizableStats statKey="director:stats" stats={[
+        { id: "providers", label: "Total providers", value: providers.length, icon: "users", tint: "blue" },
+        { id: "active", label: "Active (on shift)", value: working.length, icon: "activity", tint: "emerald" },
+        { id: "rotation", label: "In rotation", value: rotation.length, icon: "route", tint: "amber" },
+        { id: "census", label: "Total census", value: totalCensus + " / " + totalCap, icon: "bed-double", tint: "slate" },
+        ...commsStatTiles(commsMetrics),
+      ]} />
       {(() => {
         const rpt = (typeof useStore === "function" ? useStore() : {}).opsReport;
         if (!rpt) return null;

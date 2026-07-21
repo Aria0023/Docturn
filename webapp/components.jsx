@@ -351,7 +351,7 @@ function ConsultRoster({ details, onRespond, compact }) {
 
 Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS, Modal, EditableText, AcuityChip, ESI, specialtyColor, SpecialtyTag, ConsultAdd, ConsultRoster });
 
-function StatTile({ label, value, icon, tint = "blue" }) {
+function StatTile({ label, value, icon, tint = "blue", sub }) {
   const tints = { blue: "var(--primary)", emerald: "var(--status-accepted)", amber: "var(--status-pending)", slate: "var(--status-neutral)" };
   return (
     <Card style={{ padding: 16, flex: 1, minWidth: 0 }}>
@@ -360,8 +360,29 @@ function StatTile({ label, value, icon, tint = "blue" }) {
         <Icon name={icon} size={16} color={tints[tint]} />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6, letterSpacing: "-0.02em" }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 5 }}>{sub}</div>}
     </Card>
   );
 }
+
+// Short duration for comms KPIs: null → "—", else "4m 12s" / "45s".
+function fmtCommsDur(sec) {
+  if (sec == null) return "—";
+  const s = Math.round(sec);
+  if (s < 60) return s + "s";
+  return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+}
+// The 3 real clinical-comms KPI tiles (formatted for CustomizableStats), from
+// the server-computed metrics ({ messages7d, statAckAvgSec, consultResponseAvgSec }).
+// Stable ids so per-key show/hide + order persist. "—" when a metric is null.
+function commsStatTiles(cm) {
+  const m = cm || {};
+  return [
+    { id: "comms_msgs", label: "Messages (7 days)", value: m.messages7d != null ? m.messages7d : 0, icon: "message-square", tint: "blue" },
+    { id: "comms_statack", label: "STAT ack (avg)", value: fmtCommsDur(m.statAckAvgSec), icon: "siren", tint: "amber" },
+    { id: "comms_consult", label: "Consult response (avg)", value: fmtCommsDur(m.consultResponseAvgSec), icon: "stethoscope", tint: "slate" },
+  ];
+}
+Object.assign(window, { fmtCommsDur, commsStatTiles });
 
 Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS });

@@ -25,6 +25,11 @@ function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hh
 function shortName(name) { return String(name || "").split(",")[0].replace(/^Dr\.\s*/i, "").trim().split(/\s+/).slice(-1)[0] || name; }
 
 function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory, onConsult, onConsultRespond, consultServices }) {
+  // Live comms KPIs (org-scoped, server-computed). Fetch once on mount.
+  const a = useActions();
+  const commsMetrics = useStore().commsMetrics;
+  React.useEffect(() => { a.loadCommsMetrics(); }, []);
+
   // Accepted during THIS shift (since 7am); resets each morning.
   const since = shiftStart();
   const shiftAdmits = (myAdmissions || []).filter((a) => a.at >= since).sort((a, b) => b.at - a.at);
@@ -44,11 +49,12 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
 
   return (
     <PageWrap>
-      <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
-        <StatTile label="Pending requests" value={pending.length} icon="inbox" tint="amber" />
-        <StatTile label="Accepted this shift" value={shiftAdmits.length} icon="check-circle-2" tint="emerald" />
-        <StatTile label="Current census" value={shiftAdmits.length} icon="users" tint="blue" />
-      </div>
+      <CustomizableStats statKey="hospitalist:stats" stats={[
+        { id: "pending", label: "Pending requests", value: pending.length, icon: "inbox", tint: "amber" },
+        { id: "accepted", label: "Accepted this shift", value: shiftAdmits.length, icon: "check-circle-2", tint: "emerald" },
+        { id: "census", label: "Current census", value: shiftAdmits.length, icon: "users", tint: "blue" },
+        ...commsStatTiles(commsMetrics),
+      ]} />
 
       {/* Compact round-robin strip — small colored circles in order (next + you highlighted) */}
       {ordered.length > 0 && (

@@ -149,12 +149,12 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>My shift</h3>
         <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{meName ? meName + " · " : ""}patients you routed</span>
       </div>
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <Stat label="My admits today" value={today.length} icon="clipboard-plus" tint="blue" sub={mine.length + " routed in all"} />
-        <Stat label="Avg time-to-accept" value={dur(avgAcceptSec || 0)} icon="timer" tint="amber" sub="hospitalist response" />
-        <Stat label="My acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + declined + " declined"} />
-        <Stat label="Awaiting accept" value={pending} icon="loader" tint="slate" sub="still routing" />
-      </div>
+      <CustomizableStats statKey="er_doctor:stats" stats={[
+        { id: "admits", label: "My admits today", value: today.length, icon: "clipboard-plus", tint: "blue", sub: mine.length + " routed in all" },
+        { id: "ttaccept", label: "Avg time-to-accept", value: dur(avgAcceptSec || 0), icon: "timer", tint: "amber", sub: "hospitalist response" },
+        { id: "acceptrate", label: "My acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
+        { id: "awaiting", label: "Awaiting accept", value: pending, icon: "loader", tint: "slate", sub: "still routing" },
+      ]} />
     </div>
   );
 }

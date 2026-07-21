@@ -227,6 +227,14 @@
       // Drives the customizable ER / ER-director dashboards (drag to reorder,
       // remove, re-add). Empty = default order, nothing hidden.
       dashLayout: {},
+      // Per-key stat-tile layout: { order: [statId…], hidden: [statId…] }, keyed
+      // by an arbitrary string (e.g. "hospitalist:stats"). Same mechanism as
+      // dashLayout but for individual KPI tiles — show/hide, drag-reorder, reset.
+      statLayout: {},
+      // Server-computed comms KPIs ({ messages7d, statAckAvgSec,
+      // consultResponseAvgSec }). Null until loadCommsMetrics() fills it (the
+      // live override in api-bridge.js fetches the real numbers).
+      commsMetrics: null,
       // Per-organization on-call schedule source. Every tenant keeps its
       // schedule somewhere different — a scheduling vendor (Amion/QGenda), an
       // uploaded Word/PDF, or a web page — so the source is modular and keyed by
@@ -545,6 +553,17 @@
   // honor the saved order, append any newly-added widgets, and report hidden.
   function dashLayoutFor(role, allIds) {
     var saved = (state.dashLayout && state.dashLayout[role]) || {};
+    var hidden = (saved.hidden || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    var order = (saved.order || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    allIds.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
+    return { order: order, hidden: hidden };
+  }
+
+  // Same resolution as dashLayoutFor, but for individual stat tiles keyed by an
+  // arbitrary string (e.g. "hospitalist:stats"): honor the saved order, append
+  // any newly-added tiles, and report which are hidden.
+  function statLayoutFor(key, allIds) {
+    var saved = (state.statLayout && state.statLayout[key]) || {};
     var hidden = (saved.hidden || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
     var order = (saved.order || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
     allIds.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
@@ -1029,6 +1048,38 @@
       });
     },
 
+    /* stat-tile layout — per key: reorder, remove, re-add individual KPI tiles */
+    setStatOrder: function (key, order) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        cur.order = order.slice();
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+    toggleStat: function (key, id) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        var hidden = (cur.hidden || []).slice();
+        var i = hidden.indexOf(id);
+        if (i >= 0) hidden.splice(i, 1); else hidden.push(id);
+        cur.hidden = hidden;
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+    resetStatLayout: function (key) {
+      set(function (s) {
+        var n = Object.assign({}, s.statLayout); delete n[key];
+        s.statLayout = n;
+        return s;
+      });
+    },
+
+    /* comms KPIs — no-op in the pure-demo store; api-bridge.js overrides this to
+       fetch real numbers from /api/metrics/comms. Defined so callers never throw. */
+    loadCommsMetrics: function () {},
+
     /* patient-board modules — per role, toggle a section on/off */
     setBoardModule: function (role, key, on) {
       set(function (s) {
@@ -1308,7 +1359,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, orgConfig: orgEffectiveConfig };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

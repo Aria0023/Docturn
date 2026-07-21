@@ -65,12 +65,12 @@ function ErStatsPanel({ erPhysicians, sent, board, avgAcceptSec }) {
   const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
   const pendingER = (board || []).filter((b) => b.status === "pending").length;
   return (
-    <div style={{ display: "flex", gap: 14 }}>
-      <ErStat label="Admits today" value={admitsToday} icon="clipboard-plus" tint="blue" sub={todaySent.length + " routed via DocTurn"} />
-      <ErStat label="Avg time-to-accept" value={fmtDuration(avgAcceptSec)} icon="timer" tint="amber" sub="across hospitalist groups" />
-      <ErStat label="Acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + declined + " declined"} />
-      <ErStat label="Pending in ER" value={pendingER} icon="loader" tint="slate" sub="awaiting hospitalist accept" />
-    </div>
+    <CustomizableStats statKey="er_director:stats" stats={[
+      { id: "admits", label: "Admits today", value: admitsToday, icon: "clipboard-plus", tint: "blue", sub: todaySent.length + " routed via DocTurn" },
+      { id: "ttaccept", label: "Avg time-to-accept", value: fmtDuration(avgAcceptSec), icon: "timer", tint: "amber", sub: "across hospitalist groups" },
+      { id: "acceptrate", label: "Acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
+      { id: "pending", label: "Pending in ER", value: pendingER, icon: "loader", tint: "slate", sub: "awaiting hospitalist accept" },
+    ]} />
   );
 }
 

@@ -960,6 +960,17 @@
     });
   };
 
+  // Comms KPIs: fetch the org-scoped, server-computed numbers and push them into
+  // state so the dashboard stat tiles show real figures. Leave commsMetrics null
+  // on any failure (the tiles fall back to "—"/0).
+  DT.actions.loadCommsMetrics = function () {
+    return get("/api/metrics/comms").then(function (m) {
+      DT.set(function (s) { s.commsMetrics = m || null; return s; });
+    }).catch(function () {
+      DT.set(function (s) { s.commsMetrics = null; return s; });
+    });
+  };
+
   // Logout: tear down the live socket + clear the server session too.
   var origLogout = DT.actions.logout;
   DT.actions.logout = function () {

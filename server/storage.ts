@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { DbType } from "./db.js";
 import { getDb } from "./db.js";
 import {
@@ -245,6 +245,10 @@ export interface IStorage {
     userAgent?: string;
   }): Promise<void>;
   countPhiAccess(orgId: number): Promise<number>;
+
+  // ── comms KPIs (org-scoped) ──────────────────────────────────────────────────
+  avgStatAckSeconds(orgId: number, since: Date): Promise<number | null>;
+  avgConsultResponseSeconds(orgId: number, since: Date): Promise<number | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -773,13 +777,17 @@ export class DatabaseStorage implements IStorage {
       .from(patientConsults)
       .where(eq(patientConsults.organizationId, orgId));
   }
-  /** Message count since a moment (analytics). */
+  /** Message count since a moment (analytics; soft-deleted excluded). */
   async countMessagesSince(orgId: number, since: Date) {
     const rows = await this.db
       .select({ id: messages.id })
       .from(messages)
       .where(
-        and(eq(messages.organizationId, orgId), gte(messages.createdAt, since)),
+        and(
+          eq(messages.organizationId, orgId),
+          gte(messages.createdAt, since),
+          isNull(messages.deletedAt),
+        ),
       );
     return rows.length;
   }
@@ -948,6 +956,74 @@ export class DatabaseStorage implements IStorage {
       .where(eq(phiAccessLogs.organizationId, orgId))
       .orderBy(desc(phiAccessLogs.createdAt))
       .limit(limit);
+  }
+
+  // ── comms KPIs ─────────────────────────────────────────────────────────────
+  // Average seconds from a STAT message being sent to the EARLIEST recipient
+  // acknowledgement (excluding the sender's own delivery row). Null when no STAT
+  // message in the window has been acknowledged. Durations are averaged in JS to
+  // stay dialect-agnostic (pglite in tests, Postgres in prod).
+  async avgStatAckSeconds(orgId: number, since: Date) {
+    const rows = await this.db
+      .select({
+        createdAt: messages.createdAt,
+        ackAt: sql<string | Date>`min(${messageDeliveryStatus.acknowledgedAt})`,
+      })
+      .from(messages)
+      .innerJoin(
+        messageDeliveryStatus,
+        eq(messageDeliveryStatus.messageId, messages.id),
+      )
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          eq(messages.priority, "stat"),
+          gte(messages.createdAt, since),
+          isNull(messages.deletedAt),
+          isNotNull(messageDeliveryStatus.acknowledgedAt),
+          sql`${messageDeliveryStatus.userId} <> ${messages.senderId}`,
+        ),
+      )
+      .groupBy(messages.id, messages.createdAt);
+    const durs = rows
+      .filter((r) => r.ackAt != null)
+      .map(
+        (r) =>
+          (new Date(r.ackAt as string | Date).getTime() -
+            new Date(r.createdAt).getTime()) /
+          1000,
+      )
+      .filter((s) => s >= 0);
+    if (!durs.length) return null;
+    return Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
+  }
+  // Average seconds from a consult being requested (createdAt) to the consultant
+  // responding (respondedAt). Null when no consult in the window has a response.
+  async avgConsultResponseSeconds(orgId: number, since: Date) {
+    const rows = await this.db
+      .select({
+        createdAt: patientConsults.createdAt,
+        respondedAt: patientConsults.respondedAt,
+      })
+      .from(patientConsults)
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          gte(patientConsults.createdAt, since),
+          isNotNull(patientConsults.respondedAt),
+        ),
+      );
+    const durs = rows
+      .filter((r) => r.respondedAt != null)
+      .map(
+        (r) =>
+          (new Date(r.respondedAt as Date).getTime() -
+            new Date(r.createdAt).getTime()) /
+          1000,
+      )
+      .filter((s) => s >= 0);
+    if (!durs.length) return null;
+    return Math.round(durs.reduce((a, b) => a + b, 0) / durs.length);
   }
 
   // ── users (extended) ─────────────────────────────────────────────────────────
