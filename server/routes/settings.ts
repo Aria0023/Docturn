@@ -24,9 +24,10 @@ export function registerSettingsRoutes(app: Express) {
     // STAT SMS fallback defaults ON; the operator/developer can disable it.
     const statSmsFallback =
       (await storage().getOrgSetting(me.organizationId, "statSmsFallback")) !== false;
-    const [dnd, coveringUserId] = await Promise.all([
+    const [dnd, coveringUserId, dashboardLayout] = await Promise.all([
       storage().getUserPreference(me.id, "dnd"),
       storage().getUserPreference(me.id, "coveringUserId"),
+      storage().getUserPreference(me.id, "dashboardLayout"),
     ]);
     res.json({
       org: {
@@ -41,6 +42,12 @@ export function registerSettingsRoutes(app: Express) {
         dnd: dnd === true,
         coveringUserId:
           typeof coveringUserId === "number" ? coveringUserId : null,
+        // Per-user dashboard customization (panel + stat-tile layout), synced
+        // across devices. Arbitrary JSON blob; null until the user customizes.
+        dashboardLayout:
+          dashboardLayout && typeof dashboardLayout === "object"
+            ? dashboardLayout
+            : null,
       },
     });
   });

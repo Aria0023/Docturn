@@ -598,6 +598,7 @@
       meId = u.id;
       auditLoaded = false; // new login context → reload that org's audit on first hydrate
       prefsLoaded = false;
+      dashHydrated = false; lastDashSnap = null; // pause layout-save until the new user's layout hydrates
       DT.set(function (s) {
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -744,16 +745,65 @@
     });
   };
   // Self-service password change. Returns a promise so the UI can await + report.
+  // Per-user dashboard customization (panel layout + stat-tile layout + custom
+  // stats) is synced to the server so the same login shows the same layout on
+  // every device. localStorage stays the instant/offline copy; the server is
+  // the cross-device source that fills a fresh browser on login.
+  //   - dashHydrated gates the saver so the initial server-hydrate never echoes
+  //     straight back as a write.
+  //   - lastDashSnap is a serialized snapshot; the saver skips when unchanged,
+  //     so an unrelated store mutation (a message, the clock) never PATCHes.
+  var dashHydrated = false;
+  var lastDashSnap = null;
+  function dashSnapshot(s) {
+    return JSON.stringify({
+      dashLayout: s.dashLayout || {},
+      statLayout: s.statLayout || {},
+      customStats: s.customStats || {},
+    });
+  }
+  var dashSaveTimer = null;
+  function scheduleDashSave() {
+    if (!dashHydrated) return; // don't save until the server layout has hydrated
+    var snap = dashSnapshot(DT.getState());
+    if (snap === lastDashSnap) return; // nothing changed since last save/hydrate
+    if (dashSaveTimer) return; // a save is already queued
+    dashSaveTimer = setTimeout(function () {
+      dashSaveTimer = null;
+      var st = DT.getState();
+      var cur = dashSnapshot(st);
+      if (cur === lastDashSnap) return; // coalesced away
+      lastDashSnap = cur;
+      api("PATCH", "/api/settings/me", {
+        key: "dashboardLayout",
+        value: { dashLayout: st.dashLayout || {}, statLayout: st.statLayout || {}, customStats: st.customStats || {} },
+      }).catch(function () { /* offline: localStorage remains the fallback */ });
+    }, 400);
+  }
+  if (DT.subscribe) DT.subscribe(scheduleDashSave);
+
   // Personal availability prefs (DND + covering provider). Server-backed via
-  // /api/settings (read) and /api/settings/me (write).
+  // /api/settings (read) and /api/settings/me (write). Also hydrates the
+  // cross-device dashboard layout.
   function hydrateMyPrefs() {
     get("/api/settings").then(function (r) {
       if (!r) return;
       DT.set(function (s) {
         if (r.me) s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null };
         if (r.org && typeof r.org.messageRetentionDays === "number") s.orgRetentionDays = r.org.messageRetentionDays;
+        var dl = r.me && r.me.dashboardLayout;
+        if (dl && typeof dl === "object") {
+          s.dashLayout = dl.dashLayout || {};
+          s.statLayout = dl.statLayout || {};
+          s.customStats = dl.customStats || {};
+        }
         return s;
       });
+      // Mark hydrated AFTER the set (the set's emit ran with dashHydrated still
+      // false, so it scheduled no save) and snapshot the now-current layout so
+      // the very first real user change is what triggers the first PATCH.
+      dashHydrated = true;
+      lastDashSnap = dashSnapshot(DT.getState());
     }).catch(function () {});
   }
   // Web Push: subscribe this browser/PWA so STAT + new-message wake-ups reach a
@@ -976,6 +1026,7 @@
   DT.actions.logout = function () {
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     meId = null;
+    dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
     rawApi("POST", "/api/logout", {}).catch(function () {});
     if (origLogout) origLogout();
   };
