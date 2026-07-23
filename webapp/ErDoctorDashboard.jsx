@@ -143,13 +143,22 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
   const declined = mine.filter((s) => s.status === "declined" || s.status === "rejected").length;
   const pending = mine.filter((s) => s.status === "sent").length;
   const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
+  const statMetrics = [
+    { key: "admits", label: "My admits today", value: today.length },
+    { key: "routed_all", label: "Routed in all", value: mine.length },
+    { key: "ttaccept", label: "Avg time-to-accept", value: dur(avgAcceptSec || 0) },
+    { key: "acceptrate", label: "My acceptance rate", value: acceptRate + "%" },
+    { key: "accepted", label: "Accepted", value: accepted },
+    { key: "declined", label: "Declined", value: declined },
+    { key: "awaiting", label: "Awaiting accept", value: pending },
+  ];
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 10px" }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>My shift</h3>
         <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{meName ? meName + " · " : ""}patients you routed</span>
       </div>
-      <CustomizableStats statKey="er_doctor:stats" stats={[
+      <CustomizableStats statKey="er_doctor:stats" metrics={statMetrics} stats={[
         { id: "admits", label: "My admits today", value: today.length, icon: "clipboard-plus", tint: "blue", sub: mine.length + " routed in all" },
         { id: "ttaccept", label: "Avg time-to-accept", value: dur(avgAcceptSec || 0), icon: "timer", tint: "amber", sub: "hospitalist response" },
         { id: "acceptrate", label: "My acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },

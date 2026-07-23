@@ -47,9 +47,22 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
     : myPos > 0 ? "#" + (myPos + 1) + " of " + ordered.length + " · " + myPos + " ahead of you"
     : "Not in rotation";
 
+  // Live-metric catalog the "+ New stat" builder offers on this dashboard.
+  const cm = commsMetrics || {};
+  const statMetrics = [
+    { key: "pending", label: "Pending requests", value: pending.length },
+    { key: "accepted", label: "Accepted this shift", value: shiftAdmits.length },
+    { key: "census", label: "Current census", value: shiftAdmits.length },
+    { key: "rotation_size", label: "In rotation", value: ordered.length },
+    { key: "my_position", label: "My rotation position", value: myPos >= 0 ? "#" + (myPos + 1) : "—" },
+    { key: "messages_7d", label: "Messages (7 days)", value: cm.messages7d != null ? cm.messages7d : "—" },
+    { key: "stat_ack", label: "STAT ack (avg)", value: fmtCommsDur(cm.statAckAvgSec) },
+    { key: "consult_response", label: "Consult response (avg)", value: fmtCommsDur(cm.consultResponseAvgSec) },
+  ];
+
   return (
     <PageWrap>
-      <CustomizableStats statKey="hospitalist:stats" stats={[
+      <CustomizableStats statKey="hospitalist:stats" metrics={statMetrics} stats={[
         { id: "pending", label: "Pending requests", value: pending.length, icon: "inbox", tint: "amber" },
         { id: "accepted", label: "Accepted this shift", value: shiftAdmits.length, icon: "check-circle-2", tint: "emerald" },
         { id: "census", label: "Current census", value: shiftAdmits.length, icon: "users", tint: "blue" },

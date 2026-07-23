@@ -33,10 +33,10 @@ function ShiftSelect({ shifts, value, onChange }) {
 }
 
 function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions }) {
-  // Live comms KPIs (org-scoped, server-computed). Fetch once on mount.
-  const dashActions = useActions();
-  const commsMetrics = useStore().commsMetrics;
-  React.useEffect(() => { dashActions.loadCommsMetrics(); }, []);
+  // Live ops report (org-scoped, server-computed): assignment latency, consult
+  // response and message volume. Hydrated on login for directors; the strip's
+  // comms KPIs read from it so nothing is duplicated across two sources.
+  const opsReport = useStore().opsReport;
 
   const [dragId, setDragId] = React.useState(null);
   const [overId, setOverId] = React.useState(null);
@@ -80,29 +80,52 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const schedLabel = SRC_LABELS[schedKey] || "Amion";
   const schedConfigured = schedKey !== "none";
 
+  // One source of truth per metric: the comms KPIs come from the ops report
+  // (median/avg in minutes), not the separate commsMetrics feed, so the strip
+  // shows each metric exactly once. "—" until the report hydrates.
+  const rpt = opsReport;
+  const fmtMin = (v) => (v != null ? v + " min" : "—");
+  const censusVal = totalCensus + " / " + totalCap;
+  const bedsOpen = totalCap - totalCensus;
+  const ttaMedian = rpt ? fmtMin(rpt.assignments.timeToAcceptMinMedian) : "—";
+  const ttaAvg = rpt ? fmtMin(rpt.assignments.timeToAcceptMinAvg) : "—";
+  const consultResp = rpt ? fmtMin(rpt.consults.responseMinAvg) : "—";
+  const msgs7d = rpt ? rpt.messaging.last7d : "—";
+  const statAck = rpt ? fmtMin(rpt.messaging.statAckMinAvg) : "—";
+  const asgTotal = rpt ? rpt.assignments.total : "—";
+  const acceptedCt = rpt && rpt.assignments.byStatus ? (rpt.assignments.byStatus.accepted || 0) : null;
+  const acceptPct = rpt && rpt.assignments.total ? Math.round((acceptedCt / rpt.assignments.total) * 100) + "%" : "—";
+
+  // Live-metric catalog the "+ New stat" builder offers on this dashboard.
+  const statMetrics = [
+    { key: "providers", label: "Total providers", value: providers.length },
+    { key: "active", label: "Active (on shift)", value: working.length },
+    { key: "rotation", label: "In rotation", value: rotation.length },
+    { key: "census", label: "Total census", value: censusVal },
+    { key: "beds_open", label: "Beds open", value: bedsOpen },
+    { key: "tta_median", label: "Time to accept (median)", value: ttaMedian },
+    { key: "tta_avg", label: "Time to accept (avg)", value: ttaAvg },
+    { key: "consult_response", label: "Consult response (avg)", value: consultResp },
+    { key: "messages_7d", label: "Messages (7 days)", value: msgs7d },
+    { key: "stat_ack", label: "STAT ack (avg)", value: statAck },
+    { key: "assignments_total", label: "Assignments (total)", value: asgTotal },
+    { key: "accept_rate", label: "Acceptance rate", value: acceptPct },
+  ];
+
   // `bare` renders without the page frame so this can be a dashboard widget.
   const Wrap = bare ? React.Fragment : PageWrap;
   return (
     <Wrap>
-      <CustomizableStats statKey="director:stats" stats={[
+      <CustomizableStats statKey="director:stats" metrics={statMetrics} stats={[
         { id: "providers", label: "Total providers", value: providers.length, icon: "users", tint: "blue" },
         { id: "active", label: "Active (on shift)", value: working.length, icon: "activity", tint: "emerald" },
         { id: "rotation", label: "In rotation", value: rotation.length, icon: "route", tint: "amber" },
-        { id: "census", label: "Total census", value: totalCensus + " / " + totalCap, icon: "bed-double", tint: "slate" },
-        ...commsStatTiles(commsMetrics),
+        { id: "census", label: "Total census", value: censusVal, icon: "bed-double", tint: "slate" },
+        { id: "tta_median", label: "Time to accept (median)", value: ttaMedian, icon: "timer", tint: "blue" },
+        { id: "consult_response", label: "Consult response (avg)", value: consultResp, icon: "stethoscope", tint: "emerald" },
+        { id: "messages_7d", label: "Messages (7 days)", value: msgs7d, icon: "message-square", tint: "amber" },
+        { id: "stat_ack", label: "STAT ack (avg)", value: statAck, icon: "siren", tint: "slate" },
       ]} />
-      {(() => {
-        const rpt = (typeof useStore === "function" ? useStore() : {}).opsReport;
-        if (!rpt) return null;
-        return (
-          <div style={{ display: "flex", gap: 14, marginBottom: 12 }}>
-            <StatTile label="Time to accept (median)" value={rpt.assignments.timeToAcceptMinMedian != null ? rpt.assignments.timeToAcceptMinMedian + " min" : "—"} icon="timer" tint="blue" />
-            <StatTile label="Consult response (avg)" value={rpt.consults.responseMinAvg != null ? rpt.consults.responseMinAvg + " min" : "—"} icon="stethoscope" tint="emerald" />
-            <StatTile label="Messages (7 days)" value={rpt.messaging.last7d} icon="message-square" tint="amber" />
-            <StatTile label="STAT ack (avg)" value={rpt.messaging.statAckMinAvg != null ? rpt.messaging.statAckMinAvg + " min" : "—"} icon="siren" tint="slate" />
-          </div>
-        );
-      })()}
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 18, fontSize: 12, color: "var(--muted-foreground)" }}>
         <Icon name="info" size={13} />
         <span><b style={{ fontWeight: 600, color: "var(--foreground)" }}>{totalCensus}</b> patients across {providers.length} providers · {totalCap - totalCensus} beds open. Census is entered manually for now — automatic <span style={{ fontWeight: 600 }}>EPIC (FHIR)</span> sync is planned.</span>

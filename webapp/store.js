@@ -231,6 +231,12 @@
       // by an arbitrary string (e.g. "hospitalist:stats"). Same mechanism as
       // dashLayout but for individual KPI tiles — show/hide, drag-reorder, reset.
       statLayout: {},
+      // Per-key user-created stat tiles: { [key]: [{ id, label, source,
+      // metricKey, manualValue, icon, tint }] }. Users build their own KPI
+      // boxes in the CustomizableStats edit mode — either mirroring a live
+      // metric from the dashboard's catalog (source:"metric") or showing a
+      // typed value (source:"manual"). Auto-persists like every other state key.
+      customStats: {},
       // Server-computed comms KPIs ({ messages7d, statAckAvgSec,
       // consultResponseAvgSec }). Null until loadCommsMetrics() fills it (the
       // live override in api-bridge.js fetches the real numbers).
@@ -568,6 +574,11 @@
     var order = (saved.order || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
     allIds.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
     return { order: order, hidden: hidden };
+  }
+
+  // User-created custom stat tiles for a given key (empty array when none).
+  function customStatsFor(key) {
+    return (state.customStats && state.customStats[key]) || [];
   }
 
   /* ---- audit / notify helpers ------------------------------------------- */
@@ -1076,6 +1087,30 @@
       });
     },
 
+    /* user-created custom stat tiles — per key: build / delete a bespoke KPI box.
+       def = { label, source, metricKey, manualValue, icon, tint }. Ids are stable
+       ("custom:"…) so they flow through statLayout order/hidden like any tile. */
+    addCustomStat: function (key, def) {
+      set(function (s) {
+        var entry = Object.assign({ id: "custom:" + uid("cs") }, def);
+        var list = ((s.customStats && s.customStats[key]) || []).concat([entry]);
+        s.customStats = Object.assign({}, s.customStats, (function () { var o = {}; o[key] = list; return o; })());
+        return s;
+      });
+    },
+    removeCustomStat: function (key, id) {
+      set(function (s) {
+        var list = ((s.customStats && s.customStats[key]) || []).filter(function (e) { return e.id !== id; });
+        s.customStats = Object.assign({}, s.customStats, (function () { var o = {}; o[key] = list; return o; })());
+        // Scrub the deleted id from any saved layout so no dangling refs remain.
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        if (cur.order) cur.order = cur.order.filter(function (x) { return x !== id; });
+        if (cur.hidden) cur.hidden = cur.hidden.filter(function (x) { return x !== id; });
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+
     /* comms KPIs — no-op in the pure-demo store; api-bridge.js overrides this to
        fetch real numbers from /api/metrics/comms. Defined so callers never throw. */
     loadCommsMetrics: function () {},
@@ -1359,7 +1394,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
