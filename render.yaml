@@ -1,11 +1,20 @@
-# Render Blueprint — one public URL for the DocTurn demo.
-# In Render: New → Blueprint → pick this repo/branch. It builds and starts a
-# free web service. The app self-seeds an in-process database on first boot,
-# so there are no secrets or external database to configure for the demo.
+# Render Blueprint — one public URL for DocTurn, backed by a PERSISTENT database.
+# In Render: New → Blueprint → pick this repo/branch. It provisions a managed
+# Postgres and a web service wired to it, so accounts, messages and attachments
+# survive restarts and redeploys (a real multi-person test, not a throwaway demo).
+# The app applies its own schema on first boot and self-seeds the demo org, so
+# there is nothing to run by hand.
 #
 # Demo logins (org code ISPN, password "docturn"): chen / er.doc / director /
 # er.director ; developer is user "dev" on org code DOCTURN (the app picks the
 # right org automatically when you choose a role on the sign-in screen).
+# Real testers can also self-register their own accounts from the sign-in screen.
+databases:
+  - name: docturn-db
+    plan: free
+    databaseName: docturn
+    user: docturn
+
 services:
   - type: web
     name: docturn-demo
@@ -17,7 +26,12 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Loosen the auth rate limiter for a shared demo (role switching logs in).
+      # Loosen the auth rate limiter for a shared test (role switching logs in).
       - key: RATE_LIMIT
         value: "off"
-      # No DATABASE_URL → in-process PGlite, auto-seeded on boot (demo only).
+      # Persistent Postgres — the app creates its schema + seeds on first boot.
+      # Data now survives restarts/redeploys (unlike the old in-process PGlite).
+      - key: DATABASE_URL
+        fromDatabase:
+          name: docturn-db
+          property: connectionString

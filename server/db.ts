@@ -116,7 +116,14 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
       db,
       ephemeral: false,
       ensureSchema: async () => {
-        // Real Postgres schema is managed by `npm run db:push` (drizzle-kit).
+        // A fresh cloud Postgres (e.g. a new Render database) starts with zero
+        // tables. Apply the SAME idempotent DDL we use for PGlite so the app
+        // self-provisions on first boot instead of crashing on an empty schema.
+        // SCHEMA_SQL is standard Postgres (CREATE TABLE IF NOT EXISTS + additive
+        // ALTER … ADD COLUMN IF NOT EXISTS), so re-running it every start is a
+        // no-op once provisioned. (`drizzle-kit push` remains available for
+        // richer migrations, but is no longer required just to boot.)
+        await pool.query(SCHEMA_SQL);
       },
       close: async () => {
         await pool.end();
