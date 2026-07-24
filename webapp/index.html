@@ -18,6 +18,15 @@
       navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
     });
   }
+  // Capture the install prompt as early as possible — browsers fire
+  // beforeinstallprompt before React mounts, so stash it for the InstallPrompt
+  // banner to use when the user taps "Install".
+  window.__dtInstallEvent = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__dtInstallEvent = e;
+    window.dispatchEvent(new Event("dt-installable"));
+  });
 </script>
 <link rel="stylesheet" href="tokens.css">
 <style>
@@ -56,6 +65,7 @@
 <div id="root"></div>
 
 <script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="InstallPrompt.jsx"></script>
 <script type="text/babel" src="CustomizableStats.jsx"></script>
 <script type="text/babel" src="LoginScreen.jsx"></script>
 <script type="text/babel" src="LockScreen.jsx"></script>
@@ -279,7 +289,7 @@ function App() {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
@@ -412,6 +422,7 @@ function App() {
       <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
+        <InstallPrompt />
         {/* mobile top bar (nav lives in the bottom tab bar) */}
         <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -479,6 +490,7 @@ function App() {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)" }}>
       <ThemeStyle theme={st.theme} />
       <SyntheticBanner on={st.syntheticData} />
+      <InstallPrompt />
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
