@@ -74,18 +74,6 @@ function Messaging() {
     });
   };
   const removePending = (id) => setPending((prev) => prev.filter((p) => p.id !== id));
-  // Quick-reply templates — role-aware canned phrases (TigerConnect/PerfectServe
-  // ship configurable message templates). Tapping one fills the draft so it can
-  // still be edited or re-prioritized before sending; only shown while the draft
-  // is empty so it never gets in the way of typing.
-  const QUICK_REPLIES = {
-    hospitalist: ["Accepting — will see within 30 min.", "At cap — please route to the next hospitalist.", "Please call me re: this patient.", "Plan updated in the chart."],
-    er_doctor: ["New admit ready for sign-out.", "Consult requested — please advise.", "Please call me re: this patient.", "Bed assignment needed."],
-    er_director: ["Please call me re: this patient.", "Consult requested — please advise.", "Coverage question — can you take this?"],
-    director: ["Please call me re: this patient.", "Coverage question — can you take this?", "Thanks — received."],
-    _default: ["Please call me re: this patient.", "Thanks — received.", "Will do.", "Acknowledged."],
-  };
-  const quickReplies = QUICK_REPLIES[(st.session && st.session.role)] || QUICK_REPLIES._default;
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
   // When forwarding, open the chosen thread (person or role) and then send the
   // forwarded text into it once the conversation resolves (__activeConvo).
@@ -358,16 +346,6 @@ function Messaging() {
             ))}
           </div>
         )}
-        {/* Quick replies — tap to fill the draft (still editable before send).
-            Hidden once the user starts typing so it never blocks the composer. */}
-        {!conv.broadcast && !draft.trim() && (
-          <div style={{ flex: "none", padding: isMobile ? "8px 12px 0" : "8px 16px 0", background: "#fff", display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            {quickReplies.map((t) => (
-              <button key={t} onClick={() => { setDraft(t); if (a.setTyping) a.setTyping(conv.id, true); }} title="Insert quick reply"
-                style={{ flex: "none", padding: isMobile ? "7px 13px" : "5px 11px", borderRadius: 99, cursor: "pointer", fontSize: isMobile ? 13 : 12, fontWeight: 500, fontFamily: "inherit", whiteSpace: "nowrap", color: "var(--foreground)", background: "var(--secondary)", border: "1px solid var(--border)" }}>{t}</button>
-            ))}
-          </div>
-        )}
         {!conv.broadcast && (
           <div style={{ flex: "none", padding: "8px 16px 0", background: "#fff", display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginRight: 2 }}>Priority</span>
@@ -388,7 +366,7 @@ function Messaging() {
           <div style={{ flex: 1 }}>
             <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
-              style={{ width: "100%", height: isMobile ? 46 : 40, border: "1px solid " + (priority === "stat" ? "#B91C1C" : priority === "urgent" ? "#B45309" : "var(--input)"), borderRadius: isMobile ? 23 : "var(--radius-md)", padding: isMobile ? "0 18px" : "0 14px", fontSize: isMobile ? 16 : 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#fff" }} />
+              style={{ width: "100%", height: isMobile ? 46 : 40, border: (priority === "stat" ? "2px solid #B91C1C" : priority === "urgent" ? "2px solid #B45309" : "1.5px solid #94A3B8"), borderRadius: isMobile ? 23 : "var(--radius-md)", padding: isMobile ? "0 18px" : "0 14px", fontSize: isMobile ? 16 : 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#F1F5F9" }} />
           </div>
           {isMobile ? <button onClick={send} title="Send" style={{ width: 46, height: 46, flex: "none", borderRadius: 99, border: "none", background: draft.trim() ? "var(--primary)" : "#93C5FD", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Icon name="send" size={20} color="#fff" /></button> : <Button icon="send" onClick={send}>Send</Button>}
         </div>
