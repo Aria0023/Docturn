@@ -7,7 +7,7 @@
  * is cached. /api and /ws are NEVER cached — those responses can carry PHI and
  * must always go to the network over TLS. Push payloads are content-free.
  */
-const VERSION = "docturn-v1";
+const VERSION = "docturn-v2";
 
 // Core shell so the app opens offline. Unhashed dev files → we revalidate in the
 // background (stale-while-revalidate) so a pull is picked up on next load.
@@ -45,20 +45,21 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: stale-while-revalidate.
+  // Static assets: NETWORK-FIRST. The dev files (index.html scripts, .jsx, css)
+  // are unhashed, so serving cache-first / stale-while-revalidate meant a deploy
+  // only showed up on the SECOND load — installed PWAs would sit on stale code
+  // indefinitely. Fetch fresh when online (and refresh the cache), fall back to
+  // the cached copy only when the network is unavailable.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    }),
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
+        }
+        return res;
+      })
+      .catch(() => caches.match(req)),
   );
 });
 
