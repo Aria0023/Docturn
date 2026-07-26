@@ -109,7 +109,7 @@ function Messaging() {
     p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <div style={{ display: "flex", height: isMobile ? "calc(100vh - 56px - 58px)" : "calc(100vh - 64px)" }}>
+    <div style={{ display: "flex", height: isMobile ? "100%" : "calc(100vh - 64px)" }}>
       {/* List */}
       {showList && (
       <div style={{ width: isMobile ? "100%" : 312, flex: isMobile ? "1 1 auto" : "none", borderRight: isMobile ? "none" : "1px solid var(--border)", background: "#fff", display: "flex", flexDirection: "column" }}>
@@ -257,7 +257,7 @@ function Messaging() {
           </div>
         )}
 
-        <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: isMobile ? "14px 12px" : 20, display: "flex", flexDirection: "column", gap: isMobile ? 10 : 12 }}>
+        <div ref={threadRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: isMobile ? "14px 12px" : 20, display: "flex", flexDirection: "column", gap: isMobile ? 10 : 12 }}>
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
             <span style={{ background: "#fff", padding: "3px 12px", borderRadius: 99, border: "1px solid var(--border)" }}>
               <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />Encrypted in transit · access audited

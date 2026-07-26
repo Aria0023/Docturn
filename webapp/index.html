@@ -419,7 +419,7 @@ function App() {
     const msgUnread = (st.conversations || []).some((c) => c.unread > 0);
     const TABBAR_H = 58;
     return (
-      <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
+      <div style={{ height: "100dvh", background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
         <InstallPrompt />
@@ -435,7 +435,7 @@ function App() {
           <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? 0 : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
 
         {/* Bottom tab bar */}
         <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_H, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
