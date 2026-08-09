@@ -6,6 +6,10 @@ import {
   buildComplianceReport,
   buildEvidencePack,
 } from "../compliance/report.js";
+import {
+  listPolicyTemplates,
+  renderPolicy,
+} from "../compliance/policies.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
 
@@ -97,6 +101,62 @@ export function registerComplianceRoutes(app: Express) {
         riskLevel: "medium",
       });
       res.json(row);
+    },
+  );
+
+  /**
+   * The policy starter pack: one editable draft per MANUAL control, so the
+   * controls a human must answer arrive with a document instead of a blank.
+   * Metadata only here — each row says whether that control is already
+   * attested, so the screen can show what is drafted vs. what is signed.
+   */
+  app.get(
+    "/api/compliance/policies",
+    requireAuth,
+    requireRole(...COMPLIANCE_ROLES),
+    async (req, res) => {
+      const me = currentUser(req);
+      const rows = await storage().listAttestations(me.organizationId);
+      const attested = new Map(rows.map((r) => [r.controlId, r]));
+      res.json({
+        policies: listPolicyTemplates().map((t) => ({
+          ...t,
+          attested: attested.has(t.controlId),
+          attestationStatus: attested.get(t.controlId)?.status ?? null,
+        })),
+      });
+    },
+  );
+
+  /**
+   * One rendered policy, with the caller's own organization name and today's
+   * date substituted. 404 for anything that is not a manual control with a
+   * template — an automated control is never given a policy to sign.
+   */
+  app.get(
+    "/api/compliance/policies/:controlId",
+    requireAuth,
+    requireRole(...COMPLIANCE_ROLES),
+    async (req, res) => {
+      const me = currentUser(req);
+      const org = await storage().getOrganization(me.organizationId);
+      if (!org) return res.status(404).json({ error: "not_found" });
+      const rendered = renderPolicy(String(req.params.controlId ?? ""), {
+        organizationName: org.name,
+        effectiveDate: new Date().toISOString().slice(0, 10),
+      });
+      if (!rendered) return res.status(404).json({ error: "unknown_policy" });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "compliance.policy_rendered",
+        resourceType: "compliance_policy",
+        resourceId: null,
+        // Control id only — never the document text.
+        details: { controlId: rendered.controlId },
+        riskLevel: "low",
+      });
+      res.json(rendered);
     },
   );
 

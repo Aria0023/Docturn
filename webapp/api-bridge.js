@@ -997,6 +997,21 @@
       throw e;
     });
   };
+  // Policy starter pack: metadata for every manual control that ships with a
+  // draft, and the rendered document itself (placeholders filled server-side
+  // from the caller's real organization — the client never templates PHI or
+  // org identity itself).
+  DT.actions.loadPolicyTemplates = function () {
+    return get("/api/compliance/policies").then(function (r) {
+      return (r && r.policies) || [];
+    }).catch(function () { return []; });
+  };
+  DT.actions.loadPolicy = function (controlId) {
+    return get("/api/compliance/policies/" + encodeURIComponent(controlId)).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open the draft policy", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
   DT.actions.exportEvidence = function () {
     return get("/api/compliance/evidence").then(function (pack) {
       DT.set(function (s) { s.__toast = { tone: "accepted", title: "Evidence pack ready", msg: "Downloading the auditor JSON export." }; return s; });

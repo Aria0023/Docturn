@@ -240,6 +240,48 @@ await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await 
   rec("store defaults to synthetic-data mode on", DT.getState().syntheticData === true, "flag=" + DT.getState().syntheticData);
 }
 
+// Compliance monitor — POLICY STARTER PACK. The manual ("Needs human") controls
+// must each offer a starter draft, and the draft the Compliance monitor screen
+// opens must come back rendered for THIS organization with no unresolved
+// {placeholder} left in it. Driven through the real bridge actions the screen
+// calls (loadPolicyTemplates / loadPolicy), against the live server.
+await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+{
+  DT.actions.setNav("compliance-monitor");
+  for (let i = 0; i < 10; i++) await flush();
+
+  const report = await DT.actions.loadComplianceStatus().catch(() => null);
+  const manualIds = ((report || {}).controls || []).filter((c) => c.kind === "manual").map((c) => c.id);
+  const metas = await DT.actions.loadPolicyTemplates();
+  const haveTemplate = new Set((metas || []).map((m) => m.controlId));
+  rec("policy starter pack covers every manual control",
+    manualIds.length >= 13 && manualIds.every((id) => haveTemplate.has(id)),
+    "manual=" + manualIds.length + " templates=" + (metas || []).length +
+    " missing=" + JSON.stringify(manualIds.filter((id) => !haveTemplate.has(id))));
+  rec("policy list is metadata only (no document bodies over the wire)",
+    (metas || []).every((m) => !m.body && !m.markdown && (m.actionRequired || "").length > 40),
+    "sample=" + JSON.stringify((metas || [])[0] || {}).slice(0, 160));
+
+  const doc = await DT.actions.loadPolicy("risk-analysis").catch((e) => ({ error: String(e && e.message) }));
+  const md = (doc && doc.markdown) || "";
+  const orgName = ((report || {}).organization || {}).name || "";
+  rec("draft policy renders a real document for this organization",
+    md.length > 1500 && !!orgName && md.includes(orgName),
+    "len=" + md.length + " org=" + orgName);
+  rec("rendered draft leaves NO unresolved placeholder",
+    md.length > 0 && !/\{[a-zA-Z]+\}/.test(md),
+    "leftover=" + JSON.stringify((md.match(/\{[a-zA-Z]+\}/g) || []).slice(0, 3)));
+  rec("process controls say plainly that signing is not the control",
+    /do not sign this page/i.test((doc && doc.actionRequired) || "") && /HealthIT\.gov/.test(md),
+    "action=" + String((doc && doc.actionRequired) || "").slice(0, 90));
+
+  const auto = await DT.actions.loadPolicy("auth-rate-limit").catch(() => null);
+  rec("an AUTOMATED control has no policy to sign", auto === null, "auto=" + JSON.stringify(auto).slice(0, 80));
+
+  DT.actions.setNav("dashboard");
+  await flush();
+}
+
 // developer enters an organization's FULL portal (org-scoped admin context) so
 // every per-org surface — compliance, directory, board, settings — is real.
 await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();

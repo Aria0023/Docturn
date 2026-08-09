@@ -1383,6 +1383,10 @@
     loadComplianceStatus: function () { return Promise.resolve(null); },
     saveAttestation: function () { return Promise.resolve(null); },
     exportEvidence: function () { return Promise.resolve(null); },
+    /* policy starter pack — same story: the drafts are rendered server-side
+       against the real organization, so the prototype has none. */
+    loadPolicyTemplates: function () { return Promise.resolve([]); },
+    loadPolicy: function () { return Promise.resolve(null); },
     // Show/hide a specialty in the ER route-assignment consult picker (does NOT
     // delete the director-managed consult service + roster).
     toggleConsultHidden: function (name) {

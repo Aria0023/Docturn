@@ -121,7 +121,102 @@ function CmAttestEditor({ control, onSave }) {
   );
 }
 
-function CmControlRow({ control, onSave }) {
+/* Draft-policy modal — the starter document for a control code cannot measure.
+   Rendered server-side against the real organization name and today's date, so
+   the client never templates anything itself. Presented as plain text on
+   purpose: no markdown library, no dependency, and an auditor-ready .md is what
+   the org actually needs to edit.
+
+   The action the organization must PERFORM sits above the document, because for
+   risk-analysis, backup-tested and access-review, signing the page is not the
+   control — running the process is. */
+function CmPolicyModal({ meta, doc, error, onClose }) {
+  const [copied, setCopied] = React.useState(false);
+  const md = (doc && doc.markdown) || "";
+  const cites = (doc && doc.hipaa) || (meta && meta.hipaa) || [];
+  const action = (doc && doc.actionRequired) || (meta && meta.actionRequired) || "";
+
+  const download = function () {
+    if (!md) return;
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "docturn-policy-" + meta.controlId + ".md";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  };
+
+  const copy = function () {
+    if (!md) return;
+    const done = function () { setCopied(true); setTimeout(function () { setCopied(false); }, 1800); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      Promise.resolve(navigator.clipboard.writeText(md)).then(done, function () {});
+      return;
+    }
+    // Older/embedded webviews: fall back to a throwaway textarea.
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = md;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      done();
+    } catch (e) { /* clipboard unavailable — the download button still works */ }
+  };
+
+  return (
+    <Modal title={(doc && doc.title) || (meta && meta.title) || "Draft policy"}
+      subtitle={"Starter draft for " + meta.controlId + " — edit it, approve it, then attest."}
+      icon="file-text" width={880} onClose={onClose}
+      children={
+        <div data-policy-modal={meta.controlId} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* What must actually happen — first, and unmissable. */}
+          {action && (
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "12px 14px", borderRadius: "var(--radius-md)", background: "var(--status-pending-bg)", border: "1px solid var(--status-pending)" }}>
+              <Icon name="alert-triangle" size={16} color="var(--status-pending)" style={{ marginTop: 1, flex: "none" }} />
+              <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                <div style={{ fontWeight: 800, marginBottom: 2 }}>What must actually happen</div>
+                <span data-policy-action={meta.controlId}>{action}</span>
+              </div>
+            </div>
+          )}
+
+          {cites.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {cites.map(function (c) {
+                return <span key={c} className="ds-mono" style={{ fontSize: 10.5, fontWeight: 600, padding: "2px 7px", borderRadius: "var(--radius-full)", background: "var(--secondary)", color: "var(--muted-foreground)" }}>{c}</span>;
+              })}
+            </div>
+          )}
+
+          {error && (
+            <div style={{ padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", color: "var(--destructive)", fontSize: 12.5 }}>
+              Couldn't load this draft ({String(error)}).
+            </div>
+          )}
+          {!doc && !error && (
+            <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Rendering the draft…</div>
+          )}
+          {doc && (
+            <pre data-policy-body={meta.controlId} className="ds-mono"
+              style={{ margin: 0, padding: 14, maxHeight: "52vh", overflow: "auto", background: "var(--secondary)", borderRadius: "var(--radius-md)", fontSize: 12, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", color: "var(--foreground)" }}>{md}</pre>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Button size="sm" icon="download" onClick={download}>Download .md</Button>
+            <Button size="sm" variant="outline" icon={copied ? "check" : "copy"} onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>A draft, not legal advice — review it before adopting.</span>
+          </div>
+        </div>
+      } />
+  );
+}
+
+function CmControlRow({ control, policy, onDraft, onSave }) {
   const [open, setOpen] = React.useState(false);
   const cites = (control.hipaa || []).concat(control.soc2 || []);
   return (
@@ -151,9 +246,18 @@ function CmControlRow({ control, onSave }) {
           )}
         </div>
         {control.kind === "manual" && (
-          <Button size="sm" variant="outline" icon={open ? "chevron-up" : "pencil"} onClick={() => setOpen(!open)}>
-            {open ? "Close" : (control.attestation ? "Update" : "Attest")}
-          </Button>
+          <div style={{ display: "flex", gap: 8, flex: "none", flexWrap: "wrap" }}>
+            {/* Only when a starter template actually exists for this control. */}
+            {policy && (
+              <span data-draft-policy={control.id}>
+                <Button size="sm" variant="outline" icon="file-text" onClick={() => onDraft(control.id)}
+                  title="Open an editable starter policy for this control">Draft policy</Button>
+              </span>
+            )}
+            <Button size="sm" variant="outline" icon={open ? "chevron-up" : "pencil"} onClick={() => setOpen(!open)}>
+              {open ? "Close" : (control.attestation ? "Update" : "Attest")}
+            </Button>
+          </div>
         )}
       </div>
       {open && control.kind === "manual" && <CmAttestEditor control={control} onSave={onSave} />}
@@ -166,6 +270,10 @@ function ComplianceMonitor() {
   const [report, setReport] = React.useState(null);
   const [err, setErr] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
+  // Policy starter pack: metadata for the manual controls that ship with a
+  // draft, plus whichever draft is currently open in the modal.
+  const [policies, setPolicies] = React.useState([]);
+  const [draft, setDraft] = React.useState(null); // { controlId, doc, error }
 
   const load = React.useCallback(function () {
     setLoading(true);
@@ -175,6 +283,20 @@ function ComplianceMonitor() {
   }, []);
 
   React.useEffect(function () { load(); }, [load]);
+
+  React.useEffect(function () {
+    Promise.resolve(a.loadPolicyTemplates())
+      .then(function (rows) { setPolicies(rows || []); })
+      .catch(function () { setPolicies([]); });
+  }, []);
+
+  const openDraft = function (controlId) {
+    const meta = policies.filter(function (p) { return p.controlId === controlId; })[0] || { controlId: controlId };
+    setDraft({ meta: meta, doc: null, error: null });
+    return Promise.resolve(a.loadPolicy(controlId))
+      .then(function (doc) { setDraft({ meta: meta, doc: doc || null, error: doc ? null : "no_document" }); })
+      .catch(function (e) { setDraft({ meta: meta, doc: null, error: String((e && e.message) || "failed") }); });
+  };
 
   const saveAttestation = function (patch) {
     return Promise.resolve(a.saveAttestation(patch)).then(function () { return load(); });
@@ -279,7 +401,8 @@ function ComplianceMonitor() {
                     {failing > 0 && <Badge status="rejected" icon="alert-triangle">{failing} failing</Badge>}
                   </div>
                   {g.rows.map(function (c) {
-                    return <CmControlRow key={c.id} control={c} onSave={saveAttestation} />;
+                    const policy = policies.filter(function (p) { return p.controlId === c.id; })[0] || null;
+                    return <CmControlRow key={c.id} control={c} policy={policy} onDraft={openDraft} onSave={saveAttestation} />;
                   })}
                 </Card>
               );
@@ -304,8 +427,12 @@ function ComplianceMonitor() {
           )}
         </React.Fragment>
       )}
+
+      {draft && (
+        <CmPolicyModal meta={draft.meta} doc={draft.doc} error={draft.error} onClose={function () { setDraft(null); }} />
+      )}
     </PageWrap>
   );
 }
 
-Object.assign(window, { ComplianceMonitor, CmStatusPill, CmReadinessRing });
+Object.assign(window, { ComplianceMonitor, CmStatusPill, CmReadinessRing, CmPolicyModal });

@@ -23,6 +23,7 @@ import {
   type ControlSeverity,
   type ControlStatus,
 } from "./controls.js";
+import { POLICY_TEMPLATE_BY_ID } from "./policies.js";
 
 export interface ControlReport extends ControlDef {
   status: ControlStatus;
@@ -241,6 +242,44 @@ export function summarize(controls: ControlReport[]): ComplianceSummary {
 }
 
 /**
+ * Policy-pack coverage for the evidence export: which manual controls ship with
+ * a starter document and which of them a human has actually attested to.
+ *
+ * METADATA ONLY. The rendered bodies run to hundreds of lines each and would
+ * bury the rest of the pack; an auditor wants to know that the policy exists
+ * and was approved, and then to read the approved document itself — not a
+ * generated draft embedded in a JSON export.
+ */
+function buildPolicyPackSection(
+  attestations: ComplianceAttestation[],
+): Record<string, unknown> {
+  const byControl = new Map(attestations.map((a) => [a.controlId, a]));
+  const manual = CONTROLS.filter((c) => c.kind === "manual");
+  const policies = manual.map((def) => {
+    const t = POLICY_TEMPLATE_BY_ID.get(def.id);
+    const row = byControl.get(def.id);
+    return {
+      controlId: def.id,
+      title: t?.title ?? def.title,
+      hasTemplate: !!t,
+      actionRequired:
+        t?.actionRequired ??
+        "No starter template exists for this control — it must be written from scratch.",
+      attested: !!row,
+      attestationStatus: row?.status ?? null,
+      citations: { hipaa: def.hipaa },
+    };
+  });
+  return {
+    note: "Starter policy drafts DocTurn provides for the organizational controls it cannot measure. A template is a draft, not an approved policy: only the attestation, and the approved document it points to, are evidence.",
+    manualControls: manual.length,
+    templatesAvailable: policies.filter((p) => p.hasTemplate).length,
+    attested: policies.filter((p) => p.attested).length,
+    policies,
+  };
+}
+
+/**
  * The auditor evidence pack. A single self-describing JSON document:
  * what was checked, what it found, who attested to what, aggregate audit-log
  * statistics, and — critically — what this evidence does NOT establish.
@@ -295,6 +334,7 @@ export async function buildEvidencePack(
       evidence: c.evidence,
       remediation: c.remediation,
     })),
+    policyPack: buildPolicyPackSection(attestations),
     attestationRegister: attestations.map((a) => ({
       controlId: a.controlId,
       status: a.status,
