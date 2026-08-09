@@ -26,9 +26,15 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # Loosen the auth rate limiter for a shared test (role switching logs in).
-      - key: RATE_LIMIT
-        value: "off"
+      # Auth rate limiting stays ON (50 login attempts / 15 min / IP) — it is the
+      # brute-force / credential-stuffing control (§164.308(a)(5)(ii)(C)). It was
+      # previously disabled for demo role-switching; with real accounts in a
+      # multi-person test that is a genuine security gap, and the compliance
+      # monitor reports it as a FAIL. The limit is generous enough for role
+      # switching; raise AUTH_RATE_LIMIT in server/config.ts if a shared-NAT
+      # site legitimately trips it — do not turn the limiter off.
+      - key: SESSION_SECRET
+        generateValue: true
       # Persistent Postgres — the app creates its schema + seeds on first boot.
       # Data now survives restarts/redeploys (unlike the old in-process PGlite).
       - key: DATABASE_URL
