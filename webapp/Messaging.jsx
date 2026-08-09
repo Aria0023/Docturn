@@ -239,7 +239,7 @@ function Messaging() {
             </div>
           </div>
           {/* No call button: voice isn't a real capability yet — no fake affordances. */}
-          <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages · access audited." })} />
+          <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages." })} />
         </div>
 
         {/* Auto-response availability banner for a 1:1 peer. */}
@@ -260,7 +260,7 @@ function Messaging() {
         <div ref={threadRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: isMobile ? "14px 12px" : 20, display: "flex", flexDirection: "column", gap: isMobile ? 10 : 12 }}>
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
             <span style={{ background: "#fff", padding: "3px 12px", borderRadius: 99, border: "1px solid var(--border)" }}>
-              <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />Encrypted in transit · access audited
+              <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />Encrypted in transit
             </span>
           </div>
           {conv.messages.map((m, i) => {

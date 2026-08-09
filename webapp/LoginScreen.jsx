@@ -93,7 +93,7 @@ function LoginScreen({ onLogin, appName }) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center" }}>
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />
-              HIPAA-aligned design · MFA available · 15-min sessions
+              Encrypted in transit · 15-min idle timeout · server-enforced roles
             </div>
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
               {demoMode && <React.Fragment>Demo — pick a role and sign in. Org <b style={{ color: "var(--foreground)", fontWeight: 600 }}>ISPN</b> · any password. </React.Fragment>}

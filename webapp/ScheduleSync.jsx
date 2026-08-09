@@ -3,8 +3,9 @@
      • API        — token-based pull (preferred, when the vendor exposes one)
      • Capture     — NO public API: DocTurn signs in on your behalf in a sandboxed
                      headless browser and parses the published on-call grid off the
-                     rendered page ("rip contents off screen"). Credentials encrypted
-                     server-side, read-only, every fetch audited.
+                     rendered page ("rip contents off screen"). The access token lives
+                     only in server-side config (never in the DB, never logged),
+                     read-only, every fetch audited.
    Self-contained demo component; manages its own local state. Director surface. */
 
 // Real captured grid — Tarzana ISP hospitalist schedule (amion.com/cgi-bin/ocs).
@@ -320,7 +321,7 @@ function ScheduleSync({ org }) {
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
                 <Icon name="info" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
-                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. Credentials are <b>encrypted (AES-256) at rest</b>, used only to fetch the schedule, and every capture is written to the audit log.</span>
+                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. The access token lives <b>only in server-side configuration</b> — never stored in the database, never written to a log, never returned by the API — is used only to fetch the schedule, and every capture is written to the audit log.</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <Field label="Sign-in URL" icon="link" value={loginUrl} onChange={setLoginUrl} />
@@ -488,7 +489,7 @@ function ScheduleSync({ org }) {
               <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 11.5, color: "var(--muted-foreground)" }}>
-              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · credentials encrypted at rest · every capture written to the audit log.
+              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · token kept in server-side config, never in the database · every capture written to the audit log.
             </div>
           </div>
         </div>
