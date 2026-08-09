@@ -275,6 +275,9 @@ function App() {
   const role = st.session && st.session.role;
   const nav = st.ui.nav;
   const [locked, setLocked] = React.useState(false);
+  // Locking the screen also drops the persisted snapshot — a locked workstation
+  // must not leave anything readable in localStorage for someone with devtools.
+  const lockNow = React.useCallback(() => { try { DT.purgePersisted(); } catch (e) {} setLocked(true); }, []);
   const isMobile = useIsMobile();
   const [drawer, setDrawer] = React.useState(false);
   React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
@@ -283,7 +286,7 @@ function App() {
   React.useEffect(() => {
     if (!role) return;
     let timer;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => setLocked(true), 15 * 60 * 1000); };
+    const arm = () => { clearTimeout(timer); timer = setTimeout(lockNow, 15 * 60 * 1000); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
@@ -438,7 +441,7 @@ function App() {
             <Icon name="bell" size={18} />
             {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
           </button>
-          <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
+          <button onClick={lockNow} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
         </header>
         {impersonationBanner}
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
@@ -505,7 +508,7 @@ function App() {
           onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
           notifCount={DT.unreadNotifs()}
           onBell={() => a.toggleNotif()}
-          onLock={() => setLocked(true)}
+          onLock={lockNow}
           right={st.syntheticData !== false ? <React.Fragment>
             <button onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
               title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"

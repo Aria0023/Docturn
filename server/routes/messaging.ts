@@ -6,7 +6,7 @@ import {
   markReadSchema,
   sendMessageSchema,
 } from "@shared/schema";
-import { appendAudit } from "../audit.js";
+import { appendAudit, logPhiAccess } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { isDnd, resolveCovering } from "../services/escalation.js";
 import { notificationDeps } from "../services/notifications.js";
@@ -304,6 +304,10 @@ export function registerMessagingRoutes(app: Express) {
       me.organizationId,
       me.id,
     );
+    // The list carries `lastMessage` (full content) for every thread, so it is a
+    // PHI read too. One row for the whole listing — a per-thread fan-out would
+    // bloat the log without telling an investigator anything more.
+    await logPhiAccess(req, "conversations");
     // Decorate with last message + unread count.
     const out = [];
     for (const c of convos) {
@@ -489,6 +493,13 @@ export function registerMessagingRoutes(app: Express) {
       if (!convo.participantIds.includes(me.id)) {
         return res.status(403).json({ error: "forbidden" });
       }
+      // This response carries full message bodies — a PHI read. Log it AFTER the
+      // participant check (a rejected read discloses nothing, so it must not
+      // create a PHI-access row) and exactly once for the whole thread.
+      await logPhiAccess(req, "conversation-messages", {
+        resourceId: id,
+        patientId: convo.patientId ?? null,
+      });
       const msgs = await storage().listMessages(me.organizationId, id);
       // Decorate each message with acknowledgement info so STAT senders can see
       // it was acknowledged and recipients know if they still owe an ack.

@@ -253,11 +253,51 @@ export const phiAccessLogs = pgTable("phi_access_logs", {
   organizationId: integer("organization_id").references(() => organizations.id),
   userId: integer("user_id").references(() => users.id),
   resource: text("resource").notNull(),
+  // WHICH record was read. `resource` alone ("conversation-messages") cannot
+  // answer §164.528 accounting-of-disclosures or scope a breach; these two ids
+  // can. No FK on purpose: the row must outlive the record it refers to (and a
+  // tenant deletion), and it must never carry clinical content — ids only.
+  resourceId: integer("resource_id"),
+  patientId: integer("patient_id"),
   method: text("method").notNull(),
   ip: text("ip"),
   userAgent: text("user_agent"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Six-year compliance archive (§164.316(b)(2)(i)). Audit / PHI-access / security
+ * rows are FK-bound to organizations + users, so deleting a tenant would delete
+ * exactly the records the rule says must be retained. Before a tenant cascade
+ * we copy them here, denormalized to TEXT (org code/name, username, display
+ * name) and with NO foreign keys, so the record survives its tenant intact and
+ * still answers "who did this, to what, when". Ids/actions only — never PHI.
+ */
+export const retainedComplianceRecords = pgTable(
+  "retained_compliance_records",
+  {
+    id: serial("id").primaryKey(),
+    sourceTable: text("source_table").notNull(),
+    sourceId: integer("source_id").notNull(),
+    organizationId: integer("organization_id"),
+    organizationCode: text("organization_code"),
+    organizationName: text("organization_name"),
+    userId: integer("user_id"),
+    userUsername: text("user_username"),
+    userDisplayName: text("user_display_name"),
+    action: text("action").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: integer("resource_id"),
+    patientId: integer("patient_id"),
+    method: text("method"),
+    ip: text("ip"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    riskLevel: text("risk_level").notNull().default("low"),
+    occurredAt: timestamp("occurred_at").notNull(),
+    archivedAt: timestamp("archived_at").notNull().defaultNow(),
+    archivedReason: text("archived_reason").notNull().default("organization_deleted"),
+  },
+);
 
 export const securityIncidents = pgTable("security_incidents", {
   id: serial("id").primaryKey(),
@@ -676,6 +716,9 @@ export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
 export type MessageAttachment = typeof messageAttachments.$inferSelect;
 export type InsertMessageAttachment = typeof messageAttachments.$inferInsert;
 export type AuditLog = typeof auditLogs.$inferSelect;
+export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
+export type RetainedComplianceRecord =
+  typeof retainedComplianceRecords.$inferSelect;
 export type OrgSetting = typeof orgSettings.$inferSelect;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 

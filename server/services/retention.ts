@@ -10,9 +10,21 @@ import { appendAudit } from "../audit.js";
  */
 export async function runMessageRetentionSweep(): Promise<number> {
   let total = 0;
+  let orgs: Awaited<ReturnType<ReturnType<typeof storage>["listOrganizations"]>>;
   try {
-    const orgs = await storage().listOrganizations();
-    for (const o of orgs) {
+    orgs = await storage().listOrganizations();
+  } catch (err) {
+    // Only a total failure to enumerate tenants aborts the sweep.
+    console.error("[retention] could not list organizations", err);
+    return 0;
+  }
+  for (const o of orgs) {
+    // Per-org isolation: one tenant's failure must never silently cancel the
+    // sweep for every tenant after it (which is what a loop-wide try/catch did
+    // — a single FK violation stopped retention platform-wide and nothing
+    // surfaced it). Failures are recorded as a HIGH-risk audit event, then the
+    // sweep continues.
+    try {
       const raw = await storage().getOrgSetting(o.id, "messageRetentionDays");
       const days = typeof raw === "number" ? raw : Number(raw);
       if (!Number.isFinite(days) || days <= 0) continue;
@@ -30,9 +42,19 @@ export async function runMessageRetentionSweep(): Promise<number> {
           riskLevel: "medium",
         });
       }
+    } catch (err) {
+      console.error(`[retention] sweep failed for org ${o.id}`, err);
+      await appendAudit({
+        organizationId: o.id,
+        userId: null,
+        action: "retention.sweep_failed",
+        resourceType: "organization",
+        resourceId: o.id,
+        // Error text only — never a message body or any other clinical content.
+        details: { error: String((err as Error)?.message ?? err).slice(0, 300) },
+        riskLevel: "high",
+      });
     }
-  } catch (err) {
-    console.error("[retention] sweep failed", err);
   }
   if (total) console.log(`[retention] purged ${total} expired message(s)`);
   return total;

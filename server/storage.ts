@@ -28,6 +28,7 @@ import {
   patients,
   pendingRegistrations,
   phiAccessLogs,
+  retainedComplianceRecords,
   securityIncidents,
   smsHistory,
   suggestions,
@@ -55,6 +56,7 @@ import {
   type PatientConsult,
   type PendingRegistration,
   type Patient,
+  type RetainedComplianceRecord,
   type User,
 } from "@shared/schema";
 
@@ -302,11 +304,22 @@ export interface IStorage {
     organizationId: number;
     userId: number;
     resource: string;
+    /** Id of the specific record read (conversation id, patient id, …). */
+    resourceId?: number | null;
+    /** Patient the read concerns, when the record is patient-linked. */
+    patientId?: number | null;
     method: string;
     ip?: string;
     userAgent?: string;
   }): Promise<void>;
   countPhiAccess(orgId: number): Promise<number>;
+  /** Copy an org's audit/PHI/security rows into the six-year retained archive. */
+  archiveComplianceRecords(orgId: number, reason: string): Promise<number>;
+  listRetainedComplianceRecords(
+    orgId?: number,
+    limit?: number,
+  ): Promise<RetainedComplianceRecord[]>;
+  countRetainedComplianceRecords(orgId?: number): Promise<number>;
 
   // ── continuous compliance monitoring (org-scoped) ────────────────────────────
   listAttestations(orgId: number): Promise<ComplianceAttestation[]>;
@@ -828,8 +841,19 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /**
-   * Hard-delete messages older than the cutoff (plus their delivery rows) for
-   * one org — the auditable retention purge. Returns the number purged.
+   * Hard-delete messages older than the cutoff (plus every row that references
+   * them) for one org — the auditable retention purge. Returns the number
+   * purged.
+   *
+   * FK-safe order matters: `message_attachments.message_id` and
+   * `message_delivery_status.message_id` both point at `messages`, so both must
+   * go first or Postgres rejects the message delete and the whole sweep no-ops.
+   * (Attachments were previously omitted, which made retention silently fail for
+   * any org that had ever attached a file.) These run as separate statements
+   * rather than one transaction: nothing else in this storage layer uses
+   * `db.transaction`, and the ordering above is already crash-safe — an
+   * interrupted purge leaves orphan-free data (children gone, parents intact)
+   * and the next sweep simply finishes the job.
    */
   async purgeMessagesOlderThan(orgId: number, cutoff: Date) {
     const old = await this.db
@@ -840,6 +864,9 @@ export class DatabaseStorage implements IStorage {
       );
     const ids = old.map((m) => m.id);
     if (ids.length === 0) return 0;
+    await this.db
+      .delete(messageAttachments)
+      .where(inArray(messageAttachments.messageId, ids));
     await this.db
       .delete(messageDeliveryStatus)
       .where(inArray(messageDeliveryStatus.messageId, ids));
@@ -997,11 +1024,17 @@ export class DatabaseStorage implements IStorage {
     organizationId: number;
     userId: number;
     resource: string;
+    resourceId?: number | null;
+    patientId?: number | null;
     method: string;
     ip?: string;
     userAgent?: string;
   }) {
-    await this.db.insert(phiAccessLogs).values(row);
+    await this.db.insert(phiAccessLogs).values({
+      ...row,
+      resourceId: row.resourceId ?? null,
+      patientId: row.patientId ?? null,
+    });
   }
   async countPhiAccess(orgId: number) {
     const [row] = await this.db
@@ -1032,6 +1065,127 @@ export class DatabaseStorage implements IStorage {
       .where(eq(phiAccessLogs.organizationId, orgId))
       .orderBy(desc(phiAccessLogs.createdAt))
       .limit(limit);
+  }
+
+  // ── six-year compliance archive (§164.316(b)(2)(i)) ──────────────────────────
+  /**
+   * Copy an org's audit / PHI-access / security rows into the retained archive
+   * before anything deletes them. Denormalizes the org and actor to TEXT so the
+   * record still says WHO did WHAT after the org and its users are gone, and
+   * carries no foreign keys so nothing can cascade it away. Idempotent-ish by
+   * design: re-archiving would duplicate rows, so it is called only from the
+   * tenant-delete path.
+   */
+  async archiveComplianceRecords(orgId: number, reason: string) {
+    const [org] = await this.db
+      .select()
+      .from(organizations)
+      .where(eq(organizations.id, orgId));
+    const orgUsers = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.organizationId, orgId));
+    const userById = new Map(orgUsers.map((u) => [u.id, u]));
+    const who = (userId: number | null) => {
+      const u = userId != null ? userById.get(userId) : undefined;
+      return {
+        userId: userId ?? null,
+        userUsername: u?.username ?? null,
+        userDisplayName: u?.displayName ?? null,
+      };
+    };
+    const common = {
+      organizationId: orgId,
+      organizationCode: org?.code ?? null,
+      organizationName: org?.name ?? null,
+      archivedReason: reason,
+    };
+
+    const audits = await this.db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId));
+    const phi = await this.db
+      .select()
+      .from(phiAccessLogs)
+      .where(eq(phiAccessLogs.organizationId, orgId));
+    const incidents = await this.db
+      .select()
+      .from(securityIncidents)
+      .where(eq(securityIncidents.organizationId, orgId));
+
+    const rows = [
+      ...audits.map((a) => ({
+        ...common,
+        ...who(a.userId),
+        sourceTable: "audit_logs",
+        sourceId: a.id,
+        action: a.action,
+        resourceType: a.resourceType ?? null,
+        resourceId: a.resourceId ?? null,
+        patientId: null,
+        method: null,
+        ip: null,
+        details: a.details ?? null,
+        riskLevel: a.riskLevel,
+        occurredAt: a.createdAt,
+      })),
+      ...phi.map((p) => ({
+        ...common,
+        ...who(p.userId),
+        sourceTable: "phi_access_logs",
+        sourceId: p.id,
+        action: "phi.read",
+        resourceType: p.resource,
+        resourceId: p.resourceId ?? null,
+        patientId: p.patientId ?? null,
+        method: p.method,
+        ip: p.ip ?? null,
+        details: null,
+        riskLevel: "medium",
+        occurredAt: p.createdAt,
+      })),
+      ...incidents.map((s) => ({
+        ...common,
+        ...who(s.userId),
+        sourceTable: "security_incidents",
+        sourceId: s.id,
+        action: "security." + s.type,
+        resourceType: "security_incident",
+        resourceId: null,
+        patientId: null,
+        method: null,
+        ip: null,
+        details: { description: s.description } as Record<string, unknown>,
+        riskLevel: s.severity,
+        occurredAt: s.createdAt,
+      })),
+    ];
+    if (!rows.length) return 0;
+    await this.db.insert(retainedComplianceRecords).values(rows);
+    return rows.length;
+  }
+  /** Retained compliance history, optionally for one (possibly deleted) org. */
+  async listRetainedComplianceRecords(orgId?: number, limit = 500) {
+    const q = this.db.select().from(retainedComplianceRecords);
+    const rows = await (orgId != null
+      ? q.where(eq(retainedComplianceRecords.organizationId, orgId))
+      : q
+    )
+      .orderBy(desc(retainedComplianceRecords.occurredAt))
+      .limit(limit);
+    return rows;
+  }
+  async countRetainedComplianceRecords(orgId?: number) {
+    const [row] = await (orgId != null
+      ? this.db
+          .select({ n: sql<number>`count(*)` })
+          .from(retainedComplianceRecords)
+          .where(eq(retainedComplianceRecords.organizationId, orgId))
+      : this.db
+          .select({ n: sql<number>`count(*)` })
+          .from(retainedComplianceRecords));
+    return Number(row?.n ?? 0);
   }
 
   // ── continuous compliance monitoring ─────────────────────────────────────────
@@ -1291,6 +1445,14 @@ export class DatabaseStorage implements IStorage {
     // those imply) in FK-safe order — children before parents — then the users
     // and finally the org itself. This lets a developer delete an entire tenant
     // from the Danger Zone, matching how platforms (GitHub/Stripe) delete orgs.
+    //
+    // EXCEPT the compliance trail: audit_logs / phi_access_logs /
+    // security_incidents are FK-bound to organizations + users, so they cannot
+    // stay behind — but §164.316(b)(2)(i) requires six years of retention. They
+    // are copied into `retained_compliance_records` FIRST (denormalized, no FKs)
+    // and only then deleted, so the history outlives the tenant.
+    await this.archiveComplianceRecords(id, "organization_deleted");
+
     const orgUsers = await this.db
       .select({ id: users.id })
       .from(users)
@@ -1303,7 +1465,15 @@ export class DatabaseStorage implements IStorage {
     const messageIds = orgMessages.map((m) => m.id);
 
     // leaf rows that point at messages / broadcasts / assignments
+    // Attachments reference messages(id) — delete them before the messages, or
+    // the whole cascade fails with a FK violation (surfaced as 409
+    // org_has_linked_records for any tenant that ever uploaded a file).
+    await this.db.delete(messageAttachments).where(eq(messageAttachments.organizationId, id));
     if (messageIds.length) {
+      // Belt and braces: an attachment uploaded by a since-moved user could
+      // carry a different organization_id while still pointing at this org's
+      // message. Clear those by message id too.
+      await this.db.delete(messageAttachments).where(inArray(messageAttachments.messageId, messageIds));
       await this.db.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, messageIds));
     }
     await this.db.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));

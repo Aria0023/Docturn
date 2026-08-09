@@ -1556,6 +1556,40 @@
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
   }
 
+  // Session restore on load. The store no longer persists any clinical slice
+  // (PHI never touches localStorage), so a page refresh must re-establish who
+  // the user is from the server's session cookie and re-fetch everything.
+  // Deliberately rawApi, NOT the self-healing api(): an expired/absent session
+  // must land on the login screen, never silently sign in a demo account.
+  if (!DEMO_TOKEN) {
+    var savedSess = (DT.getState() && DT.getState().session) || null;
+    rawApi("GET", "/api/user").then(function (u) {
+      if (!u || u.id == null) throw new Error("no_session");
+      var orgCode = orgForRole(u.role, savedSess && savedSess.org);
+      lastAuth = { role: u.role, org: orgCode };
+      meId = u.id;
+      auditLoaded = false;
+      prefsLoaded = false;
+      dashHydrated = false; lastDashSnap = null;
+      DT.set(function (s) {
+        s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.loginError = null;
+        return s;
+      });
+      connectWs();
+      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrateMyPrefs();
+      enableWebPush();
+      if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
+      hydrate(u.role).then(function () { hydrateConversations(); });
+    }).catch(function () {
+      // No live server session — drop the restored shell back to the login
+      // screen rather than showing a signed-in UI with no data behind it.
+      if (savedSess) DT.set(function (s) { s.session = null; return s; });
+    });
+  }
+
   // Load public client config (synthetic-data flag + app name) before/after login
   // so the test-only banner reflects the server. Defaults to synthetic ON.
   rawApi("GET", "/api/config").then(function (cfg) {

@@ -310,11 +310,44 @@ CREATE TABLE IF NOT EXISTS phi_access_logs (
   organization_id INTEGER REFERENCES organizations(id),
   user_id INTEGER REFERENCES users(id),
   resource TEXT NOT NULL,
+  resource_id INTEGER,
+  patient_id INTEGER,
   method TEXT NOT NULL,
   ip TEXT,
   user_agent TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- WHICH record was read (accounting of disclosures / breach scoping). Additive
+-- and nullable so stores written before these columns existed keep their rows.
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS resource_id INTEGER;
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS patient_id INTEGER;
+
+-- Six-year compliance archive: audit / PHI-access / security rows copied out of
+-- a tenant before it is deleted, denormalized and WITHOUT foreign keys so they
+-- survive the cascade. Ids + actions only, never clinical content.
+CREATE TABLE IF NOT EXISTS retained_compliance_records (
+  id SERIAL PRIMARY KEY,
+  source_table TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  organization_id INTEGER,
+  organization_code TEXT,
+  organization_name TEXT,
+  user_id INTEGER,
+  user_username TEXT,
+  user_display_name TEXT,
+  action TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id INTEGER,
+  patient_id INTEGER,
+  method TEXT,
+  ip TEXT,
+  details JSONB,
+  risk_level TEXT NOT NULL DEFAULT 'low',
+  occurred_at TIMESTAMP NOT NULL,
+  archived_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  archived_reason TEXT NOT NULL DEFAULT 'organization_deleted'
+);
+CREATE INDEX IF NOT EXISTS retained_compliance_org_idx ON retained_compliance_records(organization_id);
 
 CREATE TABLE IF NOT EXISTS security_incidents (
   id SERIAL PRIMARY KEY,

@@ -208,7 +208,9 @@
   function seed() {
     var t0 = now();
     return {
-      v: 10,
+      // v11: persistence became a non-PHI allowlist — any v10 blob (a full
+      // state dump, clinical slices included) is discarded rather than loaded.
+      v: 11,
       // Test-only by default until an operator deliberately turns it off for a
       // compliant real-PHI deployment (server: SYNTHETIC_DATA=false).
       syntheticData: true,
@@ -473,12 +475,48 @@
   }
 
   /* ---- persistence ------------------------------------------------------- */
+  /* PHI NEVER TOUCHES localStorage.
+     The store used to serialize the ENTIRE state object, which meant server
+     PHI — conversation message bodies, the patient board, the hospitalist
+     census, admissions, pending assignments, the ER sent board — sat readable
+     in a shared workstation's browser storage, and survived logout.
+
+     Persistence is now an explicit ALLOWLIST of non-clinical UI/session
+     preferences. Everything not listed here stays in memory only and is
+     re-fetched from the server after sign-in (api-bridge restores the session
+     from the server cookie on load and re-hydrates every clinical slice).
+
+     Deliberately NOT persisted (PHI or PHI-adjacent):
+       conversations (message bodies) · board · myPatients · myAdmissions ·
+       pending · sent · admissions · broadcasts (clinical broadcast text) ·
+       notifications (bodies quote patient initials + rooms) ·
+       audit / phiLog / incidents (compliance trail — server is authoritative)
+     Also not persisted (server-owned rosters, cheap to refetch): providers,
+     directory, orgPeople, candidates, team, devUsers, orgs, registrations. */
+  var PERSIST_KEYS = [
+    "v", "syntheticData", "session", "me", "impersonating", "myPrefs",
+    "theme", "roleColors", "navHidden", "navOrder", "boardModules",
+    "dashLayout", "statLayout", "customStats",
+    "scheduleSources", "consultServices", "consultHidden",
+    "selectedOrg", "settings", "roles", "enterprise", "orgConfigs",
+    "orgRetentionDays", "autoCleanHours", "ui",
+  ];
+  function persistable(s) {
+    var out = {};
+    PERSIST_KEYS.forEach(function (k) { if (s[k] !== undefined) out[k] = s[k]; });
+    return out;
+  }
   function load() {
     try {
       var raw = localStorage.getItem(KEY);
       if (!raw) return null;
-      var s = JSON.parse(raw);
-      if (!s || s.v !== 10) return null;
+      var saved = JSON.parse(raw);
+      if (!saved || saved.v !== 11) return null;
+      // Rebuild from a fresh seed and lay ONLY the allowlisted preferences over
+      // it — a save written by an older build could still contain clinical
+      // slices, and this drops them on the floor instead of rehydrating them.
+      var s = seed();
+      PERSIST_KEYS.forEach(function (k) { if (saved[k] !== undefined) s[k] = saved[k]; });
       // Per-org / enterprise config (added v10) — backfill so older saves don't
       // crash the developer settings pages.
       if (!s.enterprise) s.enterprise = seed().enterprise;
@@ -508,10 +546,19 @@
 
   // Debounced persistence: batch write-heavy flows (e.g. typing, the 1s clock)
   // into one localStorage write at most every 250ms; flush on unload so nothing
-  // is lost on refresh.
+  // is lost on refresh. Only `persistable(state)` is ever written — see
+  // PERSIST_KEYS above.
   var persistTimer = null;
-  function persistNow() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function persistNow() { try { localStorage.setItem(KEY, JSON.stringify(persistable(state))); } catch (e) {} }
   function persist() { if (persistTimer) return; persistTimer = setTimeout(function () { persistTimer = null; persistNow(); }, 250); }
+  /** Drop the persisted snapshot entirely (logout / lock). */
+  function purgePersisted() {
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+    try { localStorage.removeItem(KEY); } catch (e) {}
+  }
+  // Rewrite the key immediately on boot so a blob left by an older build (which
+  // persisted everything, PHI included) is replaced before anything can read it.
+  persistNow();
   if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("beforeunload", function () { if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; } persistNow(); });
   }
@@ -594,6 +641,22 @@
     s.notifications = [Object.assign({ id: uid("n"), at: now(), read: false }, entry)].concat(s.notifications).slice(0, 30);
   }
   function actorName(s) { return (s.session && s.session.name) || s.me.name; }
+
+  // Clinical (or PHI-quoting) slices that must not outlive a session. Reset to
+  // FRESH SEED values rather than empty arrays so the offline/demo fallback
+  // still has something to render if the backend is unreachable at next login;
+  // a real login overwrites them from the server.
+  var PHI_SLICES = [
+    "conversations", "board", "myPatients", "myAdmissions", "pending",
+    "sent", "admissions", "broadcasts", "notifications",
+    "audit", "phiLog", "incidents",
+  ];
+  function clearPhiSlices(s) {
+    var fresh = seed();
+    PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
+    s.__activeConvo = null;
+    return s;
+  }
 
   /* ---- enterprise / per-org config helpers ------------------------------- */
   function kvPair(key, val) { var o = {}; o[key] = val; return o; }
@@ -683,7 +746,18 @@
         return s;
       });
     },
-    logout: function () { set(function (s) { pushAudit(s, { action: "logout", resource: "session", risk: "low" }); s.session = null; s.ui.notifOpen = false; return s; }); },
+    // Logout clears the in-memory clinical slices AND the persisted snapshot, so
+    // a shared workstation keeps nothing readable after the user walks away.
+    logout: function () {
+      set(function (s) {
+        pushAudit(s, { action: "logout", resource: "session", risk: "low" });
+        s.session = null; s.impersonating = null; s.ui.notifOpen = false;
+        return clearPhiSlices(s);
+      });
+      purgePersisted();
+    },
+    /** Screen lock: same PHI hygiene as logout, but keeps the session. */
+    lock: function () { purgePersisted(); },
     setNav: function (nav) { set(function (s) { s.ui.nav = nav; s.ui.notifOpen = false; return s; }); },
     setRole: function (role) { set(function (s) { s.session = Object.assign({}, s.session, { role: role }); s.ui.nav = "dashboard"; s.ui.notifOpen = false; return s; }); },
     toggleNotif: function (open) { set(function (s) { s.ui.notifOpen = open == null ? !s.ui.notifOpen : open; if (s.ui.notifOpen) s.notifications = s.notifications.map(function (n) { return Object.assign({}, n, { read: true }); }); return s; }); },
@@ -1402,7 +1476,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

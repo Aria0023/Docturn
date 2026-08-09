@@ -24,6 +24,23 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // The six-year compliance archive (§164.316(b)(2)(i)): audit / PHI-access /
+  // security rows preserved from tenants that have since been deleted. Read-only
+  // and developer-only; carries ids, actions and actor identity — never PHI.
+  app.get(
+    "/api/dev/compliance-archive",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const raw = req.query.orgId;
+      const orgId = raw != null && raw !== "" ? Number(raw) : undefined;
+      if (orgId != null && !Number.isFinite(orgId)) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      res.json(await storage().listRetainedComplianceRecords(orgId));
+    },
+  );
+
   app.get(
     "/api/dev/organizations",
     requireAuth,
