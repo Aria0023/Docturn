@@ -29,6 +29,15 @@ const ATTACHMENT_ALLOWED_MIME = new Set<string>([
 /** Max decoded attachment size (8 MB). */
 const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 
+// Roles allowed to reach into a patient's care-team thread without a treatment
+// relationship (clinical/administrative oversight). Their access is break-glass:
+// permitted, but always audited at high risk.
+const PATIENT_THREAD_OVERSIGHT_ROLES = new Set<string>([
+  "director",
+  "er_director",
+  "developer",
+]);
+
 /** Decoded byte length of a base64 string without allocating the buffer. */
 function base64ByteSize(b64: string): number {
   const clean = b64.replace(/=+$/, "");
@@ -341,8 +350,12 @@ export function registerMessagingRoutes(app: Express) {
   // Patient-linked care-team thread: ONE conversation per patient, named after
   // the patient (minimum-necessary: initials + room), auto-membered with the
   // current care team — accepted attending, routing ER physician, and accepted
-  // consultants — plus the requester. Idempotent: repeat calls reopen it (and
-  // refresh membership as the care team grows).
+  // consultants. Idempotent: repeat calls reopen it (and refresh membership as
+  // the care team grows).
+  //
+  // ACCESS CONTROL: the care team is computed BEFORE the caller is considered.
+  // A caller who is not on it cannot self-join and read the thread's PHI —
+  // only oversight roles may, and that is recorded as a break-glass access.
   app.post("/api/messaging/patient-thread", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const patientId = Number((req.body ?? {}).patientId);
@@ -352,19 +365,25 @@ export function registerMessagingRoutes(app: Express) {
     const patient = await storage().getPatient(me.organizationId, patientId);
     if (!patient) return res.status(404).json({ error: "not_found" });
 
-    // Assemble the care team (userIds, in-org by construction).
-    const members = new Set<number>([me.id]);
+    // Assemble the LEGITIMATE care team (userIds, in-org by construction).
+    // Deliberately does NOT include the caller — membership must be earned by a
+    // real clinical relationship, not by asking for the thread.
+    const careTeam = new Set<number>();
+    // The patient's ER physician of record (set when the patient was admitted),
+    // so an admitting ER doc is on the team even before routing produces an
+    // assignment row.
+    if (patient.erDoctorId) careTeam.add(patient.erDoctorId);
     const assignments = await storage().listAssignments(me.organizationId);
     for (const a of assignments) {
       if (a.patientId !== patientId) continue;
-      if (a.erDoctorId) members.add(a.erDoctorId);
+      if (a.erDoctorId) careTeam.add(a.erDoctorId);
       if (a.status === "accepted") {
-        if (a.acceptedByUserId) members.add(a.acceptedByUserId);
+        if (a.acceptedByUserId) careTeam.add(a.acceptedByUserId);
         const h = await storage().getHospitalist(
           me.organizationId,
           a.hospitalistId,
         );
-        if (h?.userId) members.add(h.userId);
+        if (h?.userId) careTeam.add(h.userId);
       }
     }
     for (const c of await storage().listConsultsForPatient(
@@ -372,7 +391,35 @@ export function registerMessagingRoutes(app: Express) {
       patientId,
     )) {
       if (c.status === "accepted" && c.consultantUserId)
-        members.add(c.consultantUserId);
+        careTeam.add(c.consultantUserId);
+    }
+
+    const onCareTeam = careTeam.has(me.id);
+    const hasOversight = PATIENT_THREAD_OVERSIGHT_ROLES.has(me.role);
+    if (!onCareTeam && !hasOversight) {
+      // No leak about whether a thread exists — the only signal above this
+      // point is the pre-existing 404-on-missing-patient.
+      return res.status(403).json({ error: "forbidden" });
+    }
+    // An oversight role reaching into a patient thread they have no treatment
+    // relationship with is a break-glass access, audited as such below.
+    const breakGlass = !onCareTeam && hasOversight;
+
+    const members = new Set<number>(careTeam);
+    members.add(me.id);
+
+    /** Record an oversight role opening a thread they aren't on the team for. */
+    async function auditBreakGlass(conversationId: number) {
+      if (!breakGlass) return;
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "message.patient_thread_breakglass",
+        resourceType: "conversation",
+        resourceId: conversationId,
+        details: { patientId, conversationId, role: me.role },
+        riskLevel: "high",
+      });
     }
 
     const existing = await storage().getConversationByPatient(
@@ -381,6 +428,7 @@ export function registerMessagingRoutes(app: Express) {
     );
     if (existing) {
       // Membership follows the care team: add anyone new (incl. the requester).
+      // EVERY addition is audited — joining a patient thread is a PHI grant.
       for (const uid of members) {
         if (!existing.participantIds.includes(uid)) {
           await storage().addConversationParticipant(
@@ -388,8 +436,18 @@ export function registerMessagingRoutes(app: Express) {
             existing.id,
             uid,
           );
+          await appendAudit({
+            organizationId: me.organizationId,
+            userId: me.id,
+            action: "message.patient_thread_joined",
+            resourceType: "conversation",
+            resourceId: existing.id,
+            details: { patientId, conversationId: existing.id, addedUserId: uid },
+            riskLevel: "medium",
+          });
         }
       }
+      await auditBreakGlass(existing.id);
       const fresh = await storage().getConversation(
         me.organizationId,
         existing.id,
@@ -416,6 +474,7 @@ export function registerMessagingRoutes(app: Express) {
       details: { patientId, participants: convo.participantIds },
       riskLevel: "low",
     });
+    await auditBreakGlass(convo.id);
     res.status(201).json(convo);
   });
 

@@ -2,11 +2,55 @@ import { hashPassword } from "./auth.js";
 import { getHandle } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 
-const DEV_PASSWORD = "docturn";
+// Password for the SYNTHETIC demo clinical roster (chen/director/er.doc/…).
+// These are shared, well-known demo credentials by design: they only ever exist
+// on a synthetic-data instance (see isSyntheticDataMode) and they never carry
+// cross-tenant privilege. Override per-deployment with DEMO_PASSWORD.
+const DEFAULT_DEMO_PASSWORD = "docturn";
+
+/** Password used for every seeded demo CLINICAL account. Never logged. */
+function demoPassword(): string {
+  return process.env.DEMO_PASSWORD || DEFAULT_DEMO_PASSWORD;
+}
+
+/**
+ * Synthetic-data mode is the default; only the literal string "false" opts a
+ * deployment into real PHI. A real-PHI instance must never carry shared demo
+ * credentials, so all demo seeding is refused when this returns false.
+ */
+export function isSyntheticDataMode(): boolean {
+  return process.env.SYNTHETIC_DATA !== "false";
+}
+
+function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * The `dev` account is cross-tenant root (it can impersonate into and read every
+ * org), so it must never be auto-provisioned with a guessable password on a
+ * publicly reachable instance. On production — or on any real-PHI instance —
+ * it is created ONLY from a PLATFORM_ADMIN_PASSWORD of at least this length.
+ */
+const MIN_PLATFORM_ADMIN_PASSWORD_LENGTH = 12;
+
+function platformAdminPasswordEnv(): string {
+  return process.env.PLATFORM_ADMIN_PASSWORD ?? "";
+}
+
+/** True when the root account must be gated behind a strong env password. */
+function rootAccountIsGated(): boolean {
+  return isProduction() || !isSyntheticDataMode();
+}
 
 // The platform/developer tenant. Kept separate from clinical tenants so the
 // developer can delete any hospital org without destroying their own account.
 const PLATFORM_ORG = { name: "DocTurn Platform", code: "DOCTURN" };
+
+/** Thrown (and caught by callers) when demo seeding is refused in real-PHI mode. */
+const REAL_PHI_REFUSAL =
+  "refusing to seed shared demo accounts: SYNTHETIC_DATA=false (real-PHI mode). " +
+  "Provision real accounts instead, or unset SYNTHETIC_DATA to run a synthetic instance.";
 
 interface SeedResult {
   orgId: number;
@@ -22,6 +66,12 @@ interface SeedResult {
  * and a couple of pending assignments so dashboards aren't empty.
  */
 export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
+  // Real-PHI instances get no demo clinical roster at all.
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    throw new Error(REAL_PHI_REFUSAL);
+  }
+
   const org = await storage.createOrganization({
     name: "Cedars-Sinai (ISP North)",
     code: "ISPN",
@@ -34,15 +84,17 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     rotationIndex: 0,
   });
 
-  const passwordHash = await hashPassword(DEV_PASSWORD);
+  const passwordHash = await hashPassword(demoPassword());
   const userIds: Record<string, number> = {};
 
   // Platform org + developer account (separate from the clinical tenant).
   // Idempotent so reseeding a DB that still has the platform org doesn't collide.
+  // NOTE: on a gated instance ensurePlatform deliberately does NOT create `dev`,
+  // so the account may legitimately be absent here.
   await ensurePlatform(storage);
   const platform = (await storage.getOrganizationByCode(PLATFORM_ORG.code))!;
-  const devUser = (await storage.getUserByUsername(platform.id, "dev"))!;
-  userIds["dev"] = devUser.id;
+  const devUser = await storage.getUserByUsername(platform.id, "dev");
+  if (devUser) userIds["dev"] = devUser.id;
 
   async function mkUser(
     username: string,
@@ -203,7 +255,11 @@ async function ensureDemoUsers(
   storage: DatabaseStorage,
   orgId: number,
 ): Promise<number> {
-  const passwordHash = await hashPassword(DEV_PASSWORD);
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    return 0;
+  }
+  const passwordHash = await hashPassword(demoPassword());
   let added = 0;
   for (const u of DEMO_USERS) {
     const existing = await storage.getUserByUsername(orgId, u.username);
@@ -263,21 +319,62 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
     });
     changed = true;
   }
+
+  const envPassword = platformAdminPasswordEnv();
+  const strongEnvPassword =
+    envPassword.length >= MIN_PLATFORM_ADMIN_PASSWORD_LENGTH;
+  const gated = rootAccountIsGated();
+
   const dev = await storage.getUserByUsername(platform.id, "dev");
-  if (!dev) {
-    const passwordHash = await hashPassword(DEV_PASSWORD);
-    await storage.createUser({
-      organizationId: platform.id,
-      username: "dev",
-      passwordHash,
-      role: "developer" as never,
-      displayName: "Platform Operator",
-      credential: null as never,
-      phone: null,
-      twoFactorEnabled: false,
-    });
-    changed = true;
+  if (dev) {
+    // Never silently delete or rotate an existing operator account — that would
+    // lock the operator out. Warn loudly instead so they rotate it themselves.
+    if (gated && !strongEnvPassword) {
+      console.warn(
+        "[seed] SECURITY: the cross-tenant root account `dev` exists on a " +
+          "hardened instance (production and/or real-PHI) but PLATFORM_ADMIN_PASSWORD " +
+          `is not set to a value of at least ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} characters. ` +
+          "This account may still be using the well-known default password and can read " +
+          "every tenant. ACTION REQUIRED: set PLATFORM_ADMIN_PASSWORD on this deployment " +
+          "and rotate the `dev` password now.",
+      );
+    }
+    return changed;
   }
+
+  if (gated && !strongEnvPassword) {
+    // Do not ship a guessable cross-tenant root credential.
+    console.warn(
+      "[seed] SECURITY: refusing to create the cross-tenant root account `dev` — " +
+        "this instance is production and/or real-PHI and PLATFORM_ADMIN_PASSWORD is " +
+        (envPassword
+          ? `shorter than ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} characters.`
+          : "not set.") +
+        ` ACTION REQUIRED: set PLATFORM_ADMIN_PASSWORD to a strong secret of at least ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} ` +
+        "characters and restart to provision it. Demo clinical accounts are unaffected.",
+    );
+    return changed;
+  }
+
+  // Outside the gate (local/dev synthetic instances) fall back to the demo
+  // password so `npm run dev` keeps working with zero configuration.
+  const rootPassword = envPassword || demoPassword();
+  await storage.createUser({
+    organizationId: platform.id,
+    username: "dev",
+    passwordHash: await hashPassword(rootPassword),
+    role: "developer" as never,
+    displayName: "Platform Operator",
+    credential: null as never,
+    phone: null,
+    twoFactorEnabled: false,
+  });
+  changed = true;
+  console.log(
+    envPassword
+      ? "[seed] provisioned the platform root account `dev` from PLATFORM_ADMIN_PASSWORD."
+      : "[seed] provisioned the platform root account `dev` with the local development password.",
+  );
   return changed;
 }
 
@@ -292,7 +389,11 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
  * usernames are unique per-org, so they differ only by org code.
  */
 export async function ensureDemoTenants(storage: DatabaseStorage): Promise<void> {
-  const passwordHash = await hashPassword(DEV_PASSWORD);
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    return;
+  }
+  const passwordHash = await hashPassword(demoPassword());
 
   async function addUser(
     orgId: number,
@@ -519,13 +620,13 @@ if (isMain) {
         if (platformChanged) msgs.push("provisioned the platform org + developer account");
         console.log(
           msgs.length
-            ? `Database already seeded — ${msgs.join(" and ")}. Password: "${DEV_PASSWORD}".`
+            ? `Database already seeded — ${msgs.join(" and ")}. Demo password: DEMO_PASSWORD (default: the documented demo password).`
             : "Database already seeded and all accounts present — nothing to do.",
         );
       } else {
         const result = await seed(storage);
         console.log(
-          `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
+          `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}).`,
         );
       }
       // Idempotently provision the two isolated demo tenants (HOSP + ER).
@@ -538,4 +639,13 @@ if (isMain) {
   })();
 }
 
-export { DEV_PASSWORD };
+/**
+ * The demo clinical password, resolved once at import. Exported for the test
+ * harness (tests/helpers.ts logs in as the seeded demo accounts) and for any
+ * caller that needs the same value `seed()` used. This is a SYNTHETIC-only
+ * credential — it is never used for the cross-tenant root account on a gated
+ * instance (see ensurePlatform / PLATFORM_ADMIN_PASSWORD).
+ */
+const DEV_PASSWORD = demoPassword();
+
+export { DEV_PASSWORD, demoPassword };

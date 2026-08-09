@@ -3,7 +3,12 @@ import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
 import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
-import { ensureDemoTenants, ensurePlatform, seed } from "./seed.js";
+import {
+  ensureDemoTenants,
+  ensurePlatform,
+  isSyntheticDataMode,
+  seed,
+} from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { startAmionSyncLoop } from "./services/amion.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
@@ -29,7 +34,17 @@ async function main() {
   // initDbWithRecovery self-heals a corrupted on-disk PGlite store (e.g. after a
   // hard kill) so the server always boots instead of dying on init.
   const { handle, recovered } = await initDbWithRecovery();
-  if (recovered) {
+  // Shared demo credentials exist ONLY on a synthetic-data instance. When the
+  // operator has deliberately switched to real PHI (SYNTHETIC_DATA=false) we
+  // seed nothing: no demo clinical roster, no demo tenants.
+  const synthetic = isSyntheticDataMode();
+  if (!synthetic) {
+    console.warn(
+      "[db] SYNTHETIC_DATA=false (real-PHI mode) — demo seeding is disabled. " +
+        "No demo clinical accounts or demo tenants will be created; provision real accounts instead.",
+    );
+  }
+  if (recovered && synthetic) {
     // The corrupt store was recreated empty — restore the demo data so logins
     // work again without a manual `npm run seed`.
     const storage = new DatabaseStorage(handle.db);
@@ -45,18 +60,24 @@ async function main() {
   // Make the demo usable out of the box — including a brand-new cloud deploy
   // with an empty database: seed the demo org + accounts if they're missing,
   // otherwise just ensure the platform org/developer exist. Idempotent.
+  // ensurePlatform() self-gates the cross-tenant root account behind
+  // PLATFORM_ADMIN_PASSWORD on production / real-PHI instances.
   try {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
-    const existing = await storage.getOrganizationByCode("ISPN");
-    if (!existing) {
-      await seed(storage);
-      console.log("[db] empty database — seeded demo data (org ISPN + platform).");
-    } else {
+    if (!synthetic) {
       await ensurePlatform(storage);
+    } else {
+      const existing = await storage.getOrganizationByCode("ISPN");
+      if (!existing) {
+        await seed(storage);
+        console.log("[db] empty database — seeded demo data (org ISPN + platform).");
+      } else {
+        await ensurePlatform(storage);
+      }
+      // Idempotently provision the two isolated demo tenants (HOSP + ER).
+      await ensureDemoTenants(storage);
     }
-    // Idempotently provision the two isolated demo tenants (HOSP + ER).
-    await ensureDemoTenants(storage);
   } catch (e) {
     console.error("[db] seed/ensure failed:", e);
   }
