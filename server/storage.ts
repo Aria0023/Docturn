@@ -7,6 +7,7 @@ import {
   beds,
   broadcastAcknowledgments,
   careTeamMembers,
+  complianceAttestations,
   contactPageSettings,
   conversations,
   departments,
@@ -36,7 +37,9 @@ import {
   type AuditLog,
   type Bed,
   type BroadcastAck,
+  type AttestationStatus,
   type CareTeamMember,
+  type ComplianceAttestation,
   type Conversation,
   type Department,
   type DeviceToken,
@@ -54,6 +57,65 @@ import {
   type Patient,
   type User,
 } from "@shared/schema";
+
+/**
+ * Normalize a timestamp aggregate. Depending on driver, `min()`/`max()` over a
+ * timestamp column arrives as a Date or as an ISO string — accept both.
+ */
+function toDate(v: unknown): Date | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Fields a director may set on a manual compliance attestation. */
+export interface AttestationPatch {
+  status: AttestationStatus;
+  owner?: string | null;
+  note?: string | null;
+  evidenceUrl?: string | null;
+  reviewDue?: Date | null;
+}
+
+/** Aggregate shape of one org's audit trail — counts and dates, never rows. */
+export interface AuditStats {
+  total: number;
+  last24h: number;
+  last30d: number;
+  oldestAt: Date | null;
+  newestAt: Date | null;
+  byRisk: Record<string, number>;
+  byAction: Record<string, number>;
+}
+
+/** Aggregate shape of one org's PHI-access trail. */
+export interface PhiAccessStats {
+  total: number;
+  /** Reads = safe HTTP methods (GET/HEAD). */
+  reads: number;
+  writes: number;
+  oldestAt: Date | null;
+  newestAt: Date | null;
+}
+
+export interface AttachmentStats {
+  count: number;
+  totalBytes: number;
+}
+
+/**
+ * Cross-tenant ROW COUNTS ONLY (integers — never rows, ids or content). The
+ * tenant-isolation control needs to know that other tenants' rows exist in this
+ * database, otherwise "the scoped query returned only my org's rows" proves
+ * nothing on a single-tenant database. No caller may use this to read data.
+ */
+export interface GlobalRowCounts {
+  organizations: number;
+  users: number;
+  patients: number;
+  assignments: number;
+  auditLogs: number;
+}
 
 /**
  * The single data-access surface. EVERY tenant-scoped method takes
@@ -245,6 +307,20 @@ export interface IStorage {
     userAgent?: string;
   }): Promise<void>;
   countPhiAccess(orgId: number): Promise<number>;
+
+  // ── continuous compliance monitoring (org-scoped) ────────────────────────────
+  listAttestations(orgId: number): Promise<ComplianceAttestation[]>;
+  upsertAttestation(
+    orgId: number,
+    controlId: string,
+    patch: AttestationPatch,
+    userId: number,
+  ): Promise<ComplianceAttestation>;
+  auditStats(orgId: number): Promise<AuditStats>;
+  phiAccessStats(orgId: number): Promise<PhiAccessStats>;
+  attachmentStats(orgId: number): Promise<AttachmentStats>;
+  lastAuditActivityByUser(orgId: number): Promise<Map<number, Date>>;
+  globalRowCounts(): Promise<GlobalRowCounts>;
 
   // ── comms KPIs (org-scoped) ──────────────────────────────────────────────────
   avgStatAckSeconds(orgId: number, since: Date): Promise<number | null>;
@@ -958,6 +1034,178 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
+  // ── continuous compliance monitoring ─────────────────────────────────────────
+  async listAttestations(orgId: number) {
+    return this.db
+      .select()
+      .from(complianceAttestations)
+      .where(eq(complianceAttestations.organizationId, orgId))
+      .orderBy(asc(complianceAttestations.controlId));
+  }
+  async upsertAttestation(
+    orgId: number,
+    controlId: string,
+    patch: AttestationPatch,
+    userId: number,
+  ) {
+    const values = {
+      organizationId: orgId,
+      controlId,
+      status: patch.status,
+      owner: patch.owner ?? null,
+      note: patch.note ?? null,
+      evidenceUrl: patch.evidenceUrl ?? null,
+      // The attestation date is server-set — an org attests "as of now", it does
+      // not get to backdate its own evidence.
+      attestedAt: new Date(),
+      reviewDue: patch.reviewDue ?? null,
+      updatedBy: userId,
+    };
+    const [row] = await this.db
+      .insert(complianceAttestations)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          complianceAttestations.organizationId,
+          complianceAttestations.controlId,
+        ],
+        set: {
+          status: values.status,
+          owner: values.owner,
+          note: values.note,
+          evidenceUrl: values.evidenceUrl,
+          attestedAt: values.attestedAt,
+          reviewDue: values.reviewDue,
+          updatedBy: values.updatedBy,
+        },
+      })
+      .returning();
+    return row!;
+  }
+  async auditStats(orgId: number): Promise<AuditStats> {
+    const now = Date.now();
+    const day = new Date(now - 86_400_000);
+    const month = new Date(now - 30 * 86_400_000);
+    const [totals] = await this.db
+      .select({
+        n: sql<number>`count(*)`,
+        oldest: sql<string | null>`min(${auditLogs.createdAt})`,
+        newest: sql<string | null>`max(${auditLogs.createdAt})`,
+      })
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId));
+    const [d1] = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(auditLogs)
+      .where(
+        and(eq(auditLogs.organizationId, orgId), gte(auditLogs.createdAt, day)),
+      );
+    const [d30] = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.organizationId, orgId),
+          gte(auditLogs.createdAt, month),
+        ),
+      );
+    const riskRows = await this.db
+      .select({ k: auditLogs.riskLevel, n: sql<number>`count(*)` })
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId))
+      .groupBy(auditLogs.riskLevel);
+    const actionRows = await this.db
+      .select({ k: auditLogs.action, n: sql<number>`count(*)` })
+      .from(auditLogs)
+      .where(eq(auditLogs.organizationId, orgId))
+      .groupBy(auditLogs.action);
+    return {
+      total: Number(totals?.n ?? 0),
+      last24h: Number(d1?.n ?? 0),
+      last30d: Number(d30?.n ?? 0),
+      oldestAt: toDate(totals?.oldest),
+      newestAt: toDate(totals?.newest),
+      byRisk: Object.fromEntries(riskRows.map((r) => [r.k, Number(r.n)])),
+      byAction: Object.fromEntries(actionRows.map((r) => [r.k, Number(r.n)])),
+    };
+  }
+  async phiAccessStats(orgId: number): Promise<PhiAccessStats> {
+    const rows = await this.db
+      .select({ k: phiAccessLogs.method, n: sql<number>`count(*)` })
+      .from(phiAccessLogs)
+      .where(eq(phiAccessLogs.organizationId, orgId))
+      .groupBy(phiAccessLogs.method);
+    const [span] = await this.db
+      .select({
+        oldest: sql<string | null>`min(${phiAccessLogs.createdAt})`,
+        newest: sql<string | null>`max(${phiAccessLogs.createdAt})`,
+      })
+      .from(phiAccessLogs)
+      .where(eq(phiAccessLogs.organizationId, orgId));
+    let reads = 0;
+    let writes = 0;
+    for (const r of rows) {
+      const m = String(r.k ?? "").toUpperCase();
+      if (m === "GET" || m === "HEAD") reads += Number(r.n);
+      else writes += Number(r.n);
+    }
+    return {
+      total: reads + writes,
+      reads,
+      writes,
+      oldestAt: toDate(span?.oldest),
+      newestAt: toDate(span?.newest),
+    };
+  }
+  async attachmentStats(orgId: number): Promise<AttachmentStats> {
+    const [row] = await this.db
+      .select({
+        n: sql<number>`count(*)`,
+        bytes: sql<string>`coalesce(sum(${messageAttachments.byteSize}), 0)`,
+      })
+      .from(messageAttachments)
+      .where(eq(messageAttachments.organizationId, orgId));
+    return { count: Number(row?.n ?? 0), totalBytes: Number(row?.bytes ?? 0) };
+  }
+  /**
+   * Last recorded audit activity per user in this org. DocTurn has no
+   * `last_login` column, so this is the ONLY genuine activity signal available —
+   * the stale-accounts control says so explicitly rather than inventing one.
+   */
+  async lastAuditActivityByUser(orgId: number): Promise<Map<number, Date>> {
+    const rows = await this.db
+      .select({
+        userId: auditLogs.userId,
+        last: sql<string | null>`max(${auditLogs.createdAt})`,
+      })
+      .from(auditLogs)
+      .where(
+        and(eq(auditLogs.organizationId, orgId), isNotNull(auditLogs.userId)),
+      )
+      .groupBy(auditLogs.userId);
+    const out = new Map<number, Date>();
+    for (const r of rows) {
+      const at = toDate(r.last);
+      if (r.userId != null && at) out.set(r.userId, at);
+    }
+    return out;
+  }
+  /** See {@link GlobalRowCounts} — integers only, deliberately no rows. */
+  async globalRowCounts(): Promise<GlobalRowCounts> {
+    const [orgs] = await this.db.select({ n: sql<number>`count(*)` }).from(organizations);
+    const [us] = await this.db.select({ n: sql<number>`count(*)` }).from(users);
+    const [pt] = await this.db.select({ n: sql<number>`count(*)` }).from(patients);
+    const [asg] = await this.db.select({ n: sql<number>`count(*)` }).from(assignments);
+    const [al] = await this.db.select({ n: sql<number>`count(*)` }).from(auditLogs);
+    return {
+      organizations: Number(orgs?.n ?? 0),
+      users: Number(us?.n ?? 0),
+      patients: Number(pt?.n ?? 0),
+      assignments: Number(asg?.n ?? 0),
+      auditLogs: Number(al?.n ?? 0),
+    };
+  }
+
   // ── comms KPIs ─────────────────────────────────────────────────────────────
   // Average seconds from a STAT message being sent to the EARLIEST recipient
   // acknowledgement (excluding the sender's own delivery row). Null when no STAT
@@ -1076,6 +1324,9 @@ export class DatabaseStorage implements IStorage {
       await this.db.delete(mfaCredentials).where(inArray(mfaCredentials.userId, userIds));
     }
     // org-scoped config / logs (some reference users via updated_by / user_id)
+    await this.db
+      .delete(complianceAttestations)
+      .where(eq(complianceAttestations.organizationId, id));
     await this.db.delete(suggestions).where(eq(suggestions.organizationId, id));
     await this.db.delete(featureFlags).where(eq(featureFlags.organizationId, id));
     await this.db.delete(orgSettings).where(eq(orgSettings.organizationId, id));

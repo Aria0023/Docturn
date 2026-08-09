@@ -89,6 +89,7 @@
 <script type="text/babel" src="ComplianceOverview.jsx"></script>
 <script type="text/babel" src="SupportDirectory.jsx"></script>
 <script type="text/babel" src="Compliance.jsx"></script>
+<script type="text/babel" src="ComplianceMonitor.jsx"></script>
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
 <script type="text/babel" src="OrgSettings.jsx"></script>
@@ -159,6 +160,7 @@ const NAV = {
     { id: "directory",  label: "Directory",  icon: "contact" },
     // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
   ],
   director: [
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
@@ -172,6 +174,7 @@ const NAV = {
     { id: "directory",  label: "Directory",  icon: "contact" },
     // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
@@ -179,6 +182,7 @@ const NAV = {
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
   ],
 };
@@ -193,6 +197,7 @@ const TOP = {
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
   consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
@@ -350,6 +355,7 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;

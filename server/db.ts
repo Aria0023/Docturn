@@ -491,4 +491,21 @@ CREATE TABLE IF NOT EXISTS sms_history (
   carrier TEXT NOT NULL DEFAULT 'console',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Continuous compliance monitor: an org's attestation for ONE manual control.
+-- Automated controls are recomputed from live state on every read and are never
+-- persisted here (a stored "pass" could go stale and mislead an auditor).
+CREATE TABLE IF NOT EXISTS compliance_attestations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  control_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_met',
+  owner TEXT,
+  note TEXT,
+  evidence_url TEXT,
+  attested_at TIMESTAMP,
+  review_due TIMESTAMP,
+  updated_by INTEGER REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS compliance_attestations_org_control_uniq ON compliance_attestations(organization_id, control_id);
 `;

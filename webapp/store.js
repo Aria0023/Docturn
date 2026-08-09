@@ -1301,6 +1301,14 @@
     },
     resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
     clearComplianceLogs: function () { set(function (s) { s.audit = []; s.phiLog = []; s.incidents = []; return s; }); },
+
+    /* continuous compliance monitor — real implementations live in
+       api-bridge.js (they hit /api/compliance/*). The prototype has no way to
+       measure the running system, so the defaults return nothing rather than a
+       fabricated all-green report. */
+    loadComplianceStatus: function () { return Promise.resolve(null); },
+    saveAttestation: function () { return Promise.resolve(null); },
+    exportEvidence: function () { return Promise.resolve(null); },
     // Show/hide a specialty in the ER route-assignment consult picker (does NOT
     // delete the director-managed consult service + roster).
     toggleConsultHidden: function (name) {

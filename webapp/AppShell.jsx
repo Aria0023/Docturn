@@ -314,7 +314,7 @@ function SettingsTabs() {
   var role = st.session && st.session.role;
   if (role !== "director" && role !== "er_director") return null;
   var nav = (st.ui && st.ui.nav) || "settings";
-  var tabs = [["settings", "Organization", "sliders-horizontal"], ["appearance", "Appearance", "palette"], ["compliance", "Compliance", "shield-check"]];
+  var tabs = [["settings", "Organization", "sliders-horizontal"], ["appearance", "Appearance", "palette"], ["compliance", "Compliance", "shield-check"], ["compliance-monitor", "Compliance monitor", "activity"]];
   return (
     <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", marginBottom: 18, maxWidth: "100%", overflowX: "auto" }}>
       {tabs.map(function (t) {

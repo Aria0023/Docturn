@@ -49,6 +49,14 @@ export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
 export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
+/** Where an org stands on a MANUAL compliance control it must attest to. */
+export const ATTESTATION_STATUS = [
+  "met",
+  "not_met",
+  "in_progress",
+  "na",
+] as const;
+export type AttestationStatus = (typeof ATTESTATION_STATUS)[number];
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Core tables — almost every table carries organization_id (the tenant boundary).
@@ -533,6 +541,41 @@ export const smsHistory = pgTable("sms_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/* ── Continuous compliance monitoring ──────────────────────────────────────── */
+
+/**
+ * An organization's attestation for ONE control in the compliance catalog
+ * (`server/compliance/controls.ts`). Only the controls code CANNOT verify —
+ * BAAs, risk analysis, training, drills — are attested here; the automated
+ * controls are recomputed from live system state on every read and are never
+ * stored. One row per (organization, control).
+ */
+export const complianceAttestations = pgTable(
+  "compliance_attestations",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    controlId: text("control_id").notNull(),
+    status: text("status", { enum: ATTESTATION_STATUS })
+      .notNull()
+      .default("not_met"),
+    owner: text("owner"),
+    note: text("note"),
+    evidenceUrl: text("evidence_url"),
+    attestedAt: timestamp("attested_at"),
+    reviewDue: timestamp("review_due"),
+    updatedBy: integer("updated_by").references(() => users.id),
+  },
+  (t) => ({
+    controlPerOrg: uniqueIndex("compliance_attestations_org_control_uniq").on(
+      t.organizationId,
+      t.controlId,
+    ),
+  }),
+);
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Relations
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -615,6 +658,7 @@ export type EmergencyBroadcast = typeof emergencyBroadcasts.$inferSelect;
 export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
 export type DeviceToken = typeof deviceTokens.$inferSelect;
 export type SmsHistory = typeof smsHistory.$inferSelect;
+export type ComplianceAttestation = typeof complianceAttestations.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -784,6 +828,27 @@ export const notificationProfileSchema = z.object({
   escalationTimeoutSec: z.number().int().min(10).max(7200).default(180),
 });
 export type NotificationProfile = z.infer<typeof notificationProfileSchema>;
+
+/**
+ * Upsert one MANUAL compliance attestation. Only manual controls are attestable
+ * — the route rejects an id that is not in the catalog's manual set, so an org
+ * can never "attest" an automated technical control into passing.
+ */
+export const attestationUpsertSchema = z.object({
+  controlId: z.string().min(1).max(64),
+  status: z.enum(ATTESTATION_STATUS),
+  owner: z.string().max(120).optional(),
+  note: z.string().max(4000).optional(),
+  // Link to the artifact an auditor would ask for (policy PDF, signed BAA,
+  // training roster). Empty string clears it.
+  evidenceUrl: z.string().url().max(1000).or(z.literal("")).optional(),
+  // ISO date (YYYY-MM-DD) or full ISO timestamp; "" clears the review date.
+  reviewDue: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}([T ].*)?$/)
+    .or(z.literal(""))
+    .optional(),
+});
 
 export const orgConfigSchema = z
   .object({

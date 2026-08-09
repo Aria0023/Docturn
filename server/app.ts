@@ -5,10 +5,17 @@ import { fileURLToPath } from "node:url";
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import session from "express-session";
 import passport from "passport";
-import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import createMemoryStore from "memorystore";
 import { configurePassport, verifyPassword } from "./auth.js";
+import {
+  AUTH_RATE_LIMIT,
+  GENERAL_RATE_LIMIT,
+  SESSION_POLICY,
+  securityHeaders,
+  sessionCookieOptions,
+  setRateLimitState,
+} from "./config.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { storage } from "./storage.js";
@@ -34,11 +41,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   if (opts.trustProxy) app.set("trust proxy", 1);
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: false, // SPA served separately; relax for dev.
-    }),
-  );
+  // Security response headers. The instance lives in server/config.ts so the
+  // compliance monitor can probe the SAME middleware for the headers it emits.
+  app.use(securityHeaders);
   // Global JSON body parser (1 MB). The attachment-upload route needs a larger
   // limit for base64 file bodies, so it is excluded here and mounts its OWN
   // express.json({ limit: "12mb" }) — otherwise this 1 MB cap would reject the
@@ -60,23 +65,16 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     process.env.SESSION_SECRET ??
     randomBytes(32).toString("hex");
 
+  // Cookie/session posture comes from SESSION_POLICY (server/config.ts) — the
+  // same values the `session-timeout` / `session-cookie-flags` controls read.
   const sessionMiddleware: RequestHandler = session({
-    name: "docturn.sid",
+    name: SESSION_POLICY.name,
     secret,
     resave: false,
     saveUninitialized: false,
     store,
-    rolling: true, // 15-minute rolling, inactivity expiry.
-    cookie: {
-      httpOnly: true,
-      // "lax" (not "strict") so the session cookie reliably sticks when the app
-      // is reached from another device / through a tunnel (strict can drop the
-      // cookie in some navigation contexts, e.g. mobile Safari). Still safe: the
-      // API is same-origin and CSRF surface is minimal for this app.
-      sameSite: "lax",
-      secure: isProd,
-      maxAge: 15 * 60 * 1000,
-    },
+    rolling: SESSION_POLICY.rolling, // maxAge behaves as INACTIVITY expiry.
+    cookie: sessionCookieOptions(),
   });
   app.locals.sessionMiddleware = sessionMiddleware;
 
@@ -118,23 +116,34 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   // Rate limiting is on by default; set RATE_LIMIT=off to disable (useful for
-  // local dev, the headless UI smoke test, and load testing).
-  if (opts.rateLimiting !== false && process.env.RATE_LIMIT !== "off") {
+  // local dev, the headless UI smoke test, and load testing). Whatever we decide
+  // here is RECORDED so the `auth-rate-limit` control reports the limiters this
+  // process actually mounted — not what an env var implies.
+  const rateLimitDisabledByOption = opts.rateLimiting === false;
+  const rateLimitDisabledByEnv = process.env.RATE_LIMIT === "off";
+  const rateLimitEnabled = !rateLimitDisabledByOption && !rateLimitDisabledByEnv;
+  setRateLimitState({
+    enabled: rateLimitEnabled,
+    reason: rateLimitEnabled
+      ? "enabled"
+      : rateLimitDisabledByEnv
+        ? "disabled_by_env"
+        : "disabled_by_app_option",
+  });
+  if (rateLimitEnabled) {
     // Tiered limits: stricter on auth, looser on general traffic.
     // Disable the X-Forwarded-For validation: behind a dev tunnel the proxy hop
     // count can differ from `trust proxy`, and a failed validation otherwise
     // throws and 500s the request (breaking login from a phone). We still get
     // correct client IPs via `trust proxy`; this just stops the hard failure.
     const authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000,
-      max: 50,
+      ...AUTH_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
       validate: { xForwardedForHeader: false },
     });
     const generalLimiter = rateLimit({
-      windowMs: 60 * 1000,
-      max: 300,
+      ...GENERAL_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
       validate: { xForwardedForHeader: false },

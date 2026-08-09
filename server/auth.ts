@@ -21,6 +21,25 @@ export async function hashPassword(password: string): Promise<string> {
   return `${derived.toString("hex")}.${salt}`;
 }
 
+/** Human-readable description of what {@link hashPassword} produces. */
+export const PASSWORD_HASH_FORMAT =
+  "scrypt N=16384 r=8 p=1, 64-byte key + 16-byte random salt, stored as <128 hex>.<32 hex>";
+
+/**
+ * Does a stored credential match the shape {@link hashPassword} emits? Used by
+ * the compliance monitor to prove no user row holds a plaintext or legacy
+ * credential. Deliberately format-only: it never derives, logs or returns the
+ * secret material it inspects.
+ */
+export function isValidPasswordHashFormat(stored: unknown): boolean {
+  if (typeof stored !== "string") return false;
+  const parts = stored.split(".");
+  if (parts.length !== 2) return false;
+  const [hashed, salt] = parts;
+  // 64-byte derived key and 16-byte salt, both hex.
+  return /^[0-9a-f]{128}$/.test(hashed!) && /^[0-9a-f]{32}$/.test(salt!);
+}
+
 export async function verifyPassword(
   password: string,
   stored: string,

@@ -980,6 +980,33 @@
     }).catch(function () {});
   };
 
+  // ---- continuous compliance monitor --------------------------------------
+  // Every automated control is recomputed server-side on each call, so the
+  // screen always reflects the live system. No client-side caching, and no
+  // fallback report: if the call fails the screen says so rather than showing
+  // a stale or invented posture.
+  DT.actions.loadComplianceStatus = function () {
+    return get("/api/compliance/status");
+  };
+  DT.actions.saveAttestation = function (patch) {
+    return api("PATCH", "/api/compliance/attestation", patch).then(function (row) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Attestation saved", msg: patch.controlId + " → " + patch.status.replace("_", " ") + "." }; return s; });
+      return row;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't save attestation", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.exportEvidence = function () {
+    return get("/api/compliance/evidence").then(function (pack) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Evidence pack ready", msg: "Downloading the auditor JSON export." }; return s; });
+      return pack;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't export evidence", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+
   // Clear old patients/logs (or all). hours=24 by default; 0 = everything.
   // Backend deletes patients + their assignments/consults; local admission log
   // is pruned to match. Also runs automatically every 24h server-side.
