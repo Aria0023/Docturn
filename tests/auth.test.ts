@@ -61,7 +61,9 @@ describe("auth", () => {
   it("health endpoint reports the database is up", async () => {
     const res = await supertest(ctx.app).get("/api/health");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, db: "up" });
+    // `persistent` distinguishes a real Postgres from the ephemeral in-process
+    // store; tests run on the latter, so it is false here.
+    expect(res.body).toEqual({ ok: true, db: "up", persistent: false });
   });
 
   it("never exposes passwordHash in the registration approval queue", async () => {
