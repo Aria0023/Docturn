@@ -9,3 +9,7 @@ coverage/
 .vite/
 client/dist/
 *.tsbuildinfo
+
+# Claude Code local state — per-machine settings and agent scratch worktrees,
+# never shared.
+.claude/
