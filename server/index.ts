@@ -120,8 +120,11 @@ async function main() {
       `DocTurn API + WebSocket listening on :${PORT} — db: ${mode}`,
     );
     if (handle.ephemeral) {
+      // The boot path already seeds this database, so do NOT tell the operator
+      // to run `npm run seed` — a second process on the same PGlite directory
+      // corrupts it. Seeding manually is only for a server that is stopped.
       console.log(
-        "  ↳ no DATABASE_URL set; using an ephemeral in-process database. Run `npm run seed` to populate it (dev only).",
+        "  ↳ no DATABASE_URL set; using an ephemeral in-process database (seeded automatically; data resets on restart).",
       );
     }
   });

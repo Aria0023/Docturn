@@ -633,6 +633,22 @@
   // former we silently fall back to the demo UI; for the latter we keep the user
   // on the login screen and tell them WHY — almost always a missing demo account
   // (DB seeded before that role existed), fixed by re-running `npm run seed`.
+  // The cross-tenant root account `dev` is deliberately NOT provisioned on a
+  // hardened deployment (production and/or real-PHI) unless the operator sets a
+  // strong PLATFORM_ADMIN_PASSWORD — it can read every tenant, so it must never
+  // ship with the well-known demo password. Explain THAT instead of pointing at
+  // `npm run seed`, which cannot be run on a hosted instance anyway.
+  function devAccountHint() {
+    return isLocalHost()
+      ? "The developer account is missing. Stop the server, run \"npm run seed\", then start it again."
+      : "The developer console is disabled on this deployment. Set PLATFORM_ADMIN_PASSWORD (12+ characters) on the host, redeploy, then sign in manually with org DOCTURN, user \"dev\" and that password.";
+  }
+  function isLocalHost() {
+    try {
+      return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+    } catch (e) { return false; }
+  }
+
   function isNetworkError(e) {
     // A real fetch transport failure (server down/unreachable). Match by message
     // because `instanceof TypeError` is unreliable across realms.
@@ -652,9 +668,10 @@
       }
       // Server reachable but login failed (bad/missing account or org code).
       var why = String((e && e.message) || "");
-      var msg = /credential/i.test(why) ? "Wrong account/password for this role."
-        : /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
-        : "Run \"npm run seed\" to create the demo accounts.";
+      var msg = /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
+        : role === "developer" ? devAccountHint()
+        : /credential/i.test(why) ? "Wrong account/password for this role."
+        : "That demo account isn't available on this deployment.";
       DT.set(function (s) {
         s.loginError = "Sign-in failed: " + msg;
         s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };
@@ -676,7 +693,9 @@
         if (origSetRole) origSetRole(role);
         return;
       }
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: "That role's account is missing — run \"npm run seed\"." }; return s; });
+      var msg = role === "developer" ? devAccountHint()
+        : "That role's demo account isn't available on this deployment.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: msg }; return s; });
       console.error("[DocTurn] setRole failed:", e);
     });
   };
