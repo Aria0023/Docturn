@@ -140,6 +140,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       ...AUTH_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
+      // Count only FAILED auth attempts (status >= 400). The control we need is
+      // brute-force / credential-stuffing protection (§164.308(a)(5)(ii)(C)),
+      // and that is entirely about wrong guesses — a successful sign-in is not
+      // an attack. Counting successes too meant ordinary use burned the budget:
+      // every role switch costs 1 (or 2, since a miss retries the role's home
+      // org), and a whole demo room behind one hospital NAT shares a single IP,
+      // so a legitimate session could lock everyone out mid-demo.
+      skipSuccessfulRequests: true,
       validate: { xForwardedForHeader: false },
     });
     const generalLimiter = rateLimit({
