@@ -1,4 +1,4 @@
-import { hashPassword } from "./auth.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 import { getHandle } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 
@@ -327,6 +327,26 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
 
   const dev = await storage.getUserByUsername(platform.id, "dev");
   if (dev) {
+    // PLATFORM_ADMIN_PASSWORD is the operator's EXPLICIT instruction about this
+    // account, so honour it even when the account already exists. Without this
+    // the variable silently did nothing on any already-seeded database (every
+    // persistent deployment after its first boot): the operator sets the secret,
+    // redeploys, and still cannot sign in — with no clue why. Aligning the
+    // stored hash with the configured secret is the opposite of a silent
+    // rotation: it is the operator's own value, applied where they asked.
+    if (strongEnvPassword) {
+      const alreadyCurrent = await verifyPassword(envPassword, dev.passwordHash);
+      if (!alreadyCurrent) {
+        await storage.updateUser(dev.id, {
+          passwordHash: await hashPassword(envPassword),
+        });
+        changed = true;
+        console.log(
+          "[seed] rotated the platform root account `dev` to the configured PLATFORM_ADMIN_PASSWORD.",
+        );
+      }
+      return changed;
+    }
     // Never silently delete or rotate an existing operator account — that would
     // lock the operator out. Warn loudly instead so they rotate it themselves.
     if (gated && !strongEnvPassword) {
