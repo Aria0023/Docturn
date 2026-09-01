@@ -38,9 +38,23 @@ function platformAdminPasswordEnv(): string {
   return process.env.PLATFORM_ADMIN_PASSWORD ?? "";
 }
 
-/** True when the root account must be gated behind a strong env password. */
+/**
+ * True when the root account must be gated behind a strong env password.
+ *
+ * The gate is REAL-PHI mode, not merely "production". A synthetic instance
+ * already publishes shared demo credentials for every clinical role on the same
+ * public URL, so refusing to seed `dev` there bought no real protection while
+ * making the developer console unreachable on a hosted demo — the operator has
+ * no shell to run a seed script and the account cannot be created any other
+ * way. What the gate genuinely protects is PATIENT data, and that boundary is
+ * unchanged: with SYNTHETIC_DATA=false the account is still refused unless
+ * PLATFORM_ADMIN_PASSWORD is set to a strong secret.
+ *
+ * A synthetic deployment that still wants the account locked down can set
+ * PLATFORM_ADMIN_PASSWORD; it takes precedence over the demo password below.
+ */
 function rootAccountIsGated(): boolean {
-  return isProduction() || !isSyntheticDataMode();
+  return !isSyntheticDataMode();
 }
 
 // The platform/developer tenant. Kept separate from clinical tenants so the
@@ -390,11 +404,26 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
     twoFactorEnabled: false,
   });
   changed = true;
-  console.log(
-    envPassword
-      ? "[seed] provisioned the platform root account `dev` from PLATFORM_ADMIN_PASSWORD."
-      : "[seed] provisioned the platform root account `dev` with the local development password.",
-  );
+  if (envPassword) {
+    console.log(
+      "[seed] provisioned the platform root account `dev` from PLATFORM_ADMIN_PASSWORD.",
+    );
+  } else if (isProduction()) {
+    // Reachable from the internet with a shared, well-known password. Fine for
+    // synthetic data; say so plainly every boot so it cannot become the quiet
+    // default once this deployment starts to matter.
+    console.warn(
+      "[seed] NOTICE: the cross-tenant root account `dev` was provisioned with the " +
+        "shared demo password because this is a SYNTHETIC-data deployment. It can read " +
+        "every demo tenant and is reachable from the internet. Before this instance " +
+        "carries real PHI, set PLATFORM_ADMIN_PASSWORD (12+ characters) and/or " +
+        "SYNTHETIC_DATA=false.",
+    );
+  } else {
+    console.log(
+      "[seed] provisioned the platform root account `dev` with the local development password.",
+    );
+  }
   return changed;
 }
 
