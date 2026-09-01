@@ -188,8 +188,14 @@ describe("C1: seeded credentials are gated by environment", () => {
     vi.unstubAllEnvs();
   });
 
-  it("production without PLATFORM_ADMIN_PASSWORD does NOT create the cross-tenant root account", async () => {
+  // The gate is REAL-PHI mode, not "production": a synthetic demo already
+  // publishes shared clinical credentials on the same public URL, and refusing
+  // the root account there only made the developer console unreachable on a
+  // hosted demo. The boundary that protects patient data is the one asserted
+  // here.
+  it("real-PHI mode without PLATFORM_ADMIN_PASSWORD does NOT create the cross-tenant root account", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SYNTHETIC_DATA", "false");
     vi.stubEnv("PLATFORM_ADMIN_PASSWORD", "");
     const storage = await freshDb();
 
@@ -201,8 +207,9 @@ describe("C1: seeded credentials are gated by environment", () => {
     expect(dev).toBeUndefined();
   });
 
-  it("production with a too-short PLATFORM_ADMIN_PASSWORD also refuses", async () => {
+  it("real-PHI mode with a too-short PLATFORM_ADMIN_PASSWORD also refuses", async () => {
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SYNTHETIC_DATA", "false");
     vi.stubEnv("PLATFORM_ADMIN_PASSWORD", "short");
     const storage = await freshDb();
 
@@ -210,6 +217,19 @@ describe("C1: seeded credentials are gated by environment", () => {
 
     const platform = (await storage.getOrganizationByCode("DOCTURN"))!;
     expect(await storage.getUserByUsername(platform.id, "dev")).toBeUndefined();
+  });
+
+  it("a synthetic production demo DOES provision the root account, so the console is reachable", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("PLATFORM_ADMIN_PASSWORD", "");
+    const storage = await freshDb();
+
+    await ensurePlatform(storage);
+
+    const platform = (await storage.getOrganizationByCode("DOCTURN"))!;
+    const dev = await storage.getUserByUsername(platform.id, "dev");
+    expect(dev).toBeTruthy();
+    expect(dev!.role).toBe("developer");
   });
 
   it("production with a >=12-char PLATFORM_ADMIN_PASSWORD creates root with THAT password, never the default", async () => {
@@ -228,6 +248,27 @@ describe("C1: seeded credentials are gated by environment", () => {
     expect(await verifyPassword("docturn", dev!.passwordHash)).toBe(false);
   });
 
+  // Without this, PLATFORM_ADMIN_PASSWORD silently did nothing on every
+  // already-seeded (persistent) deployment: the operator sets the secret,
+  // redeploys, and still cannot sign in.
+  it("an existing root account adopts a configured PLATFORM_ADMIN_PASSWORD", async () => {
+    const storage = await freshDb();
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("PLATFORM_ADMIN_PASSWORD", "");
+    await ensurePlatform(storage);
+    const platform = (await storage.getOrganizationByCode("DOCTURN"))!;
+    const before = await storage.getUserByUsername(platform.id, "dev");
+    expect(before).toBeTruthy();
+
+    vi.stubEnv("PLATFORM_ADMIN_PASSWORD", STRONG);
+    await ensurePlatform(storage);
+
+    const after = await storage.getUserByUsername(platform.id, "dev");
+    expect(after!.id).toBe(before!.id); // same account, not recreated
+    expect(await verifyPassword(STRONG, after!.passwordHash)).toBe(true);
+    expect(await verifyPassword("docturn", after!.passwordHash)).toBe(false);
+  });
+
   it("an existing root account is never deleted, only warned about", async () => {
     const storage = await freshDb();
     // Provision it the way a dev instance would (no gate).
@@ -238,9 +279,10 @@ describe("C1: seeded credentials are gated by environment", () => {
     const before = await storage.getUserByUsername(platform.id, "dev");
     expect(before).toBeTruthy();
 
-    // Now boot as production with no env password: warn, don't destroy.
+    // Now boot gated (real-PHI) with no env password: warn, don't destroy.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SYNTHETIC_DATA", "false");
     await ensurePlatform(storage);
     const after = await storage.getUserByUsername(platform.id, "dev");
     expect(after).toBeTruthy();
