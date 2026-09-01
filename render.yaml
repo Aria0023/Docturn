@@ -35,6 +35,19 @@ services:
       # site legitimately trips it — do not turn the limiter off.
       - key: SESSION_SECRET
         generateValue: true
+      # Bootstrap credential for the cross-tenant operator account `dev` (the
+      # developer console). Without it the app refuses to create that account on
+      # a production instance, because it can read every tenant.
+      #
+      # SECURITY TRADE-OFF, stated plainly: this value lives in git, so treat it
+      # as PUBLIC. It is acceptable only while this deployment carries synthetic
+      # demo data. Before any real PHI: change it in the Render dashboard
+      # (Environment → PLATFORM_ADMIN_PASSWORD), which overrides this value, and
+      # delete this entry. A dashboard value set by hand is the correct home for
+      # this secret; it is written here only because the dashboard route was not
+      # taking effect on this service.
+      - key: PLATFORM_ADMIN_PASSWORD
+        value: Doctun14777!
       # Persistent Postgres — the app creates its schema + seeds on first boot.
       # Data now survives restarts/redeploys (unlike the old in-process PGlite).
       - key: DATABASE_URL
