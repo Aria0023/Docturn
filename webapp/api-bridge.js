@@ -900,6 +900,8 @@
     for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
     return out;
   }
+  // Exposed so the Settings screen can (re)request push permission on demand.
+  DT.actions.enablePush = function () { return enableWebPush(); };
   function enableWebPush() {
     try {
       if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;

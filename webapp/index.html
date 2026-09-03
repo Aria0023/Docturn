@@ -94,6 +94,7 @@
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
 <script type="text/babel" src="OnCallBoard.jsx"></script>
+<script type="text/babel" src="AccountSettings.jsx"></script>
 <script type="text/babel" src="OrgSettings.jsx"></script>
 <script type="text/babel" src="RoleManagement.jsx"></script>
 <script type="text/babel" src="People.jsx"></script>
@@ -147,6 +148,7 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
@@ -154,6 +156,7 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
@@ -166,6 +169,7 @@ const NAV = {
     // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
     { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   director: [
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
@@ -181,6 +185,7 @@ const NAV = {
     // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
     { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
@@ -190,6 +195,7 @@ const NAV = {
     { id: "compliance", label: "Compliance", icon: "shield-check" },
     { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
+    { id: "account",    label: "My settings",     icon: "user" },
   ],
 };
 
@@ -212,6 +218,7 @@ const TOP = {
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  account:    ["Settings", "Your profile, availability, notifications and security"],
   "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
   oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
@@ -381,6 +388,7 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "account") screen = <AccountSettings onLock={lockNow} />;
   else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;

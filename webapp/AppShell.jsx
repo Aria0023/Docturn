@@ -52,6 +52,11 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
             </div>
             <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
           </div>}
+          {!compact && onNav && <button onClick={() => onNav("account")} title="Settings"
+            onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+            <Icon name="settings" size={16} />
+          </button>}
           {!compact && <DndButton />}
           {!compact && <ChangePasswordButton />}
           {!compact && <button onClick={onLogout} title="Sign out"
