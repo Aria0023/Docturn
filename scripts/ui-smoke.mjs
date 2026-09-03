@@ -226,7 +226,8 @@ await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await 
   const ispn = Array.isArray(arr) ? arr.find((o) => o.code === "ISPN") : null;
   rec("dev compliance overview separates by organization",
     Array.isArray(arr) && arr.length >= 1 && !!ispn && typeof ispn.auditCount === "number" && typeof ispn.phiCount === "number",
-    "orgs=" + JSON.stringify((arr || []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200));
+    "orgs=" + JSON.stringify((Array.isArray(arr) ? arr : []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200) +
+      (Array.isArray(arr) ? "" : " (non-array response: " + JSON.stringify(arr).slice(0, 80) + ")"));
   rec("support directory: users hydrated per organization",
     (DT.getState().devUsers || []).some((u) => u.org && u.name),
     "users=" + (DT.getState().devUsers || []).length);
