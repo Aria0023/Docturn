@@ -1,12 +1,70 @@
-import { hashPassword } from "./auth.js";
+import { hashPassword, verifyPassword } from "./auth.js";
 import { getHandle } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 
-const DEV_PASSWORD = "docturn";
+// Password for the SYNTHETIC demo clinical roster (chen/director/er.doc/…).
+// These are shared, well-known demo credentials by design: they only ever exist
+// on a synthetic-data instance (see isSyntheticDataMode) and they never carry
+// cross-tenant privilege. Override per-deployment with DEMO_PASSWORD.
+const DEFAULT_DEMO_PASSWORD = "docturn";
+
+/** Password used for every seeded demo CLINICAL account. Never logged. */
+function demoPassword(): string {
+  return process.env.DEMO_PASSWORD || DEFAULT_DEMO_PASSWORD;
+}
+
+/**
+ * Synthetic-data mode is the default; only the literal string "false" opts a
+ * deployment into real PHI. A real-PHI instance must never carry shared demo
+ * credentials, so all demo seeding is refused when this returns false.
+ */
+export function isSyntheticDataMode(): boolean {
+  return process.env.SYNTHETIC_DATA !== "false";
+}
+
+function isProduction(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * The `dev` account is cross-tenant root (it can impersonate into and read every
+ * org), so it must never be auto-provisioned with a guessable password on a
+ * publicly reachable instance. On production — or on any real-PHI instance —
+ * it is created ONLY from a PLATFORM_ADMIN_PASSWORD of at least this length.
+ */
+const MIN_PLATFORM_ADMIN_PASSWORD_LENGTH = 12;
+
+function platformAdminPasswordEnv(): string {
+  return process.env.PLATFORM_ADMIN_PASSWORD ?? "";
+}
+
+/**
+ * True when the root account must be gated behind a strong env password.
+ *
+ * The gate is REAL-PHI mode, not merely "production". A synthetic instance
+ * already publishes shared demo credentials for every clinical role on the same
+ * public URL, so refusing to seed `dev` there bought no real protection while
+ * making the developer console unreachable on a hosted demo — the operator has
+ * no shell to run a seed script and the account cannot be created any other
+ * way. What the gate genuinely protects is PATIENT data, and that boundary is
+ * unchanged: with SYNTHETIC_DATA=false the account is still refused unless
+ * PLATFORM_ADMIN_PASSWORD is set to a strong secret.
+ *
+ * A synthetic deployment that still wants the account locked down can set
+ * PLATFORM_ADMIN_PASSWORD; it takes precedence over the demo password below.
+ */
+function rootAccountIsGated(): boolean {
+  return !isSyntheticDataMode();
+}
 
 // The platform/developer tenant. Kept separate from clinical tenants so the
 // developer can delete any hospital org without destroying their own account.
 const PLATFORM_ORG = { name: "DocTurn Platform", code: "DOCTURN" };
+
+/** Thrown (and caught by callers) when demo seeding is refused in real-PHI mode. */
+const REAL_PHI_REFUSAL =
+  "refusing to seed shared demo accounts: SYNTHETIC_DATA=false (real-PHI mode). " +
+  "Provision real accounts instead, or unset SYNTHETIC_DATA to run a synthetic instance.";
 
 interface SeedResult {
   orgId: number;
@@ -22,6 +80,12 @@ interface SeedResult {
  * and a couple of pending assignments so dashboards aren't empty.
  */
 export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
+  // Real-PHI instances get no demo clinical roster at all.
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    throw new Error(REAL_PHI_REFUSAL);
+  }
+
   const org = await storage.createOrganization({
     name: "Cedars-Sinai (ISP North)",
     code: "ISPN",
@@ -34,15 +98,17 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     rotationIndex: 0,
   });
 
-  const passwordHash = await hashPassword(DEV_PASSWORD);
+  const passwordHash = await hashPassword(demoPassword());
   const userIds: Record<string, number> = {};
 
   // Platform org + developer account (separate from the clinical tenant).
   // Idempotent so reseeding a DB that still has the platform org doesn't collide.
+  // NOTE: on a gated instance ensurePlatform deliberately does NOT create `dev`,
+  // so the account may legitimately be absent here.
   await ensurePlatform(storage);
   const platform = (await storage.getOrganizationByCode(PLATFORM_ORG.code))!;
-  const devUser = (await storage.getUserByUsername(platform.id, "dev"))!;
-  userIds["dev"] = devUser.id;
+  const devUser = await storage.getUserByUsername(platform.id, "dev");
+  if (devUser) userIds["dev"] = devUser.id;
 
   async function mkUser(
     username: string,
@@ -175,6 +241,9 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     bedCapacity: 24,
   });
 
+  // Org-wide composer templates (idempotent by title).
+  await ensureMessageTemplates(storage, org.id);
+
   return {
     orgId: org.id,
     platformOrgId: platform.id,
@@ -182,6 +251,51 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     hospitalistIds,
     patientIds: { sc: p1.id },
   };
+}
+
+// Sensible org-wide message templates for a hospitalist group. `{room}` is a
+// placeholder the sender fills in before sending. No PHI.
+const ORG_MESSAGE_TEMPLATES: Array<{
+  title: string;
+  body: string;
+  priority: "routine" | "urgent" | "stat";
+}> = [
+  { title: "Call back re: bed", body: "Please call back re: bed {room}.", priority: "urgent" },
+  { title: "Consult requested", body: "Consult requested — see patient thread.", priority: "routine" },
+  { title: "STAT: need you at bedside", body: "STAT: need you at bedside — room {room}.", priority: "stat" },
+  { title: "Handoff complete", body: "Handoff complete, see notes.", priority: "routine" },
+  { title: "Running late", body: "Running late, cover 15 min?", priority: "routine" },
+  { title: "Patient ready for admission", body: "Patient ready for admission — room {room}.", priority: "routine" },
+];
+
+/**
+ * Ensure the org-wide message templates exist for an org. Idempotent: matches
+ * on title among the org's ORG-WIDE templates, so re-running never duplicates
+ * and never touches personal templates. Returns the number added.
+ */
+export async function ensureMessageTemplates(
+  storage: DatabaseStorage,
+  orgId: number,
+): Promise<number> {
+  // listMessageTemplates(orgId, userId) returns org-wide + that user's own;
+  // userId 0 matches nobody, so this is exactly the org-wide set.
+  const existing = await storage.listMessageTemplates(orgId, 0);
+  const have = new Set(
+    existing.filter((t) => t.ownerUserId == null).map((t) => t.title.toLowerCase()),
+  );
+  let added = 0;
+  for (const t of ORG_MESSAGE_TEMPLATES) {
+    if (have.has(t.title.toLowerCase())) continue;
+    await storage.createMessageTemplate({
+      organizationId: orgId,
+      ownerUserId: null,
+      title: t.title,
+      body: t.body,
+      priority: t.priority,
+    });
+    added++;
+  }
+  return added;
 }
 
 // The clinical demo roster (ISPN). The developer (`dev`) is provisioned
@@ -203,7 +317,11 @@ async function ensureDemoUsers(
   storage: DatabaseStorage,
   orgId: number,
 ): Promise<number> {
-  const passwordHash = await hashPassword(DEV_PASSWORD);
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    return 0;
+  }
+  const passwordHash = await hashPassword(demoPassword());
   let added = 0;
   for (const u of DEMO_USERS) {
     const existing = await storage.getUserByUsername(orgId, u.username);
@@ -263,22 +381,315 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
     });
     changed = true;
   }
+
+  const envPassword = platformAdminPasswordEnv();
+  const strongEnvPassword =
+    envPassword.length >= MIN_PLATFORM_ADMIN_PASSWORD_LENGTH;
+  const gated = rootAccountIsGated();
+
   const dev = await storage.getUserByUsername(platform.id, "dev");
-  if (!dev) {
-    const passwordHash = await hashPassword(DEV_PASSWORD);
-    await storage.createUser({
-      organizationId: platform.id,
-      username: "dev",
+  if (dev) {
+    // PLATFORM_ADMIN_PASSWORD is the operator's EXPLICIT instruction about this
+    // account, so honour it even when the account already exists. Without this
+    // the variable silently did nothing on any already-seeded database (every
+    // persistent deployment after its first boot): the operator sets the secret,
+    // redeploys, and still cannot sign in — with no clue why. Aligning the
+    // stored hash with the configured secret is the opposite of a silent
+    // rotation: it is the operator's own value, applied where they asked.
+    if (strongEnvPassword) {
+      const alreadyCurrent = await verifyPassword(envPassword, dev.passwordHash);
+      if (!alreadyCurrent) {
+        await storage.updateUser(dev.id, {
+          passwordHash: await hashPassword(envPassword),
+        });
+        changed = true;
+        console.log(
+          "[seed] rotated the platform root account `dev` to the configured PLATFORM_ADMIN_PASSWORD.",
+        );
+      }
+      return changed;
+    }
+    // Never silently delete or rotate an existing operator account — that would
+    // lock the operator out. Warn loudly instead so they rotate it themselves.
+    if (gated && !strongEnvPassword) {
+      console.warn(
+        "[seed] SECURITY: the cross-tenant root account `dev` exists on a " +
+          "hardened instance (production and/or real-PHI) but PLATFORM_ADMIN_PASSWORD " +
+          `is not set to a value of at least ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} characters. ` +
+          "This account may still be using the well-known default password and can read " +
+          "every tenant. ACTION REQUIRED: set PLATFORM_ADMIN_PASSWORD on this deployment " +
+          "and rotate the `dev` password now.",
+      );
+    }
+    return changed;
+  }
+
+  if (gated && !strongEnvPassword) {
+    // Do not ship a guessable cross-tenant root credential.
+    console.warn(
+      "[seed] SECURITY: refusing to create the cross-tenant root account `dev` — " +
+        "this instance is production and/or real-PHI and PLATFORM_ADMIN_PASSWORD is " +
+        (envPassword
+          ? `shorter than ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} characters.`
+          : "not set.") +
+        ` ACTION REQUIRED: set PLATFORM_ADMIN_PASSWORD to a strong secret of at least ${MIN_PLATFORM_ADMIN_PASSWORD_LENGTH} ` +
+        "characters and restart to provision it. Demo clinical accounts are unaffected.",
+    );
+    return changed;
+  }
+
+  // Outside the gate (local/dev synthetic instances) fall back to the demo
+  // password so `npm run dev` keeps working with zero configuration.
+  const rootPassword = envPassword || demoPassword();
+  await storage.createUser({
+    organizationId: platform.id,
+    username: "dev",
+    passwordHash: await hashPassword(rootPassword),
+    role: "developer" as never,
+    displayName: "Platform Operator",
+    credential: null as never,
+    phone: null,
+    twoFactorEnabled: false,
+  });
+  changed = true;
+  if (envPassword) {
+    console.log(
+      "[seed] provisioned the platform root account `dev` from PLATFORM_ADMIN_PASSWORD.",
+    );
+  } else if (isProduction()) {
+    // Reachable from the internet with a shared, well-known password. Fine for
+    // synthetic data; say so plainly every boot so it cannot become the quiet
+    // default once this deployment starts to matter.
+    console.warn(
+      "[seed] NOTICE: the cross-tenant root account `dev` was provisioned with the " +
+        "shared demo password because this is a SYNTHETIC-data deployment. It can read " +
+        "every demo tenant and is reachable from the internet. Before this instance " +
+        "carries real PHI, set PLATFORM_ADMIN_PASSWORD (12+ characters) and/or " +
+        "SYNTHETIC_DATA=false.",
+    );
+  } else {
+    console.log(
+      "[seed] provisioned the platform root account `dev` with the local development password.",
+    );
+  }
+  return changed;
+}
+
+/**
+ * Two additional, fully-isolated demo tenants, seeded idempotently (skip if the
+ * org code already exists — same skip-if-exists pattern the seed uses per org).
+ * Kept separate from ISPN/DOCTURN so neither tenant can see the other's users
+ * or data.
+ *   - HOSP "Summit Hospitalist Group" — hospitalist-director demo.
+ *   - ER   "Metro ER Network"        — ER-director demo.
+ * Both admins deliberately share username `director` / password `docturn`;
+ * usernames are unique per-org, so they differ only by org code.
+ */
+export async function ensureDemoTenants(storage: DatabaseStorage): Promise<void> {
+  if (!isSyntheticDataMode()) {
+    console.warn(`[seed] ${REAL_PHI_REFUSAL}`);
+    return;
+  }
+  const passwordHash = await hashPassword(demoPassword());
+
+  async function addUser(
+    orgId: number,
+    username: string,
+    role: string,
+    displayName: string,
+    credential: string | null = null,
+  ) {
+    return storage.createUser({
+      organizationId: orgId,
+      username,
       passwordHash,
-      role: "developer" as never,
-      displayName: "Platform Operator",
-      credential: null as never,
+      role: role as never,
+      displayName,
+      credential: credential as never,
       phone: null,
       twoFactorEnabled: false,
     });
-    changed = true;
   }
-  return changed;
+
+  async function addProvider(
+    orgId: number,
+    userId: number,
+    specialty: string,
+    census: number,
+    cap: number,
+    working: boolean,
+    order: number,
+    shiftType: "day" | "swing" | "night",
+  ) {
+    return storage.createHospitalist({
+      organizationId: orgId,
+      userId,
+      specialty,
+      currentPatientCount: census,
+      patientCap: cap,
+      rotationOrder: order,
+      working,
+      shiftType,
+    });
+  }
+
+  // ---- Hospital A: Summit Hospitalist Group (HOSP) — hospitalist director -----
+  if (!(await storage.getOrganizationByCode("HOSP"))) {
+    const org = await storage.createOrganization({
+      name: "Summit Hospitalist Group",
+      code: "HOSP",
+      city: "Boulder",
+      state: "CO",
+      timezone: "America/Denver",
+      assignmentTimeoutMin: 15,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+
+    await addUser(org.id, "director", "director", "Dr. Morgan Hale", "MD");
+    // An ER doctor exists purely to author the seeded pending assignments so the
+    // hand-off flow is real (an assignment needs an er_doctor creator id).
+    const erDoc = await addUser(org.id, "er.doc", "er_doctor", "Dr. Priya Nair", "MD");
+
+    const roster: Array<{
+      u: string; name: string; cred: string; specialty: string;
+      census: number; cap: number; working: boolean; shift: "day" | "swing" | "night";
+    }> = [
+      { u: "okafor", name: "Dr. Sam Okafor", cred: "MD", specialty: "General",           census: 3, cap: 10, working: true,  shift: "day"   },
+      { u: "voss",   name: "Dr. Lena Voss",  cred: "MD", specialty: "Cardiology",        census: 8, cap: 14, working: true,  shift: "swing" },
+      { u: "raj",    name: "Dr. Raj Patel",  cred: "DO", specialty: "Pulmonology",       census: 5, cap: 12, working: false, shift: "night" },
+      { u: "kim",    name: "Dr. Chloe Kim",  cred: "MD", specialty: "Hospital Medicine", census: 2, cap: 8,  working: true,  shift: "day"   },
+    ];
+    const hosp: Record<string, number> = {};
+    let order = 0;
+    for (const r of roster) {
+      const u = await addUser(org.id, r.u, "hospitalist", r.name, r.cred);
+      const h = await addProvider(org.id, u.id, r.specialty, r.census, r.cap, r.working, order++, r.shift);
+      hosp[r.u] = h.id;
+    }
+
+    const patients: Array<{ initials: string; room: string; summary: string; specialty: string; acuity: number }> = [
+      { initials: "JD", room: "210", summary: "Chest pain, rule out ACS",              specialty: "Cardiology",  acuity: 2 },
+      { initials: "MR", room: "305", summary: "Shortness of breath, COPD flare",       specialty: "Pulmonology", acuity: 3 },
+      { initials: "TW", room: "112", summary: "Abdominal pain, possible obstruction",  specialty: "General",     acuity: 3 },
+    ];
+    const pids: number[] = [];
+    for (const p of patients) {
+      const created = await storage.createPatient({
+        organizationId: org.id,
+        initials: p.initials,
+        roomNumber: p.room,
+        issueSummary: p.summary,
+        specialty: p.specialty,
+        department: "Emergency",
+        acuity: p.acuity,
+        status: "waiting",
+        erDoctorId: erDoc.id,
+        assignedHospitalistId: null,
+      });
+      pids.push(created.id);
+    }
+
+    // Pending assignments routed to a few providers so the director/hospitalist
+    // dashboards show live pending work.
+    const routes: Array<[number, number]> = [
+      [pids[0]!, hosp["voss"]!],
+      [pids[1]!, hosp["okafor"]!],
+      [pids[2]!, hosp["kim"]!],
+    ];
+    for (const [patientId, hospitalistId] of routes) {
+      await storage.createAssignment({
+        organizationId: org.id,
+        patientId,
+        hospitalistId,
+        erDoctorId: erDoc.id,
+        status: "pending",
+        via: "round_robin",
+        acceptedByUserId: null,
+        expiresAt: new Date(Date.now() + 10 * 60_000),
+      });
+    }
+  }
+
+  // ---- Hospital B: Metro ER Network (ER) — ER director -----------------------
+  if (!(await storage.getOrganizationByCode("ER"))) {
+    const org = await storage.createOrganization({
+      name: "Metro ER Network",
+      code: "ER",
+      city: "Metro City",
+      state: "IL",
+      timezone: "America/Chicago",
+      assignmentTimeoutMin: 15,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+
+    await addUser(org.id, "director", "er_director", "Dr. Alex Reyes", "MD");
+    const erDocs = [
+      await addUser(org.id, "er.doc1", "er_doctor", "Dr. Tara Singh",  "MD"),
+      await addUser(org.id, "er.doc2", "er_doctor", "Dr. Ben Carter",  "MD"),
+      await addUser(org.id, "er.doc3", "er_doctor", "Dr. Nadia Frost", "DO"),
+    ];
+
+    // Two hospitalists exist only as routing targets so the ER hand-off flow is
+    // functional. Kept minimal (working=true, no extra data).
+    const routeHosp: number[] = [];
+    let order = 0;
+    for (const h of [
+      { u: "holt", name: "Dr. Ivan Holt", cred: "MD", shift: "day" as const },
+      { u: "reed", name: "Dr. Maya Reed", cred: "MD", shift: "night" as const },
+    ]) {
+      const u = await addUser(org.id, h.u, "hospitalist", h.name, h.cred);
+      const prof = await addProvider(org.id, u.id, "Hospital Medicine", 0, 12, true, order++, h.shift);
+      routeHosp.push(prof.id);
+    }
+
+    const patients: Array<{ initials: string; room: string; summary: string; acuity: number }> = [
+      { initials: "AB", room: "ER-1", summary: "Fever and cough, awaiting workup", acuity: 3 },
+      { initials: "CD", room: "ER-2", summary: "Laceration, awaiting suture",       acuity: 4 },
+      { initials: "EF", room: "ER-3", summary: "Palpitations, on monitor",          acuity: 2 },
+    ];
+    const pids: number[] = [];
+    for (const p of patients) {
+      const created = await storage.createPatient({
+        organizationId: org.id,
+        initials: p.initials,
+        roomNumber: p.room,
+        issueSummary: p.summary,
+        specialty: "General",
+        department: "Emergency",
+        acuity: p.acuity,
+        status: "waiting",
+        erDoctorId: erDocs[0]!.id,
+        assignedHospitalistId: null,
+      });
+      pids.push(created.id);
+    }
+
+    // A couple of pending hand-offs from ER doctors to the routing hospitalists.
+    await storage.createAssignment({
+      organizationId: org.id,
+      patientId: pids[0]!,
+      hospitalistId: routeHosp[0]!,
+      erDoctorId: erDocs[0]!.id,
+      status: "pending",
+      via: "round_robin",
+      acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+    await storage.createAssignment({
+      organizationId: org.id,
+      patientId: pids[2]!,
+      hospitalistId: routeHosp[1]!,
+      erDoctorId: erDocs[1]!.id,
+      status: "pending",
+      via: "round_robin",
+      acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+  }
 }
 
 // CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
@@ -301,20 +712,24 @@ if (isMain) {
         // dev account out) — no wipe needed.
         const added = await ensureDemoUsers(storage, existing.id);
         const platformChanged = await ensurePlatform(storage);
+        const templatesAdded = await ensureMessageTemplates(storage, existing.id);
         const msgs: string[] = [];
         if (added > 0) msgs.push(`added ${added} missing demo account(s)`);
+        if (templatesAdded > 0) msgs.push(`added ${templatesAdded} org message template(s)`);
         if (platformChanged) msgs.push("provisioned the platform org + developer account");
         console.log(
           msgs.length
-            ? `Database already seeded — ${msgs.join(" and ")}. Password: "${DEV_PASSWORD}".`
+            ? `Database already seeded — ${msgs.join(" and ")}. Demo password: DEMO_PASSWORD (default: the documented demo password).`
             : "Database already seeded and all accounts present — nothing to do.",
         );
       } else {
         const result = await seed(storage);
         console.log(
-          `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}). Dev password: "${DEV_PASSWORD}".`,
+          `Seeded org ISPN (#${result.orgId}) + platform org (#${result.platformOrgId}).`,
         );
       }
+      // Idempotently provision the two isolated demo tenants (HOSP + ER).
+      await ensureDemoTenants(storage);
     } catch (err) {
       console.error("Seed failed:", err);
       process.exitCode = 1;
@@ -323,4 +738,13 @@ if (isMain) {
   })();
 }
 
-export { DEV_PASSWORD };
+/**
+ * The demo clinical password, resolved once at import. Exported for the test
+ * harness (tests/helpers.ts logs in as the seeded demo accounts) and for any
+ * caller that needs the same value `seed()` used. This is a SYNTHETIC-only
+ * credential — it is never used for the cross-tenant root account on a gated
+ * instance (see ensurePlatform / PLATFORM_ADMIN_PASSWORD).
+ */
+const DEV_PASSWORD = demoPassword();
+
+export { DEV_PASSWORD, demoPassword };

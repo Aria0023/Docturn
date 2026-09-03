@@ -116,7 +116,14 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
       db,
       ephemeral: false,
       ensureSchema: async () => {
-        // Real Postgres schema is managed by `npm run db:push` (drizzle-kit).
+        // A fresh cloud Postgres (e.g. a new Render database) starts with zero
+        // tables. Apply the SAME idempotent DDL we use for PGlite so the app
+        // self-provisions on first boot instead of crashing on an empty schema.
+        // SCHEMA_SQL is standard Postgres (CREATE TABLE IF NOT EXISTS + additive
+        // ALTER … ADD COLUMN IF NOT EXISTS), so re-running it every start is a
+        // no-op once provisioned. (`drizzle-kit push` remains available for
+        // richer migrations, but is no longer required just to boot.)
+        await pool.query(SCHEMA_SQL);
       },
       close: async () => {
         await pool.end();
@@ -217,6 +224,8 @@ CREATE TABLE IF NOT EXISTS patients (
   assigned_hospitalist_id INTEGER REFERENCES hospitalists(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- EHR identifier (MRN/CSN) for "Open in EHR" deep links; additive + nullable.
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS ehr_id TEXT;
 
 CREATE TABLE IF NOT EXISTS assignments (
   id SERIAL PRIMARY KEY,
@@ -238,8 +247,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   type TEXT NOT NULL DEFAULT 'direct',
   name TEXT,
   participant_ids JSONB NOT NULL,
+  patient_id INTEGER REFERENCES patients(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS patient_id INTEGER REFERENCES patients(id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id SERIAL PRIMARY KEY,
@@ -247,8 +258,24 @@ CREATE TABLE IF NOT EXISTS messages (
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   sender_id INTEGER NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMP
+);
+-- Additive columns for stores created before these fields existed (no-op on new).
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'routine';
+-- Forwarding provenance ({messageId, senderId, senderName, conversationId, sentAt}); NULL = original.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from JSONB;
+
+-- Composer templates: owner_user_id NULL = org-wide, else personal.
+CREATE TABLE IF NOT EXISTS message_templates (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  owner_user_id INTEGER REFERENCES users(id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS message_delivery_status (
@@ -256,7 +283,29 @@ CREATE TABLE IF NOT EXISTS message_delivery_status (
   message_id INTEGER NOT NULL REFERENCES messages(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
   delivered_at TIMESTAMP,
-  read_at TIMESTAMP
+  read_at TIMESTAMP,
+  acknowledged_at TIMESTAMP,
+  realerted_at TIMESTAMP,
+  escalated_at TIMESTAMP
+);
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS realerted_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
+
+-- Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: the bytes are
+-- stored inline as base64 in the row. Production PHI requires encrypted object
+-- storage (S3/GCS with a BAA), server-side AV scanning, and a signed-URL fetch
+-- path — DO NOT ship this inline-base64 store for real patient data.
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  message_id INTEGER REFERENCES messages(id),
+  uploader_id INTEGER NOT NULL REFERENCES users(id),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  data_base64 TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -276,11 +325,44 @@ CREATE TABLE IF NOT EXISTS phi_access_logs (
   organization_id INTEGER REFERENCES organizations(id),
   user_id INTEGER REFERENCES users(id),
   resource TEXT NOT NULL,
+  resource_id INTEGER,
+  patient_id INTEGER,
   method TEXT NOT NULL,
   ip TEXT,
   user_agent TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- WHICH record was read (accounting of disclosures / breach scoping). Additive
+-- and nullable so stores written before these columns existed keep their rows.
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS resource_id INTEGER;
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS patient_id INTEGER;
+
+-- Six-year compliance archive: audit / PHI-access / security rows copied out of
+-- a tenant before it is deleted, denormalized and WITHOUT foreign keys so they
+-- survive the cascade. Ids + actions only, never clinical content.
+CREATE TABLE IF NOT EXISTS retained_compliance_records (
+  id SERIAL PRIMARY KEY,
+  source_table TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  organization_id INTEGER,
+  organization_code TEXT,
+  organization_name TEXT,
+  user_id INTEGER,
+  user_username TEXT,
+  user_display_name TEXT,
+  action TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id INTEGER,
+  patient_id INTEGER,
+  method TEXT,
+  ip TEXT,
+  details JSONB,
+  risk_level TEXT NOT NULL DEFAULT 'low',
+  occurred_at TIMESTAMP NOT NULL,
+  archived_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  archived_reason TEXT NOT NULL DEFAULT 'organization_deleted'
+);
+CREATE INDEX IF NOT EXISTS retained_compliance_org_idx ON retained_compliance_records(organization_id);
 
 CREATE TABLE IF NOT EXISTS security_incidents (
   id SERIAL PRIMARY KEY,
@@ -457,4 +539,21 @@ CREATE TABLE IF NOT EXISTS sms_history (
   carrier TEXT NOT NULL DEFAULT 'console',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Continuous compliance monitor: an org's attestation for ONE manual control.
+-- Automated controls are recomputed from live state on every read and are never
+-- persisted here (a stored "pass" could go stale and mislead an auditor).
+CREATE TABLE IF NOT EXISTS compliance_attestations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  control_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_met',
+  owner TEXT,
+  note TEXT,
+  evidence_url TEXT,
+  attested_at TIMESTAMP,
+  review_due TIMESTAMP,
+  updated_by INTEGER REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS compliance_attestations_org_control_uniq ON compliance_attestations(organization_id, control_id);
 `;

@@ -11,14 +11,94 @@ import {
 } from "@shared/schema";
 import { storage } from "./storage.js";
 import { appendAudit } from "./audit.js";
+import { getModules } from "./modules.js";
 
 const scryptAsync = promisify(scrypt);
+
+/* ── MFA enrolment gate ─────────────────────────────────────────────────────
+ * When the org has the `security.mfaRequired` module ON, a privileged user
+ * (director / ER director / developer — see PRIVILEGED_ROLES in rbac.ts) who
+ * has not enrolled a second factor may sign in, but the session is then only
+ * good for enrolling: every /api route except the exemptions below answers
+ * 403 { error: "mfa_enrollment_required" }. The check re-reads the user row
+ * and the org's module map on every request, so completing enrolment (the
+ * existing POST /api/mfa/verify flow) lifts the block immediately, and
+ * flipping the module mid-session takes effect without a re-login.
+ */
+export const MFA_REQUIRED_MODULE = "security.mfaRequired";
+
+/** Paths (relative to the /api mount) a flagged session may still use. */
+const MFA_GATE_EXEMPT: readonly RegExp[] = [
+  /^\/user\/?$/,
+  /^\/logout\/?$/,
+  /^\/mfa(\/|$)/,
+  /^\/modules\/?$/,
+  /^\/config\/?$/,
+];
+
+export function isMfaGateExempt(apiRelativePath: string): boolean {
+  return MFA_GATE_EXEMPT.some((re) => re.test(apiRelativePath));
+}
+
+/**
+ * Must this user enrol MFA before doing anything else? Reads live state — the
+ * org's module switch and the user's twoFactorEnabled column — never the
+ * session, so it cannot go stale.
+ */
+export async function mfaEnrollmentRequired(user: {
+  id: number;
+  organizationId: number;
+  role: string;
+}): Promise<boolean> {
+  if (!isPrivilegedRole(user.role)) return false;
+  const modules = await getModules(user.organizationId);
+  if (modules[MFA_REQUIRED_MODULE] !== true) return false;
+  const fresh = await storage().getUserById(user.id);
+  return !!fresh && !fresh.twoFactorEnabled;
+}
+
+/** Express middleware mounted at /api by registerAuthRoutes. */
+export function mfaEnrollmentGate(): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const me = req.user as unknown as User | undefined;
+      // Unauthenticated requests are the routes' own business (401 there).
+      if (!me || !isPrivilegedRole(me.role)) return next();
+      if (isMfaGateExempt(req.path)) return next();
+      if (await mfaEnrollmentRequired(me)) {
+        return res.status(403).json({ error: "mfa_enrollment_required" });
+      }
+      return next();
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
 
 /** scrypt with a per-user random salt, stored as `hash.salt` (both hex). */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
   const derived = (await scryptAsync(password, salt, 64)) as Buffer;
   return `${derived.toString("hex")}.${salt}`;
+}
+
+/** Human-readable description of what {@link hashPassword} produces. */
+export const PASSWORD_HASH_FORMAT =
+  "scrypt N=16384 r=8 p=1, 64-byte key + 16-byte random salt, stored as <128 hex>.<32 hex>";
+
+/**
+ * Does a stored credential match the shape {@link hashPassword} emits? Used by
+ * the compliance monitor to prove no user row holds a plaintext or legacy
+ * credential. Deliberately format-only: it never derives, logs or returns the
+ * secret material it inspects.
+ */
+export function isValidPasswordHashFormat(stored: unknown): boolean {
+  if (typeof stored !== "string") return false;
+  const parts = stored.split(".");
+  if (parts.length !== 2) return false;
+  const [hashed, salt] = parts;
+  // 64-byte derived key and 16-byte salt, both hex.
+  return /^[0-9a-f]{128}$/.test(hashed!) && /^[0-9a-f]{32}$/.test(salt!);
 }
 
 export async function verifyPassword(
@@ -88,6 +168,10 @@ export function configurePassport() {
 
 /** Registers the auth routes onto the app. */
 export function registerAuthRoutes(app: Express) {
+  // Privileged-role MFA enrolment gate. Mounted here, before every /api route
+  // that follows (registerRoutes calls this second, right after /api/health).
+  app.use("/api", mfaEnrollmentGate());
+
   // Self-registration → pending (a director approves). We model the pending
   // gate minimally here: a registration creates no active user yet.
   app.post("/api/register", async (req, res) => {
@@ -130,7 +214,9 @@ export function registerAuthRoutes(app: Express) {
     requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = req.user as unknown as User;
-      res.json(await storage().listPendingRegistrations(me.organizationId));
+      const rows = await storage().listPendingRegistrations(me.organizationId);
+      // Never expose credential hashes to the approval UI.
+      res.json(rows.map(({ passwordHash: _ph, ...rest }) => rest));
     },
   );
 
@@ -229,18 +315,32 @@ export function registerAuthRoutes(app: Express) {
           req.session.pendingMfaUserId = user.id;
           return res.status(202).json({ twoFactorRequired: true });
         }
-        req.login(user as unknown as Express.User, (loginErr) => {
+        req.login(user as unknown as Express.User, async (loginErr) => {
           if (loginErr) return next(loginErr);
+          // Login SUCCEEDS for a privileged user who still has to enrol MFA —
+          // the session is simply flagged, and the gate above limits it to the
+          // enrolment routes until /api/mfa/verify flips twoFactorEnabled.
+          let enrolmentRequired = false;
+          try {
+            enrolmentRequired = await mfaEnrollmentRequired(user);
+          } catch (err) {
+            return next(err);
+          }
+          if (enrolmentRequired) req.session.mfaEnrollmentRequired = true;
           void appendAudit({
             organizationId: user.organizationId,
             userId: user.id,
             action: "auth.login",
             resourceType: "user",
             resourceId: user.id,
-            details: {},
+            details: enrolmentRequired ? { mfaEnrollmentRequired: true } : {},
             riskLevel: "low",
           });
-          return res.status(200).json(toSafeUser(user));
+          return res.status(200).json(
+            enrolmentRequired
+              ? { ...toSafeUser(user), mfaEnrollmentRequired: true }
+              : toSafeUser(user),
+          );
         });
       },
     )(req, res, next);
@@ -253,11 +353,25 @@ export function registerAuthRoutes(app: Express) {
     });
   });
 
-  app.get("/api/user", (req, res) => {
+  app.get("/api/user", async (req, res, next) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
       return res.status(401).json({ error: "unauthorized" });
     }
-    return res.json(toSafeUser(req.user as unknown as User));
+    const me = req.user as unknown as User;
+    try {
+      // Re-checked from the DB + module map on every call (not the session):
+      // the UI polls this to learn the block has lifted after enrolment.
+      const required = await mfaEnrollmentRequired(me);
+      if (req.session) {
+        if (required) req.session.mfaEnrollmentRequired = true;
+        else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
+      }
+      return res.json(
+        required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me),
+      );
+    } catch (err) {
+      return next(err);
+    }
   });
 
   app.get("/api/users", requireAuth, requireRole("director", "developer"), async (req, res) => {
@@ -265,14 +379,40 @@ export function registerAuthRoutes(app: Express) {
     const list = await storage().listUsers(me.organizationId);
     res.json(list.map(toSafeUser));
   });
+
+  // Self-service password change: verify the current password, then set a new one
+  // (scrypt-hashed). Lets users move off the shared demo password for real use.
+  app.patch("/api/account/password", requireAuth, async (req, res) => {
+    const me = req.user as unknown as User;
+    const current = String((req.body || {}).currentPassword || "");
+    const next = String((req.body || {}).newPassword || "");
+    if (next.length < 8) return res.status(400).json({ error: "weak_password" });
+    const fresh = await storage().getUserById(me.id);
+    if (!fresh) return res.status(404).json({ error: "not_found" });
+    const ok = await verifyPassword(current, fresh.passwordHash);
+    if (!ok) return res.status(403).json({ error: "wrong_password" });
+    await storage().updateUser(me.id, { passwordHash: await hashPassword(next) });
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "auth.password_change",
+      resourceType: "user",
+      resourceId: me.id,
+      details: {},
+      riskLevel: "medium",
+    });
+    res.json({ ok: true });
+  });
 }
 
 // Imported here to avoid a cycle at module top in some bundlers.
-import { requireAuth, requireRole } from "./rbac.js";
+import { isPrivilegedRole, requireAuth, requireRole } from "./rbac.js";
 
 declare module "express-session" {
   interface SessionData {
     pendingMfaUserId?: number;
+    /** Privileged user signed in without MFA while the org requires it. */
+    mfaEnrollmentRequired?: boolean;
   }
 }
 

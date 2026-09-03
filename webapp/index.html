@@ -2,8 +2,32 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DocTurn — Clinical Web App (Extended UI Kit)</title>
+<!-- PWA: the full web app is installable to a phone home screen and push-capable. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563EB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DocTurn">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+    });
+  }
+  // Capture the install prompt as early as possible — browsers fire
+  // beforeinstallprompt before React mounts, so stash it for the InstallPrompt
+  // banner to use when the user taps "Install".
+  window.__dtInstallEvent = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__dtInstallEvent = e;
+    window.dispatchEvent(new Event("dt-installable"));
+  });
+</script>
 <link rel="stylesheet" href="tokens.css">
 <style>
   * { box-sizing: border-box; }
@@ -41,8 +65,11 @@
 <div id="root"></div>
 
 <script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="InstallPrompt.jsx"></script>
+<script type="text/babel" src="CustomizableStats.jsx"></script>
 <script type="text/babel" src="LoginScreen.jsx"></script>
 <script type="text/babel" src="LockScreen.jsx"></script>
+<script type="text/babel" src="MfaScreen.jsx"></script>
 <script type="text/babel" src="AppShell.jsx"></script>
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
 <script type="text/babel" src="HospitalistWork.jsx"></script>
@@ -63,8 +90,11 @@
 <script type="text/babel" src="ComplianceOverview.jsx"></script>
 <script type="text/babel" src="SupportDirectory.jsx"></script>
 <script type="text/babel" src="Compliance.jsx"></script>
+<script type="text/babel" src="ComplianceMonitor.jsx"></script>
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
+<script type="text/babel" src="OnCallBoard.jsx"></script>
+<script type="text/babel" src="AccountSettings.jsx"></script>
 <script type="text/babel" src="OrgSettings.jsx"></script>
 <script type="text/babel" src="RoleManagement.jsx"></script>
 <script type="text/babel" src="People.jsx"></script>
@@ -114,40 +144,48 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   director: [
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
     { id: "roles",      label: "Role management", icon: "shield-half" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
@@ -155,9 +193,20 @@ const NAV = {
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
+    { id: "account",    label: "My settings",     icon: "user" },
   ],
 };
+
+// Nav item → feature module (shared/modules.ts). An item whose module is OFF for
+// the signed-in org is hidden; the server enforces the same switch (404).
+const NAV_MODULE = {
+  consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
+  admissions: "routing.assignments", history: "routing.assignments",
+  resources: "ops.resources", appearance: "platform.appearance",
+};
+const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.DT.moduleOn(NAV_MODULE[it.id]);
 
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
@@ -169,7 +218,10 @@ const TOP = {
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  account:    ["Settings", "Your profile, availability, notifications and security"],
+  "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
+  oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
   consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
   people:     ["People", "Manage everyone in your organization, grouped by role"],
@@ -246,6 +298,9 @@ function App() {
   const role = st.session && st.session.role;
   const nav = st.ui.nav;
   const [locked, setLocked] = React.useState(false);
+  // Locking the screen also drops the persisted snapshot — a locked workstation
+  // must not leave anything readable in localStorage for someone with devtools.
+  const lockNow = React.useCallback(() => { try { DT.purgePersisted(); } catch (e) {} setLocked(true); }, []);
   const isMobile = useIsMobile();
   const [drawer, setDrawer] = React.useState(false);
   React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
@@ -254,7 +309,7 @@ function App() {
   React.useEffect(() => {
     if (!role) return;
     let timer;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => setLocked(true), 15 * 60 * 1000); };
+    const arm = () => { clearTimeout(timer); timer = setTimeout(lockNow, 15 * 60 * 1000); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
@@ -265,11 +320,18 @@ function App() {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  // Second factor at sign-in for an enrolled account: the server holds the
+  // login (202) until the code arrives, so there is no session yet.
+  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  // The org requires MFA for this privileged role and the user hasn't enrolled:
+  // the server 403s every other route, so hold the whole app (no navigation)
+  // on the enrolment screen until /api/user says the block has lifted.
+  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
-  const master = NAV[role];
+  const master = NAV[role].filter(navModuleOn);
   const hidden = st.navHidden[role] || [];
   const order = st.navOrder[role];
   let composed = master.filter((it) => it.id === "dashboard" || !hidden.includes(it.id));
@@ -326,11 +388,14 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "account") screen = <AccountSettings onLock={lockNow} />;
+  else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
-  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} domainPortals={dirDomain.portals} />;
   else if (nav === "consult") screen = <ConsultServices />;
+  else if (nav === "oncall") screen = <OnCallBoard />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
   else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
   else if (nav === "access") {
@@ -359,11 +424,13 @@ function App() {
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
-  else screen = <CustomizableDashboard role="director" widgets={[
-    { id: "rotation", label: "Rotation & roster", icon: "users-round", node: <DirectorDashboard bare providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} /> },
-    { id: "myhosp", label: "My hospitalist work", icon: "stethoscope", node: <HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessage={message} /> },
-    { id: "admissions", label: "Admissions log", icon: "scroll-text", node: <AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} /> },
-  ]} />;
+  // DirectorDashboard owns its own panel customization internally (stat strip
+  // pinned on top, panels below as CustomizableDashboard widgets), so it is
+  // mounted directly. The former "My hospitalist work" / "Admissions log"
+  // widgets are passed in as nodes and kept as re-addable panels.
+  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")}
+    myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessage={message} />}
+    admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} />} />;
 
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
@@ -382,23 +449,56 @@ function App() {
   );
 
   if (isMobile) {
+    // Bottom tab bar (TigerConnect/native style): the primary destinations as
+    // icon tabs, plus "More" for everything else + the role switcher & sign-out
+    // (which live in the drawer). Messages is always promoted so it's one tap.
+    const MOBILE_PRIMARY = ["dashboard", "messages", "board", "directory"];
+    const MOBILE_LABEL = { dashboard: "Home", messages: "Messages", board: "Board", directory: "Directory" };
+    const primaryTabs = MOBILE_PRIMARY.map((id) => navItems.find((n) => n.id === id)).filter(Boolean).slice(0, 4);
+    const primaryIds = primaryTabs.map((t) => t.id);
+    const moreActive = !primaryIds.includes(nav);
+    const msgUnread = (st.conversations || []).some((c) => c.unread > 0);
+    const TABBAR_H = 58;
     return (
-      <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
+      <div style={{ height: "100dvh", background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <ThemeStyle theme={st.theme} />
-        {/* mobile top bar */}
-        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 12px" }}>
-          <button onClick={() => setDrawer(true)} title="Menu" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="menu" size={20} /></button>
+        <SyntheticBanner on={st.syntheticData} />
+        <InstallPrompt />
+        {/* mobile top bar (nav lives in the bottom tab bar) */}
+        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
           </div>
           <button onClick={() => a.toggleNotif()} title="Notifications" style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
             <Icon name="bell" size={18} />
             {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
           </button>
-          <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
+          <button onClick={lockNow} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+
+        {/* Bottom tab bar */}
+        <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_H, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+          {primaryTabs.map((t) => {
+            const on = nav === t.id;
+            return (
+              <button key={t.id} onClick={() => a.setNav(t.id)}
+                style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative" }}>
+                <div style={{ position: "relative" }}>
+                  <Icon name={t.icon} size={22} />
+                  {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid #fff" }} />}
+                </div>
+                <span style={{ fontSize: 10.5, fontWeight: 600 }}>{MOBILE_LABEL[t.id] || t.label}</span>
+              </button>
+            );
+          })}
+          <button onClick={() => setDrawer(true)}
+            style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit" }}>
+            <Icon name="menu" size={22} />
+            <span style={{ fontSize: 10.5, fontWeight: 600 }}>More</span>
+          </button>
+        </nav>
 
         {/* slide-out nav drawer */}
         {drawer && (
@@ -408,10 +508,15 @@ function App() {
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
                 <Sidebar role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
               </div>
+              {st.syntheticData !== false && (
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12, color: "var(--muted-foreground)" }}>
+                  <Icon name="smartphone" size={14} color="var(--primary)" />Install this app: your browser's "Add to Home Screen".
+                </div>
               </div>
+              )}
             </div>
           </React.Fragment>
         )}
@@ -423,8 +528,11 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--secondary)" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)" }}>
       <ThemeStyle theme={st.theme} />
+      <SyntheticBanner on={st.syntheticData} />
+      <InstallPrompt />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Topbar title={topTitle} subtitle={topSub}
@@ -432,10 +540,18 @@ function App() {
           onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
           notifCount={DT.unreadNotifs()}
           onBell={() => a.toggleNotif()}
-          onLock={() => setLocked(true)}
-          right={<RoleSwitcher role={role} onChange={a.setRole} />} />
+          onLock={lockNow}
+          right={st.syntheticData !== false ? <React.Fragment>
+            <button onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
+              title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
+            </button>
+            <RoleSwitcher role={role} onChange={a.setRole} />
+          </React.Fragment> : null} />
         {impersonationBanner}
         <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+      </div>
       </div>
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />

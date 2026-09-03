@@ -19,12 +19,35 @@ export function registerSettingsRoutes(app: Express) {
     const org = await storage().getOrganization(me.organizationId);
     const autoReassignOnDecline =
       (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
+    const retentionRaw = await storage().getOrgSetting(me.organizationId, "messageRetentionDays");
+    const messageRetentionDays = typeof retentionRaw === "number" ? retentionRaw : 0;
+    // STAT SMS fallback defaults ON; the operator/developer can disable it.
+    const statSmsFallback =
+      (await storage().getOrgSetting(me.organizationId, "statSmsFallback")) !== false;
+    const [dnd, coveringUserId, dashboardLayout] = await Promise.all([
+      storage().getUserPreference(me.id, "dnd"),
+      storage().getUserPreference(me.id, "coveringUserId"),
+      storage().getUserPreference(me.id, "dashboardLayout"),
+    ]);
     res.json({
       org: {
         assignmentTimeoutMin: org?.assignmentTimeoutMin,
         roundRobinShiftTypes: org?.roundRobinShiftTypes,
         rotationMode: org?.rotationMode,
         autoReassignOnDecline,
+        messageRetentionDays,
+        statSmsFallback,
+      },
+      me: {
+        dnd: dnd === true,
+        coveringUserId:
+          typeof coveringUserId === "number" ? coveringUserId : null,
+        // Per-user dashboard customization (panel + stat-tile layout), synced
+        // across devices. Arbitrary JSON blob; null until the user customizes.
+        dashboardLayout:
+          dashboardLayout && typeof dashboardLayout === "object"
+            ? dashboardLayout
+            : null,
       },
     });
   });

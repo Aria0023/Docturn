@@ -89,6 +89,44 @@ export async function selectNext(
   return pick;
 }
 
+/**
+ * Read-only preview of who is "up next" by rotation, WITHOUT any side effects
+ * (no cursor advance, no cap relief, no writes). Used by non-mutating surfaces
+ * like the on-call message-addressing picker, which only needs to know who
+ * currently holds the rotation without disturbing the live routing state.
+ *
+ * Org-scoped through `storage`, so it can never surface a provider from another
+ * tenant.
+ */
+export async function previewNext(
+  storage: IStorage,
+  orgId: number,
+): Promise<Hospitalist | null> {
+  const org = await storage.getOrganization(orgId);
+  if (!org) return null;
+  const working = await storage.listWorkingHospitalists(orgId);
+  const allowedShifts = org.roundRobinShiftTypes ?? ["day", "night"];
+  // Prefer providers whose shift is in the round-robin set; if that leaves
+  // nobody, fall back to the full working pool so a preview still resolves.
+  let pool = working.filter((h) => allowedShifts.includes(h.shiftType));
+  if (pool.length === 0) pool = working;
+  if (pool.length === 0) return null;
+
+  if (org.rotationMode === "sequential") {
+    const ordered = [...pool].sort(
+      (a, b) => a.rotationOrder - b.rotationOrder || a.id - b.id,
+    );
+    return ordered[org.rotationIndex % ordered.length] ?? null;
+  }
+  const ordered = [...pool].sort(
+    (a, b) =>
+      a.currentPatientCount - b.currentPatientCount ||
+      a.rotationOrder - b.rotationOrder ||
+      a.id - b.id,
+  );
+  return ordered[0] ?? null;
+}
+
 async function computeEligible(
   storage: IStorage,
   org: Organization,

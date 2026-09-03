@@ -49,6 +49,14 @@ export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
 export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
+/** Where an org stands on a MANUAL compliance control it must attest to. */
+export const ATTESTATION_STATUS = [
+  "met",
+  "not_met",
+  "in_progress",
+  "na",
+] as const;
+export type AttestationStatus = (typeof ATTESTATION_STATUS)[number];
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Core tables — almost every table carries organization_id (the tenant boundary).
@@ -130,6 +138,10 @@ export const patients = pgTable("patients", {
     () => hospitalists.id,
   ),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // EHR identifier (MRN / CSN) for "Open in EHR" deep links. PHI: resolved
+  // server-side only (GET /api/patients/:id/ehr-link) and never included in
+  // push, SMS or WebSocket payloads.
+  ehrId: text("ehr_id"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -164,6 +176,8 @@ export const conversations = pgTable("conversations", {
   type: text("type", { enum: CONVERSATION_TYPE }).notNull().default("direct"),
   name: text("name"),
   participantIds: jsonb("participant_ids").$type<number[]>().notNull(),
+  // Patient-linked thread: the care-team conversation for one patient.
+  patientId: integer("patient_id").references(() => patients.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -179,9 +193,24 @@ export const messages = pgTable("messages", {
     .notNull()
     .references(() => users.id),
   content: text("content").notNull(),
+  // routine | urgent | stat — STAT messages demand an explicit acknowledgement
+  // (see messageDeliveryStatus.acknowledgedAt), mirroring clinical-comms tools.
+  priority: text("priority").notNull().default("routine"),
+  // Provenance of a forwarded message: where it came from and who wrote it.
+  // NULL for an original message. Ids + a display name + a timestamp only.
+  forwardedFrom: jsonb("forwarded_from").$type<ForwardedFrom | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });
+
+/** Provenance stamped on a forwarded message (see messages.forwardedFrom). */
+export interface ForwardedFrom {
+  messageId: number;
+  senderId: number;
+  senderName: string;
+  conversationId: number;
+  sentAt: string;
+}
 
 export const messageDeliveryStatus = pgTable("message_delivery_status", {
   id: serial("id").primaryKey(),
@@ -193,6 +222,46 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
     .references(() => users.id),
   deliveredAt: timestamp("delivered_at"),
   readAt: timestamp("read_at"),
+  // Explicit acknowledgement (distinct from read) — required for STAT messages.
+  acknowledgedAt: timestamp("acknowledged_at"),
+  // Escalation bookkeeping for unacknowledged STATs (set by the sweep so each
+  // step fires exactly once): re-alert nudge, then covering-provider escalation.
+  realertedAt: timestamp("realerted_at"),
+  escalatedAt: timestamp("escalated_at"),
+});
+
+// Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: bytes live
+// inline as base64 in `dataBase64`. Production PHI needs encrypted object storage
+// (S3/GCS behind a BAA), AV scanning, and signed-URL fetch — not this inline store.
+export const messageAttachments = pgTable("message_attachments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  // NULL until the attachment is linked to a message at send time.
+  messageId: integer("message_id").references(() => messages.id),
+  uploaderId: integer("uploader_id")
+    .notNull()
+    .references(() => users.id),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  dataBase64: text("data_base64").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Canned messages for the composer. ownerUserId NULL = org-wide template
+// (directors/developers manage those); otherwise a personal template.
+export const messageTemplates = pgTable("message_templates", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  ownerUserId: integer("owner_user_id").references(() => users.id),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  priority: text("priority").notNull().default("routine"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 /* ── Audit, PHI access & security ──────────────────────────────────────────── */
@@ -214,11 +283,51 @@ export const phiAccessLogs = pgTable("phi_access_logs", {
   organizationId: integer("organization_id").references(() => organizations.id),
   userId: integer("user_id").references(() => users.id),
   resource: text("resource").notNull(),
+  // WHICH record was read. `resource` alone ("conversation-messages") cannot
+  // answer §164.528 accounting-of-disclosures or scope a breach; these two ids
+  // can. No FK on purpose: the row must outlive the record it refers to (and a
+  // tenant deletion), and it must never carry clinical content — ids only.
+  resourceId: integer("resource_id"),
+  patientId: integer("patient_id"),
   method: text("method").notNull(),
   ip: text("ip"),
   userAgent: text("user_agent"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Six-year compliance archive (§164.316(b)(2)(i)). Audit / PHI-access / security
+ * rows are FK-bound to organizations + users, so deleting a tenant would delete
+ * exactly the records the rule says must be retained. Before a tenant cascade
+ * we copy them here, denormalized to TEXT (org code/name, username, display
+ * name) and with NO foreign keys, so the record survives its tenant intact and
+ * still answers "who did this, to what, when". Ids/actions only — never PHI.
+ */
+export const retainedComplianceRecords = pgTable(
+  "retained_compliance_records",
+  {
+    id: serial("id").primaryKey(),
+    sourceTable: text("source_table").notNull(),
+    sourceId: integer("source_id").notNull(),
+    organizationId: integer("organization_id"),
+    organizationCode: text("organization_code"),
+    organizationName: text("organization_name"),
+    userId: integer("user_id"),
+    userUsername: text("user_username"),
+    userDisplayName: text("user_display_name"),
+    action: text("action").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: integer("resource_id"),
+    patientId: integer("patient_id"),
+    method: text("method"),
+    ip: text("ip"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    riskLevel: text("risk_level").notNull().default("low"),
+    occurredAt: timestamp("occurred_at").notNull(),
+    archivedAt: timestamp("archived_at").notNull().defaultNow(),
+    archivedReason: text("archived_reason").notNull().default("organization_deleted"),
+  },
+);
 
 export const securityIncidents = pgTable("security_incidents", {
   id: serial("id").primaryKey(),
@@ -482,7 +591,7 @@ export const deviceTokens = pgTable(
       .notNull()
       .references(() => users.id),
     token: text("token").notNull(),
-    platform: text("platform", { enum: ["ios", "android", "web"] })
+    platform: text("platform", { enum: ["ios", "android", "web", "webpush", "expo"] })
       .notNull()
       .default("ios"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -501,6 +610,41 @@ export const smsHistory = pgTable("sms_history", {
   carrier: text("carrier").notNull().default("console"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/* ── Continuous compliance monitoring ──────────────────────────────────────── */
+
+/**
+ * An organization's attestation for ONE control in the compliance catalog
+ * (`server/compliance/controls.ts`). Only the controls code CANNOT verify —
+ * BAAs, risk analysis, training, drills — are attested here; the automated
+ * controls are recomputed from live system state on every read and are never
+ * stored. One row per (organization, control).
+ */
+export const complianceAttestations = pgTable(
+  "compliance_attestations",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    controlId: text("control_id").notNull(),
+    status: text("status", { enum: ATTESTATION_STATUS })
+      .notNull()
+      .default("not_met"),
+    owner: text("owner"),
+    note: text("note"),
+    evidenceUrl: text("evidence_url"),
+    attestedAt: timestamp("attested_at"),
+    reviewDue: timestamp("review_due"),
+    updatedBy: integer("updated_by").references(() => users.id),
+  },
+  (t) => ({
+    controlPerOrg: uniqueIndex("compliance_attestations_org_control_uniq").on(
+      t.organizationId,
+      t.controlId,
+    ),
+  }),
+);
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Relations
@@ -584,6 +728,7 @@ export type EmergencyBroadcast = typeof emergencyBroadcasts.$inferSelect;
 export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
 export type DeviceToken = typeof deviceTokens.$inferSelect;
 export type SmsHistory = typeof smsHistory.$inferSelect;
+export type ComplianceAttestation = typeof complianceAttestations.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -597,8 +742,14 @@ export type Assignment = typeof assignments.$inferSelect;
 export type InsertAssignment = z.infer<typeof insertAssignmentSchema>;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
+export type MessageAttachment = typeof messageAttachments.$inferSelect;
+export type InsertMessageAttachment = typeof messageAttachments.$inferInsert;
 export type AuditLog = typeof auditLogs.$inferSelect;
+export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
+export type RetainedComplianceRecord =
+  typeof retainedComplianceRecords.$inferSelect;
 export type OrgSetting = typeof orgSettings.$inferSelect;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 
@@ -648,6 +799,8 @@ export const createPatientSchema = z.object({
   specialty: z.string().optional(),
   department: z.string().optional(),
   acuity: z.number().int().min(1).max(5).optional(),
+  // Optional EHR identifier (MRN/CSN) — printable characters only, no spaces.
+  ehrId: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/).optional(),
 });
 
 export const createAssignmentSchema = z.object({
@@ -662,12 +815,65 @@ export const createConversationSchema = z.object({
   participantIds: z.array(z.number().int().positive()).min(1),
 });
 
+export const MESSAGE_PRIORITY = ["routine", "urgent", "stat"] as const;
+
 export const sendMessageSchema = z.object({
   conversationId: z.number().int().positive(),
-  content: z.string().min(1),
+  // Empty allowed so a message can be attachment-only. The send route rejects a
+  // message that has NEITHER text nor attachments (400 empty_message).
+  content: z.string().default(""),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  attachmentIds: z.array(z.number().int().positive()).max(10).optional(),
+});
+
+// Base64 upload of a single attachment (see the attachments route's mime
+// allowlist + 8 MB decoded-size cap).
+export const attachmentUploadSchema = z.object({
+  fileName: z.string().min(1).max(255),
+  mimeType: z.string().min(1),
+  dataBase64: z.string().min(1),
 });
 
 export const markReadSchema = z.object({
+  messageIds: z.array(z.number().int().positive()).min(1),
+});
+
+// Forward one message. Exactly one target: an existing conversation the caller
+// is in, a set of people (a direct/group thread is created or reused), or an
+// on-call role target id from /api/messaging/on-call-targets.
+export const forwardMessageSchema = z
+  .object({
+    conversationId: z.number().int().positive().optional(),
+    participantIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+    roleTarget: z.string().min(1).max(120).optional(),
+    // Default routine; the forwarder may opt to keep the original priority.
+    keepPriority: z.boolean().default(false),
+    // Optional note prepended to the forwarded content.
+    note: z.string().max(2000).optional(),
+  })
+  .refine(
+    (v) =>
+      [v.conversationId, v.participantIds, v.roleTarget].filter((x) => x != null)
+        .length === 1,
+    { message: "exactly one target is required" },
+  );
+
+export const createTemplateSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(2000),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  // "org" (directors/developers only) or "mine" (default).
+  scope: z.enum(["org", "mine"]).default("mine"),
+});
+export const updateTemplateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    body: z.string().trim().min(1).max(2000).optional(),
+    priority: z.enum(MESSAGE_PRIORITY).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "nothing to update" });
+
+export const acknowledgeSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),
 });
 
@@ -721,7 +927,7 @@ export const devCreateUserSchema = z.object({
 
 export const deviceTokenSchema = z.object({
   token: z.string().min(1),
-  platform: z.enum(["ios", "android", "web"]).default("ios"),
+  platform: z.enum(["ios", "android", "web", "webpush", "expo"]).default("ios"),
 });
 
 export const notificationProfileSchema = z.object({
@@ -733,6 +939,27 @@ export const notificationProfileSchema = z.object({
   escalationTimeoutSec: z.number().int().min(10).max(7200).default(180),
 });
 export type NotificationProfile = z.infer<typeof notificationProfileSchema>;
+
+/**
+ * Upsert one MANUAL compliance attestation. Only manual controls are attestable
+ * — the route rejects an id that is not in the catalog's manual set, so an org
+ * can never "attest" an automated technical control into passing.
+ */
+export const attestationUpsertSchema = z.object({
+  controlId: z.string().min(1).max(64),
+  status: z.enum(ATTESTATION_STATUS),
+  owner: z.string().max(120).optional(),
+  note: z.string().max(4000).optional(),
+  // Link to the artifact an auditor would ask for (policy PDF, signed BAA,
+  // training roster). Empty string clears it.
+  evidenceUrl: z.string().url().max(1000).or(z.literal("")).optional(),
+  // ISO date (YYYY-MM-DD) or full ISO timestamp; "" clears the review date.
+  reviewDue: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}([T ].*)?$/)
+    .or(z.literal(""))
+    .optional(),
+});
 
 export const orgConfigSchema = z
   .object({

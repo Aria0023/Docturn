@@ -55,6 +55,12 @@
   // server session goes away (15-min idle expiry, OR a dev-server restart that
   // wipes the in-memory session store). Set on every successful doLogin.
   var lastAuth = null;
+  // Set once a response says the org requires MFA for this privileged session
+  // (403 mfa_enrollment_required); de-dupes the state flip across the many
+  // parallel hydrate calls that all fail the same way.
+  var mfaFlagged = false;
+  // Analytics (/api/metrics/comms, /api/reports/ops) are director-level.
+  var PRIVILEGED = { director: 1, er_director: 1, developer: 1 };
 
   function rawApi(method, path, body) {
     var headers = body ? { "Content-Type": "application/json" } : {};
@@ -96,6 +102,17 @@
   // on the login call itself.
   function api(method, path, body) {
     return rawApi(method, path, body).catch(function (e) {
+      // The org requires MFA for privileged roles and this session hasn't
+      // enrolled: the server answers everything but the enrolment routes this
+      // way. Route the UI to the enrolment screen; never self-heal (a re-login
+      // would just be flagged again).
+      if (e && e.status === 403 && String(e.message) === "mfa_enrollment_required") {
+        if (!mfaFlagged) {
+          mfaFlagged = true;
+          DT.set(function (s) { s.mfaEnrollmentRequired = true; return s; });
+        }
+        throw e;
+      }
       var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
       var hint = authHint();
       // Token-mode panes authenticate by bearer token, not a re-loginable cookie
@@ -260,8 +277,11 @@
       // is director-only, so we derive names from the directory instead.
       get("/api/physicians/directory").catch(function () { return null; }),
       get("/api/patients").catch(function () { return null; }),
+      // EVERY org user (all roles) for name resolution — so a DM with an ER
+      // physician or director shows their real name, not "Conversation".
+      get("/api/care-team/candidates").catch(function () { return null; }),
     ]).then(function (res) {
-      var hosps = res[0], directory = res[1], patients = res[2];
+      var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3];
       var usersById = {};
       (directory || []).forEach(function (d) {
         usersById[d.userId] = { displayName: d.displayName, credential: d.credential };
@@ -312,6 +332,22 @@
           if (directory) s.directory = (directory || []).map(function (d) {
             return { id: d.userId, name: d.displayName, avatar: initials(d.displayName), specialty: d.specialty || "", credential: d.credential || "", working: !!d.working, shift: d.shiftType || "" };
           });
+          // Org-wide people map for NAME RESOLUTION in messaging. The directory
+          // above only carries hospitalists, so a DM with an ER physician or a
+          // director would otherwise show "Conversation". Merge in the care-team
+          // candidate roster (every org user except me + already-linked), so any
+          // conversation partner resolves to a real name + role/specialty. Never
+          // clobber a richer directory entry with a thinner candidate one.
+          if (directory || candidates) {
+            var people = Object.assign({}, s.orgPeople || {});
+            (directory || []).forEach(function (d) {
+              people[d.userId] = { id: d.userId, name: d.displayName, credential: d.credential || "", specialty: d.specialty || "", working: !!d.working, role: "hospitalist" };
+            });
+            (candidates || []).forEach(function (c) {
+              if (!people[c.userId]) people[c.userId] = { id: c.userId, name: c.displayName, credential: c.credential || "", specialty: roleLabel(c.role), working: false, role: c.role };
+            });
+            s.orgPeople = people;
+          }
           // Consultants per patient come off the live board so census/sent rows
           // can show who was consulted, their status, and when they responded.
           var consultByPid = {}, consultDetailByPid = {};
@@ -335,7 +371,7 @@
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
             return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
           });
-          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline });
+          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false });
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
             var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
@@ -361,15 +397,41 @@
   }
 
   // ---- messaging (real, cross-device) --------------------------------------
-  function nameForUserId(uid) {
+  // Human label for a raw role code (used when a conversation partner is not a
+  // hospitalist, so the directory has no specialty for them).
+  function roleLabel(role) {
+    return ({ hospitalist: "Provider", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Admin" })[role] || "Provider";
+  }
+  // Resolve a userId to a person, preferring the rich directory entry and
+  // falling back to the org-wide people map (covers ER physicians, directors,
+  // and anyone else not in the hospitalist directory).
+  function personForUserId(uid) {
     var d = (DT.getState().directory || []).find(function (x) { return x.id === uid; });
-    return d ? d.name : null;
+    if (d) return d;
+    var p = (DT.getState().orgPeople || {})[uid];
+    return p || null;
+  }
+  function nameForUserId(uid) {
+    var p = personForUserId(uid);
+    return p ? p.name : null;
   }
   function dirByUserId(uid) {
-    return (DT.getState().directory || []).find(function (x) { return x.id === uid; }) || null;
+    return personForUserId(uid);
   }
   function mapMessage(m) {
-    return { id: m.id, me: m.senderId === meId, text: m.content, at: new Date(m.createdAt || Date.now()).getTime(), read: true };
+    return {
+      id: m.id, me: m.senderId === meId, text: m.content,
+      at: new Date(m.createdAt || Date.now()).getTime(), read: true,
+      priority: m.priority || "routine",
+      ackCount: m.ackCount || 0,
+      readCount: m.readCount || 0,
+      ackedByMe: !!m.acknowledgedByMe,
+      attachments: m.attachments || [],
+      // Provenance of a forwarded message ({messageId, senderName, sentAt, ...}).
+      forwardedFrom: m.forwardedFrom || null,
+      // Per-recipient delivery state (group threads: "Seen by N · Acked by M").
+      deliveries: m.deliveries || [],
+    };
   }
   // Pull the user's conversations + their messages from the backend into the
   // kit's conversation shape. Shared server state → both devices see the same.
@@ -396,6 +458,7 @@
               unread: c.unreadCount || 0,
               group: c.type === "group",
               broadcast: c.type === "emergency",
+              patientId: c.patientId != null ? c.patientId : null,
               typing: false,
               participantIds: c.participantIds || [],
               messages: (row.msgs || []).map(mapMessage),
@@ -411,6 +474,7 @@
   // Cookie-authenticated socket at /ws. Refreshes messaging on MESSAGE_RECEIVED
   // and the role's data on assignment/board/broadcast events, so a second device
   // updates live without a manual refresh.
+  var typingExpiry = {}; // convoId -> timeout clearing a lost typing_stop
   function connectWs() {
     try { if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } } catch (e) {}
     if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
@@ -423,7 +487,56 @@
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
         if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
-        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "PATIENT_BOARD_UPDATED" || ev.type === "BROADCAST_SENT") rehydrate();
+        // A STAT/urgent message was acknowledged — refresh so ack counts update.
+        else if (ev.type === "MESSAGE_ACK") hydrateConversations();
+        // Real typing indicator: a peer relayed typing_start/stop through the
+        // server (see server/ws). Flip the convo's flag, with a 5s safety expiry
+        // in case the stop event is lost.
+        else if (ev.type === "user_typing" && ev.conversationId != null) {
+          var setTypingFlag = function (on) {
+            DT.set(function (s) {
+              s.conversations = (s.conversations || []).map(function (c) {
+                return c.id === ev.conversationId ? Object.assign({}, c, { typing: !!on }) : c;
+              });
+              return s;
+            });
+          };
+          setTypingFlag(ev.typing);
+          clearTimeout(typingExpiry[ev.conversationId]);
+          if (ev.typing) typingExpiry[ev.conversationId] = setTimeout(function () { setTypingFlag(false); }, 5000);
+        }
+        // Server-emitted event names (see server/services + routes): consult and
+        // care-team changes also re-hydrate so boards/rosters stay live.
+        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
+        else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
+          // Surface an incoming org-wide broadcast live: insert it (with its
+          // real ack requirement) so the banner + card show an Acknowledge
+          // button immediately, then re-hydrate from the server for the
+          // authoritative list (sender name, tallies).
+          var b = ev.broadcast;
+          DT.set(function (s) {
+            if (!(s.broadcasts || []).some(function (x) { return x.id === b.id; })) {
+              s.broadcasts = [mapBroadcast(b)].concat(s.broadcasts || []);
+            }
+            if (b.senderId !== meId) s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "urgent"), msg: b.message + (b.ackRequired !== false && b.severity !== "info" ? " · acknowledgement required" : "") };
+            return s;
+          });
+          hydrateBroadcasts();
+        }
+        // Someone acknowledged a broadcast — update that card's tally live
+        // (director) and, if it was me on another device, my own ack state.
+        else if (ev.type === "BROADCAST_ACKED" && ev.broadcastId != null) {
+          DT.set(function (s) {
+            s.broadcasts = (s.broadcasts || []).map(function (x) {
+              if (x.id !== ev.broadcastId) return x;
+              var patch = { acked: typeof ev.ackCount === "number" ? ev.ackCount : x.acked, total: typeof ev.total === "number" ? ev.total : x.total };
+              if (ev.userId === meId) patch.ackedByMe = true;
+              if (ev.displayName && ev.userId !== meId) patch.ackedBy = (x.ackedBy || []).filter(function (p) { return p.userId !== ev.userId; }).concat([{ userId: ev.userId, displayName: ev.displayName }]);
+              return Object.assign({}, x, patch);
+            });
+            return s;
+          });
+        }
       };
       sock.onclose = function () { if (ws === sock) ws = null; if (DT.getState().session) setTimeout(connectWs, 3000); };
       sock.onerror = function () { try { sock.close(); } catch (e) {} };
@@ -514,6 +627,21 @@
   // the login form is wrong/stale (e.g. a cached old "MERCY").
   function canonicalOrg(role) { return role === "developer" ? PLATFORM_ORG : "ISPN"; }
 
+  // Everything that runs once a session is established and allowed to work:
+  // the live socket plus every per-role hydrate. Split out of doLogin so the
+  // MFA enrolment screen can run it AFTER enrolment lifts the server's block
+  // (until then every one of these calls would just 403).
+  function bootSession(u) {
+    connectWs();
+    if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+    hydrateMyPrefs();
+    enableWebPush();
+    if (PRIVILEGED[u.role]) hydrateOpsReport();
+    hydrateBroadcasts(); // catch up on broadcasts sent while this device was offline
+    hydrateAwayMessage();
+    return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+  }
+
   function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
     var primary = orgForRole(role, org);
@@ -524,23 +652,37 @@
       meId = u.id;
       auditLoaded = false; // new login context → reload that org's audit on first hydrate
       prefsLoaded = false;
+      dashHydrated = false; lastDashSnap = null; // pause layout-save until the new user's layout hydrates
       DT.set(function (s) {
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.ui.nav = "dashboard";
         s.ui.notifOpen = false;
         s.loginError = null;
+        s.mfaChallenge = null;
+        // Privileged role in an org that requires MFA, not enrolled yet: the
+        // login succeeded but the server 403s everything except enrolment.
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
       });
-      connectWs();
-      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
-      return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return Promise.resolve(u); // held at the enrolment screen; mfaEnrollmentDone() boots the rest
+      return bootSession(u);
     }
     function attempt(orgCode) {
       return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
-        .then(function () { return get("/api/user"); })
-        .then(function (u) { return finish(u, orgCode); });
+        .then(function (r) {
+          if (r && r.twoFactorRequired) {
+            // Enrolled account: the server holds the login until a second
+            // factor arrives (POST /api/2fa/complete-login → finish()).
+            DT.set(function (s) { s.mfaChallenge = { org: orgCode, role: role, username: username }; s.session = null; s.loginError = null; return s; });
+            return null;
+          }
+          return get("/api/user").then(function (u) { return finish(u, orgCode); });
+        });
     }
+    // Second-factor completion re-enters the same finish() as a plain login.
+    pendingMfaFinish = function (u) { return finish(u, orgForRole(u.role, org)); };
 
     return attempt(primary).catch(function (e) {
       // Demo resilience: a wrong/stale org code (cached "MERCY") shouldn't block
@@ -555,6 +697,22 @@
   // former we silently fall back to the demo UI; for the latter we keep the user
   // on the login screen and tell them WHY — almost always a missing demo account
   // (DB seeded before that role existed), fixed by re-running `npm run seed`.
+  // The cross-tenant root account `dev` is deliberately NOT provisioned on a
+  // hardened deployment (production and/or real-PHI) unless the operator sets a
+  // strong PLATFORM_ADMIN_PASSWORD — it can read every tenant, so it must never
+  // ship with the well-known demo password. Explain THAT instead of pointing at
+  // `npm run seed`, which cannot be run on a hosted instance anyway.
+  function devAccountHint() {
+    return isLocalHost()
+      ? "The developer account is missing. Stop the server, run \"npm run seed\", then start it again."
+      : "The developer console is disabled on this deployment. Set PLATFORM_ADMIN_PASSWORD (12+ characters) on the host, redeploy, then sign in manually with org DOCTURN, user \"dev\" and that password.";
+  }
+  function isLocalHost() {
+    try {
+      return /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+    } catch (e) { return false; }
+  }
+
   function isNetworkError(e) {
     // A real fetch transport failure (server down/unreachable). Match by message
     // because `instanceof TypeError` is unreliable across realms.
@@ -574,9 +732,10 @@
       }
       // Server reachable but login failed (bad/missing account or org code).
       var why = String((e && e.message) || "");
-      var msg = /credential/i.test(why) ? "Wrong account/password for this role."
-        : /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
-        : "Run \"npm run seed\" to create the demo accounts.";
+      var msg = /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
+        : role === "developer" ? devAccountHint()
+        : /credential/i.test(why) ? "Wrong account/password for this role."
+        : "That demo account isn't available on this deployment.";
       DT.set(function (s) {
         s.loginError = "Sign-in failed: " + msg;
         s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };
@@ -598,7 +757,9 @@
         if (origSetRole) origSetRole(role);
         return;
       }
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: "That role's account is missing — run \"npm run seed\"." }; return s; });
+      var msg = role === "developer" ? devAccountHint()
+        : "That role's demo account isn't available on this deployment.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: msg }; return s; });
       console.error("[DocTurn] setRole failed:", e);
     });
   };
@@ -666,6 +827,134 @@
       return s;
     });
   };
+  // Self-service password change. Returns a promise so the UI can await + report.
+  // Per-user dashboard customization (panel layout + stat-tile layout + custom
+  // stats) is synced to the server so the same login shows the same layout on
+  // every device. localStorage stays the instant/offline copy; the server is
+  // the cross-device source that fills a fresh browser on login.
+  //   - dashHydrated gates the saver so the initial server-hydrate never echoes
+  //     straight back as a write.
+  //   - lastDashSnap is a serialized snapshot; the saver skips when unchanged,
+  //     so an unrelated store mutation (a message, the clock) never PATCHes.
+  var dashHydrated = false;
+  var lastDashSnap = null;
+  function dashSnapshot(s) {
+    return JSON.stringify({
+      dashLayout: s.dashLayout || {},
+      statLayout: s.statLayout || {},
+      customStats: s.customStats || {},
+    });
+  }
+  var dashSaveTimer = null;
+  function scheduleDashSave() {
+    if (!dashHydrated) return; // don't save until the server layout has hydrated
+    var snap = dashSnapshot(DT.getState());
+    if (snap === lastDashSnap) return; // nothing changed since last save/hydrate
+    if (dashSaveTimer) return; // a save is already queued
+    dashSaveTimer = setTimeout(function () {
+      dashSaveTimer = null;
+      var st = DT.getState();
+      var cur = dashSnapshot(st);
+      if (cur === lastDashSnap) return; // coalesced away
+      lastDashSnap = cur;
+      api("PATCH", "/api/settings/me", {
+        key: "dashboardLayout",
+        value: { dashLayout: st.dashLayout || {}, statLayout: st.statLayout || {}, customStats: st.customStats || {} },
+      }).catch(function () { /* offline: localStorage remains the fallback */ });
+    }, 400);
+  }
+  if (DT.subscribe) DT.subscribe(scheduleDashSave);
+
+  // Personal availability prefs (DND + covering provider). Server-backed via
+  // /api/settings (read) and /api/settings/me (write). Also hydrates the
+  // cross-device dashboard layout.
+  function hydrateMyPrefs() {
+    get("/api/settings").then(function (r) {
+      if (!r) return;
+      DT.set(function (s) {
+        if (r.me) s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null };
+        if (r.org && typeof r.org.messageRetentionDays === "number") s.orgRetentionDays = r.org.messageRetentionDays;
+        var dl = r.me && r.me.dashboardLayout;
+        if (dl && typeof dl === "object") {
+          s.dashLayout = dl.dashLayout || {};
+          s.statLayout = dl.statLayout || {};
+          s.customStats = dl.customStats || {};
+        }
+        return s;
+      });
+      // Mark hydrated AFTER the set (the set's emit ran with dashHydrated still
+      // false, so it scheduled no save) and snapshot the now-current layout so
+      // the very first real user change is what triggers the first PATCH.
+      dashHydrated = true;
+      lastDashSnap = dashSnapshot(DT.getState());
+    }).catch(function () {});
+  }
+  // Web Push: subscribe this browser/PWA so STAT + new-message wake-ups reach a
+  // closed phone (content-free payloads; the SW shows a generic title). Best-
+  // effort + permission-gated — the app works fully without it.
+  function urlB64ToUint8Array(b64) {
+    var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+    var base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+    var raw = atob(base);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  // Exposed so the Settings screen can (re)request push permission on demand.
+  DT.actions.enablePush = function () { return enableWebPush(); };
+  function enableWebPush() {
+    try {
+      if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+      if (typeof window === "undefined" || !("PushManager" in window) || !("Notification" in window)) return;
+      if (Notification.permission === "denied") return;
+      Notification.requestPermission().then(function (perm) {
+        if (perm !== "granted") return;
+        Promise.all([navigator.serviceWorker.ready, rawApi("GET", "/api/push/vapid-key")])
+          .then(function (r) {
+            var reg = r[0], key = r[1] && r[1].key;
+            if (!reg || !key) return null;
+            return reg.pushManager.getSubscription().then(function (existing) {
+              return existing || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+            });
+          })
+          .then(function (sub) {
+            if (sub) return api("POST", "/api/mobile/device-tokens", { token: JSON.stringify(sub), platform: "webpush" });
+          })
+          .catch(function () { /* push is optional */ });
+      }).catch(function () {});
+    } catch (e) { /* older browsers */ }
+  }
+  // Director ops report (assignments latency, consult response, message volume).
+  function hydrateOpsReport() {
+    get("/api/reports/ops").then(function (r) {
+      if (r) DT.set(function (s) { s.opsReport = r; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.setOrgRetention = function (days) {
+    DT.set(function (s) { s.orgRetentionDays = days; return s; });
+    return api("PATCH", "/api/settings/org", { key: "messageRetentionDays", value: Number(days) || 0 })
+      .then(function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Retention updated", msg: Number(days) > 0 ? "Messages auto-delete after " + days + " days." : "Messages are kept indefinitely." }; return s; }); })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: "Couldn't update retention." }; return s; }); });
+  };
+  DT.actions.setMyPref = function (key, value) {
+    DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
+    return api("PATCH", "/api/settings/me", { key: key, value: value }).catch(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Setting not saved", msg: "Couldn\u2019t reach the server." }; return s; });
+    });
+  };
+  DT.actions.changePassword = function (currentPassword, newPassword) {
+    return api("PATCH", "/api/account/password", { currentPassword: currentPassword, newPassword: newPassword })
+      .then(function () {
+        DT.set(function (s) { s.__toast = { tone: "accepted", title: "Password updated", msg: "Use your new password next time you sign in." }; return s; });
+        return { ok: true };
+      })
+      .catch(function (e) {
+        var m = String((e && e.message) || "");
+        var msg = /weak/.test(m) ? "Use at least 8 characters." : /wrong/.test(m) ? "Current password is incorrect." : "Couldn't update password.";
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Password not changed", msg: msg }; return s; });
+        return { ok: false, error: msg };
+      });
+  };
   DT.actions.decline = function (id) {
     api("PATCH", "/api/assignments/" + id + "/reject").then(rehydrate).catch(function () {});
     DT.set(function (s) {
@@ -718,6 +1007,9 @@
   DT.actions.setSetting = function (key, value) {
     if (key === "autoReassign") {
       api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
+    }
+    if (key === "statSmsFallback") {
+      api("PATCH", "/api/settings/org", { key: "statSmsFallback", value: !!value }).catch(function () {});
     }
     if (origSetSetting) return origSetSetting(key, value);
   };
@@ -773,6 +1065,48 @@
     }).catch(function () {});
   };
 
+  // ---- continuous compliance monitor --------------------------------------
+  // Every automated control is recomputed server-side on each call, so the
+  // screen always reflects the live system. No client-side caching, and no
+  // fallback report: if the call fails the screen says so rather than showing
+  // a stale or invented posture.
+  DT.actions.loadComplianceStatus = function () {
+    return get("/api/compliance/status");
+  };
+  DT.actions.saveAttestation = function (patch) {
+    return api("PATCH", "/api/compliance/attestation", patch).then(function (row) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Attestation saved", msg: patch.controlId + " → " + patch.status.replace("_", " ") + "." }; return s; });
+      return row;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't save attestation", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+  // Policy starter pack: metadata for every manual control that ships with a
+  // draft, and the rendered document itself (placeholders filled server-side
+  // from the caller's real organization — the client never templates PHI or
+  // org identity itself).
+  DT.actions.loadPolicyTemplates = function () {
+    return get("/api/compliance/policies").then(function (r) {
+      return (r && r.policies) || [];
+    }).catch(function () { return []; });
+  };
+  DT.actions.loadPolicy = function (controlId) {
+    return get("/api/compliance/policies/" + encodeURIComponent(controlId)).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open the draft policy", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.exportEvidence = function () {
+    return get("/api/compliance/evidence").then(function (pack) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Evidence pack ready", msg: "Downloading the auditor JSON export." }; return s; });
+      return pack;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't export evidence", msg: String((e && e.message) || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+
   // Clear old patients/logs (or all). hours=24 by default; 0 = everything.
   // Backend deletes patients + their assignments/consults; local admission log
   // is pruned to match. Also runs automatically every 24h server-side.
@@ -803,13 +1137,79 @@
     });
   };
 
+  // Comms KPIs: fetch the org-scoped, server-computed numbers and push them into
+  // state so the dashboard stat tiles show real figures. Leave commsMetrics null
+  // on any failure (the tiles fall back to "—"/0).
+  DT.actions.loadCommsMetrics = function () {
+    // Director-level analytics: the server answers 403 for every other role.
+    // Skip the round trip for them and leave commsMetrics null — the tiles
+    // show "—" — so the hospitalist dashboard is unaffected by the gate.
+    var sess = DT.getState().session || {};
+    if (!PRIVILEGED[sess.role]) {
+      DT.set(function (s) { if (s.commsMetrics != null) s.commsMetrics = null; return s; });
+      return Promise.resolve(null);
+    }
+    return get("/api/metrics/comms").then(function (m) {
+      DT.set(function (s) { s.commsMetrics = m || null; return s; });
+    }).catch(function () {
+      // 403 (role not allowed) or any other failure: tiles fall back to "—".
+      DT.set(function (s) { s.commsMetrics = null; return s; });
+    });
+  };
+
+  // ---- two-factor authentication -----------------------------------------
+  // Enrolment (MfaEnrollScreen) and the sign-in challenge (MfaChallengeScreen)
+  // talk to the server's existing TOTP routes. rawApi throughout: none of
+  // these may self-heal into a demo re-login.
+  var pendingMfaFinish = null; // set by doLogin so complete-login re-enters its finish()
+  DT.actions.mfaBeginEnrollment = function () {
+    return rawApi("POST", "/api/mfa/enroll", {});
+  };
+  DT.actions.mfaVerifyEnrollment = function (code) {
+    return rawApi("POST", "/api/mfa/verify", { code: String(code || "") });
+  };
+  // After the user has saved their backup codes: confirm with the server that
+  // the block is gone (it re-checks the DB), then boot the session normally.
+  DT.actions.mfaEnrollmentDone = function () {
+    return rawApi("GET", "/api/user").then(function (u) {
+      if (!u || u.mfaEnrollmentRequired) throw new Error("mfa_enrollment_required");
+      mfaFlagged = false;
+      DT.set(function (s) {
+        s.mfaEnrollmentRequired = false;
+        s.__toast = { tone: "accepted", title: "Two-factor authentication on", msg: "You'll be asked for a code at each sign-in." };
+        return s;
+      });
+      return bootSession(u);
+    });
+  };
+  DT.actions.mfaCompleteLogin = function (code) {
+    var ch = DT.getState().mfaChallenge || {};
+    return rawApi("POST", "/api/2fa/complete-login", { code: String(code || "") }).then(function (u) {
+      if (pendingMfaFinish) return pendingMfaFinish(u);
+      // No doLogin closure (e.g. page reloaded mid-challenge): minimal restore.
+      DT.set(function (s) { s.mfaChallenge = null; return s; });
+      window.location.reload();
+      return u;
+    });
+  };
+  DT.actions.mfaRequestSms = function () {
+    return rawApi("POST", "/api/2fa/request-sms", {});
+  };
+  DT.actions.mfaCancelLogin = function () {
+    pendingMfaFinish = null;
+    DT.set(function (s) { s.mfaChallenge = null; return s; });
+  };
+
   // Logout: tear down the live socket + clear the server session too.
   var origLogout = DT.actions.logout;
   DT.actions.logout = function () {
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     meId = null;
+    dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
+    mfaFlagged = false; pendingMfaFinish = null;
     rawApi("POST", "/api/logout", {}).catch(function () {});
     if (origLogout) origLogout();
+    DT.set(function (s) { s.mfaEnrollmentRequired = false; s.mfaChallenge = null; return s; });
   };
 
   // ---- messaging overrides (backend-backed, cross-device) ------------------
@@ -822,18 +1222,85 @@
       if (ids.length) api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {});
     }
   };
-  DT.actions.sendMessage = function (id, text) {
-    if (!text || !text.trim()) return;
-    var t = text.trim();
+  // Upload a File as a base64 attachment; resolves to {id, fileName, mimeType,
+  // byteSize}. The bytes are stored server-side unlinked until sendMessage
+  // references the id. (Synthetic-data pilot: no encrypted object store yet.)
+  DT.actions.uploadAttachment = function (file) {
+    return new Promise(function (resolve, reject) {
+      if (!file) return reject(new Error("no file"));
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("read failed")); };
+      reader.onload = function () {
+        var result = String(reader.result || "");
+        var comma = result.indexOf(",");
+        var b64 = comma >= 0 ? result.slice(comma + 1) : result; // strip data: prefix
+        api("POST", "/api/messaging/attachments", {
+          fileName: file.name || "attachment",
+          mimeType: file.type || "application/octet-stream",
+          dataBase64: b64,
+        }).then(resolve, reject);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+  DT.actions.sendMessage = function (id, text, priority, attachmentIds) {
+    var t = (text || "").trim();
+    var atts = Array.isArray(attachmentIds) ? attachmentIds.filter(function (n) { return n != null; }) : [];
+    if (!t && !atts.length) return;
+    var pri = priority === "stat" || priority === "urgent" ? priority : "routine";
     DT.set(function (s) {
       s.conversations = (s.conversations || []).map(function (c) {
-        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true }]), unread: 0 }) : c;
+        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true, priority: pri, ackCount: 0, attachments: [] }]), unread: 0 }) : c;
       });
       return s;
     });
-    api("POST", "/api/messaging/send", { conversationId: Number(id), content: t })
+    var body = { conversationId: Number(id), content: t, priority: pri };
+    if (atts.length) body.attachmentIds = atts;
+    api("POST", "/api/messaging/send", body)
       .then(function () { hydrateConversations(); })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
+  };
+  // Acknowledge a STAT/urgent message (stronger than read). Optimistic, then syncs.
+  DT.actions.acknowledgeMessage = function (convoId, messageId) {
+    if (messageId == null) return;
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (c.id !== convoId) return c;
+        return Object.assign({}, c, { messages: (c.messages || []).map(function (m) { return m.id === messageId ? Object.assign({}, m, { ackedByMe: true }) : m; }) });
+      });
+      return s;
+    });
+    api("POST", "/api/messaging/messages/ack", { messageIds: [messageId] })
+      .then(function () { hydrateConversations(); })
+      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't acknowledge", msg: "Try again." }; return s; }); });
+  };
+  // Real typing indicator (outbound). Sends typing_start once, then refreshes a
+  // 2.5s idle timer that emits typing_stop — same protocol as the /m mobile kit,
+  // relayed by the server to the other participants only.
+  var typingSendState = {};
+  DT.actions.setTyping = function (convoId, on) {
+    if (convoId == null || !ws || ws.readyState !== 1) return;
+    var convo = (DT.getState().conversations || []).find(function (c) { return c.id === convoId; });
+    if (!convo || !(convo.participantIds || []).length || convo.broadcast) return;
+    var send = function (start) {
+      try { ws.send(JSON.stringify({ type: start ? "typing_start" : "typing_stop", conversationId: Number(convoId), participantIds: convo.participantIds })); } catch (e) {}
+    };
+    if (!!typingSendState[convoId] !== !!on) { typingSendState[convoId] = !!on; send(!!on); }
+    clearTimeout(typingSendState["t" + convoId]);
+    if (on) typingSendState["t" + convoId] = setTimeout(function () { typingSendState[convoId] = false; send(false); }, 2500);
+  };
+  // Open (or create) the patient-linked care-team thread and jump to it.
+  DT.actions.openPatientThread = function (patientId) {
+    if (patientId == null) return;
+    return api("POST", "/api/messaging/patient-thread", { patientId: Number(patientId) })
+      .then(function (convo) {
+        return hydrateConversations().then(function () {
+          DT.set(function (s) { s.__activeConvo = convo.id; s.ui.nav = "messages"; return s; });
+        });
+      })
+      .catch(function () {
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open patient thread", msg: "Try again." }; return s; });
+      });
   };
   DT.actions.startConversation = function (participant) {
     var other = (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });
@@ -848,6 +1315,204 @@
       });
     }).catch(function () { if (origStartConversation) origStartConversation(participant); });
   };
+
+  // On-call / role addressing: fetch the server-resolved list of addressable
+  // roles (each already resolved to a real messageable userId in our org).
+  DT.actions.listOnCallTargets = function () {
+    return get("/api/messaging/on-call-targets").then(function (targets) {
+      var list = targets || [];
+      DT.set(function (s) { s.onCallTargets = list; return s; });
+      return list;
+    }).catch(function () { DT.set(function (s) { s.onCallTargets = []; return s; }); return []; });
+  };
+  // Availability of a 1:1 peer (DND + covering + on-shift) for the thread's
+  // auto-response banner. Cached per userId in s.peerAvail.
+  DT.actions.loadPeerAvailability = function (userId) {
+    if (userId == null) return Promise.resolve(null);
+    return get("/api/messaging/availability/" + userId).then(function (info) {
+      DT.set(function (s) { var m = Object.assign({}, s.peerAvail || {}); m[userId] = info; s.peerAvail = m; return s; });
+      return info;
+    }).catch(function () { return null; });
+  };
+  // Start (or reopen, deduped by the resolved userId) a direct conversation with
+  // whoever holds the selected role, naming the thread after the role so it's
+  // clear who was addressed. Reuses the standard conversation endpoint.
+  DT.actions.startRoleConversation = function (target) {
+    if (!target || target.userId == null || meId == null) return Promise.resolve();
+    return get("/api/messaging/conversations").then(function (convos) {
+      var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(target.userId) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
+      if (existing) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.conversations = (s.conversations || []).map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }); });
+      }
+      return api("POST", "/api/messaging/conversations", { type: "direct", name: target.label, participantIds: [target.userId] }).then(function (convo) {
+        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+      });
+    }).catch(function () {});
+  };
+
+  // ---- message forwarding (server-backed, with provenance) -----------------
+  // target: { conversationId } | { participantIds: [..] } | { roleTarget: "<id>" }
+  // opts: { keepPriority, note }. Resolves to the forwarded message; the
+  // target thread becomes the active conversation.
+  DT.actions.forwardMessage = function (messageId, target, opts) {
+    if (messageId == null || !target) return Promise.resolve(null);
+    var body = Object.assign({}, target, { keepPriority: !!(opts && opts.keepPriority) });
+    if (opts && opts.note) body.note = String(opts.note);
+    return api("POST", "/api/messaging/messages/" + messageId + "/forward", body)
+      .then(function (m) {
+        return hydrateConversations().then(function () {
+          DT.set(function (s) { if (m && m.conversationId != null) s.__activeConvo = m.conversationId; s.__toast = { tone: "sent", title: "Message forwarded", msg: "Sent with its original sender and time attached." }; return s; });
+          return m;
+        });
+      })
+      .catch(function (e) {
+        var why = String((e && e.message) || "");
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't forward", msg: /module_disabled/.test(why) ? "Message forwarding is switched off for your organization." : /same_conversation/.test(why) ? "That message is already in this thread." : /role_unresolved/.test(why) ? "Nobody currently holds that role." : "Try again." }; return s; });
+        return null;
+      });
+  };
+
+  // ---- message templates (org-wide + personal canned messages) -------------
+  DT.actions.listTemplates = function () {
+    return get("/api/messaging/templates").then(function (rows) {
+      var list = rows || [];
+      DT.set(function (s) { s.templates = list; return s; });
+      return list;
+    }).catch(function () { DT.set(function (s) { s.templates = s.templates || []; return s; }); return []; });
+  };
+  function templateErrorToast(e, title) {
+    var why = String((e && e.message) || "");
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: /forbidden/.test(why) ? "Only directors can manage organization templates." : /module_disabled/.test(why) ? "Templates are switched off for your organization." : "Try again." }; return s; });
+  }
+  DT.actions.createTemplate = function (data) {
+    return api("POST", "/api/messaging/templates", { title: data.title, body: data.body, priority: data.priority || "routine", scope: data.scope === "org" ? "org" : "mine" })
+      .then(function (t) { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Template saved", msg: t.title }; return s; }); return DT.actions.listTemplates().then(function () { return t; }); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't save template"); return null; });
+  };
+  DT.actions.updateTemplate = function (id, patch) {
+    return api("PATCH", "/api/messaging/templates/" + id, patch)
+      .then(function (t) { return DT.actions.listTemplates().then(function () { return t; }); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't update template"); return null; });
+  };
+  DT.actions.deleteTemplate = function (id) {
+    return api("DELETE", "/api/messaging/templates/" + id)
+      .then(function () { return DT.actions.listTemplates(); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't delete template"); return null; });
+  };
+
+  // ---- away message (shown to senders while I'm DND / off shift) -----------
+  // Read back through the availability endpoint (it's what senders see).
+  function hydrateAwayMessage() {
+    if (meId == null) return Promise.resolve();
+    return get("/api/messaging/availability/" + meId).then(function (info) {
+      DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p.awayMessage = (info && info.awayMessage) || ""; s.myPrefs = p; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.setAwayMessage = function (text) {
+    var t = String(text || "").trim().slice(0, 280);
+    return DT.actions.setMyPref("awayMessage", t);
+  };
+
+  // ---- broadcasts: catch-up list + per-recipient acknowledgement -----------
+  // Kit severity: info | warning | critical; server: info | urgent | critical.
+  var SEV_TO_KIT = { info: "info", urgent: "warning", critical: "critical" };
+  function mapBroadcast(b) {
+    return {
+      id: b.id,
+      title: b.message,
+      sev: SEV_TO_KIT[b.severity] || "warning",
+      at: new Date(b.createdAt || Date.now()).getTime(),
+      senderId: b.senderId,
+      senderName: b.senderName || "",
+      mine: b.senderId === meId,
+      ackReq: b.ackRequired != null ? !!b.ackRequired : b.severity !== "info",
+      ackedByMe: !!b.acked,
+      ackedAt: b.ackedAt ? new Date(b.ackedAt).getTime() : null,
+      acked: typeof b.ackCount === "number" ? b.ackCount : 0,
+      total: typeof b.total === "number" ? b.total : 0,
+      ackedBy: b.ackedBy || [],
+    };
+  }
+  function hydrateBroadcasts() {
+    return get("/api/broadcasts").then(function (rows) {
+      DT.set(function (s) { s.broadcasts = (rows || []).map(mapBroadcast); s.broadcastsLive = true; return s; });
+    }).catch(function () { /* module off or offline: keep what's there */ });
+  }
+  DT.actions.refreshBroadcasts = hydrateBroadcasts;
+  DT.actions.ackBroadcast = function (id) {
+    if (id == null) return Promise.resolve();
+    // Optimistic: flip my own state now; the WS BROADCAST_ACKED event brings
+    // the authoritative tally.
+    DT.set(function (s) {
+      s.broadcasts = (s.broadcasts || []).map(function (b) { return b.id === id ? Object.assign({}, b, { ackedByMe: true, ackedAt: Date.now() }) : b; });
+      return s;
+    });
+    return api("POST", "/api/broadcasts/" + id + "/ack").then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Broadcast acknowledged", msg: "The sender can see you received it." }; return s; });
+    }).catch(function () {
+      DT.set(function (s) {
+        s.broadcasts = (s.broadcasts || []).map(function (b) { return b.id === id ? Object.assign({}, b, { ackedByMe: false, ackedAt: null }) : b; });
+        s.__toast = { tone: "rejected", title: "Couldn't acknowledge", msg: "Try again." };
+        return s;
+      });
+    });
+  };
+
+  // Live banner: every unacknowledged urgent/critical broadcast addressed to me
+  // stays pinned at the top of the app (any screen, any role) with an
+  // Acknowledge button until it's acked — a toast alone disappears in seconds.
+  // Plain DOM so it works regardless of which screen is mounted.
+  var bannerEl = null;
+  var bannerKey = "";
+  function renderBroadcastBanner() {
+    try {
+      var st = DT.getState();
+      var mod = !DT.moduleOn || DT.moduleOn("broadcasts");
+      var due = st.session && mod ? (st.broadcasts || []).filter(function (b) { return b.ackReq && !b.ackedByMe && !b.mine && b.senderId != null; }) : [];
+      var key = due.map(function (b) { return b.id; }).join(",");
+      if (key === bannerKey) return;
+      bannerKey = key;
+      if (!bannerEl) {
+        bannerEl = document.createElement("div");
+        bannerEl.id = "dt-broadcast-banner";
+        bannerEl.setAttribute("role", "alert");
+        bannerEl.style.cssText = "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:45;width:min(640px,calc(100vw - 24px));display:flex;flex-direction:column;gap:8px;font-family:inherit;";
+        document.body.appendChild(bannerEl);
+      }
+      bannerEl.innerHTML = "";
+      due.slice(0, 3).forEach(function (b) {
+        var critical = b.sev === "critical";
+        var row = document.createElement("div");
+        row.className = "dt-broadcast-banner-item";
+        row.style.cssText = "display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid " + (critical ? "#B91C1C" : "#B45309") + ";background:" + (critical ? "#FEE2E2" : "#FEF3C7") + ";color:" + (critical ? "#7F1D1D" : "#78350F") + ";";
+        var txt = document.createElement("div");
+        txt.style.cssText = "flex:1;min-width:0;";
+        var t1 = document.createElement("div");
+        t1.style.cssText = "font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;";
+        t1.textContent = (critical ? "Critical" : "Urgent") + " broadcast" + (b.senderName ? " · " + b.senderName : "");
+        var t2 = document.createElement("div");
+        t2.style.cssText = "font-size:13.5px;font-weight:600;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        t2.textContent = b.title;
+        txt.appendChild(t1); txt.appendChild(t2);
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Acknowledge";
+        btn.setAttribute("data-broadcast-ack", String(b.id));
+        btn.style.cssText = "flex:none;padding:8px 14px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:12.5px;font-family:inherit;color:#fff;background:" + (critical ? "#B91C1C" : "#B45309") + ";";
+        btn.onclick = function () { DT.actions.ackBroadcast(b.id); };
+        row.appendChild(txt); row.appendChild(btn);
+        bannerEl.appendChild(row);
+      });
+      if (due.length > 3) {
+        var more = document.createElement("div");
+        more.style.cssText = "text-align:center;font-size:12px;color:#78350F;";
+        more.textContent = (due.length - 3) + " more awaiting acknowledgement";
+        bannerEl.appendChild(more);
+      }
+      bannerEl.style.display = due.length ? "flex" : "none";
+    } catch (e) { /* never let the banner break the app */ }
+  }
+  if (DT.subscribe) DT.subscribe(renderBroadcastBanner);
 
   DT.actions.sendAssignment = function (provider, fields, consults) {
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
@@ -904,16 +1569,52 @@
     api("POST", "/api/round-robin/reset").catch(function () {});
     DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
   };
+  // Emergency broadcast: persist + fan out via the real backend (WS
+  // BROADCAST_CREATED reaches every signed-in member of the org). The kit's
+  // local action still runs for the sender's own list/toast. Severity mapping:
+  // the kit offers info/warning/critical/emergency; the server accepts
+  // info/urgent/critical.
+  var origSendBroadcast = DT.actions.sendBroadcast;
+  DT.actions.sendBroadcast = function (data) {
+    var SEV_MAP = { info: "info", warning: "urgent", critical: "critical", emergency: "critical" };
+    var msg = (data.title || "").trim() + (data.message && data.message.trim() ? " — " + data.message.trim() : "");
+    if (!msg) { if (origSendBroadcast) return origSendBroadcast(data); return; }
+    // Ack semantics are server-defined: urgent/critical require an ack, info
+    // doesn't. If the composer asked for an ack on an info broadcast, promote
+    // it to urgent so recipients actually get the Acknowledge button.
+    var sev = SEV_MAP[data.severity] || "urgent";
+    if (data.ackReq && sev === "info") sev = "urgent";
+    return api("POST", "/api/broadcasts", { message: msg, severity: sev }).then(function (b) {
+      DT.set(function (s) {
+        if (b && !(s.broadcasts || []).some(function (x) { return x.id === b.id; })) s.broadcasts = [mapBroadcast(Object.assign({ senderName: (s.me && s.me.name) || "" }, b))].concat(s.broadcasts || []);
+        s.__toast = { tone: "sent", title: "Broadcast sent", msg: "Delivered to everyone in your organization" + (sev !== "info" ? " · acknowledgement required" : "") + "." };
+        return s;
+      });
+      return hydrateBroadcasts();
+    }).catch(function (e) {
+      // Backend unreachable → the kit's local demo behaviour; a server
+      // REJECTION must not look like success.
+      if (isNetworkError(e) && origSendBroadcast) return origSendBroadcast(data);
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: String((e && e.message) || "The server rejected it.") }; return s; });
+    });
+  };
   DT.actions.addProvider = function (data) {
     var name = (data.name || "").trim();
     if (!name) return;
+    // Never allow provisioning a developer/super-admin from the director UI;
+    // the server enforces this too, but keep the client from ever asking.
+    var role = data.role && data.role !== "developer" ? data.role : "hospitalist";
     var uname = name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 20) || ("dr" + Date.now());
-    api("POST", "/api/director/hospitalists", {
-      username: uname, password: "docturn", displayName: name,
-      specialty: data.specialty || "Hospital Medicine", patientCap: parseInt(data.cap, 10) || 12,
-      shiftType: data.shift || "day", role: "hospitalist",
-    }).then(rehydrate).catch(function () {});
-    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Provider added", msg: name + " added to the group." }; return s; });
+    var body = { username: uname, password: "docturn", displayName: name, role: role };
+    // Specialty/cap/shift only apply to hospitalists (who join the rotation).
+    if (role === "hospitalist") {
+      body.specialty = data.specialty || "Hospital Medicine";
+      body.patientCap = parseInt(data.cap, 10) || 12;
+      body.shiftType = data.shift || "day";
+    }
+    api("POST", "/api/director/hospitalists", body).then(rehydrate).catch(function () {});
+    var roleLabel = { hospitalist: "Provider", er_doctor: "ER doctor", er_director: "ER director", director: "Director" }[role] || "Provider";
+    DT.set(function (s) { s.__toast = { tone: "accepted", title: roleLabel + " added", msg: name + " added to " + (role === "hospitalist" ? "the group." : "the organization.") }; return s; });
   };
   DT.actions.removeProvider = function (id) {
     api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
@@ -976,6 +1677,13 @@
       throw e;
     });
   };
+
+  // ---- Amion schedule feed (server-side, env-configured) --------------------
+  // Status is readable by any authed role (the server scopes it to the Amion
+  // org); sync-now is director/developer only. The feed URL/token never
+  // reaches the client — these return only the parsed grid + sync metadata.
+  DT.actions.amionStatus = function () { return get("/api/amion/status"); };
+  DT.actions.amionSyncNow = function () { return api("POST", "/api/amion/sync-now", {}); };
 
   // Developer: hydrate real cross-tenant users into the kit's devUsers shape.
   function hydrateDevUsers() {
@@ -1171,13 +1879,250 @@
         s.session = { role: u.role, org: lastAuth.org, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.ui.nav = "dashboard"; s.ui.notifOpen = false; s.loginError = null;
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
       });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return; // held at the enrolment screen
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrateBroadcasts();
       hydrate(u.role).then(function () { hydrateConversations(); });
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
   }
+
+  // Session restore on load. The store no longer persists any clinical slice
+  // (PHI never touches localStorage), so a page refresh must re-establish who
+  // the user is from the server's session cookie and re-fetch everything.
+  // Deliberately rawApi, NOT the self-healing api(): an expired/absent session
+  // must land on the login screen, never silently sign in a demo account.
+  if (!DEMO_TOKEN) {
+    var savedSess = (DT.getState() && DT.getState().session) || null;
+    rawApi("GET", "/api/user").then(function (u) {
+      if (!u || u.id == null) throw new Error("no_session");
+      var orgCode = orgForRole(u.role, savedSess && savedSess.org);
+      lastAuth = { role: u.role, org: orgCode };
+      meId = u.id;
+      auditLoaded = false;
+      prefsLoaded = false;
+      dashHydrated = false; lastDashSnap = null;
+      DT.set(function (s) {
+        s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.loginError = null;
+        s.mfaChallenge = null;
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
+        return s;
+      });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return; // held at the enrolment screen; mfaEnrollmentDone() boots the rest
+      connectWs();
+      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrateMyPrefs();
+      enableWebPush();
+      if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
+      hydrateBroadcasts();
+      hydrateAwayMessage();
+      hydrate(u.role).then(function () { hydrateConversations(); });
+    }).catch(function () {
+      // No live server session — drop the restored shell back to the login
+      // screen rather than showing a signed-in UI with no data behind it.
+      if (savedSess) DT.set(function (s) { s.session = null; return s; });
+    });
+  }
+
+  // Load public client config (synthetic-data flag + app name) before/after login
+  // so the test-only banner reflects the server. Defaults to synthetic ON.
+  rawApi("GET", "/api/config").then(function (cfg) {
+    if (cfg) DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
+  }).catch(function () { /* keep the safe default (synthetic on) */ });
+
+  // ==== modules: per-org feature switches (server-enforced) — BEGIN =========
+  // Registry + effective map come from /api/modules (shared/modules.ts). The
+  // developer console flips one switch per org via PATCH /api/dev/modules/:id;
+  // the server's moduleGate answers 404 module_disabled for anything switched
+  // off, so the UI hides nav/controls with DT.moduleOn(id) but never decides.
+  // rawApi, not the self-healing api(): a stale saved session must never be
+  // "healed" into a demo login just because this refetch got a 401.
+  function hydrateModules() {
+    return rawApi("GET", "/api/modules").then(function (r) {
+      if (!r) return;
+      DT.set(function (s) { s.modules = r.modules || {}; s.moduleRegistry = r.registry || []; return s; });
+    }).catch(function () {});
+  }
+  function moduleOrgId(orgRef) {
+    if (typeof orgRef === "number") return orgRef;
+    var o = (DT.getState().orgs || []).find(function (x) { return x.code === orgRef || x.id === orgRef; });
+    return o ? o.id : null;
+  }
+  function putOrgModules(id, map) {
+    DT.set(function (s) {
+      s.orgModules = Object.assign({}, s.orgModules || {});
+      s.orgModules[id] = map || {};
+      return s;
+    });
+  }
+  // Developer: load one tenant's effective map into s.orgModules[orgId].
+  DT.actions.loadOrgModules = function (orgRef) {
+    var id = moduleOrgId(orgRef);
+    if (id == null) return Promise.resolve(null);
+    return get("/api/dev/modules/" + id).then(function (r) {
+      putOrgModules(id, r && r.modules);
+      if (r && r.registry) DT.set(function (s) { s.moduleRegistry = r.registry; return s; });
+      return r && r.modules;
+    });
+  };
+  // Developer: one click flips a switch — optimistic, then server truth.
+  DT.actions.setModule = function (orgRef, moduleId, enabled) {
+    var id = moduleOrgId(orgRef);
+    if (id == null) return Promise.reject(new Error("unknown_org"));
+    var before = (DT.getState().orgModules || {})[id] || {};
+    var optimistic = Object.assign({}, before); optimistic[moduleId] = !!enabled;
+    putOrgModules(id, optimistic);
+    return api("PATCH", "/api/dev/modules/" + id, { id: moduleId, enabled: !!enabled }).then(function (r) {
+      putOrgModules(id, r && r.modules);
+      var sess = DT.getState().session;
+      if (sess && moduleOrgId(sess.org) === id) hydrateModules(); // flipped our own org
+      return r && r.modules;
+    }).catch(function (e) {
+      putOrgModules(id, before);
+      DT.actions.loadOrgModules(id).catch(function () {});
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not change module", msg: String((e && e.message) || e) }; return s; });
+      throw e;
+    });
+  };
+  // Components: `if (!DT.moduleOn("broadcasts")) return null;` — unknown ids and
+  // a not-yet-hydrated map read as ON so nothing flickers away on first paint.
+  DT.moduleOn = function (id) { var m = DT.getState().modules; return !m || m[id] !== false; };
+  // Refetch whenever the signed-in identity changes (login, role switch,
+  // session restore) and every minute while signed in, so a switch flipped by
+  // the developer reaches an open portal without a reload.
+  // Compared by REFERENCE: store.set() shallow-clones the top level, so the
+  // session object only changes when a login/restore assigns a new one — which
+  // also catches re-login as the same user (switches may have flipped since).
+  var lastModuleSess = null;
+  function syncModulesForSession() {
+    var sess = DT.getState().session || null;
+    if (sess === lastModuleSess) return;
+    lastModuleSess = sess;
+    if (sess) hydrateModules();
+    else DT.set(function (s) { s.modules = null; s.orgModules = {}; return s; });
+  }
+  if (DT.subscribe) DT.subscribe(syncModulesForSession);
+  setInterval(function () { if (DT.getState().session) hydrateModules(); }, 60000);
+  // ==== modules — END =======================================================
+
+  // ==== oncall / ehr: who's-on-call board + EHR deep links — BEGIN ==========
+  // The board is server-merged (selected schedule source + consult services +
+  // next hospitalist, DND → covering already applied). The MRN never reaches
+  // the browser: "Open in EHR" asks the server for the resolved URL per click.
+  DT.actions.loadOnCallBoard = function () {
+    return get("/api/oncall/board").then(function (r) {
+      DT.set(function (s) { s.onCallBoard = r || null; return s; });
+      return r;
+    }).catch(function (e) {
+      var msg = String((e && e.message) || "unavailable");
+      DT.set(function (s) { s.onCallBoard = { error: msg === "module_disabled" ? "the on-call board is switched off for this organization" : msg, rows: [] }; return s; });
+      return null;
+    });
+  };
+  DT.actions.loadOnCallSources = function () {
+    return get("/api/oncall/sources").then(function (r) { DT.set(function (s) { s.onCallSources = r || null; return s; }); return r; }).catch(function () { return null; });
+  };
+  DT.actions.setOnCallSource = function (source) {
+    return api("PATCH", "/api/oncall/source", { source: source }).then(function (r) {
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Schedule source: " + ({ amion: "Amion", epic: "Epic", manual: "Manual" }[source] || source), msg: r && r.status && !r.status.configured ? (r.status.message || "Not configured yet.") : "The on-call board now reads from this source." };
+        return s;
+      });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't change source", msg: m === "module_disabled" ? "That source's module is switched off for this organization." : (m || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.loadManualSlots = function () {
+    return get("/api/oncall/manual").then(function (r) { DT.set(function (s) { s.manualOnCall = r || []; return s; }); return r; }).catch(function () { return []; });
+  };
+  DT.actions.addManualSlot = function (slot) {
+    return api("POST", "/api/oncall/manual", slot).then(function (r) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Slot added", msg: r.slot + " · " + r.providerName }; return s; });
+      return DT.actions.loadManualSlots().then(function () { return r; });
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't add slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.updateManualSlot = function (id, patch) {
+    return api("PATCH", "/api/oncall/manual/" + encodeURIComponent(id), patch).then(function (r) { return DT.actions.loadManualSlots().then(function () { return r; }); }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.removeManualSlot = function (id) {
+    return api("DELETE", "/api/oncall/manual/" + encodeURIComponent(id)).then(function () { return DT.actions.loadManualSlots(); }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.epicSyncNow = function () {
+    return api("POST", "/api/oncall/epic/sync-now", {}).then(function (r) {
+      DT.set(function (s) { s.__toast = r && r.lastStatus === "error" ? { tone: "rejected", title: "Epic sync failed", msg: r.error || "See the board's source status." } : { tone: "accepted", title: "Epic synced", msg: (r && r.rowCount) + " on-call rows." }; return s; });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Epic not synced", msg: m === "epic_not_configured" ? "Needs Epic app credentials (App Orchard/Vendor Services registration) on the server." : m === "module_disabled" ? "Epic on-call is switched off for this organization." : (m || "Try again.") }; return s; });
+      return null;
+    });
+  };
+  // Message whoever actually answers for a board row (the covering provider
+  // when the holder is on DND). Reuses the role-conversation flow so the thread
+  // is named after the role, then jumps to Messages.
+  DT.actions.messageOnCallRow = function (row) {
+    if (!row || !row.messageable || row.messageUserId == null) return Promise.resolve();
+    var label = row.label + (row.covering ? " · covering: " + row.covering.name : "");
+    return Promise.resolve(DT.actions.startRoleConversation({ userId: row.messageUserId, label: label })).then(function () {
+      DT.set(function (s) { s.ui.nav = "messages"; return s; });
+    });
+  };
+  // EHR deep links (org setting "ehrDeepLink": vendor + template; presets from the server).
+  var ehrConfigInflight = null; // many patient rows mount at once — one fetch serves them all
+  DT.actions.loadEhrConfig = function () {
+    if (ehrConfigInflight) return ehrConfigInflight;
+    DT.set(function (s) { if (s.ehrConfig === undefined) s.ehrConfig = null; return s; });
+    ehrConfigInflight = get("/api/ehr/config").then(function (r) { DT.set(function (s) { s.ehrConfig = r || null; return s; }); return r; })
+      .catch(function () { return null; })
+      .finally(function () { ehrConfigInflight = null; });
+    return ehrConfigInflight;
+  };
+  DT.actions.saveEhrConfig = function (vendor, template) {
+    return api("PATCH", "/api/ehr/config", { vendor: vendor, template: template || "" }).then(function (r) {
+      DT.set(function (s) { s.ehrConfig = Object.assign({}, s.ehrConfig || {}, r || {}); s.__toast = { tone: "accepted", title: "EHR link saved", msg: r && r.configured ? "\"Open in EHR\" is now available on patient rows." : (template ? "Template stored — replace the placeholder host to activate it." : "EHR deep links cleared.") }; return s; });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      var why = { template_missing_placeholder: "The template must contain {ehrId}.", template_scheme: "That URL scheme isn't allowed.", template_whitespace: "The template can't contain spaces.", template_required: "Enter a template." }[m] || (m || "Try again.");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "EHR link not saved", msg: why }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.openInEhr = function (patientId) {
+    if (patientId == null) return Promise.resolve();
+    // Open the window synchronously (popup blockers), then point it at the URL
+    // the server resolves. Custom schemes (epichaiku://) navigate in place.
+    var win = null;
+    try { win = window.open("", "_blank", "noopener"); } catch (e) { win = null; }
+    return get("/api/patients/" + Number(patientId) + "/ehr-link").then(function (r) {
+      var url = r && r.url;
+      if (!url) throw new Error("no_link");
+      if (/^https?:/i.test(url)) { if (win) win.location.href = url; else window.open(url, "_blank", "noopener"); }
+      else { if (win) { try { win.close(); } catch (e) {} } window.location.assign(url); }
+    }).catch(function (e) {
+      if (win) { try { win.close(); } catch (_) {} }
+      var m = String((e && e.message) || "");
+      var msg = m === "no_ehr_id" ? "No EHR id (MRN) on file for this patient." : m === "forbidden" ? "Only the patient's care team can open their chart." : m === "ehr_not_configured" ? "Ask a director to set the EHR link template in Settings." : m === "module_disabled" ? "EHR deep links are switched off for this organization." : "Couldn't open the chart.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Open in EHR", msg: msg }; return s; });
+    });
+  };
+  // ==== oncall / ehr — END ==================================================
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

@@ -61,6 +61,28 @@ describe("auth", () => {
   it("health endpoint reports the database is up", async () => {
     const res = await supertest(ctx.app).get("/api/health");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, db: "up" });
+    // `persistent` distinguishes a real Postgres from the ephemeral in-process
+    // store; tests run on the latter, so it is false here.
+    expect(res.body).toEqual({ ok: true, db: "up", persistent: false });
+  });
+
+  it("never exposes passwordHash in the registration approval queue", async () => {
+    const reg = await supertest(ctx.app).post("/api/register").send({
+      orgCode: "ISPN",
+      username: "qa.pending",
+      password: "qatest123",
+      displayName: "QA Pending",
+      requestedRole: "hospitalist",
+    });
+    expect(reg.status).toBe(201);
+
+    const { agent } = await login(ctx.app, { username: "director" });
+    const res = await agent.get("/api/registrations");
+    expect(res.status).toBe(200);
+    const row = res.body.find((r: { username: string }) => r.username === "qa.pending");
+    expect(row).toBeTruthy();
+    expect(row).not.toHaveProperty("passwordHash");
+    expect(row).not.toHaveProperty("password_hash");
+    expect(JSON.stringify(res.body)).not.toMatch(/passwordHash/);
   });
 });

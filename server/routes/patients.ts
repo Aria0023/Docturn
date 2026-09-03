@@ -40,6 +40,9 @@ export function registerPatientRoutes(app: Express) {
         status: "waiting",
         erDoctorId: me.id,
         assignedHospitalistId: null,
+        // EHR id (MRN/CSN) is PHI: stored here, resolved only by the audited
+        // /api/patients/:id/ehr-link route — never echoed into notifications.
+        ehrId: parsed.data.ehrId ?? null,
       });
       res.status(201).json(patient);
     },

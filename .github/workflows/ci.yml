@@ -1,0 +1,133 @@
+name: CI
+
+# DocTurn continuous integration.
+#
+# HIPAA note: CI runs against SYNTHETIC (fake) data only — the server boots in
+# its default synthetic-data mode and the test suites never load real PHI. Do NOT
+# add steps that print database contents, and keep secret scanning redacted so no
+# credential value is ever echoed into a build log.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  quality:
+    name: Typecheck + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run typecheck
+      - name: Unit + integration tests (vitest)
+        run: npm test
+
+  smoke:
+    name: UI + realtime smoke (live server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Boot server and run smokes
+        # RATE_LIMIT=off so the harnesses' many rapid logins aren't throttled —
+        # this is a throwaway test server, never a deployment.
+        run: |
+          RATE_LIMIT=off SYNTHETIC_DATA=true npx tsx server/index.ts > server.log 2>&1 &
+          echo "waiting for server…"
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/api/health >/dev/null; then echo "up"; break; fi
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:3000/api/health || { echo "::error::server did not start"; tail -50 server.log; exit 1; }
+          npm run test:ui
+          npm run test:rt
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: server.log
+          if-no-files-found: ignore
+
+  build-web:
+    name: Build web (client + server)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+
+  mobile:
+    name: Mobile app typecheck (Expo / React Native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # A full native (iOS/Android) binary build runs via EAS with signing
+      # credentials outside CI. Here we install deps and type-check the RN app so
+      # regressions are caught on every push.
+      - name: Install + type-check
+        working-directory: mobile-app
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit
+
+  security:
+    name: Security scan (deps + secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Report (not block): production-dependency advisories are surfaced as a
+      # warning. Blocking is intentionally off because the current high-severity
+      # item (drizzle-orm SQLi advisory) needs a major-version upgrade tracked
+      # separately; flip `|| ...` to a hard failure once deps are clean.
+      - name: Dependency audit (production deps)
+        run: |
+          npm audit --omit=dev --audit-level=high \
+            || echo "::warning title=Dependency audit::High/critical vulnerabilities in production deps — run 'npm audit --omit=dev' and upgrade."
+      # Secret scanning IS blocking — a real credential must never merge. Values
+      # are redacted so nothing sensitive is ever printed to the build log.
+      - name: Secret scan (gitleaks, redacted)
+        run: |
+          VER=8.18.4
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks detect --no-git --source=. --config=.gitleaks.toml --redact --no-banner --exit-code=1 \
+            || { echo "::error title=Secret scan::Potential secret detected (value redacted). Review gitleaks findings."; exit 1; }
+
+# Failure notifications: GitHub surfaces failed checks on the commit/PR and emails
+# the author by default — no extra wiring needed. Branch protection can require
+# these checks (quality, smoke, build-web, security) before merge.
