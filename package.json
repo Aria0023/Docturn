@@ -21,7 +21,7 @@
     "test:ui": "node scripts/ui-smoke.mjs",
     "test:rt": "node scripts/xuser-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:e2e": "node scripts/e2e-mobile.mjs",
+    "test:e2e": "node scripts/interop-unified.mjs",
     "test:interop": "node scripts/interop-unified.mjs"
   },
   "dependencies": {

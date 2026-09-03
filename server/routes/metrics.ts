@@ -1,12 +1,19 @@
 import type { Express } from "express";
-import { currentUser, requireAuth } from "../rbac.js";
+import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Org-scoped clinical-comms KPIs for the dashboard stat tiles.
+// Org-scoped clinical-comms KPIs for the dashboard stat tiles. Analytics are
+// director-level data (org-wide volumes and response times), so only the
+// director roles and the platform developer may read them; other roles get
+// 403 and their dashboard tiles fall back to "—" (webapp/api-bridge.js).
 export function registerMetricsRoutes(app: Express) {
-  app.get("/api/metrics/comms", requireAuth, async (req, res) => {
+  app.get(
+    "/api/metrics/comms",
+    requireAuth,
+    requireRole("director", "er_director", "developer"),
+    async (req, res) => {
     const me = currentUser(req);
     const now = Date.now();
     const since7d = new Date(now - 7 * DAY_MS);
@@ -23,5 +30,6 @@ export function registerMetricsRoutes(app: Express) {
     );
 
     res.json({ messages7d, statAckAvgSec, consultResponseAvgSec });
-  });
+    },
+  );
 }

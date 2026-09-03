@@ -84,14 +84,14 @@ export const CONTROLS: ControlDef[] = [
     id: "mfa-enrollment",
     title: "Multi-factor authentication enrolled",
     description:
-      "Counts users with twoFactorEnabled against the roster. The policy threshold is: every PRIVILEGED account (director, ER director, developer) has MFA. Anything less is reported with the real numbers.",
+      "Counts users with twoFactorEnabled against the roster. The policy threshold is: every PRIVILEGED account (director, ER director, developer) has MFA. Anything less is reported with the real numbers, together with whether the org ENFORCES enrolment (module security.mfaRequired: un-enrolled privileged users are held at the enrolment screen until they finish).",
     category: "Authentication",
     hipaa: ["45 CFR §164.312(d)"],
     soc2: ["CC6.1"],
     kind: "auto",
     severity: "high",
     remediation:
-      "Have each privileged user enrol a TOTP authenticator from Settings → Security (POST /api/2fa/setup, then verify).",
+      "Switch on the 'Require MFA for privileged roles' module for the org (developer console) so every director / ER director / developer is routed into TOTP enrolment (POST /api/mfa/enroll, then /api/mfa/verify) at next sign-in.",
   },
   {
     id: "session-timeout",
@@ -279,14 +279,14 @@ export const CONTROLS: ControlDef[] = [
     id: "attachment-storage",
     title: "Attachment storage suitable for ePHI",
     description:
-      "Message attachments are stored as base64 inside the database row — a synthetic-data pilot shortcut. Reports the real count and total bytes currently stored. Real ePHI requires encrypted object storage under a BAA, server-side antivirus scanning, and signed-URL delivery.",
+      "Reads the attachment store this process is running with. Passes when ATTACHMENT_STORE=fs-encrypted with a valid 32-byte ATTACHMENT_KEY (AES-256-GCM per file, random IV, auth tag; plaintext never written). The default base64-in-database store — a synthetic-data pilot shortcut — warns. Reports the real count and total bytes currently stored.",
     category: "Data protection",
     hipaa: ["45 CFR §164.312(a)(2)(iv)", "45 CFR §164.312(c)(1)"],
     soc2: ["CC6.1"],
     kind: "auto",
     severity: "high",
     remediation:
-      "Move attachment bytes to S3/GCS with a signed BAA and SSE, add AV scanning on upload, and serve via short-lived signed URLs before enabling real-PHI mode.",
+      "Set ATTACHMENT_STORE=fs-encrypted, ATTACHMENT_DIR and a 32-byte ATTACHMENT_KEY (64 hex chars) from a secrets manager; then move bytes to S3/GCS under a signed BAA with SSE, add AV scanning on upload, and serve via short-lived signed URLs before enabling real-PHI mode.",
   },
 
   /* ── MANUAL: organizational controls only a human can attest to ─────────── */

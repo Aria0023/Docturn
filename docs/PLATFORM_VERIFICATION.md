@@ -15,9 +15,11 @@ enforcement, role-addressed ("message the on-call") targets, retention policy,
 analytics, push key, compliance monitor and audit. Tenant isolation and RBAC held on
 every probe. What does **not** hold up: (a) recipients on the web/phone app have **no
 way to acknowledge an emergency broadcast**, so the director's "acked / total" bar can
-never fill; (b) the phone E2E harness, `docs/MOBILE.md` and the `mobileapp/` directory
-describe a `/m` app that was deliberately removed — they are stale, and the harness
-reports false failures; (c) the comms analytics endpoint is readable by any role.
+never fill; (b) the old phone E2E harness, `docs/MOBILE.md` and the dead slim phone-kit
+directory described a phone app that was deliberately removed — *since resolved: the
+stale harness and directory were deleted, `docs/MOBILE.md` was rewritten for the unified
+PWA, and `npm run test:e2e` now runs `scripts/interop-unified.mjs`*; (c) the comms
+analytics endpoint was readable by any role — *since gated to director roles*.
 
 ## 2. What was run
 
@@ -26,9 +28,9 @@ reports false failures; (c) the comms analytics endpoint is readable by any role
 | `npm test` (vitest) | 19 files, unit + route + security | **141 / 141 pass** |
 | `npm run test:rt` (two live sessions, real WebSockets) | presence, live assignment events, accept→census, bidirectional messaging, on-call role resolution, reassign, RBAC | **33 / 33 pass** |
 | `npm run test:ui` (jsdom, single session, all roles) | 107 UI/API behaviours | **104 / 107** — the 3 misses are harness timing/jsdom limits, not product defects (see §4.7) |
-| `npm run test:e2e` (Chromium, web + `/m`) | phone ↔ web interop | 13 / 21 — **harness is stale** (targets removed `/m` kit; see §5) |
+| `npm run test:e2e` (the old phone harness, since deleted) | phone ↔ web interop | 13 / 21 — **harness was stale** (targeted the removed slim phone kit; see §5). `test:e2e` now runs the unified interop suite below |
 | Own API verification (curl, production build, isolated DB) | 49 checks across 9 accounts / 4 orgs | 42 pass; the 7 "fails" were script assumptions (204 vs 200, binary body, wrong getter path) — re-verified individually, all behave correctly |
-| Own phone ↔ web interop (`scripts/interop-unified.mjs`; Chromium, iPhone viewport vs desktop, unified app) | login, live message both directions, STAT ack, admission accept sync, broadcast, role targets, DND | **17 / 18** — the single failure is the broadcast-acknowledge gap (§4.1) |
+| Own phone ↔ web interop (`scripts/interop-unified.mjs`; Chromium, iPhone viewport vs desktop, unified app) | login, live message both directions, STAT ack, admission accept sync, broadcast, role targets, DND | **17 / 18** at audit time — the single failure was the broadcast-acknowledge gap (§4.1); **18 / 18 after the fix batch** (192/192 unit tests, typecheck and production build green on the integrated tree) |
 
 ## 3. Verified working (with evidence)
 
@@ -48,20 +50,20 @@ reports false failures; (c) the comms analytics endpoint is readable by any role
 
 ## 4. Discrepancies found (ordered by impact)
 
-1. **Broadcast acknowledgement is one-sided.** The server exposes `POST /api/broadcasts/:id/ack` and the director UI shows "acked / total", but the unified web/phone app never calls it — recipients get a toast with no acknowledge control (`webapp/api-bridge.js` BROADCAST_CREATED handler adds the item with `ackReq:false`). The removed `mobileapp/` had this wired; the unified app lost it. *Result:* the flagship "emergency broadcast with per-recipient acknowledgement" cannot complete in practice.
-2. **Stale phone artefacts.** `scripts/e2e-mobile.mjs` still drives the old `/m` kit (3-input form, `/m` tabs) and now fails 8 checks that are not product defects; `docs/MOBILE.md` documents `/m` and `mobileapp/`; `mobileapp/` is dead code (served nowhere since `6f4b221`). Anyone reading the docs or CI output will be misled.
-3. **Comms analytics not role-gated.** `GET /api/metrics/comms` is `requireAuth` only — a hospitalist can read org-wide KPIs (`/api/reports/ops` is correctly director/ER-director/developer only). Not PHI, but inconsistent with the director-only intent.
+1. **Broadcast acknowledgement is one-sided.** The server exposes `POST /api/broadcasts/:id/ack` and the director UI shows "acked / total", but the unified web/phone app never calls it — recipients get a toast with no acknowledge control (`webapp/api-bridge.js` BROADCAST_CREATED handler adds the item with `ackReq:false`). The removed slim phone kit had this wired; the unified app lost it. *Result:* the flagship "emergency broadcast with per-recipient acknowledgement" cannot complete in practice.
+2. **Stale phone artefacts** — *resolved.* The old phone harness drove the removed slim phone kit and failed 8 checks that were not product defects, and the docs described that kit. The harness and the dead directory have been deleted, `docs/MOBILE.md` rewritten for the unified PWA, and `npm run test:e2e` now runs `scripts/interop-unified.mjs`.
+3. **Comms analytics not role-gated** — *resolved.* `GET /api/metrics/comms` was `requireAuth` only — a hospitalist could read org-wide KPIs. It is now `requireRole("director", "er_director", "developer")`, matching `/api/reports/ops`; other roles' dashboard tiles show "—".
 4. **No `GET /api/broadcasts` list endpoint.** Recipients only learn of a broadcast via the live WS frame; a device that was offline at send time never sees it. Ack-required/audience remain UI-only concepts.
 5. **No single-patient read** (`GET /api/patients/:id` → 404 for everyone); the board endpoints cover the UI, but API consumers (integrations) have no per-patient fetch.
 6. **On-call role targets are thin without schedule data.** In a seeded org with no Amion feed there is exactly one target ("Next hospitalist"). The feature is real, but its demo value depends on the live Amion feed being configured.
 7. **UI smoke harness cannot run against a production build over plain HTTP** (Secure cookies) — it needs the dev server or an HTTPS front. Document or add `X-Forwarded-Proto` support to the harness.
-8. **Attachments are stored as base64 in the database** (compliance monitor WARN). Fine for a synthetic pilot; not the right home for ePHI images at scale (needs encrypted object storage + AV scanning).
-9. **MFA enrolment is 0 / 16 users** including all privileged accounts (compliance WARN). The capability exists; nothing enforces it.
+8. **Attachments are stored as base64 in the database** (compliance monitor WARN). Fine for a synthetic pilot; not the right home for ePHI images at scale. *Addressed:* attachment bytes now go through a storage abstraction (`server/services/attachment-store.ts`); `ATTACHMENT_STORE=fs-encrypted` with `ATTACHMENT_KEY` writes AES-256-GCM files and turns the control green. Object storage under a BAA + AV scanning remain the next step.
+9. **MFA enrolment is 0 / 16 users** including all privileged accounts (compliance WARN). *Addressed:* the `security.mfaRequired` module now holds un-enrolled directors / ER directors / developers at the enrolment screen at sign-in (every other route answers 403 until they enrol); the control reports whether enforcement is on.
 
 ## 5. Phone ↔ web interop — what "the phone app" actually is now
 
 As of `6f4b221` the phone app **is the same web app** served at `/`, installable as a PWA
-(manifest, service worker, icons, Web Push). `/m` → `/` redirect is intentional. My
+(manifest, service worker, icons, Web Push). The old phone URL redirecting to `/` is intentional. My
 interop test therefore drove the unified app at an iPhone viewport against a desktop
 session on one backend:
 
@@ -88,8 +90,8 @@ a phone but not optimised for it.
 (wrong nav id; a leftover seeded pending request that captured the first "Accept" tap;
 zombie servers from an earlier run holding ports so later runs hit stale state). Each was
 diagnosed with request-level tracing before being discounted — none was a product bug.
-The old `scripts/e2e-mobile.mjs` suffers the same class of staleness and should be
-retired in favour of `scripts/interop-unified.mjs`.
+The old phone harness suffered the same class of staleness and has since been retired in
+favour of `scripts/interop-unified.mjs` (`npm run test:e2e`).
 
 ## 6. Competitive reality check — TigerConnect & PerfectServe
 
@@ -130,14 +132,14 @@ already the default for many systems. Third-party vendors survive on what EHR ch
 resilience, alarm/critical-result routing. DocTurn's pitch must be framed against Secure
 Chat, not only against TigerConnect.
 
-## 7. Recommended next batch (value ÷ effort)
+## 7. Recommended next batch (value ÷ effort) — *status: items 1–6 BUILT (2026-09); 7 remains*
 
 1. Wire recipient broadcast acknowledgement in the unified app (small; restores a headline feature).
-2. Delete `mobileapp/`, rewrite `docs/MOBILE.md` for the unified PWA, retarget `scripts/e2e-mobile.mjs` to `/` (so CI stops lying).
-3. Gate `/api/metrics/comms` to director / er_director / developer.
+2. ~~Delete the dead slim phone kit, rewrite `docs/MOBILE.md` for the unified PWA, retarget the phone harness to `/`~~ — done (`test:e2e` → `scripts/interop-unified.mjs`).
+3. ~~Gate `/api/metrics/comms` to director / er_director / developer.~~ — done.
 4. Add `GET /api/broadcasts` (recent, with my-ack state) so offline devices catch up.
 5. "Who's on call now" board + message forwarding + templates (Tier-1 gaps both competitors ship).
-6. Enforce MFA for privileged roles; move attachments to encrypted object storage before any real PHI.
+6. ~~Enforce MFA for privileged roles~~ (done: `security.mfaRequired` module); attachments now have an encrypted file store (`ATTACHMENT_STORE=fs-encrypted`) — move them to encrypted object storage under a BAA before any real PHI.
 7. Prove push delivery on physical iOS/Android devices and measure delivery latency — that is the number that wins against the incumbents' worst reviews.
 
 ### Sources

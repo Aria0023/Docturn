@@ -241,6 +241,9 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     bedCapacity: 24,
   });
 
+  // Org-wide composer templates (idempotent by title).
+  await ensureMessageTemplates(storage, org.id);
+
   return {
     orgId: org.id,
     platformOrgId: platform.id,
@@ -248,6 +251,51 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     hospitalistIds,
     patientIds: { sc: p1.id },
   };
+}
+
+// Sensible org-wide message templates for a hospitalist group. `{room}` is a
+// placeholder the sender fills in before sending. No PHI.
+const ORG_MESSAGE_TEMPLATES: Array<{
+  title: string;
+  body: string;
+  priority: "routine" | "urgent" | "stat";
+}> = [
+  { title: "Call back re: bed", body: "Please call back re: bed {room}.", priority: "urgent" },
+  { title: "Consult requested", body: "Consult requested — see patient thread.", priority: "routine" },
+  { title: "STAT: need you at bedside", body: "STAT: need you at bedside — room {room}.", priority: "stat" },
+  { title: "Handoff complete", body: "Handoff complete, see notes.", priority: "routine" },
+  { title: "Running late", body: "Running late, cover 15 min?", priority: "routine" },
+  { title: "Patient ready for admission", body: "Patient ready for admission — room {room}.", priority: "routine" },
+];
+
+/**
+ * Ensure the org-wide message templates exist for an org. Idempotent: matches
+ * on title among the org's ORG-WIDE templates, so re-running never duplicates
+ * and never touches personal templates. Returns the number added.
+ */
+export async function ensureMessageTemplates(
+  storage: DatabaseStorage,
+  orgId: number,
+): Promise<number> {
+  // listMessageTemplates(orgId, userId) returns org-wide + that user's own;
+  // userId 0 matches nobody, so this is exactly the org-wide set.
+  const existing = await storage.listMessageTemplates(orgId, 0);
+  const have = new Set(
+    existing.filter((t) => t.ownerUserId == null).map((t) => t.title.toLowerCase()),
+  );
+  let added = 0;
+  for (const t of ORG_MESSAGE_TEMPLATES) {
+    if (have.has(t.title.toLowerCase())) continue;
+    await storage.createMessageTemplate({
+      organizationId: orgId,
+      ownerUserId: null,
+      title: t.title,
+      body: t.body,
+      priority: t.priority,
+    });
+    added++;
+  }
+  return added;
 }
 
 // The clinical demo roster (ISPN). The developer (`dev`) is provisioned
@@ -664,8 +712,10 @@ if (isMain) {
         // dev account out) — no wipe needed.
         const added = await ensureDemoUsers(storage, existing.id);
         const platformChanged = await ensurePlatform(storage);
+        const templatesAdded = await ensureMessageTemplates(storage, existing.id);
         const msgs: string[] = [];
         if (added > 0) msgs.push(`added ${added} missing demo account(s)`);
+        if (templatesAdded > 0) msgs.push(`added ${templatesAdded} org message template(s)`);
         if (platformChanged) msgs.push("provisioned the platform org + developer account");
         console.log(
           msgs.length

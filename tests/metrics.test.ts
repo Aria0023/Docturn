@@ -34,9 +34,11 @@ describe("comms metrics", () => {
 
   it("returns the KPI shape and counts a freshly-sent message", async () => {
     const { agent: chen } = await login(ctx.app, { username: "chen" });
+    // Analytics are director-level: the KPIs are read by a director agent.
+    const { agent: director } = await login(ctx.app, { username: "director" });
     const patelId = ctx.seedResult.userIds.patel!;
 
-    const before = await chen.get("/api/metrics/comms");
+    const before = await director.get("/api/metrics/comms");
     expect(before.status).toBe(200);
     expect(before.body).toHaveProperty("messages7d");
     expect(before.body).toHaveProperty("statAckAvgSec");
@@ -49,17 +51,18 @@ describe("comms metrics", () => {
       .send({ conversationId: convo.id, content: "hello patel" })
       .expect(201);
 
-    const after = await chen.get("/api/metrics/comms");
+    const after = await director.get("/api/metrics/comms");
     expect(after.body.messages7d).toBe(baseline + 1);
   });
 
   it("statAckAvgSec is null with no STAT acks, non-null once a STAT is acknowledged", async () => {
     const { agent: chen } = await login(ctx.app, { username: "chen" });
     const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const { agent: erDirector } = await login(ctx.app, { username: "er.director" });
     const chenId = ctx.seedResult.userIds.chen!;
 
     // No STAT acknowledged yet → null.
-    const before = await er.get("/api/metrics/comms");
+    const before = await erDirector.get("/api/metrics/comms");
     expect(before.status).toBe(200);
     expect(before.body.statAckAvgSec).toBeNull();
 
@@ -74,7 +77,7 @@ describe("comms metrics", () => {
       .send({ messageIds: [sent.body.id] })
       .expect(204);
 
-    const after = await er.get("/api/metrics/comms");
+    const after = await erDirector.get("/api/metrics/comms");
     expect(after.body.statAckAvgSec).not.toBeNull();
     expect(after.body.statAckAvgSec).toBeGreaterThanOrEqual(0);
   });
@@ -88,7 +91,8 @@ describe("comms metrics", () => {
       .send({ conversationId: convo.id, content: "ispn only" })
       .expect(201);
 
-    const ispn = await chen.get("/api/metrics/comms");
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    const ispn = await director.get("/api/metrics/comms");
     expect(ispn.body.messages7d).toBeGreaterThan(0);
 
     // The developer lives in the separate platform org (DOCTURN) — its metrics

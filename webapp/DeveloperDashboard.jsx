@@ -305,6 +305,101 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
   );
 }
 
+// ---- Feature modules: add / remove product functions per organization ------
+// Registry (labels, groups, blurbs, requires) comes from the server; a toggle
+// calls DT.actions.setModule → PATCH /api/dev/modules/:orgId. The server's
+// moduleGate enforces the switch — this panel is only the control surface.
+function ModToggle({ on, disabled, onChange }) {
+  return (
+    <button onClick={() => !disabled && onChange(!on)} role="switch" aria-checked={on} disabled={disabled}
+      style={{ width: 42, height: 24, borderRadius: 99, border: "none", cursor: disabled ? "not-allowed" : "pointer", padding: 2, background: on ? "var(--primary)" : "var(--secondary)", opacity: disabled ? 0.45 : 1, transition: "background .15s", flex: "none" }}>
+      <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
+    </button>
+  );
+}
+
+function ModulesPanel({ organizations }) {
+  const DT = window.DT;
+  const st = (DT && DT.getState && DT.getState()) || {};
+  const registry = st.moduleRegistry || [];
+  const [orgCode, setOrgCode] = React.useState((organizations[0] || {}).code || "");
+  const [busy, setBusy] = React.useState({});
+  const org = organizations.find((o) => o.code === orgCode) || organizations[0];
+  const orgId = org ? org.id : null;
+  const map = (st.orgModules || {})[orgId] || null;
+
+  React.useEffect(() => {
+    if (!org && organizations.length) setOrgCode(organizations[0].code);
+  }, [organizations.length]);
+  React.useEffect(() => {
+    if (orgId != null && DT && DT.actions.loadOrgModules) DT.actions.loadOrgModules(orgId).catch(() => {});
+  }, [orgId]);
+
+  const labelOf = (id) => (registry.find((m) => m.id === id) || {}).label || id;
+  const flip = (id, enabled) => {
+    if (orgId == null || busy[id]) return;
+    setBusy((b) => Object.assign({}, b, { [id]: true }));
+    Promise.resolve(DT.actions.setModule(orgId, id, enabled))
+      .then(() => DT.actions.toast && DT.actions.toast({ tone: enabled ? "accepted" : "sent", title: (enabled ? "Enabled " : "Disabled ") + labelOf(id), msg: (org && org.name) || orgCode }))
+      .catch(() => {})
+      .then(() => setBusy((b) => { const n = Object.assign({}, b); delete n[id]; return n; }));
+  };
+
+  const groups = [];
+  registry.forEach((m) => { let g = groups.find((x) => x.name === m.group); if (!g) { g = { name: m.group, items: [] }; groups.push(g); } g.items.push(m); });
+  const onCount = map ? registry.filter((m) => map[m.id] !== false).length : 0;
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <SectionTitle action={
+        <div style={{ width: 280 }}>
+          <DSelect icon="building-2" value={orgCode} onChange={setOrgCode}
+            options={organizations.map((o) => ({ value: o.code, label: `${o.name} (${o.code})` }))} />
+        </div>
+      }>Modules</SectionTitle>
+      <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: -8, marginBottom: 12 }}>
+        Add or remove product functions for one organization with a click. The server enforces every switch — a disabled module's API answers <span className="ds-mono">404 module_disabled</span> and its navigation disappears.
+        {map && <span> · <b>{onCount}</b> of {registry.length} on for <span className="ds-mono">{orgCode}</span></span>}
+      </div>
+      {!registry.length && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Loading module registry…</Card>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
+        {groups.map((g) => (
+          <Card key={g.name} style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 16px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>{g.name}</span>
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted-foreground)" }}>{map ? g.items.filter((m) => map[m.id] !== false).length : "–"}/{g.items.length}</span>
+            </div>
+            {g.items.map((m, i) => {
+              const on = map ? map[m.id] !== false : m.default;
+              const missing = (m.requires || []).filter((r) => map && map[r] === false);
+              const blocked = missing.length > 0;
+              return (
+                <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "11px 16px", borderTop: i ? "1px solid var(--border)" : "none", opacity: blocked ? 0.6 : 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13.5, fontWeight: 600 }}>
+                      {m.label}
+                      {on && !blocked ? <Badge status="accepted">On</Badge> : <Badge status="offline">Off</Badge>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2, lineHeight: 1.45 }}>{m.blurb}</div>
+                    {m.requires && m.requires.length > 0 && (
+                      <div style={{ fontSize: 11.5, marginTop: 4, color: blocked ? "var(--status-pending)" : "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 4 }}>
+                        <Icon name={blocked ? "alert-triangle" : "link"} size={11} />
+                        Requires {m.requires.map(labelOf).join(", ")}{blocked ? " — turn that on first" : ""}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 10.5, marginTop: 3 }} className="ds-mono">{m.id}</div>
+                  </div>
+                  <ModToggle on={on && !blocked} disabled={!map || blocked || !!busy[m.id]} onChange={(v) => flip(m.id, v)} />
+                </div>
+              );
+            })}
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function devClock(at) {
   const d = new Date(at);
   return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
@@ -517,6 +612,9 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
           </Card>
         </div>
       </div>
+
+      {/* Feature modules — add/remove functions per org with a click */}
+      <ModulesPanel organizations={organizations} />
 
       {/* Organizations & user management */}
       <AddUserPanel organizations={organizations} devUsers={devUsers} roleColors={roleColors} onAddUser={onAddUser} onRemoveUser={onRemoveUser} onImpersonate={onImpersonate} />

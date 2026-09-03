@@ -18,6 +18,7 @@ import {
 } from "./config.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
+import { moduleGate } from "./modules.js";
 import { storage } from "./storage.js";
 import { toSafeUser } from "@shared/schema";
 
@@ -87,6 +88,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // identity without colliding on the shared session cookie. Additive — a
   // request with no token is unaffected.
   app.use(demoTokenAuth());
+  // Feature-module gate: per-org on/off switches enforced centrally (one table
+  // in server/modules.ts) so route files stay untouched. After session/passport
+  // so currentUser(req) is populated; before registerRoutes so it wins.
+  app.use(moduleGate());
 
   // Mint a demo token from valid demo credentials. Non-production only; the
   // 3-up demo console (/demo) calls this once per pane, then loads the real app

@@ -69,6 +69,7 @@
 <script type="text/babel" src="CustomizableStats.jsx"></script>
 <script type="text/babel" src="LoginScreen.jsx"></script>
 <script type="text/babel" src="LockScreen.jsx"></script>
+<script type="text/babel" src="MfaScreen.jsx"></script>
 <script type="text/babel" src="AppShell.jsx"></script>
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
 <script type="text/babel" src="HospitalistWork.jsx"></script>
@@ -92,6 +93,7 @@
 <script type="text/babel" src="ComplianceMonitor.jsx"></script>
 <script type="text/babel" src="Broadcasts.jsx"></script>
 <script type="text/babel" src="ScheduleSync.jsx"></script>
+<script type="text/babel" src="OnCallBoard.jsx"></script>
 <script type="text/babel" src="OrgSettings.jsx"></script>
 <script type="text/babel" src="RoleManagement.jsx"></script>
 <script type="text/babel" src="People.jsx"></script>
@@ -141,12 +143,14 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
@@ -154,6 +158,7 @@ const NAV = {
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
@@ -166,6 +171,7 @@ const NAV = {
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
     { id: "roles",      label: "Role management", icon: "shield-half" },
@@ -187,6 +193,15 @@ const NAV = {
   ],
 };
 
+// Nav item → feature module (shared/modules.ts). An item whose module is OFF for
+// the signed-in org is hidden; the server enforces the same switch (404).
+const NAV_MODULE = {
+  consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
+  admissions: "routing.assignments", history: "routing.assignments",
+  resources: "ops.resources", appearance: "platform.appearance",
+};
+const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.DT.moduleOn(NAV_MODULE[it.id]);
+
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
@@ -199,6 +214,7 @@ const TOP = {
   compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
   "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
+  oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
   roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
   consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
   people:     ["People", "Manage everyone in your organization, grouped by role"],
@@ -297,11 +313,18 @@ function App() {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
+  // Second factor at sign-in for an enrolled account: the server holds the
+  // login (202) until the code arrives, so there is no session yet.
+  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
   if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  // The org requires MFA for this privileged role and the user hasn't enrolled:
+  // the server 403s every other route, so hold the whole app (no navigation)
+  // on the enrolment screen until /api/user says the block has lifted.
+  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
-  const master = NAV[role];
+  const master = NAV[role].filter(navModuleOn);
   const hidden = st.navHidden[role] || [];
   const order = st.navOrder[role];
   let composed = master.filter((it) => it.id === "dashboard" || !hidden.includes(it.id));
@@ -364,6 +387,7 @@ function App() {
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
   else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} domainPortals={dirDomain.portals} />;
   else if (nav === "consult") screen = <ConsultServices />;
+  else if (nav === "oncall") screen = <OnCallBoard />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
   else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
   else if (nav === "access") {

@@ -281,6 +281,8 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
               <Icon name="message-square" size={16} />Message team
             </button>
           )}
+          {/* EHR deep link (module ehr.deepLinks + org template) — see OnCallBoard.jsx */}
+          {p.patientId != null && window.OpenInEhrButton && <window.OpenInEhrButton patientId={p.patientId} />}
           {canEdit && (
             <button onClick={() => onRemove(p.id)} title="Remove admission"
               style={{ width: 46, height: 42, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={18} /></button>
@@ -463,6 +465,8 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
                   <Icon name="message-square" size={15} />
                 </button>
               )}
+              {/* EHR deep link (module ehr.deepLinks + org template) — see OnCallBoard.jsx */}
+              {p.patientId != null && window.OpenInEhrButton && <window.OpenInEhrButton patientId={p.patientId} compact />}
               {/* Status */}
               <span style={{ width: 132, flex: "none" }}>{canEdit ? <BoardStatusSelect value={p.status} onChange={(v) => onUpdate(p.id, { status: v })} /> : <Badge status={bs.status}>{bs.label}</Badge>}</span>
               {/* Remove */}

@@ -224,6 +224,8 @@ CREATE TABLE IF NOT EXISTS patients (
   assigned_hospitalist_id INTEGER REFERENCES hospitalists(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- EHR identifier (MRN/CSN) for "Open in EHR" deep links; additive + nullable.
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS ehr_id TEXT;
 
 CREATE TABLE IF NOT EXISTS assignments (
   id SERIAL PRIMARY KEY,
@@ -262,6 +264,19 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 -- Additive columns for stores created before these fields existed (no-op on new).
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'routine';
+-- Forwarding provenance ({messageId, senderId, senderName, conversationId, sentAt}); NULL = original.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from JSONB;
+
+-- Composer templates: owner_user_id NULL = org-wide, else personal.
+CREATE TABLE IF NOT EXISTS message_templates (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  owner_user_id INTEGER REFERENCES users(id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE IF NOT EXISTS message_delivery_status (
   id SERIAL PRIMARY KEY,

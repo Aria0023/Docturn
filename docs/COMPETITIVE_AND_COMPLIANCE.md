@@ -43,6 +43,17 @@ section reflects that.
 | **Director/ops analytics** (response/accept latency, volume) | ✅ live | TigerConnect TigerInsights (basic) |
 | Multi-tenant isolation + RBAC (domain-scoped roles) + audit + PHI log | ✅ live | Both (enterprise admin) |
 | PHI-minimizing everywhere (initials only; PHI-free push/SMS) | ✅ live | Both |
+| **Broadcast acknowledgement by recipients** (banner + list, live acked/total tally, offline catch-up via `GET /api/broadcasts`) | ✅ live (2026-09) | TigerConnect broadcast ack |
+| **Message forwarding** (person / role / group, provenance line, attachment refs) | ✅ live (2026-09) | Both |
+| **Message templates** (org-wide + personal, composer picker) | ✅ live (2026-09) | TigerConnect templates |
+| **Availability / away message** shown to senders when DND, with covering | ✅ live (2026-09) | TigerConnect Delegation / auto-forward |
+| **Per-recipient status in group threads** (sent / delivered / read / acked) | ✅ live (2026-09) | Both |
+| **Who's on call board** — every role/service + holder, DND→covering, source chips | ✅ live (2026-09) | TigerConnect Roles directory · PerfectServe on-call view |
+| **Pluggable schedule sources: Amion · Epic (FHIR R4, SMART backend services) · manual**, switchable per org | ✅ code live; Epic needs health-system credentials | PerfectServe/Lightning Bolt · TigerConnect Scheduling |
+| **Open in EHR** deep links (Epic Haiku/Canto/Hyperspace, Cerner PowerChart) from patient rows | ✅ live (template set by the health system's EHR team) | Both (EHR deep links) |
+| **Feature modules**: 23 functions switchable per org with one click from the developer console, enforced server-side | ✅ live (2026-09) | Enterprise admin consoles (both) |
+| **MFA enforcement for privileged roles** (switchable module; enrolment gate at sign-in) | ✅ live (2026-09) | Both (enterprise security) |
+| **Encrypted-at-rest attachment store** (AES-256-GCM files; object storage next) | ✅ opt-in via env | Both |
 
 ## 2. Gaps vs. TigerConnect / PerfectServe — what they have that we don't
 
@@ -52,6 +63,7 @@ these are separate **products** the competitors license individually (alarm
 management, scheduling engines, operator consoles), not quick features.
 
 ### Tier 1 — closes obvious demo gaps, buildable on current architecture
+*Status 2026-09: items 1–4 are BUILT (see §1); item 5 remains.*
 1. **Message forwarding + message templates.** Forward a thread/message to another person/role/group; canned templates ("Please call back re: bed X"). Cheap, expected in every demo.
 2. **Auto-response / availability status message.** When DND/off-shift, senders see "Back at 07:00 — for urgent, contact the on-call." We have DND+covering; surfacing the status string is small.
 3. **Read/status lifecycle polish.** We have ack + read; add explicit per-recipient status in group threads (sent/received/read/acknowledged) like both vendors show.

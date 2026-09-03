@@ -21,6 +21,7 @@ import {
   mfaCredentials,
   messageAttachments,
   messageDeliveryStatus,
+  messageTemplates,
   messages,
   orgSettings,
   organizations,
@@ -47,9 +48,11 @@ import {
   type EmergencyBroadcast,
   type Equipment,
   type FeatureFlag,
+  type ForwardedFrom,
   type Hospitalist,
   type InsertHospitalist,
   type Message,
+  type MessageTemplate,
   type MessageAttachment,
   type MessageDeliveryStatus,
   type Organization,
@@ -60,6 +63,9 @@ import {
   type User,
 } from "@shared/schema";
 
+/** Insert shape for a patient — the EHR id (MRN/CSN) is optional. */
+export type NewPatient = Omit<Patient, "id" | "createdAt" | "ehrId"> & { ehrId?: string | null };
+
 /**
  * Normalize a timestamp aggregate. Depending on driver, `min()`/`max()` over a
  * timestamp column arrives as a Date or as an ISO string — accept both.
@@ -69,6 +75,12 @@ function toDate(v: unknown): Date | null {
   const d = v instanceof Date ? v : new Date(String(v));
   return Number.isNaN(d.getTime()) ? null : d;
 }
+
+/** Insert shape for a message; forwarding provenance is optional (NULL = original). */
+export type NewMessage = Omit<
+  Message,
+  "id" | "createdAt" | "deletedAt" | "forwardedFrom"
+> & { forwardedFrom?: ForwardedFrom | null };
 
 /** Fields a director may set on a manual compliance attestation. */
 export interface AttestationPatch {
@@ -164,7 +176,7 @@ export interface IStorage {
   // patients
   getPatient(orgId: number, id: number): Promise<Patient | undefined>;
   listPatients(orgId: number): Promise<Patient[]>;
-  createPatient(p: Omit<Patient, "id" | "createdAt">): Promise<Patient>;
+  createPatient(p: NewPatient): Promise<Patient>;
   updatePatient(
     orgId: number,
     id: number,
@@ -217,7 +229,7 @@ export interface IStorage {
   countMessagesSince(orgId: number, since: Date): Promise<number>;
   listStatAckLatencies(orgId: number): Promise<number[]>;
   listMessages(orgId: number, conversationId: number): Promise<Message[]>;
-  createMessage(m: Omit<Message, "id" | "createdAt" | "deletedAt">): Promise<Message>;
+  createMessage(m: NewMessage): Promise<Message>;
   getMessage(orgId: number, id: number): Promise<Message | undefined>;
   softDeleteMessage(orgId: number, id: number): Promise<void>;
   createDeliveryStatuses(
@@ -492,8 +504,8 @@ export class DatabaseStorage implements IStorage {
       .where(eq(patients.organizationId, orgId))
       .orderBy(desc(patients.createdAt));
   }
-  async createPatient(p: Omit<Patient, "id" | "createdAt">) {
-    const [row] = await this.db.insert(patients).values(p).returning();
+  async createPatient(p: NewPatient) {
+    const [row] = await this.db.insert(patients).values({ ...p, ehrId: p.ehrId ?? null }).returning();
     return row!;
   }
   /**
@@ -674,8 +686,11 @@ export class DatabaseStorage implements IStorage {
       )
       .orderBy(asc(messages.createdAt));
   }
-  async createMessage(m: Omit<Message, "id" | "createdAt" | "deletedAt">) {
-    const [row] = await this.db.insert(messages).values(m).returning();
+  async createMessage(m: NewMessage) {
+    const [row] = await this.db
+      .insert(messages)
+      .values({ ...m, forwardedFrom: m.forwardedFrom ?? null })
+      .returning();
     return row!;
   }
   async getMessage(orgId: number, id: number) {
@@ -2036,6 +2051,96 @@ export class DatabaseStorage implements IStorage {
         .insert(table)
         .values({ organizationId: orgId, ...value } as never);
     }
+  }
+
+  // ── attachment metadata by id (forwarded references) ──────────────────────
+  /** Metadata only (never dataBase64) for a set of attachment ids in one org. */
+  async listAttachmentMetaByIds(orgId: number, ids: number[]) {
+    if (ids.length === 0) return [];
+    return this.db
+      .select({
+        id: messageAttachments.id,
+        messageId: messageAttachments.messageId,
+        fileName: messageAttachments.fileName,
+        mimeType: messageAttachments.mimeType,
+        byteSize: messageAttachments.byteSize,
+      })
+      .from(messageAttachments)
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          inArray(messageAttachments.id, ids),
+        ),
+      );
+  }
+
+  // ── broadcast acks (org-wide listing) ─────────────────────────────────────
+  /** Every ack for a set of broadcasts in one org (for the catch-up list). */
+  async listBroadcastAcksForBroadcasts(orgId: number, broadcastIds: number[]) {
+    if (broadcastIds.length === 0) return [];
+    return this.db
+      .select()
+      .from(broadcastAcknowledgments)
+      .where(
+        and(
+          eq(broadcastAcknowledgments.organizationId, orgId),
+          inArray(broadcastAcknowledgments.broadcastId, broadcastIds),
+        ),
+      );
+  }
+  /** Last N broadcasts for an org, newest first. */
+  async listRecentBroadcasts(orgId: number, limit: number) {
+    return this.db
+      .select()
+      .from(emergencyBroadcasts)
+      .where(eq(emergencyBroadcasts.organizationId, orgId))
+      .orderBy(desc(emergencyBroadcasts.createdAt), desc(emergencyBroadcasts.id))
+      .limit(limit);
+  }
+
+  // ── message templates ─────────────────────────────────────────────────────
+  /** Org-wide templates plus the caller's personal ones. */
+  async listMessageTemplates(orgId: number, userId: number): Promise<MessageTemplate[]> {
+    const rows = await this.db
+      .select()
+      .from(messageTemplates)
+      .where(eq(messageTemplates.organizationId, orgId))
+      .orderBy(asc(messageTemplates.title), asc(messageTemplates.id));
+    return rows.filter((t) => t.ownerUserId == null || t.ownerUserId === userId);
+  }
+  async getMessageTemplate(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(messageTemplates)
+      .where(
+        and(eq(messageTemplates.organizationId, orgId), eq(messageTemplates.id, id)),
+      );
+    return row;
+  }
+  async createMessageTemplate(t: Omit<MessageTemplate, "id" | "createdAt">) {
+    const [row] = await this.db.insert(messageTemplates).values(t).returning();
+    return row!;
+  }
+  async updateMessageTemplate(
+    orgId: number,
+    id: number,
+    patch: Partial<Pick<MessageTemplate, "title" | "body" | "priority">>,
+  ) {
+    const [row] = await this.db
+      .update(messageTemplates)
+      .set(patch)
+      .where(
+        and(eq(messageTemplates.organizationId, orgId), eq(messageTemplates.id, id)),
+      )
+      .returning();
+    return row;
+  }
+  async deleteMessageTemplate(orgId: number, id: number) {
+    await this.db
+      .delete(messageTemplates)
+      .where(
+        and(eq(messageTemplates.organizationId, orgId), eq(messageTemplates.id, id)),
+      );
   }
 }
 

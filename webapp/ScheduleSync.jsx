@@ -59,6 +59,11 @@ function ssAgo(iso) {
 // demo carries a real captured grid; the others ingest the org's own data.
 const SS_SOURCES = {
   amion:      { label: "Amion",          kind: "vendor", demo: true, blurb: "amion.com on-call grid",         loginUrl: "https://www.amion.com",         api: "https://www.amion.com/api" },
+  // Epic on-call via FHIR R4 (SMART Backend Services). Credentials are server
+  // env only (EPIC_FHIR_BASE_URL / EPIC_CLIENT_ID / EPIC_PRIVATE_KEY_PEM /
+  // EPIC_TOKEN_URL) — issued through the health system's Epic app registration.
+  epic:       { label: "Epic (FHIR)",    kind: "epic",   blurb: "PractitionerRole + Schedule/Slot via FHIR R4", loginUrl: "", api: "" },
+  manual:     { label: "Manual list",    kind: "manual", blurb: "Director-maintained on-call slots in DocTurn", loginUrl: "", api: "" },
   qgenda:     { label: "QGenda",         kind: "vendor", blurb: "QGenda provider schedules",                  loginUrl: "https://app.qgenda.com",        api: "https://api.qgenda.com/v2" },
   tangier:    { label: "Tangier / Spok", kind: "vendor", blurb: "Tangier (Spok) on-call",                     loginUrl: "https://www.tangieronline.com", api: "" },
   shiftadmin: { label: "ShiftAdmin",     kind: "vendor", blurb: "ShiftAdmin scheduling",                      loginUrl: "https://www.shiftadmin.com",    api: "" },
@@ -68,7 +73,10 @@ const SS_SOURCES = {
   custom:     { label: "Custom / other", kind: "vendor", blurb: "Custom endpoint or sign-in capture",         loginUrl: "",                              api: "" },
   none:       { label: "Not configured", kind: "none", blurb: "No schedule source set for this organization", loginUrl: "", api: "" },
 };
-const SS_SOURCE_KEYS = ["amion", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
+const SS_SOURCE_KEYS = ["amion", "epic", "manual", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
+// Sources the on-call board can actually read (server-side schedule-source
+// adapters). Picking one of these also persists the org's board source.
+const SS_BOARD_SOURCES = { amion: true, epic: true, manual: true };
 
 // Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
 function ss24(tok) {
@@ -150,6 +158,26 @@ function ScheduleSync({ org }) {
     if (!a.amionStatus) return;
     Promise.resolve(a.amionStatus()).then((s) => { if (s) setAmion(s); }).catch(() => {});
   }, []);
+  // Server-side status of the board sources (amion / epic / manual) for this
+  // org — drives the Epic panel and mirrors the org's persisted board source
+  // into the picker once loaded.
+  const [boardSources, setBoardSources] = React.useState(null);
+  const loadBoardSources = () => { if (!a.loadOnCallSources) return; Promise.resolve(a.loadOnCallSources()).then((r) => { if (r) setBoardSources(r); }).catch(() => {}); };
+  React.useEffect(loadBoardSources, []);
+  React.useEffect(() => {
+    if (boardSources && boardSources.explicit && SS_BOARD_SOURCES[boardSources.selected] && a.setScheduleSource) {
+      const code = (org && org.code) || st.selectedOrg || "ISPN";
+      if ((st.scheduleSources || {})[code] !== boardSources.selected) a.setScheduleSource(code, boardSources.selected);
+    }
+  }, [boardSources]);
+  const pickSource = (key) => {
+    a.setScheduleSource(orgCode, key);
+    if (SS_BOARD_SOURCES[key] && a.setOnCallSource) Promise.resolve(a.setOnCallSource(key)).then(loadBoardSources).catch(() => {});
+  };
+  const epicStatus = boardSources && boardSources.sources && boardSources.sources.epic;
+  const epicModuleOn = !boardSources || !boardSources.modules || boardSources.modules.epic !== false;
+  const [epicBusy, setEpicBusy] = React.useState(false);
+  const epicSync = () => { if (!a.epicSyncNow) return; setEpicBusy(true); Promise.resolve(a.epicSyncNow()).then(loadBoardSources).finally(() => setEpicBusy(false)); };
 
   const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
   // The captured Amion on-call grid is the REAL Cedars / Tarzana ISP roster, so
@@ -280,7 +308,7 @@ function ScheduleSync({ org }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
           <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</span>
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-            <select value={srcKey} onChange={(e) => a.setScheduleSource(orgCode, e.target.value)}
+            <select value={srcKey} onChange={(e) => pickSource(e.target.value)}
               style={{ appearance: "none", WebkitAppearance: "none", height: 30, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
               {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}</option>)}
               <option value="none">Not configured</option>
@@ -298,6 +326,40 @@ function ScheduleSync({ org }) {
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>No schedule source for {orgCode}</div>
             <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Choose this organization's scheduling system above (Amion, QGenda, …) to import its on-call grid.</div>
           </div>
+        </div>
+      )}
+
+      {/* Epic (FHIR R4, SMART Backend Services) — server-env credentials only;
+          shows what the health system's Epic team must issue when absent. */}
+      {srcKey === "epic" && (
+        <div style={{ marginTop: 14 }}>
+          {!epicModuleOn ? (
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
+              <Icon name="triangle-alert" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
+              <span>The <b>Epic on-call (FHIR)</b> module is switched off for this organization. A developer can enable it from the module console.</span>
+            </div>
+          ) : epicStatus && epicStatus.configured ? (
+            <div style={{ display: "flex", gap: 9, alignItems: "center", background: epicStatus.lastStatus === "error" ? "#FEF3C7" : "#D1FAE5", border: "1px solid " + (epicStatus.lastStatus === "error" ? "#FCD34D" : "#6EE7B7"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "#92400E" : "#065F46", flexWrap: "wrap" }}>
+              <Icon name={epicStatus.lastStatus === "error" ? "triangle-alert" : "circle-check-big"} size={15} />
+              <span style={{ fontWeight: 600 }}>Epic FHIR connected · {epicStatus.lastStatus === "error" ? "last sync failed" : "synced " + ssAgo(epicStatus.lastSyncAt)} · {epicStatus.rowCount} on-call rows</span>
+              {epicStatus.error && <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.error}</span>}
+              <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="rotate-ccw" onClick={epicSync} disabled={epicBusy}>{epicBusy ? "Syncing…" : "Sync now"}</Button></span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+              <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
+              <span>
+                <b style={{ color: "var(--foreground)" }}>Needs Epic app credentials</b> (App Orchard / Vendor Services registration). DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) using SMART Backend Services — a registered backend app, its client ID and RS384 private key, and the site's FHIR base + token URLs, set on the server as <code>EPIC_FHIR_BASE_URL</code>, <code>EPIC_CLIENT_ID</code>, <code>EPIC_PRIVATE_KEY_PEM</code>, <code>EPIC_TOKEN_URL</code> (and <code>EPIC_ORG_CODE</code> for this organization). Nothing is fabricated until those are present.
+                {epicStatus && epicStatus.message ? <span style={{ display: "block", marginTop: 6, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.message}</span> : null}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {srcKey === "manual" && (
+        <div style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+          <Icon name="pencil" size={15} style={{ marginTop: 1, flex: "none" }} />
+          <span>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0 }}>Open the board →</button></span>
         </div>
       )}
 

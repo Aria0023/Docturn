@@ -12,6 +12,7 @@
  *   BASE_URL=http://127.0.0.1:3000 node scripts/interop-unified.mjs
  * Chromium: uses the sandbox's pre-installed build at /opt/pw-browsers/chromium.
  */
+import { chromium } from "playwright-core";
 const BASE = process.env.BASE_URL || "http://127.0.0.1:3000";
 const CHROME = "/opt/pw-browsers/chromium";
 const results = []; const rec = (n, ok, note="") => { results.push([n, ok, note]); console.log((ok?"PASS  ":"FAIL  ")+n+(note?"  ↳ "+note:"")); };

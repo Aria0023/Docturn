@@ -20,6 +20,11 @@ function Broadcasts({ onSend, broadcasts = [] }) {
   const toggleAud = (r) => setAudience((a) => a.includes(r) ? a.filter((x) => x !== r) : [...a, r]);
 
   const sevMeta = (id) => SEV.find((s) => s[0] === id) || SEV[0];
+  const role = (window.DT && window.DT.getState().session || {}).role;
+  const isDirector = role === "director" || role === "er_director" || role === "developer";
+  // Ack-required follows the server rule: urgent (warning) / critical /
+  // emergency require an ack; info doesn't. Mirror that in the toggle.
+  React.useEffect(() => { setRequireAck(severity !== "info"); }, [severity]);
 
   const send = () => {
     if (!title.trim()) { window.DT.actions.toast({ tone: "rejected", title: "Title required", msg: "Add a short, scannable headline." }); return; }
@@ -97,6 +102,12 @@ function Broadcasts({ onSend, broadcasts = [] }) {
             {broadcasts.map((b, i) => {
               const sm = sevMeta(b.sev);
               const pct = b.total ? Math.round((b.acked / b.total) * 100) : 0;
+              // A live (server) broadcast carries senderId; mine = I sent it.
+              // Recipients of an ack-required broadcast get an Acknowledge
+              // button; the sender / directors see the tally.
+              const live = b.senderId != null;
+              const recipient = live && !b.mine;
+              const showTally = b.ackReq && (!live || b.mine || isDirector);
               return (
                 <Card key={b.id || i} style={{ padding: 16 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
@@ -105,22 +116,35 @@ function Broadcasts({ onSend, broadcasts = [] }) {
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{b.title}</div>
-                      <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{sm[1]} · sent {dtFmt.ago(b.at)}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{sm[1]} · sent {dtFmt.ago(b.at)}{b.senderName ? " · " + (b.mine ? "you" : b.senderName) : ""}</div>
                     </div>
                   </div>
-                  {b.ackReq ? (
+                  {recipient && b.ackReq && (
+                    <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+                      {b.ackedByMe
+                        ? <Badge status="accepted" icon="check-check">Acknowledged{b.ackedAt ? " · " + dtFmt.ago(b.ackedAt) : ""}</Badge>
+                        : <Button size="sm" icon="check" data-broadcast-ack={b.id} onClick={() => window.DT.actions.ackBroadcast && window.DT.actions.ackBroadcast(b.id)}>Acknowledge</Button>}
+                      {!b.ackedByMe && <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Acknowledgement required.</span>}
+                    </div>
+                  )}
+                  {showTally ? (
                     <div style={{ marginTop: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
                         <span style={{ color: "var(--muted-foreground)", fontWeight: 500 }}>Acknowledged</span>
-                        <span style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{b.acked}/{b.total} · {pct}%</span>
+                        <span data-ack-tally style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{b.acked}/{b.total} · {pct}%</span>
                       </div>
                       <div style={{ height: 7, borderRadius: 99, background: "var(--secondary)", overflow: "hidden" }}>
                         <div style={{ width: pct + "%", height: "100%", borderRadius: 99, background: pct === 100 ? "var(--status-accepted)" : "var(--status-pending)" }} />
                       </div>
+                      {(b.ackedBy || []).length > 0 && (
+                        <div style={{ marginTop: 6, fontSize: 11.5, color: "var(--muted-foreground)" }}>
+                          {b.ackedBy.map((p) => p.displayName).filter(Boolean).slice(0, 6).join(", ")}{b.ackedBy.length > 6 ? " +" + (b.ackedBy.length - 6) + " more" : ""}
+                        </div>
+                      )}
                     </div>
-                  ) : (
+                  ) : (!b.ackReq && (
                     <div style={{ marginTop: 10 }}><Badge variant="secondary" icon="bell-off">No acknowledgement required</Badge></div>
-                  )}
+                  ))}
                 </Card>
               );
             })}

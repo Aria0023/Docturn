@@ -1,6 +1,22 @@
 import type { NextFunction, Request, Response } from "express";
 import type { Role, User } from "@shared/schema";
 
+/**
+ * Roles with administrative / cross-user reach. The single definition the MFA
+ * enrolment gate (server/auth.ts), the analytics routes and the compliance
+ * monitor all read, so "privileged" means the same thing everywhere.
+ */
+export const PRIVILEGED_ROLES: readonly Role[] = ["director", "er_director", "developer"];
+
+export function isPrivilegedRole(role: string | null | undefined): boolean {
+  return PRIVILEGED_ROLES.includes(role as Role);
+}
+
+/** 403 unless the caller holds one of the PRIVILEGED_ROLES. */
+export function requirePrivileged() {
+  return requireRole(...PRIVILEGED_ROLES);
+}
+
 /** 401 unless an authenticated session is present. */
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();

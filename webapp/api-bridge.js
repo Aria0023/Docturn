@@ -55,6 +55,12 @@
   // server session goes away (15-min idle expiry, OR a dev-server restart that
   // wipes the in-memory session store). Set on every successful doLogin.
   var lastAuth = null;
+  // Set once a response says the org requires MFA for this privileged session
+  // (403 mfa_enrollment_required); de-dupes the state flip across the many
+  // parallel hydrate calls that all fail the same way.
+  var mfaFlagged = false;
+  // Analytics (/api/metrics/comms, /api/reports/ops) are director-level.
+  var PRIVILEGED = { director: 1, er_director: 1, developer: 1 };
 
   function rawApi(method, path, body) {
     var headers = body ? { "Content-Type": "application/json" } : {};
@@ -96,6 +102,17 @@
   // on the login call itself.
   function api(method, path, body) {
     return rawApi(method, path, body).catch(function (e) {
+      // The org requires MFA for privileged roles and this session hasn't
+      // enrolled: the server answers everything but the enrolment routes this
+      // way. Route the UI to the enrolment screen; never self-heal (a re-login
+      // would just be flagged again).
+      if (e && e.status === 403 && String(e.message) === "mfa_enrollment_required") {
+        if (!mfaFlagged) {
+          mfaFlagged = true;
+          DT.set(function (s) { s.mfaEnrollmentRequired = true; return s; });
+        }
+        throw e;
+      }
       var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
       var hint = authHint();
       // Token-mode panes authenticate by bearer token, not a re-loginable cookie
@@ -407,8 +424,13 @@
       at: new Date(m.createdAt || Date.now()).getTime(), read: true,
       priority: m.priority || "routine",
       ackCount: m.ackCount || 0,
+      readCount: m.readCount || 0,
       ackedByMe: !!m.acknowledgedByMe,
       attachments: m.attachments || [],
+      // Provenance of a forwarded message ({messageId, senderName, sentAt, ...}).
+      forwardedFrom: m.forwardedFrom || null,
+      // Per-recipient delivery state (group threads: "Seen by N · Acked by M").
+      deliveries: m.deliveries || [],
     };
   }
   // Pull the user's conversations + their messages from the backend into the
@@ -487,14 +509,31 @@
         // care-team changes also re-hydrate so boards/rosters stay live.
         else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
-          // Surface an incoming org-wide broadcast live (the sender already has
-          // an optimistic local copy; don't duplicate it for them).
+          // Surface an incoming org-wide broadcast live: insert it (with its
+          // real ack requirement) so the banner + card show an Acknowledge
+          // button immediately, then re-hydrate from the server for the
+          // authoritative list (sender name, tallies).
           var b = ev.broadcast;
           DT.set(function (s) {
-            if (b.senderId !== meId && !(s.broadcasts || []).some(function (x) { return x.id === b.id; })) {
-              s.broadcasts = [{ id: b.id, title: b.message, sev: b.severity, at: new Date(b.createdAt || Date.now()).getTime(), acked: 0, total: 0, ackReq: false }].concat(s.broadcasts || []);
-              s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "urgent"), msg: b.message };
+            if (!(s.broadcasts || []).some(function (x) { return x.id === b.id; })) {
+              s.broadcasts = [mapBroadcast(b)].concat(s.broadcasts || []);
             }
+            if (b.senderId !== meId) s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "urgent"), msg: b.message + (b.ackRequired !== false && b.severity !== "info" ? " · acknowledgement required" : "") };
+            return s;
+          });
+          hydrateBroadcasts();
+        }
+        // Someone acknowledged a broadcast — update that card's tally live
+        // (director) and, if it was me on another device, my own ack state.
+        else if (ev.type === "BROADCAST_ACKED" && ev.broadcastId != null) {
+          DT.set(function (s) {
+            s.broadcasts = (s.broadcasts || []).map(function (x) {
+              if (x.id !== ev.broadcastId) return x;
+              var patch = { acked: typeof ev.ackCount === "number" ? ev.ackCount : x.acked, total: typeof ev.total === "number" ? ev.total : x.total };
+              if (ev.userId === meId) patch.ackedByMe = true;
+              if (ev.displayName && ev.userId !== meId) patch.ackedBy = (x.ackedBy || []).filter(function (p) { return p.userId !== ev.userId; }).concat([{ userId: ev.userId, displayName: ev.displayName }]);
+              return Object.assign({}, x, patch);
+            });
             return s;
           });
         }
@@ -588,6 +627,21 @@
   // the login form is wrong/stale (e.g. a cached old "MERCY").
   function canonicalOrg(role) { return role === "developer" ? PLATFORM_ORG : "ISPN"; }
 
+  // Everything that runs once a session is established and allowed to work:
+  // the live socket plus every per-role hydrate. Split out of doLogin so the
+  // MFA enrolment screen can run it AFTER enrolment lifts the server's block
+  // (until then every one of these calls would just 403).
+  function bootSession(u) {
+    connectWs();
+    if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+    hydrateMyPrefs();
+    enableWebPush();
+    if (PRIVILEGED[u.role]) hydrateOpsReport();
+    hydrateBroadcasts(); // catch up on broadcasts sent while this device was offline
+    hydrateAwayMessage();
+    return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+  }
+
   function doLogin(role, org, user) {
     var username = DEMO[role] || user || "chen";
     var primary = orgForRole(role, org);
@@ -605,20 +659,30 @@
         s.ui.nav = "dashboard";
         s.ui.notifOpen = false;
         s.loginError = null;
+        s.mfaChallenge = null;
+        // Privileged role in an org that requires MFA, not enrolled yet: the
+        // login succeeded but the server 403s everything except enrolment.
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
       });
-      connectWs();
-      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
-      hydrateMyPrefs();
-      enableWebPush();
-      if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
-      return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return Promise.resolve(u); // held at the enrolment screen; mfaEnrollmentDone() boots the rest
+      return bootSession(u);
     }
     function attempt(orgCode) {
       return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
-        .then(function () { return get("/api/user"); })
-        .then(function (u) { return finish(u, orgCode); });
+        .then(function (r) {
+          if (r && r.twoFactorRequired) {
+            // Enrolled account: the server holds the login until a second
+            // factor arrives (POST /api/2fa/complete-login → finish()).
+            DT.set(function (s) { s.mfaChallenge = { org: orgCode, role: role, username: username }; s.session = null; s.loginError = null; return s; });
+            return null;
+          }
+          return get("/api/user").then(function (u) { return finish(u, orgCode); });
+        });
     }
+    // Second-factor completion re-enters the same finish() as a plain login.
+    pendingMfaFinish = function (u) { return finish(u, orgForRole(u.role, org)); };
 
     return attempt(primary).catch(function (e) {
       // Demo resilience: a wrong/stale org code (cached "MERCY") shouldn't block
@@ -1075,11 +1139,63 @@
   // state so the dashboard stat tiles show real figures. Leave commsMetrics null
   // on any failure (the tiles fall back to "—"/0).
   DT.actions.loadCommsMetrics = function () {
+    // Director-level analytics: the server answers 403 for every other role.
+    // Skip the round trip for them and leave commsMetrics null — the tiles
+    // show "—" — so the hospitalist dashboard is unaffected by the gate.
+    var sess = DT.getState().session || {};
+    if (!PRIVILEGED[sess.role]) {
+      DT.set(function (s) { if (s.commsMetrics != null) s.commsMetrics = null; return s; });
+      return Promise.resolve(null);
+    }
     return get("/api/metrics/comms").then(function (m) {
       DT.set(function (s) { s.commsMetrics = m || null; return s; });
     }).catch(function () {
+      // 403 (role not allowed) or any other failure: tiles fall back to "—".
       DT.set(function (s) { s.commsMetrics = null; return s; });
     });
+  };
+
+  // ---- two-factor authentication -----------------------------------------
+  // Enrolment (MfaEnrollScreen) and the sign-in challenge (MfaChallengeScreen)
+  // talk to the server's existing TOTP routes. rawApi throughout: none of
+  // these may self-heal into a demo re-login.
+  var pendingMfaFinish = null; // set by doLogin so complete-login re-enters its finish()
+  DT.actions.mfaBeginEnrollment = function () {
+    return rawApi("POST", "/api/mfa/enroll", {});
+  };
+  DT.actions.mfaVerifyEnrollment = function (code) {
+    return rawApi("POST", "/api/mfa/verify", { code: String(code || "") });
+  };
+  // After the user has saved their backup codes: confirm with the server that
+  // the block is gone (it re-checks the DB), then boot the session normally.
+  DT.actions.mfaEnrollmentDone = function () {
+    return rawApi("GET", "/api/user").then(function (u) {
+      if (!u || u.mfaEnrollmentRequired) throw new Error("mfa_enrollment_required");
+      mfaFlagged = false;
+      DT.set(function (s) {
+        s.mfaEnrollmentRequired = false;
+        s.__toast = { tone: "accepted", title: "Two-factor authentication on", msg: "You'll be asked for a code at each sign-in." };
+        return s;
+      });
+      return bootSession(u);
+    });
+  };
+  DT.actions.mfaCompleteLogin = function (code) {
+    var ch = DT.getState().mfaChallenge || {};
+    return rawApi("POST", "/api/2fa/complete-login", { code: String(code || "") }).then(function (u) {
+      if (pendingMfaFinish) return pendingMfaFinish(u);
+      // No doLogin closure (e.g. page reloaded mid-challenge): minimal restore.
+      DT.set(function (s) { s.mfaChallenge = null; return s; });
+      window.location.reload();
+      return u;
+    });
+  };
+  DT.actions.mfaRequestSms = function () {
+    return rawApi("POST", "/api/2fa/request-sms", {});
+  };
+  DT.actions.mfaCancelLogin = function () {
+    pendingMfaFinish = null;
+    DT.set(function (s) { s.mfaChallenge = null; return s; });
   };
 
   // Logout: tear down the live socket + clear the server session too.
@@ -1088,8 +1204,10 @@
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     meId = null;
     dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
+    mfaFlagged = false; pendingMfaFinish = null;
     rawApi("POST", "/api/logout", {}).catch(function () {});
     if (origLogout) origLogout();
+    DT.set(function (s) { s.mfaEnrollmentRequired = false; s.mfaChallenge = null; return s; });
   };
 
   // ---- messaging overrides (backend-backed, cross-device) ------------------
@@ -1230,6 +1348,170 @@
     }).catch(function () {});
   };
 
+  // ---- message forwarding (server-backed, with provenance) -----------------
+  // target: { conversationId } | { participantIds: [..] } | { roleTarget: "<id>" }
+  // opts: { keepPriority, note }. Resolves to the forwarded message; the
+  // target thread becomes the active conversation.
+  DT.actions.forwardMessage = function (messageId, target, opts) {
+    if (messageId == null || !target) return Promise.resolve(null);
+    var body = Object.assign({}, target, { keepPriority: !!(opts && opts.keepPriority) });
+    if (opts && opts.note) body.note = String(opts.note);
+    return api("POST", "/api/messaging/messages/" + messageId + "/forward", body)
+      .then(function (m) {
+        return hydrateConversations().then(function () {
+          DT.set(function (s) { if (m && m.conversationId != null) s.__activeConvo = m.conversationId; s.__toast = { tone: "sent", title: "Message forwarded", msg: "Sent with its original sender and time attached." }; return s; });
+          return m;
+        });
+      })
+      .catch(function (e) {
+        var why = String((e && e.message) || "");
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't forward", msg: /module_disabled/.test(why) ? "Message forwarding is switched off for your organization." : /same_conversation/.test(why) ? "That message is already in this thread." : /role_unresolved/.test(why) ? "Nobody currently holds that role." : "Try again." }; return s; });
+        return null;
+      });
+  };
+
+  // ---- message templates (org-wide + personal canned messages) -------------
+  DT.actions.listTemplates = function () {
+    return get("/api/messaging/templates").then(function (rows) {
+      var list = rows || [];
+      DT.set(function (s) { s.templates = list; return s; });
+      return list;
+    }).catch(function () { DT.set(function (s) { s.templates = s.templates || []; return s; }); return []; });
+  };
+  function templateErrorToast(e, title) {
+    var why = String((e && e.message) || "");
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: /forbidden/.test(why) ? "Only directors can manage organization templates." : /module_disabled/.test(why) ? "Templates are switched off for your organization." : "Try again." }; return s; });
+  }
+  DT.actions.createTemplate = function (data) {
+    return api("POST", "/api/messaging/templates", { title: data.title, body: data.body, priority: data.priority || "routine", scope: data.scope === "org" ? "org" : "mine" })
+      .then(function (t) { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Template saved", msg: t.title }; return s; }); return DT.actions.listTemplates().then(function () { return t; }); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't save template"); return null; });
+  };
+  DT.actions.updateTemplate = function (id, patch) {
+    return api("PATCH", "/api/messaging/templates/" + id, patch)
+      .then(function (t) { return DT.actions.listTemplates().then(function () { return t; }); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't update template"); return null; });
+  };
+  DT.actions.deleteTemplate = function (id) {
+    return api("DELETE", "/api/messaging/templates/" + id)
+      .then(function () { return DT.actions.listTemplates(); })
+      .catch(function (e) { templateErrorToast(e, "Couldn't delete template"); return null; });
+  };
+
+  // ---- away message (shown to senders while I'm DND / off shift) -----------
+  // Read back through the availability endpoint (it's what senders see).
+  function hydrateAwayMessage() {
+    if (meId == null) return Promise.resolve();
+    return get("/api/messaging/availability/" + meId).then(function (info) {
+      DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p.awayMessage = (info && info.awayMessage) || ""; s.myPrefs = p; return s; });
+    }).catch(function () {});
+  }
+  DT.actions.setAwayMessage = function (text) {
+    var t = String(text || "").trim().slice(0, 280);
+    return DT.actions.setMyPref("awayMessage", t);
+  };
+
+  // ---- broadcasts: catch-up list + per-recipient acknowledgement -----------
+  // Kit severity: info | warning | critical; server: info | urgent | critical.
+  var SEV_TO_KIT = { info: "info", urgent: "warning", critical: "critical" };
+  function mapBroadcast(b) {
+    return {
+      id: b.id,
+      title: b.message,
+      sev: SEV_TO_KIT[b.severity] || "warning",
+      at: new Date(b.createdAt || Date.now()).getTime(),
+      senderId: b.senderId,
+      senderName: b.senderName || "",
+      mine: b.senderId === meId,
+      ackReq: b.ackRequired != null ? !!b.ackRequired : b.severity !== "info",
+      ackedByMe: !!b.acked,
+      ackedAt: b.ackedAt ? new Date(b.ackedAt).getTime() : null,
+      acked: typeof b.ackCount === "number" ? b.ackCount : 0,
+      total: typeof b.total === "number" ? b.total : 0,
+      ackedBy: b.ackedBy || [],
+    };
+  }
+  function hydrateBroadcasts() {
+    return get("/api/broadcasts").then(function (rows) {
+      DT.set(function (s) { s.broadcasts = (rows || []).map(mapBroadcast); s.broadcastsLive = true; return s; });
+    }).catch(function () { /* module off or offline: keep what's there */ });
+  }
+  DT.actions.refreshBroadcasts = hydrateBroadcasts;
+  DT.actions.ackBroadcast = function (id) {
+    if (id == null) return Promise.resolve();
+    // Optimistic: flip my own state now; the WS BROADCAST_ACKED event brings
+    // the authoritative tally.
+    DT.set(function (s) {
+      s.broadcasts = (s.broadcasts || []).map(function (b) { return b.id === id ? Object.assign({}, b, { ackedByMe: true, ackedAt: Date.now() }) : b; });
+      return s;
+    });
+    return api("POST", "/api/broadcasts/" + id + "/ack").then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Broadcast acknowledged", msg: "The sender can see you received it." }; return s; });
+    }).catch(function () {
+      DT.set(function (s) {
+        s.broadcasts = (s.broadcasts || []).map(function (b) { return b.id === id ? Object.assign({}, b, { ackedByMe: false, ackedAt: null }) : b; });
+        s.__toast = { tone: "rejected", title: "Couldn't acknowledge", msg: "Try again." };
+        return s;
+      });
+    });
+  };
+
+  // Live banner: every unacknowledged urgent/critical broadcast addressed to me
+  // stays pinned at the top of the app (any screen, any role) with an
+  // Acknowledge button until it's acked — a toast alone disappears in seconds.
+  // Plain DOM so it works regardless of which screen is mounted.
+  var bannerEl = null;
+  var bannerKey = "";
+  function renderBroadcastBanner() {
+    try {
+      var st = DT.getState();
+      var mod = !DT.moduleOn || DT.moduleOn("broadcasts");
+      var due = st.session && mod ? (st.broadcasts || []).filter(function (b) { return b.ackReq && !b.ackedByMe && !b.mine && b.senderId != null; }) : [];
+      var key = due.map(function (b) { return b.id; }).join(",");
+      if (key === bannerKey) return;
+      bannerKey = key;
+      if (!bannerEl) {
+        bannerEl = document.createElement("div");
+        bannerEl.id = "dt-broadcast-banner";
+        bannerEl.setAttribute("role", "alert");
+        bannerEl.style.cssText = "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:45;width:min(640px,calc(100vw - 24px));display:flex;flex-direction:column;gap:8px;font-family:inherit;";
+        document.body.appendChild(bannerEl);
+      }
+      bannerEl.innerHTML = "";
+      due.slice(0, 3).forEach(function (b) {
+        var critical = b.sev === "critical";
+        var row = document.createElement("div");
+        row.className = "dt-broadcast-banner-item";
+        row.style.cssText = "display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid " + (critical ? "#B91C1C" : "#B45309") + ";background:" + (critical ? "#FEE2E2" : "#FEF3C7") + ";color:" + (critical ? "#7F1D1D" : "#78350F") + ";";
+        var txt = document.createElement("div");
+        txt.style.cssText = "flex:1;min-width:0;";
+        var t1 = document.createElement("div");
+        t1.style.cssText = "font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;";
+        t1.textContent = (critical ? "Critical" : "Urgent") + " broadcast" + (b.senderName ? " · " + b.senderName : "");
+        var t2 = document.createElement("div");
+        t2.style.cssText = "font-size:13.5px;font-weight:600;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        t2.textContent = b.title;
+        txt.appendChild(t1); txt.appendChild(t2);
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Acknowledge";
+        btn.setAttribute("data-broadcast-ack", String(b.id));
+        btn.style.cssText = "flex:none;padding:8px 14px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:12.5px;font-family:inherit;color:#fff;background:" + (critical ? "#B91C1C" : "#B45309") + ";";
+        btn.onclick = function () { DT.actions.ackBroadcast(b.id); };
+        row.appendChild(txt); row.appendChild(btn);
+        bannerEl.appendChild(row);
+      });
+      if (due.length > 3) {
+        var more = document.createElement("div");
+        more.style.cssText = "text-align:center;font-size:12px;color:#78350F;";
+        more.textContent = (due.length - 3) + " more awaiting acknowledgement";
+        bannerEl.appendChild(more);
+      }
+      bannerEl.style.display = due.length ? "flex" : "none";
+    } catch (e) { /* never let the banner break the app */ }
+  }
+  if (DT.subscribe) DT.subscribe(renderBroadcastBanner);
+
   DT.actions.sendAssignment = function (provider, fields, consults) {
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
     var sentId = "s" + Date.now();
@@ -1294,12 +1576,25 @@
   DT.actions.sendBroadcast = function (data) {
     var SEV_MAP = { info: "info", warning: "urgent", critical: "critical", emergency: "critical" };
     var msg = (data.title || "").trim() + (data.message && data.message.trim() ? " — " + data.message.trim() : "");
-    if (msg) {
-      api("POST", "/api/broadcasts", { message: msg, severity: SEV_MAP[data.severity] || "urgent" }).catch(function (e) {
-        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: String((e && e.message) || "Server rejected it — it was only shown locally.") }; return s; });
+    if (!msg) { if (origSendBroadcast) return origSendBroadcast(data); return; }
+    // Ack semantics are server-defined: urgent/critical require an ack, info
+    // doesn't. If the composer asked for an ack on an info broadcast, promote
+    // it to urgent so recipients actually get the Acknowledge button.
+    var sev = SEV_MAP[data.severity] || "urgent";
+    if (data.ackReq && sev === "info") sev = "urgent";
+    return api("POST", "/api/broadcasts", { message: msg, severity: sev }).then(function (b) {
+      DT.set(function (s) {
+        if (b && !(s.broadcasts || []).some(function (x) { return x.id === b.id; })) s.broadcasts = [mapBroadcast(Object.assign({ senderName: (s.me && s.me.name) || "" }, b))].concat(s.broadcasts || []);
+        s.__toast = { tone: "sent", title: "Broadcast sent", msg: "Delivered to everyone in your organization" + (sev !== "info" ? " · acknowledgement required" : "") + "." };
+        return s;
       });
-    }
-    if (origSendBroadcast) return origSendBroadcast(data);
+      return hydrateBroadcasts();
+    }).catch(function (e) {
+      // Backend unreachable → the kit's local demo behaviour; a server
+      // REJECTION must not look like success.
+      if (isNetworkError(e) && origSendBroadcast) return origSendBroadcast(data);
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: String((e && e.message) || "The server rejected it.") }; return s; });
+    });
   };
   DT.actions.addProvider = function (data) {
     var name = (data.name || "").trim();
@@ -1582,10 +1877,14 @@
         s.session = { role: u.role, org: lastAuth.org, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.ui.nav = "dashboard"; s.ui.notifOpen = false; s.loginError = null;
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
       });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return; // held at the enrolment screen
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      hydrateBroadcasts();
       hydrate(u.role).then(function () { hydrateConversations(); });
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
   }
@@ -1609,13 +1908,19 @@
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.loginError = null;
+        s.mfaChallenge = null;
+        s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
       });
+      mfaFlagged = !!u.mfaEnrollmentRequired;
+      if (u.mfaEnrollmentRequired) return; // held at the enrolment screen; mfaEnrollmentDone() boots the rest
       connectWs();
       if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
       hydrateMyPrefs();
       enableWebPush();
       if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
+      hydrateBroadcasts();
+      hydrateAwayMessage();
       hydrate(u.role).then(function () { hydrateConversations(); });
     }).catch(function () {
       // No live server session — drop the restored shell back to the login
@@ -1629,6 +1934,193 @@
   rawApi("GET", "/api/config").then(function (cfg) {
     if (cfg) DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
   }).catch(function () { /* keep the safe default (synthetic on) */ });
+
+  // ==== modules: per-org feature switches (server-enforced) — BEGIN =========
+  // Registry + effective map come from /api/modules (shared/modules.ts). The
+  // developer console flips one switch per org via PATCH /api/dev/modules/:id;
+  // the server's moduleGate answers 404 module_disabled for anything switched
+  // off, so the UI hides nav/controls with DT.moduleOn(id) but never decides.
+  // rawApi, not the self-healing api(): a stale saved session must never be
+  // "healed" into a demo login just because this refetch got a 401.
+  function hydrateModules() {
+    return rawApi("GET", "/api/modules").then(function (r) {
+      if (!r) return;
+      DT.set(function (s) { s.modules = r.modules || {}; s.moduleRegistry = r.registry || []; return s; });
+    }).catch(function () {});
+  }
+  function moduleOrgId(orgRef) {
+    if (typeof orgRef === "number") return orgRef;
+    var o = (DT.getState().orgs || []).find(function (x) { return x.code === orgRef || x.id === orgRef; });
+    return o ? o.id : null;
+  }
+  function putOrgModules(id, map) {
+    DT.set(function (s) {
+      s.orgModules = Object.assign({}, s.orgModules || {});
+      s.orgModules[id] = map || {};
+      return s;
+    });
+  }
+  // Developer: load one tenant's effective map into s.orgModules[orgId].
+  DT.actions.loadOrgModules = function (orgRef) {
+    var id = moduleOrgId(orgRef);
+    if (id == null) return Promise.resolve(null);
+    return get("/api/dev/modules/" + id).then(function (r) {
+      putOrgModules(id, r && r.modules);
+      if (r && r.registry) DT.set(function (s) { s.moduleRegistry = r.registry; return s; });
+      return r && r.modules;
+    });
+  };
+  // Developer: one click flips a switch — optimistic, then server truth.
+  DT.actions.setModule = function (orgRef, moduleId, enabled) {
+    var id = moduleOrgId(orgRef);
+    if (id == null) return Promise.reject(new Error("unknown_org"));
+    var before = (DT.getState().orgModules || {})[id] || {};
+    var optimistic = Object.assign({}, before); optimistic[moduleId] = !!enabled;
+    putOrgModules(id, optimistic);
+    return api("PATCH", "/api/dev/modules/" + id, { id: moduleId, enabled: !!enabled }).then(function (r) {
+      putOrgModules(id, r && r.modules);
+      var sess = DT.getState().session;
+      if (sess && moduleOrgId(sess.org) === id) hydrateModules(); // flipped our own org
+      return r && r.modules;
+    }).catch(function (e) {
+      putOrgModules(id, before);
+      DT.actions.loadOrgModules(id).catch(function () {});
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not change module", msg: String((e && e.message) || e) }; return s; });
+      throw e;
+    });
+  };
+  // Components: `if (!DT.moduleOn("broadcasts")) return null;` — unknown ids and
+  // a not-yet-hydrated map read as ON so nothing flickers away on first paint.
+  DT.moduleOn = function (id) { var m = DT.getState().modules; return !m || m[id] !== false; };
+  // Refetch whenever the signed-in identity changes (login, role switch,
+  // session restore) and every minute while signed in, so a switch flipped by
+  // the developer reaches an open portal without a reload.
+  // Compared by REFERENCE: store.set() shallow-clones the top level, so the
+  // session object only changes when a login/restore assigns a new one — which
+  // also catches re-login as the same user (switches may have flipped since).
+  var lastModuleSess = null;
+  function syncModulesForSession() {
+    var sess = DT.getState().session || null;
+    if (sess === lastModuleSess) return;
+    lastModuleSess = sess;
+    if (sess) hydrateModules();
+    else DT.set(function (s) { s.modules = null; s.orgModules = {}; return s; });
+  }
+  if (DT.subscribe) DT.subscribe(syncModulesForSession);
+  setInterval(function () { if (DT.getState().session) hydrateModules(); }, 60000);
+  // ==== modules — END =======================================================
+
+  // ==== oncall / ehr: who's-on-call board + EHR deep links — BEGIN ==========
+  // The board is server-merged (selected schedule source + consult services +
+  // next hospitalist, DND → covering already applied). The MRN never reaches
+  // the browser: "Open in EHR" asks the server for the resolved URL per click.
+  DT.actions.loadOnCallBoard = function () {
+    return get("/api/oncall/board").then(function (r) {
+      DT.set(function (s) { s.onCallBoard = r || null; return s; });
+      return r;
+    }).catch(function (e) {
+      var msg = String((e && e.message) || "unavailable");
+      DT.set(function (s) { s.onCallBoard = { error: msg === "module_disabled" ? "the on-call board is switched off for this organization" : msg, rows: [] }; return s; });
+      return null;
+    });
+  };
+  DT.actions.loadOnCallSources = function () {
+    return get("/api/oncall/sources").then(function (r) { DT.set(function (s) { s.onCallSources = r || null; return s; }); return r; }).catch(function () { return null; });
+  };
+  DT.actions.setOnCallSource = function (source) {
+    return api("PATCH", "/api/oncall/source", { source: source }).then(function (r) {
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Schedule source: " + ({ amion: "Amion", epic: "Epic", manual: "Manual" }[source] || source), msg: r && r.status && !r.status.configured ? (r.status.message || "Not configured yet.") : "The on-call board now reads from this source." };
+        return s;
+      });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't change source", msg: m === "module_disabled" ? "That source's module is switched off for this organization." : (m || "Try again.") }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.loadManualSlots = function () {
+    return get("/api/oncall/manual").then(function (r) { DT.set(function (s) { s.manualOnCall = r || []; return s; }); return r; }).catch(function () { return []; });
+  };
+  DT.actions.addManualSlot = function (slot) {
+    return api("POST", "/api/oncall/manual", slot).then(function (r) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Slot added", msg: r.slot + " · " + r.providerName }; return s; });
+      return DT.actions.loadManualSlots().then(function () { return r; });
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't add slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.updateManualSlot = function (id, patch) {
+    return api("PATCH", "/api/oncall/manual/" + encodeURIComponent(id), patch).then(function (r) { return DT.actions.loadManualSlots().then(function () { return r; }); }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.removeManualSlot = function (id) {
+    return api("DELETE", "/api/oncall/manual/" + encodeURIComponent(id)).then(function () { return DT.actions.loadManualSlots(); }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove slot", msg: String((e && e.message) || "Try again.") }; return s; });
+    });
+  };
+  DT.actions.epicSyncNow = function () {
+    return api("POST", "/api/oncall/epic/sync-now", {}).then(function (r) {
+      DT.set(function (s) { s.__toast = r && r.lastStatus === "error" ? { tone: "rejected", title: "Epic sync failed", msg: r.error || "See the board's source status." } : { tone: "accepted", title: "Epic synced", msg: (r && r.rowCount) + " on-call rows." }; return s; });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Epic not synced", msg: m === "epic_not_configured" ? "Needs Epic app credentials (App Orchard/Vendor Services registration) on the server." : m === "module_disabled" ? "Epic on-call is switched off for this organization." : (m || "Try again.") }; return s; });
+      return null;
+    });
+  };
+  // Message whoever actually answers for a board row (the covering provider
+  // when the holder is on DND). Reuses the role-conversation flow so the thread
+  // is named after the role, then jumps to Messages.
+  DT.actions.messageOnCallRow = function (row) {
+    if (!row || !row.messageable || row.messageUserId == null) return Promise.resolve();
+    var label = row.label + (row.covering ? " · covering: " + row.covering.name : "");
+    return Promise.resolve(DT.actions.startRoleConversation({ userId: row.messageUserId, label: label })).then(function () {
+      DT.set(function (s) { s.ui.nav = "messages"; return s; });
+    });
+  };
+  // EHR deep links (org setting "ehrDeepLink": vendor + template; presets from the server).
+  var ehrConfigInflight = null; // many patient rows mount at once — one fetch serves them all
+  DT.actions.loadEhrConfig = function () {
+    if (ehrConfigInflight) return ehrConfigInflight;
+    DT.set(function (s) { if (s.ehrConfig === undefined) s.ehrConfig = null; return s; });
+    ehrConfigInflight = get("/api/ehr/config").then(function (r) { DT.set(function (s) { s.ehrConfig = r || null; return s; }); return r; })
+      .catch(function () { return null; })
+      .finally(function () { ehrConfigInflight = null; });
+    return ehrConfigInflight;
+  };
+  DT.actions.saveEhrConfig = function (vendor, template) {
+    return api("PATCH", "/api/ehr/config", { vendor: vendor, template: template || "" }).then(function (r) {
+      DT.set(function (s) { s.ehrConfig = Object.assign({}, s.ehrConfig || {}, r || {}); s.__toast = { tone: "accepted", title: "EHR link saved", msg: r && r.configured ? "\"Open in EHR\" is now available on patient rows." : (template ? "Template stored — replace the placeholder host to activate it." : "EHR deep links cleared.") }; return s; });
+      return r;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      var why = { template_missing_placeholder: "The template must contain {ehrId}.", template_scheme: "That URL scheme isn't allowed.", template_whitespace: "The template can't contain spaces.", template_required: "Enter a template." }[m] || (m || "Try again.");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "EHR link not saved", msg: why }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.openInEhr = function (patientId) {
+    if (patientId == null) return Promise.resolve();
+    // Open the window synchronously (popup blockers), then point it at the URL
+    // the server resolves. Custom schemes (epichaiku://) navigate in place.
+    var win = null;
+    try { win = window.open("", "_blank", "noopener"); } catch (e) { win = null; }
+    return get("/api/patients/" + Number(patientId) + "/ehr-link").then(function (r) {
+      var url = r && r.url;
+      if (!url) throw new Error("no_link");
+      if (/^https?:/i.test(url)) { if (win) win.location.href = url; else window.open(url, "_blank", "noopener"); }
+      else { if (win) { try { win.close(); } catch (e) {} } window.location.assign(url); }
+    }).catch(function (e) {
+      if (win) { try { win.close(); } catch (_) {} }
+      var m = String((e && e.message) || "");
+      var msg = m === "no_ehr_id" ? "No EHR id (MRN) on file for this patient." : m === "forbidden" ? "Only the patient's care team can open their chart." : m === "ehr_not_configured" ? "Ask a director to set the EHR link template in Settings." : m === "module_disabled" ? "EHR deep links are switched off for this organization." : "Couldn't open the chart.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Open in EHR", msg: msg }; return s; });
+    });
+  };
+  // ==== oncall / ehr — END ==================================================
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

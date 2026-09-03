@@ -40,7 +40,7 @@ export interface AmionSyncState {
   providers: AmionRow[];
 }
 
-const SYNC_SETTING_KEY = "amionSync";
+export const SYNC_SETTING_KEY = "amionSync";
 
 /** Env-driven configuration. The URL (with its Lo= token) is env-only. */
 export function amionConfig() {
@@ -174,8 +174,9 @@ export function toDisplayName(published: string): string {
 }
 
 // Match Amion names against existing accounts regardless of the "Dr." prefix
-// or casing (the seeded roster stores e.g. "Dr. Nathan Alyesh").
-function normalizeName(name: string): string {
+// or casing (the seeded roster stores e.g. "Dr. Nathan Alyesh"). Shared with
+// the schedule-source adapters so every source resolves names the same way.
+export function normalizeName(name: string): string {
   return name.toLowerCase().replace(/^dr\.?\s+/, "").replace(/\s+/g, " ").trim();
 }
 

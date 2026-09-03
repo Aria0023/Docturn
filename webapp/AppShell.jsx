@@ -95,6 +95,7 @@ function DndButton() {
         <Modal title="Do not disturb" subtitle="Pick who covers for you — your messages and on-call roles route to them while you're away." icon="moon" onClose={() => setOpen(false)}
           children={
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {window.DndAwayMessageField && <DndAwayMessageField />}
               <Field icon="search" value={q} onChange={setQ} placeholder="Search colleagues…" />
               <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
                 {people.map((d) => (

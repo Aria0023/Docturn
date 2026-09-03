@@ -32,7 +32,13 @@ function Messaging() {
   const [q, setQ] = React.useState("");
   const [composing, setComposing] = React.useState(false);
   const [forwarding, setForwarding] = React.useState(null); // message being forwarded, or null
+  const [keepPrio, setKeepPrio] = React.useState(false); // forward: keep the original priority (default routine)
+  const [tplOpen, setTplOpen] = React.useState(false); // composer template picker
+  const [statusFor, setStatusFor] = React.useState(null); // message id whose per-recipient status is expanded
   const [mobileView, setMobileView] = React.useState("list"); // phone: "list" | "thread"
+  // Feature modules: hide a control when the org has switched it off (server
+  // enforces; a missing helper means "enabled").
+  const modOn = (id) => !(window.DT && window.DT.moduleOn) || window.DT.moduleOn(id);
   const threadRef = React.useRef(null);
   const openThread = (id) => { setActive(id); if (isMobile) setMobileView("thread"); };
 
@@ -75,16 +81,36 @@ function Messaging() {
   };
   const removePending = (id) => setPending((prev) => prev.filter((p) => p.id !== id));
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
-  // When forwarding, open the chosen thread (person or role) and then send the
-  // forwarded text into it once the conversation resolves (__activeConvo).
-  const FWD_PREFIX = "↪ Forwarded:\n";
-  const completeForward = (openerResult) => {
-    Promise.resolve(openerResult).then(() => {
-      const id = window.DT.getState().__activeConvo;
-      if (id && forwarding && forwarding.text) a.sendMessage(id, FWD_PREFIX + forwarding.text, "routine");
-    }).finally(() => setForwarding(null));
+  // Forwarding is SERVER-backed: POST /api/messaging/messages/:id/forward
+  // creates the message in the target thread with provenance (original
+  // sender + time) and carries attachments by reference. The picker resolves
+  // a person to their userId (directory first, then the org-wide people map)
+  // or an on-call role to its target id.
+  const userIdForPerson = (p) => {
+    const d = (st.directory || []).find((x) => x.name === p.name);
+    if (d) return d.id;
+    const op = Object.values(st.orgPeople || {}).find((x) => x.name === p.name);
+    return op ? op.id : null;
   };
-  const startWith = (p) => { const r = a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" }); if (forwarding) completeForward(r); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+  const finishForward = (target) => {
+    const fw = forwarding;
+    setForwarding(null); setComposing(false); setQ("");
+    if (!fw || fw.id == null || !a.forwardMessage) return;
+    Promise.resolve(a.forwardMessage(fw.id, target, { keepPriority: keepPrio })).then((m) => {
+      if (m && m.conversationId != null) { setActive(m.conversationId); if (isMobile) setMobileView("thread"); }
+    });
+    setKeepPrio(false);
+  };
+  const startWith = (p) => {
+    if (forwarding) {
+      const uid = userIdForPerson(p);
+      if (uid == null) { if (a.toast) a.toast({ tone: "rejected", title: "Can't forward", msg: p.name + " isn't a registered user." }); return; }
+      finishForward({ participantIds: [uid] });
+      return;
+    }
+    a.startConversation({ name: p.name, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" });
+    setComposing(false); setQ(""); if (isMobile) setMobileView("thread");
+  };
 
   // On-call / role addressing: whenever the compose picker opens, refresh the
   // server-resolved list of addressable roles (each already resolved to a real
@@ -93,7 +119,34 @@ function Messaging() {
   const onCallTargets = st.onCallTargets || [];
   React.useEffect(() => { if (composing && a.listOnCallTargets) a.listOnCallTargets(); }, [composing]);
   const ROLE_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
-  const startRole = (t) => { const r = a.startRoleConversation ? a.startRoleConversation(t) : null; if (forwarding) completeForward(r); setComposing(false); setQ(""); if (isMobile) setMobileView("thread"); };
+  const startRole = (t) => {
+    if (forwarding) { finishForward({ roleTarget: t.id }); return; }
+    if (a.startRoleConversation) a.startRoleConversation(t);
+    setComposing(false); setQ(""); if (isMobile) setMobileView("thread");
+  };
+  // Composer templates (org-wide + mine): loaded when the picker opens.
+  const templates = st.templates || [];
+  React.useEffect(() => { if (tplOpen && a.listTemplates) a.listTemplates(); }, [tplOpen]);
+  const insertTemplate = (t) => {
+    setDraft((d) => (d && d.trim() ? d.replace(/\s+$/, "") + " " : "") + t.body);
+    if (t.priority === "urgent" || t.priority === "stat") setPriority(t.priority);
+    setTplOpen(false);
+  };
+  const myRole = st.session && st.session.role;
+  const canManageOrgTemplates = myRole === "director" || myRole === "er_director" || myRole === "developer";
+  // Availability line above the composer (DND / off shift) — wording per spec:
+  // "<Name> is unavailable — covering: <Covering Name>", plus their own away
+  // message when they set one.
+  const availLine = (() => {
+    if (!peerAvail || !modOn("messaging.dnd")) return null;
+    if (!peerAvail.dnd && peerAvail.working !== false) return null;
+    const nm = peerAvail.displayName || conv.name;
+    let text = nm + " is unavailable";
+    if (peerAvail.covering) text += " — covering: " + peerAvail.covering.displayName;
+    else if (peerAvail.dnd) text += " — do-not-disturb, no covering provider set. STAT messages will still alert them.";
+    else text += " — off shift.";
+    return { text, away: peerAvail.awayMessage || null, dnd: !!peerAvail.dnd };
+  })();
   const rolesShown = onCallTargets.filter((t) => t.label.toLowerCase().includes(q.toLowerCase()));
 
   // On a phone, show exactly one pane at a time (list OR thread/compose).
@@ -167,10 +220,16 @@ function Messaging() {
             {forwarding && (
               <div style={{ flex: "none", padding: "10px 20px", borderBottom: "1px solid var(--border)", background: "var(--secondary)", display: "flex", alignItems: "flex-start", gap: 8 }}>
                 <Icon name="forward" size={13} color="var(--muted-foreground)" style={{ marginTop: 2, flex: "none" }} />
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em" }}>Forwarding</div>
                   <div style={{ fontSize: 12.5, color: "var(--foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 460 }}>{forwarding.text}</div>
+                  {(forwarding.attachments || []).length > 0 && <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 2 }}><Icon name="paperclip" size={11} style={{ verticalAlign: "-1px", marginRight: 3 }} />{forwarding.attachments.length} attachment{forwarding.attachments.length === 1 ? "" : "s"} carried along</div>}
                 </div>
+                {forwarding.priority && forwarding.priority !== "routine" && (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: PRIO[forwarding.priority] ? PRIO[forwarding.priority].color : "var(--foreground)", cursor: "pointer", flex: "none" }}>
+                    <input type="checkbox" checked={keepPrio} onChange={(e) => setKeepPrio(e.target.checked)} />Keep {PRIO[forwarding.priority] ? PRIO[forwarding.priority].label : forwarding.priority}
+                  </label>
+                )}
               </div>
             )}
             <div style={{ padding: "12px 20px", flex: "none", borderBottom: "1px solid var(--border)" }}>
@@ -242,17 +301,14 @@ function Messaging() {
           <Button size="icon" variant="ghost" icon="info" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages." })} />
         </div>
 
-        {/* Auto-response availability banner for a 1:1 peer. */}
-        {peerAvail && (peerAvail.dnd || peerAvail.working === false) && (
-          <div style={{ flex: "none", padding: "9px 16px", display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, lineHeight: 1.4,
-            background: peerAvail.dnd ? "#FEF3C7" : "var(--secondary)", color: peerAvail.dnd ? "#92400E" : "var(--muted-foreground)", borderBottom: "1px solid " + (peerAvail.dnd ? "#FCD34D" : "var(--border)") }}>
-            <Icon name={peerAvail.dnd ? "moon" : "clock"} size={14} style={{ flex: "none" }} />
-            <span>
-              {peerAvail.dnd
-                ? (peerAvail.covering
-                    ? conv.name + " is do-not-disturb — messages are covered by " + peerAvail.covering.displayName + "."
-                    : conv.name + " is do-not-disturb. STAT messages will still alert them.")
-                : conv.name + " is off shift."}
+        {/* Availability line for a 1:1 peer (DND / off shift + their away message). */}
+        {availLine && (
+          <div data-availability-line style={{ flex: "none", padding: "9px 16px", display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, lineHeight: 1.4,
+            background: availLine.dnd ? "#FEF3C7" : "var(--secondary)", color: availLine.dnd ? "#92400E" : "var(--muted-foreground)", borderBottom: "1px solid " + (availLine.dnd ? "#FCD34D" : "var(--border)") }}>
+            <Icon name={availLine.dnd ? "moon" : "clock"} size={14} style={{ flex: "none", marginTop: 2 }} />
+            <span style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: 600 }}>{availLine.text}</span>
+              {availLine.away && <span style={{ display: "block", marginTop: 2, fontStyle: "italic", opacity: .9 }}>“{availLine.away}”</span>}
             </span>
           </div>
         )}
@@ -273,8 +329,14 @@ function Messaging() {
                     <Icon name={prio.icon} size={11} />{prio.label}
                   </div>
                 )}
+                {/* Provenance of a forwarded message (server-stamped, never editable). */}
+                {m.forwardedFrom && (
+                  <div data-forwarded-from style={{ clear: "both", display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", marginBottom: 3, justifyContent: m.me ? "flex-end" : "flex-start" }}>
+                    <Icon name="forward" size={11} />Forwarded from {m.forwardedFrom.senderName || "unknown"} · {m.forwardedFrom.sentAt ? dtFmt.ago(new Date(m.forwardedFrom.sentAt).getTime()) : ""}
+                  </div>
+                )}
                 {m.text && (
-                <div style={{ clear: "both", padding: isMobile ? "10px 14px" : "9px 13px", borderRadius: isMobile ? 16 : 14, fontSize: isMobile ? 15.5 : 13.5, lineHeight: 1.45,
+                <div style={{ clear: "both", whiteSpace: "pre-wrap", padding: isMobile ? "10px 14px" : "9px 13px", borderRadius: isMobile ? 16 : 14, fontSize: isMobile ? 15.5 : 13.5, lineHeight: 1.45,
                   background: m.me ? "var(--primary)" : "#fff", color: m.me ? "#fff" : "var(--foreground)",
                   border: m.me ? "none" : (prio ? "1px solid " + prio.color + "88" : "1px solid var(--border)"),
                   borderBottomRightRadius: m.me ? 4 : 14, borderBottomLeftRadius: m.me ? 14 : 4 }}>{m.text}</div>
@@ -284,10 +346,10 @@ function Messaging() {
                     each fetch is access-checked + audited server-side. */}
                 {(m.attachments || []).map((at) => (
                   at.isImage
-                    ? <img key={at.id} src={"/api/messaging/attachments/" + at.id} alt={at.fileName}
-                        onClick={() => window.open("/api/messaging/attachments/" + at.id, "_blank")}
+                    ? <img key={at.id} src={at.url || ("/api/messaging/attachments/" + at.id)} alt={at.fileName}
+                        onClick={() => window.open(at.url || ("/api/messaging/attachments/" + at.id), "_blank")}
                         style={{ clear: "both", maxWidth: 220, maxHeight: 220, borderRadius: 10, cursor: "pointer", marginTop: 6, display: "block", border: "1px solid var(--border)" }} />
-                    : <a key={at.id} href={"/api/messaging/attachments/" + at.id} target="_blank" rel="noreferrer" download={at.fileName}
+                    : <a key={at.id} href={at.url || ("/api/messaging/attachments/" + at.id)} target="_blank" rel="noreferrer" download={at.fileName}
                         style={{ clear: "both", marginTop: 6, display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "11px 13px" : "9px 12px", borderRadius: 12, textDecoration: "none",
                           background: "#fff", border: "1px solid var(--border)", color: "var(--foreground)", maxWidth: 260 }}>
                         <Icon name="paperclip" size={16} color="var(--muted-foreground)" />
@@ -312,14 +374,37 @@ function Messaging() {
                     : <span style={{ color: prio.color, fontWeight: 600 }}>Awaiting ack…</span>)}
                   {m.me && !prio && <Icon name={m.read ? "check-check" : "check"} size={12} color={m.read ? "var(--status-active)" : "var(--muted-foreground)"} />}
                   {!m.me && m.ackedByMe && prio && <span style={{ color: "var(--status-active)", fontWeight: 600 }}>✓ You acknowledged</span>}
-                  {/* Forward this message to another person or on-call role. */}
-                  {!conv.broadcast && m.text && (
-                    <button onClick={() => { setForwarding(m); setComposing(true); setQ(""); }} title="Forward"
+                  {/* Group threads: per-recipient status, tap to expand. */}
+                  {conv.group && m.id && (m.deliveries || []).length > 0 && (
+                    <button data-recipient-status onClick={() => setStatusFor(statusFor === m.id ? null : m.id)} title="Who has seen this"
+                      style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", padding: 0, marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "inherit", fontSize: 10.5, textDecoration: "underline dotted" }}>
+                      Seen by {m.deliveries.filter((d) => d.readAt).length}{prio ? " · Acked by " + m.deliveries.filter((d) => d.acknowledgedAt).length : ""} of {m.deliveries.length}
+                    </button>
+                  )}
+                  {/* Forward this message to another person or on-call role (server-backed). */}
+                  {!conv.broadcast && m.id && (m.text || (m.attachments || []).length > 0) && modOn("messaging.forwarding") && (
+                    <button data-forward onClick={() => { setForwarding(m); setKeepPrio(false); setComposing(true); setQ(""); }} title="Forward"
                       style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", padding: 0, marginLeft: 2, display: "inline-flex", alignItems: "center", gap: 3, fontFamily: "inherit", fontSize: 10.5 }}>
                       <Icon name="forward" size={12} />Forward
                     </button>
                   )}
                 </div>
+                {statusFor === m.id && (m.deliveries || []).length > 0 && (
+                  <div data-recipient-status-list style={{ clear: "both", marginTop: 4, padding: "8px 10px", borderRadius: 10, background: "#fff", border: "1px solid var(--border)", fontSize: 11.5, display: "flex", flexDirection: "column", gap: 4 }}>
+                    {m.deliveries.map((d) => {
+                      const S = { acknowledged: ["check-check", "var(--status-active)", "Acknowledged"], read: ["check-check", "var(--status-active)", "Read"], delivered: ["check", "var(--muted-foreground)", "Delivered"], sent: ["clock", "var(--muted-foreground)", "Sent"] }[d.status] || ["clock", "var(--muted-foreground)", d.status];
+                      const at = d.acknowledgedAt || d.readAt || d.deliveredAt;
+                      return (
+                        <div key={d.userId} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <Icon name={S[0]} size={12} color={S[1]} />
+                          <span style={{ flex: 1, fontWeight: 600, color: "var(--foreground)" }}>{d.displayName || ("User " + d.userId)}</span>
+                          <span style={{ color: S[1], fontWeight: 600 }}>{S[2]}</span>
+                          {at && <span style={{ color: "var(--muted-foreground)" }}>{fmtTime(new Date(at).getTime())}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
             );
@@ -346,6 +431,11 @@ function Messaging() {
             ))}
           </div>
         )}
+        {/* Template picker (search, insert into the draft, preselect priority)
+            with a small manage view — anchored above the composer. */}
+        {tplOpen && !conv.broadcast && (
+          <TemplatePicker templates={templates} onPick={insertTemplate} onClose={() => setTplOpen(false)} canManageOrg={canManageOrgTemplates} actions={a} isMobile={isMobile} />
+        )}
         {!conv.broadcast && (
           <div style={{ flex: "none", padding: "8px 16px 0", background: "#fff", display: "flex", gap: 6, alignItems: "center" }}>
             <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginRight: 2 }}>Priority</span>
@@ -355,6 +445,13 @@ function Messaging() {
                   color: priority === id ? "#fff" : color, background: priority === id ? color : "transparent",
                   border: "1px solid " + (priority === id ? color : "var(--border)") }}>{label}</button>
             ))}
+            {modOn("messaging.templates") && (
+              <button data-templates onClick={() => setTplOpen(!tplOpen)} title="Insert a message template"
+                style={{ marginLeft: "auto", padding: isMobile ? "7px 13px" : "3px 11px", borderRadius: 99, cursor: "pointer", fontSize: isMobile ? 13 : 11.5, fontWeight: 700, fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 5,
+                  color: tplOpen ? "#fff" : "var(--primary)", background: tplOpen ? "var(--primary)" : "transparent", border: "1px solid " + (tplOpen ? "var(--primary)" : "var(--border)") }}>
+                <Icon name="file-text" size={12} />Templates
+              </button>
+            )}
           </div>
         )}
         <div style={{ flex: "none", padding: isMobile ? "10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px)" : 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
@@ -383,4 +480,112 @@ function Messaging() {
   );
 }
 
-Object.assign(window, { Messaging });
+// Composer template picker: search + insert; "Manage" flips to a small
+// add/edit/delete view. Org-wide templates are editable only by directors /
+// ER directors / developers (server-enforced; the UI mirrors `canEdit`).
+function TemplatePicker({ templates, onPick, onClose, canManageOrg, actions, isMobile }) {
+  const [q, setQ] = React.useState("");
+  const [manage, setManage] = React.useState(false);
+  const [editing, setEditing] = React.useState(null); // null | "new" | template id
+  const [form, setForm] = React.useState({ title: "", body: "", priority: "routine", scope: "mine" });
+  const PR = { routine: ["Routine", "var(--muted-foreground)"], urgent: ["Urgent", "#B45309"], stat: ["STAT", "#B91C1C"] };
+  const shown = (templates || []).filter((t) => !q || (t.title + " " + t.body).toLowerCase().includes(q.toLowerCase()));
+  const startNew = () => { setForm({ title: "", body: "", priority: "routine", scope: "mine" }); setEditing("new"); };
+  const startEdit = (t) => { setForm({ title: t.title, body: t.body, priority: t.priority || "routine", scope: t.scope }); setEditing(t.id); };
+  const save = () => {
+    if (!form.title.trim() || !form.body.trim()) { if (actions.toast) actions.toast({ tone: "rejected", title: "Title and text required", msg: "" }); return; }
+    const p = editing === "new"
+      ? actions.createTemplate({ title: form.title.trim(), body: form.body.trim(), priority: form.priority, scope: form.scope })
+      : actions.updateTemplate(editing, { title: form.title.trim(), body: form.body.trim(), priority: form.priority });
+    Promise.resolve(p).then(() => setEditing(null));
+  };
+  const remove = (t) => { if (window.confirm('Delete template "' + t.title + '"?')) actions.deleteTemplate(t.id); };
+  const pill = (pr) => <span style={{ fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 4, color: PR[pr] ? PR[pr][1] : "var(--muted-foreground)", border: "1px solid " + (PR[pr] ? PR[pr][1] : "var(--border)") + "66", flex: "none" }}>{PR[pr] ? PR[pr][0] : pr}</span>;
+  return (
+    <div data-template-picker style={{ flex: "none", margin: isMobile ? "0 8px" : "0 16px", marginBottom: 6, background: "#fff", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "var(--shadow-lg)", display: "flex", flexDirection: "column", maxHeight: 320, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+        <Icon name="file-text" size={14} color="var(--primary)" />
+        <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{manage ? "Manage templates" : "Templates"}</span>
+        {!manage && <Button size="sm" variant="ghost" icon="settings-2" onClick={() => setManage(true)}>Manage</Button>}
+        {manage && <Button size="sm" variant="ghost" icon="arrow-left" onClick={() => { setManage(false); setEditing(null); }}>Back</Button>}
+        <Button size="sm" variant="ghost" icon="x" onClick={onClose} />
+      </div>
+      {!manage && (
+        <React.Fragment>
+          <div style={{ padding: "8px 10px 4px" }}><Field icon="search" placeholder="Search templates…" value={q} onChange={setQ} /></div>
+          <div style={{ overflowY: "auto", padding: "4px 6px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+            {shown.length === 0 && <div style={{ padding: 14, textAlign: "center", fontSize: 12.5, color: "var(--muted-foreground)" }}>{(templates || []).length ? "No template matches." : "No templates yet — add one under Manage."}</div>}
+            {shown.map((t) => (
+              <button key={t.id} data-template-item onClick={() => onPick(t)}
+                onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", padding: "7px 8px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>{t.title}{t.scope === "org" && <span style={{ fontSize: 9.5, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em" }}>org</span>}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.body}</div>
+                </div>
+                {pill(t.priority || "routine")}
+              </button>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
+      {manage && editing == null && (
+        <div style={{ overflowY: "auto", padding: "6px 8px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+          <Button size="sm" variant="outline" icon="plus" onClick={startNew}>New template</Button>
+          {(templates || []).map((t) => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{t.title} <span style={{ fontSize: 10, color: "var(--muted-foreground)", fontWeight: 600 }}>· {t.scope === "org" ? "organization" : "mine"}</span></div>
+                <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.body}</div>
+              </div>
+              {pill(t.priority || "routine")}
+              {t.canEdit && <Button size="sm" variant="ghost" icon="pencil" onClick={() => startEdit(t)} />}
+              {t.canEdit && <Button size="sm" variant="ghost" icon="trash-2" onClick={() => remove(t)} />}
+            </div>
+          ))}
+        </div>
+      )}
+      {manage && editing != null && (
+        <div style={{ overflowY: "auto", padding: "8px 10px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+          <Field label="Title" value={form.title} onChange={(v) => setForm({ ...form, title: v })} placeholder="Short name shown in the picker" />
+          <Field label="Message" textarea rows={2} value={form.body} onChange={(v) => setForm({ ...form, body: v })} placeholder="Use {room} as a placeholder. No PHI." />
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Priority</span>
+            {Object.keys(PR).map((id) => (
+              <button key={id} onClick={() => setForm({ ...form, priority: id })}
+                style={{ padding: "3px 10px", borderRadius: 99, cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "inherit", color: form.priority === id ? "#fff" : PR[id][1], background: form.priority === id ? PR[id][1] : "transparent", border: "1px solid " + (form.priority === id ? PR[id][1] : "var(--border)") }}>{PR[id][0]}</button>
+            ))}
+            {editing === "new" && canManageOrg && (
+              <label style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+                <input type="checkbox" checked={form.scope === "org"} onChange={(e) => setForm({ ...form, scope: e.target.checked ? "org" : "mine" })} />Organization-wide
+              </label>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Button size="sm" variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button size="sm" icon="check" onClick={save}>{editing === "new" ? "Add template" : "Save"}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Away message field for the Do-not-disturb modal (AppShell): what senders see
+// on the availability line while you're DND / off shift. Saves on blur/Enter
+// via the "awayMessage" user preference.
+function DndAwayMessageField() {
+  const st = useStore();
+  const a = useActions();
+  const saved = (st.myPrefs && st.myPrefs.awayMessage) || "";
+  const [val, setVal] = React.useState(saved);
+  React.useEffect(() => { setVal(saved); }, [saved]);
+  const commit = () => { if (val.trim() !== saved.trim() && a.setAwayMessage) a.setAwayMessage(val); };
+  return (
+    <div data-away-message onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); }}>
+      <Field label="Away message (optional)" icon="message-circle" value={val} onChange={setVal} placeholder="e.g. In clinic until 3pm — page my cover for anything urgent" help="Shown to anyone who messages you while you're unavailable." />
+    </div>
+  );
+}
+
+Object.assign(window, { Messaging, TemplatePicker, DndAwayMessageField });

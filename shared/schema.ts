@@ -138,6 +138,10 @@ export const patients = pgTable("patients", {
     () => hospitalists.id,
   ),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // EHR identifier (MRN / CSN) for "Open in EHR" deep links. PHI: resolved
+  // server-side only (GET /api/patients/:id/ehr-link) and never included in
+  // push, SMS or WebSocket payloads.
+  ehrId: text("ehr_id"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -192,9 +196,21 @@ export const messages = pgTable("messages", {
   // routine | urgent | stat — STAT messages demand an explicit acknowledgement
   // (see messageDeliveryStatus.acknowledgedAt), mirroring clinical-comms tools.
   priority: text("priority").notNull().default("routine"),
+  // Provenance of a forwarded message: where it came from and who wrote it.
+  // NULL for an original message. Ids + a display name + a timestamp only.
+  forwardedFrom: jsonb("forwarded_from").$type<ForwardedFrom | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   deletedAt: timestamp("deleted_at"),
 });
+
+/** Provenance stamped on a forwarded message (see messages.forwardedFrom). */
+export interface ForwardedFrom {
+  messageId: number;
+  senderId: number;
+  senderName: string;
+  conversationId: number;
+  sentAt: string;
+}
 
 export const messageDeliveryStatus = pgTable("message_delivery_status", {
   id: serial("id").primaryKey(),
@@ -231,6 +247,20 @@ export const messageAttachments = pgTable("message_attachments", {
   mimeType: text("mime_type").notNull(),
   byteSize: integer("byte_size").notNull(),
   dataBase64: text("data_base64").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Canned messages for the composer. ownerUserId NULL = org-wide template
+// (directors/developers manage those); otherwise a personal template.
+export const messageTemplates = pgTable("message_templates", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  ownerUserId: integer("owner_user_id").references(() => users.id),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  priority: text("priority").notNull().default("routine"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -712,6 +742,7 @@ export type Assignment = typeof assignments.$inferSelect;
 export type InsertAssignment = z.infer<typeof insertAssignmentSchema>;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
 export type MessageAttachment = typeof messageAttachments.$inferSelect;
 export type InsertMessageAttachment = typeof messageAttachments.$inferInsert;
@@ -768,6 +799,8 @@ export const createPatientSchema = z.object({
   specialty: z.string().optional(),
   department: z.string().optional(),
   acuity: z.number().int().min(1).max(5).optional(),
+  // Optional EHR identifier (MRN/CSN) — printable characters only, no spaces.
+  ehrId: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/).optional(),
 });
 
 export const createAssignmentSchema = z.object({
@@ -804,6 +837,41 @@ export const attachmentUploadSchema = z.object({
 export const markReadSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),
 });
+
+// Forward one message. Exactly one target: an existing conversation the caller
+// is in, a set of people (a direct/group thread is created or reused), or an
+// on-call role target id from /api/messaging/on-call-targets.
+export const forwardMessageSchema = z
+  .object({
+    conversationId: z.number().int().positive().optional(),
+    participantIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+    roleTarget: z.string().min(1).max(120).optional(),
+    // Default routine; the forwarder may opt to keep the original priority.
+    keepPriority: z.boolean().default(false),
+    // Optional note prepended to the forwarded content.
+    note: z.string().max(2000).optional(),
+  })
+  .refine(
+    (v) =>
+      [v.conversationId, v.participantIds, v.roleTarget].filter((x) => x != null)
+        .length === 1,
+    { message: "exactly one target is required" },
+  );
+
+export const createTemplateSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(2000),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  // "org" (directors/developers only) or "mine" (default).
+  scope: z.enum(["org", "mine"]).default("mine"),
+});
+export const updateTemplateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    body: z.string().trim().min(1).max(2000).optional(),
+    priority: z.enum(MESSAGE_PRIORITY).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "nothing to update" });
 
 export const acknowledgeSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),

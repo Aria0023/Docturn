@@ -27,6 +27,9 @@ import {
   sessionCookieOptions,
 } from "../config.js";
 import { getHandle } from "../db.js";
+import { MFA_REQUIRED_MODULE } from "../auth.js";
+import { getModules } from "../modules.js";
+import { attachmentStoreConfig } from "../services/attachment-store.js";
 import type { DatabaseStorage } from "../storage.js";
 import type { ComplianceAttestation } from "@shared/schema";
 import type { ControlStatus } from "./controls.js";
@@ -145,20 +148,30 @@ const checks: Record<string, CheckFn> = {
     const privilegedEnrolled = privileged.filter((u) => u.twoFactorEnabled);
     const policyMet =
       privileged.length > 0 && privilegedEnrolled.length === privileged.length;
+    // Is the org ENFORCING enrolment? Read from the live module map: with
+    // security.mfaRequired on, an un-enrolled privileged user can sign in but
+    // reaches nothing except the enrolment routes (server/auth.ts gate).
+    const modules = await getModules(organizationId);
+    const enforced = modules[MFA_REQUIRED_MODULE] === true;
     return {
       status: policyMet ? "pass" : "warn",
       detail:
         `${enrolled.length} of ${users.length} users have MFA enabled; ` +
         `${privilegedEnrolled.length} of ${privileged.length} privileged accounts (director / ER director / developer) are enrolled. ` +
         (policyMet
-          ? "Policy threshold met: every privileged account has a second factor."
-          : "Policy threshold NOT met: every privileged account must have a second factor."),
+          ? "Policy threshold met: every privileged account has a second factor. "
+          : "Policy threshold NOT met: every privileged account must have a second factor. ") +
+        (enforced
+          ? `Enforcement is ON (module ${MFA_REQUIRED_MODULE}): un-enrolled privileged users are blocked from every route except enrolment until they enrol.`
+          : `Enforcement is OFF (module ${MFA_REQUIRED_MODULE}): enrolment is voluntary and an un-enrolled director keeps full access.`),
       evidence: {
         totalUsers: users.length,
         enrolled: enrolled.length,
         privileged: privileged.length,
         privilegedEnrolled: privilegedEnrolled.length,
         policy: "all privileged accounts enrolled",
+        enforcement: enforced ? "on" : "off",
+        enforcementModule: MFA_REQUIRED_MODULE,
       },
     };
   },
@@ -664,27 +677,51 @@ const checks: Record<string, CheckFn> = {
   },
 
   /**
-   * Never passes: base64-in-database attachment storage is unfit for real ePHI
-   * regardless of how many rows currently exist. The numbers are real.
+   * Reads the attachment store configuration this process is ACTUALLY using
+   * (server/services/attachment-store.ts, resolved from env at call time).
+   * Passes only when new uploads are written as AES-256-GCM ciphertext
+   * (ATTACHMENT_STORE=fs-encrypted with a valid 32-byte ATTACHMENT_KEY). The
+   * default base64-in-database store warns regardless of how many rows exist.
+   * The row counts and bytes are real. Never reveals the key.
    */
   "attachment-storage": async ({ organizationId, store }) => {
     const s = await store.attachmentStats(organizationId);
+    const cfg = attachmentStoreConfig();
+    const encrypted = cfg.mode === "fs-encrypted" && cfg.ready;
+    const volume =
+      s.count === 0
+        ? "No attachments are stored for this organization yet."
+        : `${s.count} attachment(s) totalling ${mb(s.totalBytes)} are stored for this organization.`;
+    const detail = encrypted
+      ? `${volume} New uploads are written as AES-256-GCM ciphertext (random IV and auth tag per file) under the configured attachment directory; plaintext never reaches disk. Object storage under a BAA, antivirus scanning and signed-URL delivery remain the next step for real ePHI.`
+      : cfg.mode === "fs-encrypted"
+        ? `${volume} ATTACHMENT_STORE=fs-encrypted is requested but unusable (${cfg.problem}); uploads are refused rather than stored in plaintext. Set a valid 32-byte ATTACHMENT_KEY.`
+        : `${volume} The upload path writes file bytes as base64 directly into the database row (ATTACHMENT_STORE=db). Real ePHI requires encrypted storage: set ATTACHMENT_STORE=fs-encrypted with ATTACHMENT_KEY, then move to object storage under a BAA with antivirus scanning and signed-URL delivery.`;
     return {
-      status: "warn",
-      detail:
-        (s.count === 0
-          ? "No attachments are stored for this organization yet, but the upload path writes file bytes as base64 directly into the database row."
-          : `${s.count} attachment(s) totalling ${mb(s.totalBytes)} are stored as base64 inside database rows.`) +
-        " Real ePHI requires encrypted object storage under a BAA, server-side antivirus scanning, and signed-URL delivery.",
+      status: encrypted ? "pass" : "warn",
+      detail,
       evidence: {
         attachments: s.count,
         totalBytes: s.totalBytes,
-        storage: "base64 inline in message_attachments.data_base64",
-        missingForRealPhi: [
-          "encrypted object storage (S3/GCS) under a BAA",
-          "server-side antivirus scanning on upload",
-          "short-lived signed-URL delivery",
-        ],
+        storeMode: cfg.mode,
+        storeReady: cfg.ready,
+        keyConfigured: cfg.keyConfigured,
+        keyValid: cfg.keyValid,
+        storage: encrypted
+          ? "AES-256-GCM files under ATTACHMENT_DIR; row holds the fsenc: ref"
+          : "base64 inline in message_attachments.data_base64",
+        missingForRealPhi: encrypted
+          ? [
+              "encrypted object storage (S3/GCS) under a BAA",
+              "server-side antivirus scanning on upload",
+              "short-lived signed-URL delivery",
+            ]
+          : [
+              "encrypted attachment store (ATTACHMENT_STORE=fs-encrypted + ATTACHMENT_KEY)",
+              "encrypted object storage (S3/GCS) under a BAA",
+              "server-side antivirus scanning on upload",
+              "short-lived signed-URL delivery",
+            ],
       },
     };
   },
