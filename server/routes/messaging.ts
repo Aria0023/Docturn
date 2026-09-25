@@ -13,7 +13,7 @@ import {
   type User,
 } from "@shared/schema";
 import { appendAudit, logPhiAccess } from "../audit.js";
-import { requireModule } from "../modules.js";
+import { requireModule, isModuleEnabled } from "../modules.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { isDnd, resolveCovering } from "../services/escalation.js";
 import { notificationDeps } from "../services/notifications.js";
@@ -37,9 +37,23 @@ const ATTACHMENT_ALLOWED_MIME = new Set<string>([
   "text/plain",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  // Voice messages (gated by the messaging.voice module, see the upload route).
+  // MediaRecorder emits webm/opus on Chromium/Firefox and mp4/aac on Safari.
+  "audio/webm",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/mpeg",
+  "audio/aac",
+  "audio/wav",
 ]);
 /** Max decoded attachment size (8 MB). */
 const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+/** Voice-message ceilings. Opus at ~24 kbps is ~180 KB/min, so 3 min stays well
+ *  under 5 MB; the duration cap is the real guardrail against unbounded audio.
+ *  We never raise the shared 12 MB request-parser cap for audio. */
+const VOICE_MAX_BYTES = 5 * 1024 * 1024;
+const VOICE_MAX_DURATION_MS = 3 * 60 * 1000;
+const isAudioMime = (m: string) => m.startsWith("audio/");
 
 // Roles allowed to reach into a patient's care-team thread without a treatment
 // relationship (clinical/administrative oversight). Their access is break-glass:
@@ -317,9 +331,21 @@ export function registerMessagingRoutes(app: Express) {
       if (!ATTACHMENT_ALLOWED_MIME.has(parsed.data.mimeType)) {
         return res.status(400).json({ error: "bad_type" });
       }
+      const audio = isAudioMime(parsed.data.mimeType);
+      // Voice messages are a separately switchable capability. The central
+      // moduleGate covers the attachments path as a whole (messaging.attachments);
+      // audio additionally requires messaging.voice for the caller's org.
+      if (audio && !(await isModuleEnabled(me.organizationId, "messaging.voice"))) {
+        return res.status(404).json({ error: "module_disabled", module: "messaging.voice" });
+      }
+      // A voice clip over the duration ceiling is rejected before we touch bytes.
+      if (audio && parsed.data.durationMs && parsed.data.durationMs > VOICE_MAX_DURATION_MS) {
+        return res.status(400).json({ error: "too_long" });
+      }
       // Size-gate on the base64 length BEFORE decoding so an oversize body
-      // never allocates a multi-megabyte buffer.
-      if (base64ByteSize(parsed.data.dataBase64) > ATTACHMENT_MAX_BYTES) {
+      // never allocates a multi-megabyte buffer. Audio uses a tighter ceiling.
+      const maxBytes = audio ? VOICE_MAX_BYTES : ATTACHMENT_MAX_BYTES;
+      if (base64ByteSize(parsed.data.dataBase64) > maxBytes) {
         return res.status(400).json({ error: "too_large" });
       }
       const bytes = Buffer.from(parsed.data.dataBase64, "base64");
@@ -327,6 +353,7 @@ export function registerMessagingRoutes(app: Express) {
       if (byteSize === 0) {
         return res.status(400).json({ error: "validation_error" });
       }
+      const durationMs = audio ? parsed.data.durationMs ?? null : null;
       let ref: string;
       try {
         ref = await getAttachmentStore().put(bytes, {
@@ -350,6 +377,7 @@ export function registerMessagingRoutes(app: Express) {
         mimeType: parsed.data.mimeType,
         byteSize,
         dataBase64: ref,
+        durationMs,
       });
       await appendAudit({
         organizationId: me.organizationId,
@@ -357,7 +385,7 @@ export function registerMessagingRoutes(app: Express) {
         action: "message.attachment_upload",
         resourceType: "attachment",
         resourceId: id,
-        details: { mimeType: parsed.data.mimeType, byteSize },
+        details: { mimeType: parsed.data.mimeType, byteSize, durationMs },
         riskLevel: "low",
       });
       res.status(201).json({
@@ -365,6 +393,8 @@ export function registerMessagingRoutes(app: Express) {
         fileName: parsed.data.fileName,
         mimeType: parsed.data.mimeType,
         byteSize,
+        durationMs,
+        isAudio: audio,
       });
     },
   );
@@ -723,6 +753,8 @@ export function registerMessagingRoutes(app: Express) {
           mimeType: a.mimeType,
           byteSize: a.byteSize,
           isImage: a.mimeType.startsWith("image/"),
+          isAudio: a.mimeType.startsWith("audio/"),
+          durationMs: a.durationMs ?? null,
           url: "/api/messaging/attachments/" + a.id,
         }));
         const forwarded = forwardedAttachmentIds(m)
@@ -734,6 +766,8 @@ export function registerMessagingRoutes(app: Express) {
             mimeType: a.mimeType,
             byteSize: a.byteSize,
             isImage: a.mimeType.startsWith("image/"),
+            isAudio: a.mimeType.startsWith("audio/"),
+            durationMs: a.durationMs ?? null,
             forwarded: true,
             url: "/api/messaging/messages/" + m.id + "/attachments/" + a.id,
           }));

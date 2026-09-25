@@ -305,8 +305,10 @@ CREATE TABLE IF NOT EXISTS message_attachments (
   mime_type TEXT NOT NULL,
   byte_size INTEGER NOT NULL,
   data_base64 TEXT NOT NULL,
+  duration_ms INTEGER,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE message_attachments ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,

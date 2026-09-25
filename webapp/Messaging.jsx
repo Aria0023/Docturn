@@ -80,6 +80,65 @@ function Messaging() {
     });
   };
   const removePending = (id) => setPending((prev) => prev.filter((p) => p.id !== id));
+
+  // ---- Voice messages (module: messaging.voice) --------------------------
+  // Record audio with the browser MediaRecorder API, then upload it through the
+  // SAME encrypted-attachment path as any file. HIPAA notes: audio bytes live in
+  // memory only (never localStorage); we never send the clip to any speech-to-
+  // text service (no Web Speech API); the mic stream tracks are always stopped.
+  const VOICE_MAX_SECS = 180;
+  const [recording, setRecording] = React.useState(false);
+  const [recSecs, setRecSecs] = React.useState(0);
+  const recRef = React.useRef(null);      // MediaRecorder
+  const chunksRef = React.useRef([]);
+  const streamRef = React.useRef(null);
+  const recTimerRef = React.useRef(null);
+  const recStartRef = React.useRef(0);
+  const recCancelRef = React.useRef(false);
+  const canVoice = modOn("messaging.voice") && typeof window.MediaRecorder !== "undefined" &&
+    navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+
+  const stopTracks = () => { if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; } };
+  const clearRecTimer = () => { if (recTimerRef.current) { clearInterval(recTimerRef.current); recTimerRef.current = null; } };
+
+  const startRec = async () => {
+    if (recording || conv.broadcast) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (err) { if (a.toast) a.toast({ tone: "rejected", title: "Microphone blocked", msg: "Allow mic access to record a voice message." }); return; }
+    // Pick a container the server allow-list accepts (webm/opus on Chromium &
+    // Firefox, mp4/aac on Safari). Strip any ";codecs=…" for the stored mimeType.
+    const prefer = ["audio/webm", "audio/mp4", "audio/ogg"];
+    const type = prefer.find((t) => window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(t)) || "";
+    let mr; try { mr = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream); }
+    catch (err) { stream.getTracks().forEach((t) => t.stop()); if (a.toast) a.toast({ tone: "rejected", title: "Recording unsupported", msg: "This browser can't record audio." }); return; }
+    streamRef.current = stream; recRef.current = mr; chunksRef.current = []; recCancelRef.current = false;
+    mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+    mr.onstop = () => {
+      clearRecTimer(); stopTracks();
+      const durationMs = Math.max(0, Date.now() - recStartRef.current);
+      const wasCancel = recCancelRef.current; setRecording(false); setRecSecs(0);
+      if (wasCancel || !chunksRef.current.length) { chunksRef.current = []; return; }
+      const baseType = (type || (chunksRef.current[0] && chunksRef.current[0].type) || "audio/webm").split(";")[0];
+      const ext = baseType.indexOf("mp4") >= 0 ? "m4a" : baseType.indexOf("ogg") >= 0 ? "ogg" : "webm";
+      const blob = new Blob(chunksRef.current, { type: baseType });
+      chunksRef.current = [];
+      const file = new File([blob], "voice-" + Date.now() + "." + ext, { type: baseType });
+      Promise.resolve(a.uploadAttachment && a.uploadAttachment(file, { durationMs }))
+        .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
+        .catch(() => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: "Voice message" }); });
+    };
+    mr.start(); recStartRef.current = Date.now(); setRecording(true); setRecSecs(0);
+    recTimerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - recStartRef.current) / 1000);
+      setRecSecs(s);
+      if (s >= VOICE_MAX_SECS) stopRec(); // hard cap; server rejects longer anyway
+    }, 250);
+  };
+  const stopRec = () => { const mr = recRef.current; if (mr && mr.state !== "inactive") mr.stop(); };
+  const cancelRec = () => { recCancelRef.current = true; stopRec(); };
+  React.useEffect(() => () => { clearRecTimer(); stopTracks(); }, []); // cleanup on unmount
+  const fmtDur = (ms) => { const s = Math.round((ms || 0) / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   const PRIO = { urgent: { label: "Urgent", color: "#B45309", bg: "#FEF3C7", icon: "alert-triangle" }, stat: { label: "STAT", color: "#B91C1C", bg: "#FEE2E2", icon: "siren" } };
   // Forwarding is SERVER-backed: POST /api/messaging/messages/:id/forward
   // creates the message in the target thread with provenance (original
@@ -349,6 +408,12 @@ function Messaging() {
                     ? <img key={at.id} src={at.url || ("/api/messaging/attachments/" + at.id)} alt={at.fileName}
                         onClick={() => window.open(at.url || ("/api/messaging/attachments/" + at.id), "_blank")}
                         style={{ clear: "both", maxWidth: 220, maxHeight: 220, borderRadius: 10, cursor: "pointer", marginTop: 6, display: "block", border: "1px solid var(--border)" }} />
+                    : at.isAudio
+                    ? <span key={at.id} style={{ clear: "both", marginTop: 6, display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "9px 12px" : "8px 11px", borderRadius: 12, background: "#fff", border: "1px solid var(--border)", maxWidth: 280 }}>
+                        <Icon name="mic" size={16} color="var(--primary)" />
+                        <audio controls preload="none" src={at.url || ("/api/messaging/attachments/" + at.id)} style={{ height: 34, maxWidth: 200 }} />
+                        {at.durationMs ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{fmtDur(at.durationMs)}</span> : null}
+                      </span>
                     : <a key={at.id} href={at.url || ("/api/messaging/attachments/" + at.id)} target="_blank" rel="noreferrer" download={at.fileName}
                         style={{ clear: "both", marginTop: 6, display: "flex", alignItems: "center", gap: 9, padding: isMobile ? "11px 13px" : "9px 12px", borderRadius: 12, textDecoration: "none",
                           background: "#fff", border: "1px solid var(--border)", color: "var(--foreground)", maxWidth: 260 }}>
@@ -424,8 +489,8 @@ function Messaging() {
           <div style={{ flex: "none", padding: isMobile ? "8px 12px 0" : "8px 16px 0", background: "#fff", display: "flex", gap: 6, flexWrap: "wrap" }}>
             {pending.map((p) => (
               <span key={p.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: isMobile ? "7px 10px" : "5px 9px", borderRadius: 99, fontSize: isMobile ? 13 : 12, fontWeight: 500, color: "var(--foreground)", background: "var(--secondary)", border: "1px solid var(--border)", maxWidth: 220 }}>
-                <Icon name="paperclip" size={13} color="var(--muted-foreground)" />
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.fileName}</span>
+                <Icon name={p.isAudio ? "mic" : "paperclip"} size={13} color="var(--muted-foreground)" />
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.isAudio ? ("Voice message" + (p.durationMs ? " · " + fmtDur(p.durationMs) : "")) : p.fileName}</span>
                 <button onClick={() => removePending(p.id)} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", color: "var(--muted-foreground)", padding: 0, display: "inline-flex", alignItems: "center" }}><Icon name="x" size={13} /></button>
               </span>
             ))}
@@ -456,16 +521,38 @@ function Messaging() {
         )}
         <div style={{ flex: "none", padding: isMobile ? "10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px)" : 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,video/mp4" onChange={onPickFiles} style={{ display: "none" }} />
-          <button onClick={() => fileInputRef.current && fileInputRef.current.click()} title="Attach a file" disabled={conv.broadcast}
-            style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: conv.broadcast ? "default" : "pointer" }}>
-            <Icon name="paperclip" size={isMobile ? 20 : 18} />
-          </button>
-          <div style={{ flex: 1 }}>
-            <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
-              style={{ width: "100%", height: isMobile ? 46 : 40, border: (priority === "stat" ? "2px solid #B91C1C" : priority === "urgent" ? "2px solid #B45309" : "1.5px solid #94A3B8"), borderRadius: isMobile ? 23 : "var(--radius-md)", padding: isMobile ? "0 18px" : "0 14px", fontSize: isMobile ? 16 : 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#F1F5F9" }} />
-          </div>
-          {isMobile ? <button onClick={send} title="Send" style={{ width: 46, height: 46, flex: "none", borderRadius: 99, border: "none", background: draft.trim() ? "var(--primary)" : "#93C5FD", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Icon name="send" size={20} color="#fff" /></button> : <Button icon="send" onClick={send}>Send</Button>}
+          {recording ? (
+            <React.Fragment>
+              <button onClick={cancelRec} title="Discard recording"
+                style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <Icon name="trash-2" size={isMobile ? 19 : 17} />
+              </button>
+              <div style={{ flex: 1, height: isMobile ? 46 : 40, borderRadius: isMobile ? 23 : "var(--radius-md)", border: "1.5px solid #B91C1C", background: "#FEF2F2", display: "flex", alignItems: "center", gap: 9, padding: "0 16px", color: "#B91C1C", fontWeight: 600, fontSize: isMobile ? 15 : 13 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 99, background: "#B91C1C", animation: "dt-blink 1s ease-in-out infinite" }} />
+                Recording… {fmtDur(recSecs * 1000)} <span style={{ color: "var(--muted-foreground)", fontWeight: 500 }}>/ {fmtDur(VOICE_MAX_SECS * 1000)}</span>
+              </div>
+              <button onClick={stopRec} title="Stop & attach" style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "none", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Icon name="check" size={isMobile ? 22 : 19} color="#fff" /></button>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <button onClick={() => fileInputRef.current && fileInputRef.current.click()} title="Attach a file" disabled={conv.broadcast}
+                style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: conv.broadcast ? "default" : "pointer" }}>
+                <Icon name="paperclip" size={isMobile ? 20 : 18} />
+              </button>
+              {canVoice && (
+                <button onClick={startRec} title="Record a voice message" disabled={conv.broadcast}
+                  style={{ width: isMobile ? 46 : 40, height: isMobile ? 46 : 40, flex: "none", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: conv.broadcast ? "default" : "pointer" }}>
+                  <Icon name="mic" size={isMobile ? 20 : 18} />
+                </button>
+              )}
+              <div style={{ flex: 1 }}>
+                <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
+                  placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
+                  style={{ width: "100%", height: isMobile ? 46 : 40, border: (priority === "stat" ? "2px solid #B91C1C" : priority === "urgent" ? "2px solid #B45309" : "1.5px solid #94A3B8"), borderRadius: isMobile ? 23 : "var(--radius-md)", padding: isMobile ? "0 18px" : "0 14px", fontSize: isMobile ? 16 : 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#F1F5F9" }} />
+              </div>
+              {isMobile ? <button onClick={send} title="Send" style={{ width: 46, height: 46, flex: "none", borderRadius: 99, border: "none", background: draft.trim() ? "var(--primary)" : "#93C5FD", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Icon name="send" size={20} color="#fff" /></button> : <Button icon="send" onClick={send}>Send</Button>}
+            </React.Fragment>
+          )}
         </div>
         </React.Fragment>) : (
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", gap: 8 }}>

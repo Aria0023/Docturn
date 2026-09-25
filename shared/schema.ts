@@ -247,6 +247,8 @@ export const messageAttachments = pgTable("message_attachments", {
   mimeType: text("mime_type").notNull(),
   byteSize: integer("byte_size").notNull(),
   dataBase64: text("data_base64").notNull(),
+  // Playback length for audio (voice-message) attachments; NULL for images/docs.
+  durationMs: integer("duration_ms"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -832,6 +834,9 @@ export const attachmentUploadSchema = z.object({
   fileName: z.string().min(1).max(255),
   mimeType: z.string().min(1),
   dataBase64: z.string().min(1),
+  // Client-measured playback length for a voice message, in milliseconds.
+  // Advisory metadata for the player chip; the server independently caps it.
+  durationMs: z.number().int().positive().max(10 * 60 * 1000).optional(),
 });
 
 export const markReadSchema = z.object({

@@ -39,6 +39,7 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "messaging.forwarding",   label: "Message forwarding",             group: "Messaging", default: true,  blurb: "Forward a message or thread to a person, role or group with provenance." },
   { id: "messaging.templates",    label: "Message templates",              group: "Messaging", default: true,  blurb: "Org and personal canned messages in the composer." },
   { id: "messaging.attachments",  label: "Attachments",                    group: "Messaging", default: true,  blurb: "Images and documents in messages (type allow-list, participant-only access)." },
+  { id: "messaging.voice",        label: "Voice messages",                 group: "Messaging", default: true,  blurb: "Record and send short audio messages; stored as participant-only audio attachments.", requires: ["messaging.attachments"] },
   { id: "messaging.patientThreads", label: "Patient-linked threads",       group: "Messaging", default: true,  blurb: "A care-team conversation bound to a patient." },
   { id: "messaging.dnd",          label: "Do-not-disturb & covering",      group: "Messaging", default: true,  blurb: "DND with a covering provider; senders see an availability message." },
   { id: "messaging.recall",       label: "Message recall",                 group: "Messaging", default: true,  blurb: "Sender can recall an unread message (audited)." },

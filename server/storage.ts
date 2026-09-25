@@ -263,6 +263,7 @@ export interface IStorage {
     mimeType: string;
     byteSize: number;
     dataBase64: string;
+    durationMs?: number | null;
   }): Promise<{ id: number }>;
   getAttachment(
     orgId: number,
@@ -796,10 +797,11 @@ export class DatabaseStorage implements IStorage {
     mimeType: string;
     byteSize: number;
     dataBase64: string;
+    durationMs?: number | null;
   }) {
     const [row] = await this.db
       .insert(messageAttachments)
-      .values({ ...a, messageId: null })
+      .values({ ...a, durationMs: a.durationMs ?? null, messageId: null })
       .returning({ id: messageAttachments.id });
     return row!;
   }
@@ -846,6 +848,7 @@ export class DatabaseStorage implements IStorage {
         fileName: messageAttachments.fileName,
         mimeType: messageAttachments.mimeType,
         byteSize: messageAttachments.byteSize,
+        durationMs: messageAttachments.durationMs,
       })
       .from(messageAttachments)
       .where(
@@ -2064,6 +2067,7 @@ export class DatabaseStorage implements IStorage {
         fileName: messageAttachments.fileName,
         mimeType: messageAttachments.mimeType,
         byteSize: messageAttachments.byteSize,
+        durationMs: messageAttachments.durationMs,
       })
       .from(messageAttachments)
       .where(

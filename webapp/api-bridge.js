@@ -1225,7 +1225,8 @@
   // Upload a File as a base64 attachment; resolves to {id, fileName, mimeType,
   // byteSize}. The bytes are stored server-side unlinked until sendMessage
   // references the id. (Synthetic-data pilot: no encrypted object store yet.)
-  DT.actions.uploadAttachment = function (file) {
+  DT.actions.uploadAttachment = function (file, opts) {
+    opts = opts || {};
     return new Promise(function (resolve, reject) {
       if (!file) return reject(new Error("no file"));
       var reader = new FileReader();
@@ -1234,11 +1235,16 @@
         var result = String(reader.result || "");
         var comma = result.indexOf(",");
         var b64 = comma >= 0 ? result.slice(comma + 1) : result; // strip data: prefix
-        api("POST", "/api/messaging/attachments", {
+        var body = {
           fileName: file.name || "attachment",
           mimeType: file.type || "application/octet-stream",
           dataBase64: b64,
-        }).then(resolve, reject);
+        };
+        // Voice messages carry a client-measured playback length; the server
+        // caps it independently. NOTE: audio bytes stay in memory only — never
+        // written to localStorage (PHI can be spoken into a clip).
+        if (opts.durationMs && opts.durationMs > 0) body.durationMs = Math.round(opts.durationMs);
+        api("POST", "/api/messaging/attachments", body).then(resolve, reject);
       };
       reader.readAsDataURL(file);
     });
