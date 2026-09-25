@@ -3,32 +3,35 @@
      • API        — token-based pull (preferred, when the vendor exposes one)
      • Capture     — NO public API: DocTurn signs in on your behalf in a sandboxed
                      headless browser and parses the published on-call grid off the
-                     rendered page ("rip contents off screen"). Credentials encrypted
-                     server-side, read-only, every fetch audited.
+                     rendered page ("rip contents off screen"). The access token lives
+                     only in server-side config (never in the DB, never logged),
+                     read-only, every fetch audited.
    Self-contained demo component; manages its own local state. Director surface. */
 
 // Real captured grid — Tarzana ISP hospitalist schedule (amion.com/cgi-bin/ocs).
 // `secure` = "Secure message to Amion app" (onboarded) vs "Not ready to receive
 // secure messages" — the onboarding signal DocTurn uses to invite the rest.
-const SS_HRS = { "7a-7p": ["Day call", "amber"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
+const SS_HRS = { "7a-7p": ["Day call", "amber"], "2p-10p": ["Swing", "blue"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
+// Live Tarzana ISP North on-call roster (captured from Amion OCS grid).
 const SS_ROWS = [
-  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
-  { slot: "Tarzana 2", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
-  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Ahmed, Amir", grp: "ISP North", secure: false },
-  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
-  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
-  { slot: "Tarzana 6", hrs: "7a-7p", prov: "Gideon, Danny", grp: "ISP North", secure: false },
-  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
-  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
-  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
-  { slot: "North Triage", hrs: "7a-7p", prov: "Williams, Nicole", grp: "ISP North", secure: true },
-  { slot: "Tarzana 2 PM Swing", hrs: "4p-12a", prov: "Manukian, Naira", grp: "ISP North", secure: false },
+  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Lou, May", grp: "Lead Hospitalist", secure: true },
+  { slot: "Tarzana 2", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
+  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
+  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Rostami, Matt", grp: "ISP North", secure: true },
+  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
+  { slot: "Tarzana 6", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
+  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
+  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
+  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Yu, Allen", grp: "ISP Hospitalist", secure: true },
+  { slot: "North Triage", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
+  { slot: "Tarzana Swing", hrs: "2p-10p", prov: "Kashi, Kioumars", grp: "ISP North", secure: false },
   { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
+  { slot: "Tarzana Night Triage (incoming 7p)", hrs: "7p-7a", prov: "Tabibian, Allen", grp: "ISP North", secure: false },
   { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
 ];
 const SS_MAP = [
   { code: "7a–7p",  shift: "Day call",      tint: "amber" },
-  { code: "4p–12a", shift: "Swing",         tint: "blue" },
+  { code: "2p–10p", shift: "Swing",         tint: "blue" },
   { code: "7p–7a",  shift: "Nights",        tint: "slate" },
   { code: "11p–7a", shift: "Night X-cover", tint: "slate" },
 ];
@@ -37,7 +40,17 @@ function ssName(prov) { const [last, first] = prov.split(", "); return (first ||
 function ssInit(prov) { const [last, first] = prov.split(", "); return ((first || " ")[0] + last[0]).toUpperCase(); }
 
 // Amion hours → DocTurn shift type.
-const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
+const SS_SHIFT = { "7a-7p": "day", "2p-10p": "swing", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
+
+// Relative "synced X ago" label for the live-feed bar.
+function ssAgo(iso) {
+  if (!iso) return "never";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + " h ago";
+  return Math.floor(s / 86400) + " d ago";
+}
 
 // On-call schedule sources. Each organization picks its own — different
 // hospitals keep their schedule in different places, so the source is
@@ -46,6 +59,11 @@ const SS_SHIFT = { "7a-7p": "day", "4p-12a": "swing", "7p-7a": "night", "11p-7a"
 // demo carries a real captured grid; the others ingest the org's own data.
 const SS_SOURCES = {
   amion:      { label: "Amion",          kind: "vendor", demo: true, blurb: "amion.com on-call grid",         loginUrl: "https://www.amion.com",         api: "https://www.amion.com/api" },
+  // Epic on-call via FHIR R4 (SMART Backend Services). Credentials are server
+  // env only (EPIC_FHIR_BASE_URL / EPIC_CLIENT_ID / EPIC_PRIVATE_KEY_PEM /
+  // EPIC_TOKEN_URL) — issued through the health system's Epic app registration.
+  epic:       { label: "Epic (FHIR)",    kind: "epic",   blurb: "PractitionerRole + Schedule/Slot via FHIR R4", loginUrl: "", api: "" },
+  manual:     { label: "Manual list",    kind: "manual", blurb: "Director-maintained on-call slots in DocTurn", loginUrl: "", api: "" },
   qgenda:     { label: "QGenda",         kind: "vendor", blurb: "QGenda provider schedules",                  loginUrl: "https://app.qgenda.com",        api: "https://api.qgenda.com/v2" },
   tangier:    { label: "Tangier / Spok", kind: "vendor", blurb: "Tangier (Spok) on-call",                     loginUrl: "https://www.tangieronline.com", api: "" },
   shiftadmin: { label: "ShiftAdmin",     kind: "vendor", blurb: "ShiftAdmin scheduling",                      loginUrl: "https://www.shiftadmin.com",    api: "" },
@@ -55,7 +73,10 @@ const SS_SOURCES = {
   custom:     { label: "Custom / other", kind: "vendor", blurb: "Custom endpoint or sign-in capture",         loginUrl: "",                              api: "" },
   none:       { label: "Not configured", kind: "none", blurb: "No schedule source set for this organization", loginUrl: "", api: "" },
 };
-const SS_SOURCE_KEYS = ["amion", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
+const SS_SOURCE_KEYS = ["amion", "epic", "manual", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
+// Sources the on-call board can actually read (server-side schedule-source
+// adapters). Picking one of these also persists the org's board source.
+const SS_BOARD_SOURCES = { amion: true, epic: true, manual: true };
 
 // Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
 function ss24(tok) {
@@ -129,6 +150,35 @@ function ScheduleSync({ org }) {
   const [shiftsAdded, setShiftsAdded] = React.useState(false);
   const [shiftsBusy, setShiftsBusy] = React.useState(false);
 
+  // Live Amion feed status (server-side AMION_OCS_URL env config). Null until
+  // fetched; { configured:false } when the org has no live feed — in which
+  // case everything below behaves exactly like the static snapshot demo.
+  const [amion, setAmion] = React.useState(null);
+  React.useEffect(() => {
+    if (!a.amionStatus) return;
+    Promise.resolve(a.amionStatus()).then((s) => { if (s) setAmion(s); }).catch(() => {});
+  }, []);
+  // Server-side status of the board sources (amion / epic / manual) for this
+  // org — drives the Epic panel and mirrors the org's persisted board source
+  // into the picker once loaded.
+  const [boardSources, setBoardSources] = React.useState(null);
+  const loadBoardSources = () => { if (!a.loadOnCallSources) return; Promise.resolve(a.loadOnCallSources()).then((r) => { if (r) setBoardSources(r); }).catch(() => {}); };
+  React.useEffect(loadBoardSources, []);
+  React.useEffect(() => {
+    if (boardSources && boardSources.explicit && SS_BOARD_SOURCES[boardSources.selected] && a.setScheduleSource) {
+      const code = (org && org.code) || st.selectedOrg || "ISPN";
+      if ((st.scheduleSources || {})[code] !== boardSources.selected) a.setScheduleSource(code, boardSources.selected);
+    }
+  }, [boardSources]);
+  const pickSource = (key) => {
+    a.setScheduleSource(orgCode, key);
+    if (SS_BOARD_SOURCES[key] && a.setOnCallSource) Promise.resolve(a.setOnCallSource(key)).then(loadBoardSources).catch(() => {});
+  };
+  const epicStatus = boardSources && boardSources.sources && boardSources.sources.epic;
+  const epicModuleOn = !boardSources || !boardSources.modules || boardSources.modules.epic !== false;
+  const [epicBusy, setEpicBusy] = React.useState(false);
+  const epicSync = () => { if (!a.epicSyncNow) return; setEpicBusy(true); Promise.resolve(a.epicSyncNow()).then(loadBoardSources).finally(() => setEpicBusy(false)); };
+
   const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
   // The captured Amion on-call grid is the REAL Cedars / Tarzana ISP roster, so
   // it only auto-populates for the Cedars org (code ISP*/CEDARS). Any other org
@@ -138,9 +188,28 @@ function ScheduleSync({ org }) {
   const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
   const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
   const notConfigured = srcKey === "none";
-  const people = React.useMemo(() => ssUniqueProviders(SS_ROWS), []);
+
+  // Live feed rows (server-parsed Amion grid) → same shape as SS_ROWS. When
+  // the env var isn't set (or this isn't the Amion org) we keep the snapshot.
+  const liveRows = React.useMemo(() => {
+    if (!amion || !amion.configured || !Array.isArray(amion.providers) || !amion.providers.length) return null;
+    return amion.providers.map((p) => ({ slot: p.slot, hrs: p.hrs, prov: p.name, grp: p.group, secure: !!p.secure }));
+  }, [amion]);
+  const liveOk = !!(amion && amion.configured && amion.lastStatus === "ok" && liveRows);
+  const liveErr = !!(amion && amion.configured && amion.lastStatus === "error");
+  const rows = liveRows || SS_ROWS;
+
+  // A configured live feed connects itself — no fake "sign in & capture" step.
+  React.useEffect(() => {
+    if (amion && amion.configured) {
+      setConnected(true); setRevealed(true);
+      if (amion.lastSyncAt) setLastSync(ssAgo(amion.lastSyncAt));
+    }
+  }, [amion]);
+
+  const people = React.useMemo(() => ssUniqueProviders(rows), [rows]);
   const remaining = people.filter((p) => !added[p.name]);
-  const shiftTypes = React.useMemo(() => ssShiftTypes(SS_ROWS), []);
+  const shiftTypes = React.useMemo(() => ssShiftTypes(rows), [rows]);
 
   const importShifts = () => {
     if (!a.importShiftTypes) return;
@@ -180,7 +249,8 @@ function ScheduleSync({ org }) {
   // Switching the org's source resets the live connection and points the
   // sign-in/API fields at the new vendor's defaults.
   React.useEffect(() => {
-    setConnected(false); setRevealed(false);
+    // A live env-configured Amion feed stays connected regardless of the picker.
+    if (!(amion && amion.configured)) { setConnected(false); setRevealed(false); }
     if (src.api) setBaseUrl(src.api);
     if (src.loginUrl) setLoginUrl(src.loginUrl);
   }, [srcKey]);
@@ -189,11 +259,41 @@ function ScheduleSync({ org }) {
     setBusy(true);
     setTimeout(() => { setBusy(false); setConnected(true); setRevealed(true); setLastSync("just now"); }, 1200);
   };
-  const syncNow = () => { setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900); };
+  const syncNow = () => {
+    // Live feed → real server-side sync (re-pulls Amion, updates the roster).
+    if (amion && amion.configured && a.amionSyncNow) {
+      setBusy(true);
+      Promise.resolve(a.amionSyncNow())
+        .then((s) => { if (s) setAmion(s); setLastSync("just now"); })
+        .catch(() => {})
+        .finally(() => setBusy(false));
+      return;
+    }
+    setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900);
+  };
   const disconnect = () => { setConnected(false); setRevealed(false); };
 
   return (
     <Card style={{ padding: 18, marginBottom: 18 }}>
+      {/* Feed banner: green when the live Amion feed is connected & healthy;
+          amber "feed error" when the last pull failed (last snapshot shown);
+          amber "Preview" when no live feed is configured (static snapshot). */}
+      {liveOk ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#D1FAE5", border: "1px solid #6EE7B7" }}>
+          <Icon name="circle-check-big" size={15} color="#065F46" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#065F46" }}>Live Amion feed · synced {ssAgo(amion.lastSyncAt)} · {amion.rowCount} slots</span>
+        </div>
+      ) : liveErr ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+          <Icon name="triangle-alert" size={15} color="#92400E" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Amion feed error — showing last snapshot.</span>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+          <Icon name="info" size={15} color="#92400E" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Preview — schedule shown is a loaded snapshot, not a live Amion connection.</span>
+        </div>
+      )}
       {/* header */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
         <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
@@ -208,7 +308,7 @@ function ScheduleSync({ org }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
           <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</span>
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-            <select value={srcKey} onChange={(e) => a.setScheduleSource(orgCode, e.target.value)}
+            <select value={srcKey} onChange={(e) => pickSource(e.target.value)}
               style={{ appearance: "none", WebkitAppearance: "none", height: 30, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
               {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}</option>)}
               <option value="none">Not configured</option>
@@ -226,6 +326,40 @@ function ScheduleSync({ org }) {
             <div style={{ fontSize: 13.5, fontWeight: 600 }}>No schedule source for {orgCode}</div>
             <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Choose this organization's scheduling system above (Amion, QGenda, …) to import its on-call grid.</div>
           </div>
+        </div>
+      )}
+
+      {/* Epic (FHIR R4, SMART Backend Services) — server-env credentials only;
+          shows what the health system's Epic team must issue when absent. */}
+      {srcKey === "epic" && (
+        <div style={{ marginTop: 14 }}>
+          {!epicModuleOn ? (
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
+              <Icon name="triangle-alert" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
+              <span>The <b>Epic on-call (FHIR)</b> module is switched off for this organization. A developer can enable it from the module console.</span>
+            </div>
+          ) : epicStatus && epicStatus.configured ? (
+            <div style={{ display: "flex", gap: 9, alignItems: "center", background: epicStatus.lastStatus === "error" ? "#FEF3C7" : "#D1FAE5", border: "1px solid " + (epicStatus.lastStatus === "error" ? "#FCD34D" : "#6EE7B7"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "#92400E" : "#065F46", flexWrap: "wrap" }}>
+              <Icon name={epicStatus.lastStatus === "error" ? "triangle-alert" : "circle-check-big"} size={15} />
+              <span style={{ fontWeight: 600 }}>Epic FHIR connected · {epicStatus.lastStatus === "error" ? "last sync failed" : "synced " + ssAgo(epicStatus.lastSyncAt)} · {epicStatus.rowCount} on-call rows</span>
+              {epicStatus.error && <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.error}</span>}
+              <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="rotate-ccw" onClick={epicSync} disabled={epicBusy}>{epicBusy ? "Syncing…" : "Sync now"}</Button></span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+              <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
+              <span>
+                <b style={{ color: "var(--foreground)" }}>Needs Epic app credentials</b> (App Orchard / Vendor Services registration). DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) using SMART Backend Services — a registered backend app, its client ID and RS384 private key, and the site's FHIR base + token URLs, set on the server as <code>EPIC_FHIR_BASE_URL</code>, <code>EPIC_CLIENT_ID</code>, <code>EPIC_PRIVATE_KEY_PEM</code>, <code>EPIC_TOKEN_URL</code> (and <code>EPIC_ORG_CODE</code> for this organization). Nothing is fabricated until those are present.
+                {epicStatus && epicStatus.message ? <span style={{ display: "block", marginTop: 6, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.message}</span> : null}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      {srcKey === "manual" && (
+        <div style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+          <Icon name="pencil" size={15} style={{ marginTop: 1, flex: "none" }} />
+          <span>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0 }}>Open the board →</button></span>
         </div>
       )}
 
@@ -249,7 +383,7 @@ function ScheduleSync({ org }) {
             <div style={{ marginTop: 12 }}>
               <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
                 <Icon name="info" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
-                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. Credentials are <b>encrypted (AES-256) at rest</b>, used only to fetch the schedule, and every capture is written to the audit log.</span>
+                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. The access token lives <b>only in server-side configuration</b> — never stored in the database, never written to a log, never returned by the API — is used only to fetch the schedule, and every capture is written to the audit log.</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <Field label="Sign-in URL" icon="link" value={loginUrl} onChange={setLoginUrl} />
@@ -322,11 +456,11 @@ function ScheduleSync({ org }) {
                     <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready">Sec</th>
                   </tr></thead>
                   <tbody>
-                    {SS_ROWS.map((r, i) => (
+                    {rows.map((r, i) => (
                       <tr key={i}>
-                        <td style={{ padding: "5px 10px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.slot}<span style={{ color: "var(--muted-foreground)", marginLeft: 5 }}>{r.hrs}</span></td>
-                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.prov}</td>
-                        <td style={{ padding: "5px 8px", borderBottom: i < SS_ROWS.length - 1 ? "1px solid var(--border)" : "none", textAlign: "center" }}>
+                        <td style={{ padding: "5px 10px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.slot}<span style={{ color: "var(--muted-foreground)", marginLeft: 5 }}>{r.hrs}</span></td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", whiteSpace: "nowrap" }}>{r.prov}</td>
+                        <td style={{ padding: "5px 8px", borderBottom: i < rows.length - 1 ? "1px solid var(--border)" : "none", textAlign: "center" }}>
                           <Icon name={r.secure ? "check" : "x"} size={12} color={r.secure ? "var(--status-accepted)" : "var(--status-rejected)"} />
                         </td>
                       </tr>
@@ -417,7 +551,7 @@ function ScheduleSync({ org }) {
               <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 11.5, color: "var(--muted-foreground)" }}>
-              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · credentials encrypted at rest · every capture written to the audit log.
+              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · token kept in server-side config, never in the database · every capture written to the audit log.
             </div>
           </div>
         </div>

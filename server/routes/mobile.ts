@@ -3,6 +3,7 @@ import { deviceTokenSchema } from "@shared/schema";
 import { logPhiAccess } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { storage } from "../storage.js";
+import { getVapidPublicKey } from "../services/push.js";
 
 /**
  * Mobile endpoints: public org lookup (safe fields only, for QR onboarding),
@@ -45,6 +46,13 @@ export function registerMobileRoutes(app: Express) {
         };
       }),
     );
+  });
+
+  // Public key browsers need to create a Web Push subscription (PWA + web).
+  app.get("/api/push/vapid-key", requireAuth, (_req, res) => {
+    const key = getVapidPublicKey();
+    if (!key) return res.status(503).json({ error: "push_unavailable" });
+    res.json({ key });
   });
 
   app.post("/api/mobile/device-tokens", requireAuth, async (req, res) => {

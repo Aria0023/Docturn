@@ -87,6 +87,71 @@ await chen.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ con
 await wait(500);
 rec("Chen→ER reply delivered live (bidirectional)", erWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
 
+// REAL typing indicator: Chen's typing_start relays to ER as user_typing (and
+// never echoes back to Chen — the server excludes the sender).
+before = erWs.got.length;
+const chenBefore = chenWs.got.length;
+chenWs.sock.send(JSON.stringify({ type: "typing_start", conversationId: convo.id, participantIds: convo.participantIds }));
+await wait(400);
+rec("typing_start relays to the peer as user_typing (real, not simulated)",
+  erWs.got.slice(before).some((e) => e.type === "user_typing" && e.conversationId === convo.id && e.typing === true && e.userId === chenU.id));
+rec("typing is not echoed back to the sender",
+  !chenWs.got.slice(chenBefore).some((e) => e.type === "user_typing"));
+chenWs.sock.send(JSON.stringify({ type: "typing_stop", conversationId: convo.id, participantIds: convo.participantIds }));
+await wait(400);
+rec("typing_stop relays too", erWs.got.slice(before).some((e) => e.type === "user_typing" && e.typing === false));
+
+// STAT / priority messaging + acknowledgement.
+before = chenWs.got.length;
+const stat = await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: convo.id, content: "STAT: rapid response, bed 4", priority: "stat" }) });
+rec("STAT message sends with priority=stat", stat.status === 201 && stat.json.priority === "stat", "status=" + stat.status + " pri=" + (stat.json || {}).priority);
+await wait(400);
+rec("STAT delivered live carries its priority", chenWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED" && e.message && e.message.priority === "stat"));
+const statId = stat.json.id;
+// Chen (recipient) sees it unacknowledged, then acknowledges it.
+let cmsgs = (await chen.f("/api/messaging/conversations/" + convo.id + "/messages")).json || [];
+let statRow = cmsgs.find((m) => m.id === statId) || {};
+rec("recipient sees STAT unacknowledged (ackCount 0)", statRow.priority === "stat" && statRow.ackCount === 0 && statRow.acknowledgedByMe === false, "row=" + JSON.stringify({ p: statRow.priority, a: statRow.ackCount, m: statRow.acknowledgedByMe }));
+before = erWs.got.length;
+const ack = await chen.f("/api/messaging/messages/ack", { method: "POST", body: JSON.stringify({ messageIds: [statId] }) });
+rec("acknowledge returns 204", ack.status === 204, "status=" + ack.status);
+await wait(400);
+rec("sender is notified of the ack live (MESSAGE_ACK)", erWs.got.slice(before).some((e) => e.type === "MESSAGE_ACK" && e.messageId === statId && e.userId === chenU.id));
+const erMsgs = (await er.f("/api/messaging/conversations/" + convo.id + "/messages")).json || [];
+rec("sender now sees ackCount=1 on the STAT", (erMsgs.find((m) => m.id === statId) || {}).ackCount === 1);
+// Bad priority is rejected.
+const bad = await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: convo.id, content: "x", priority: "nope" }) });
+rec("invalid priority is rejected (400)", bad.status === 400, "status=" + bad.status);
+
+// On-call role addressing: a director publishes a consult catalog whose on-call
+// is given by DISPLAY NAME only; the server resolves that name to a real
+// messageable userId in the org. ER then addresses the ROLE (not a named
+// person), and the message reaches whoever holds it — live.
+{
+  const dirA = jar();
+  await login(dirA, "director");
+  const pref = await dirA.f("/api/org/preferences", { method: "PATCH", body: JSON.stringify({
+    consultServices: [{ id: "cs-cardio", name: "Cardiology", onCall: { name: chenU.displayName, avatar: "NA" }, members: [] }],
+  }) });
+  rec("director publishes a consult on-call by display name", pref.status === 200, "status=" + pref.status);
+
+  const targets = (await er.f("/api/messaging/on-call-targets")).json || [];
+  rec("on-call targets all resolve to real userIds", targets.length > 0 && targets.every((t) => typeof t.userId === "number" && t.userId > 0),
+    "targets=" + JSON.stringify(targets.map((t) => t.kind + ":" + t.userId)));
+  rec("next-hospitalist role is exposed and resolves", targets.some((t) => t.kind === "next_hospitalist"));
+  const cardio = targets.find((t) => t.kind === "consult_service" && t.userId === chenU.id);
+  rec("consult on-call display name resolves → messageable userId", !!cardio && cardio.label === "On-call Cardiology", "t=" + JSON.stringify(cardio));
+
+  if (cardio) {
+    before = chenWs.got.length;
+    const roleConvo = (await er.f("/api/messaging/conversations", { method: "POST", body: JSON.stringify({ type: "direct", name: cardio.label, participantIds: [cardio.userId] }) })).json;
+    rec("on-call conversation is named after the role", roleConvo && roleConvo.name === "On-call Cardiology", "name=" + (roleConvo && roleConvo.name));
+    await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: roleConvo.id, content: "On-call Cardiology, please advise" }) });
+    await wait(400);
+    rec("messaging a resolved on-call role reaches the holder live", chenWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
+  }
+}
+
 // Decline visibility: ER routes a fresh patient to Chen, Chen declines — the ER
 // must SEE the decline live and in its sent feed (and the auto-reroute).
 const patelH = hosps.find((h) => h.specialty && h.userId && h.id !== chenProv.id);

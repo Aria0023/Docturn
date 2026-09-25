@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { registerAuthRoutes } from "../auth.js";
+import { registerAmionRoutes } from "./amion.js";
 import { registerAssignmentRoutes } from "./assignments.js";
 import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
@@ -10,8 +11,12 @@ import { registerConfigRoutes } from "./config.js";
 import { registerDevRoutes } from "./dev.js";
 import { registerHealthRoutes } from "./health.js";
 import { registerMessagingRoutes } from "./messaging.js";
+import { registerMetricsRoutes } from "./metrics.js";
+import { registerReportsRoutes } from "./reports.js";
 import { registerMfaRoutes } from "./mfa.js";
 import { registerMobileRoutes } from "./mobile.js";
+import { registerModuleRoutes } from "./modules.js";
+import { registerOnCallRoutes } from "./oncall.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
@@ -28,6 +33,8 @@ export function registerRoutes(app: Express) {
   registerPatientRoutes(app);
   registerAssignmentRoutes(app);
   registerMessagingRoutes(app);
+  registerMetricsRoutes(app);
+  registerReportsRoutes(app);
   registerOrgRoutes(app);
   registerSettingsRoutes(app);
   registerConfigRoutes(app);
@@ -40,4 +47,7 @@ export function registerRoutes(app: Express) {
   registerDevRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);
+  registerAmionRoutes(app);
+  registerModuleRoutes(app);
+  registerOnCallRoutes(app);
 }

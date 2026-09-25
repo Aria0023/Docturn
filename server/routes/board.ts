@@ -124,6 +124,12 @@ export function registerBoardRoutes(app: Express) {
   app.get("/api/patients/:id/consults", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const patientId = Number(req.params.id);
+    // Consults are clinical content about a named patient — audited per read,
+    // with the patient identified so §164.528 accounting can be answered.
+    await logPhiAccess(req, "patient-consults", {
+      resourceId: patientId,
+      patientId,
+    });
     res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
   });
 

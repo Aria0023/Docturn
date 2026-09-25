@@ -13,7 +13,9 @@ const createProviderSchema = z.object({
   specialty: z.string().default("General"),
   patientCap: z.number().int().min(1).max(50).default(12),
   shiftType: z.enum(["day", "night", "swing"]).default("day"),
-  role: z.enum(["hospitalist", "er_doctor"]).default("hospitalist"),
+  role: z
+    .enum(["hospitalist", "er_doctor", "er_director", "director"])
+    .default("hospitalist"),
   credential: z.enum(["MD", "DO", "NP", "PA"]).optional(),
   // Imported-from-schedule providers come in on-shift (drives on-call roster).
   working: z.boolean().optional(),
@@ -101,6 +103,13 @@ export function registerProviderRoutes(app: Express) {
     requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
+
+      // Security boundary: only the dedicated developer route may mint developer
+      // (super-admin) accounts. Enforced server-side regardless of the UI.
+      if (req.body?.role === "developer" && me.role !== "developer") {
+        return res.status(403).json({ error: "forbidden" });
+      }
+
       const parsed = createProviderSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const data = parsed.data;

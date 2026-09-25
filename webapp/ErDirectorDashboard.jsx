@@ -64,13 +64,22 @@ function ErStatsPanel({ erPhysicians, sent, board, avgAcceptSec }) {
   const declined = (sent || []).filter((s) => s.status === "declined" || s.status === "rejected").length;
   const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
   const pendingER = (board || []).filter((b) => b.status === "pending").length;
+  const statMetrics = [
+    { key: "admits", label: "Admits today", value: admitsToday },
+    { key: "routed", label: "Routed via DocTurn", value: todaySent.length },
+    { key: "ttaccept", label: "Avg time-to-accept", value: fmtDuration(avgAcceptSec) },
+    { key: "acceptrate", label: "Acceptance rate", value: acceptRate + "%" },
+    { key: "accepted", label: "Accepted", value: accepted },
+    { key: "declined", label: "Declined", value: declined },
+    { key: "pending", label: "Pending in ER", value: pendingER },
+  ];
   return (
-    <div style={{ display: "flex", gap: 14 }}>
-      <ErStat label="Admits today" value={admitsToday} icon="clipboard-plus" tint="blue" sub={todaySent.length + " routed via DocTurn"} />
-      <ErStat label="Avg time-to-accept" value={fmtDuration(avgAcceptSec)} icon="timer" tint="amber" sub="across hospitalist groups" />
-      <ErStat label="Acceptance rate" value={acceptRate + "%"} icon="check-check" tint="emerald" sub={accepted + " accepted · " + declined + " declined"} />
-      <ErStat label="Pending in ER" value={pendingER} icon="loader" tint="slate" sub="awaiting hospitalist accept" />
-    </div>
+    <CustomizableStats statKey="er_director:stats" metrics={statMetrics} stats={[
+      { id: "admits", label: "Admits today", value: admitsToday, icon: "clipboard-plus", tint: "blue", sub: todaySent.length + " routed via DocTurn" },
+      { id: "ttaccept", label: "Avg time-to-accept", value: fmtDuration(avgAcceptSec), icon: "timer", tint: "amber", sub: "across hospitalist groups" },
+      { id: "acceptrate", label: "Acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
+      { id: "pending", label: "Pending in ER", value: pendingER, icon: "loader", tint: "slate", sub: "awaiting hospitalist accept" },
+    ]} />
   );
 }
 

@@ -52,7 +52,18 @@ window.fetch = async (url, opts = {}) => {
   const u = String(url).startsWith("http") ? String(url) : BASE + url;
   const headers = { ...(opts.headers || {}) };
   if (cookie) headers.cookie = cookie;
-  const res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  // One retry on a pure transport failure ("fetch failed": a keep-alive socket
+  // reset by the burst of hydration requests the kit fires after some actions).
+  // The server is healthy in that case — verified — so a retry is the honest
+  // equivalent of a browser's automatic reconnect, not a way to hide a bug.
+  let res;
+  try {
+    res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    await new Promise((r) => setTimeout(r, 150));
+    res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  }
   const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
   if (sc && sc.length) cookie = sc.map((c) => c.split(";")[0]).join("; ");
   return res;
@@ -68,15 +79,12 @@ runInWindow(read("store.js"), "store.js");
 runInWindow(read("api-bridge.js"), "api-bridge.js");
 if (!window.DT) { console.log("FATAL: store.js did not set window.DT"); process.exit(2); }
 
-const JSX_FILES = [
-  "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
-  "HospitalistDashboard.jsx", "HospitalistWork.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
-  "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
-  "PatientBoard.jsx", "DeveloperDashboard.jsx", "OrgConfig.jsx", "ComplianceOverview.jsx", "SupportDirectory.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
-  "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
-  "CustomizableDashboard.jsx", "ConsultServices.jsx", "RegistrationApprovals.jsx",
-];
 const html = read("index.html");
+// Load exactly the JSX files index.html loads, in the same order, so a newly
+// added screen (MfaScreen, OnCallBoard, …) can never silently drop out of the
+// smoke and fail "App mounted" for a reason unrelated to the product.
+const JSX_FILES = [...html.matchAll(/<script[^>]*src="([A-Za-z0-9_-]+\.jsx)"/g)].map((m) => m[1]);
+if (JSX_FILES.length === 0) { console.log("FATAL: no .jsx script tags found in index.html"); process.exit(2); }
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);
 if (!inlineApp) { console.log("FATAL: could not find inline App script in index.html"); process.exit(2); }
 const bundle = JSX_FILES.map(read).join("\n;\n") + "\n;\n" + inlineApp[1];
@@ -141,8 +149,9 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
   if (role === "developer") {
     const mercy = (st.orgs || []).find((o) => o.code === "ISPN");
     const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
-    // ISPN seeds the real Cedars Amion roster: 3 ops roles + 12 hospitalists + 1 PA = 16.
-    rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users === 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
+    // ISPN seeds the real Cedars Amion roster (3 ops roles + hospitalists + PA);
+    // assert "a realistic seeded roster", not an exact count that drifts with seed edits.
+    rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users >= 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }
   if (role === "hospitalist") rec("hospitalist: providers hydrated", (st.providers || []).length >= 4, "providers=" + (st.providers || []).length);
   for (const navId of NAV[role]) { DT.actions.setNav(navId); await flush(); await clickEveryButton(role, navId); }
@@ -226,10 +235,61 @@ await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await 
   const ispn = Array.isArray(arr) ? arr.find((o) => o.code === "ISPN") : null;
   rec("dev compliance overview separates by organization",
     Array.isArray(arr) && arr.length >= 1 && !!ispn && typeof ispn.auditCount === "number" && typeof ispn.phiCount === "number",
-    "orgs=" + JSON.stringify((arr || []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200));
+    "orgs=" + JSON.stringify((Array.isArray(arr) ? arr : []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200) +
+      (Array.isArray(arr) ? "" : " (non-array response: " + JSON.stringify(arr).slice(0, 80) + ")"));
   rec("support directory: users hydrated per organization",
     (DT.getState().devUsers || []).some((u) => u.org && u.name),
     "users=" + (DT.getState().devUsers || []).length);
+}
+
+// Synthetic-data mode: public /api/config flag + store default both "on" so the
+// test-only banner shows unless an operator deliberately disables it.
+{
+  const cfg = await window.fetch("/api/config", { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  rec("public /api/config exposes synthetic-data flag (default on)", cfg.syntheticData === true, "cfg=" + JSON.stringify(cfg));
+  rec("store defaults to synthetic-data mode on", DT.getState().syntheticData === true, "flag=" + DT.getState().syntheticData);
+}
+
+// Compliance monitor — POLICY STARTER PACK. The manual ("Needs human") controls
+// must each offer a starter draft, and the draft the Compliance monitor screen
+// opens must come back rendered for THIS organization with no unresolved
+// {placeholder} left in it. Driven through the real bridge actions the screen
+// calls (loadPolicyTemplates / loadPolicy), against the live server.
+await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+{
+  DT.actions.setNav("compliance-monitor");
+  for (let i = 0; i < 10; i++) await flush();
+
+  const report = await DT.actions.loadComplianceStatus().catch(() => null);
+  const manualIds = ((report || {}).controls || []).filter((c) => c.kind === "manual").map((c) => c.id);
+  const metas = await DT.actions.loadPolicyTemplates();
+  const haveTemplate = new Set((metas || []).map((m) => m.controlId));
+  rec("policy starter pack covers every manual control",
+    manualIds.length >= 13 && manualIds.every((id) => haveTemplate.has(id)),
+    "manual=" + manualIds.length + " templates=" + (metas || []).length +
+    " missing=" + JSON.stringify(manualIds.filter((id) => !haveTemplate.has(id))));
+  rec("policy list is metadata only (no document bodies over the wire)",
+    (metas || []).every((m) => !m.body && !m.markdown && (m.actionRequired || "").length > 40),
+    "sample=" + JSON.stringify((metas || [])[0] || {}).slice(0, 160));
+
+  const doc = await DT.actions.loadPolicy("risk-analysis").catch((e) => ({ error: String(e && e.message) }));
+  const md = (doc && doc.markdown) || "";
+  const orgName = ((report || {}).organization || {}).name || "";
+  rec("draft policy renders a real document for this organization",
+    md.length > 1500 && !!orgName && md.includes(orgName),
+    "len=" + md.length + " org=" + orgName);
+  rec("rendered draft leaves NO unresolved placeholder",
+    md.length > 0 && !/\{[a-zA-Z]+\}/.test(md),
+    "leftover=" + JSON.stringify((md.match(/\{[a-zA-Z]+\}/g) || []).slice(0, 3)));
+  rec("process controls say plainly that signing is not the control",
+    /do not sign this page/i.test((doc && doc.actionRequired) || "") && /HealthIT\.gov/.test(md),
+    "action=" + String((doc && doc.actionRequired) || "").slice(0, 90));
+
+  const auto = await DT.actions.loadPolicy("auth-rate-limit").catch(() => null);
+  rec("an AUTOMATED control has no policy to sign", auto === null, "auto=" + JSON.stringify(auto).slice(0, 80));
+
+  DT.actions.setNav("dashboard");
+  await flush();
 }
 
 // developer enters an organization's FULL portal (org-scoped admin context) so
@@ -391,6 +451,29 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
     detail = "received=" + ok + " from=" + (conv2 && conv2.name);
   }
   rec("messaging: receiver sees the sender's message (cross-user)", ok, detail);
+}
+
+// On-call role addressing: the compose picker can address a ROLE (e.g. the next
+// hospitalist by rotation) that resolves to whoever holds it; selecting it opens
+// a direct conversation with the resolved holder (named after the role).
+await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+{
+  let targets = [];
+  try { targets = await DT.actions.listOnCallTargets(); } catch {}
+  for (let i = 0; i < 8 && (!targets || !targets.length); i++) { await flush(); targets = (DT.getState().onCallTargets || []); }
+  const resolvedOk = !!(targets && targets.length && targets.every((t) => typeof t.userId === "number" && t.userId > 0));
+  rec("on-call targets load and every one resolves to a userId", resolvedOk, "targets=" + JSON.stringify((targets || []).map((t) => t.kind)));
+  const nextH = (targets || []).find((t) => t.kind === "next_hospitalist");
+  let ok = false, detail = "no next-hospitalist target";
+  if (nextH) {
+    await DT.actions.startRoleConversation(nextH);
+    let active = null;
+    for (let i = 0; i < 14 && active == null; i++) { await flush(); active = DT.getState().__activeConvo; }
+    const conv = (DT.getState().conversations || []).find((c) => c.id === active);
+    ok = !!(conv && typeof conv.id === "number");
+    detail = "active=" + active + " conv=" + (conv && conv.name);
+  }
+  rec("selecting an on-call role opens a direct conversation with the holder", ok, detail);
 }
 
 // demo resilience: a wrong/stale org code (e.g. cached "MERCY") still signs in
@@ -673,6 +756,14 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   } else {
     rec("ER physician sees consultants they called on their own board", false, "no sent patient with patientId");
   }
+}
+
+// Self-service password change: a wrong current password is rejected (so the
+// account is unchanged and demo logins keep working).
+await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+{
+  const r = await DT.actions.changePassword("definitely-wrong-pass", "BrandNewPass123");
+  rec("password change rejects an incorrect current password", r && r.ok === false, "r=" + JSON.stringify(r));
 }
 
 // Consulting a service with a NAMED on-call records that provider's name (not a

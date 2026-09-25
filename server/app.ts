@@ -5,12 +5,20 @@ import { fileURLToPath } from "node:url";
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import session from "express-session";
 import passport from "passport";
-import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import createMemoryStore from "memorystore";
 import { configurePassport, verifyPassword } from "./auth.js";
+import {
+  AUTH_RATE_LIMIT,
+  GENERAL_RATE_LIMIT,
+  SESSION_POLICY,
+  securityHeaders,
+  sessionCookieOptions,
+  setRateLimitState,
+} from "./config.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
+import { moduleGate } from "./modules.js";
 import { storage } from "./storage.js";
 import { toSafeUser } from "@shared/schema";
 
@@ -34,12 +42,20 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   if (opts.trustProxy) app.set("trust proxy", 1);
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: false, // SPA served separately; relax for dev.
-    }),
-  );
-  app.use(express.json({ limit: "1mb" }));
+  // Security response headers. The instance lives in server/config.ts so the
+  // compliance monitor can probe the SAME middleware for the headers it emits.
+  app.use(securityHeaders);
+  // Global JSON body parser (1 MB). The attachment-upload route needs a larger
+  // limit for base64 file bodies, so it is excluded here and mounts its OWN
+  // express.json({ limit: "12mb" }) — otherwise this 1 MB cap would reject the
+  // upload before the route-level parser could run.
+  const globalJson = express.json({ limit: "1mb" });
+  app.use((req, res, next) => {
+    if (req.method === "POST" && req.path === "/api/messaging/attachments") {
+      return next();
+    }
+    return globalJson(req, res, next);
+  });
 
   // Session store: real Postgres uses connect-pg-simple; otherwise in-memory.
   const MemoryStore = createMemoryStore(session);
@@ -50,23 +66,16 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     process.env.SESSION_SECRET ??
     randomBytes(32).toString("hex");
 
+  // Cookie/session posture comes from SESSION_POLICY (server/config.ts) — the
+  // same values the `session-timeout` / `session-cookie-flags` controls read.
   const sessionMiddleware: RequestHandler = session({
-    name: "docturn.sid",
+    name: SESSION_POLICY.name,
     secret,
     resave: false,
     saveUninitialized: false,
     store,
-    rolling: true, // 15-minute rolling, inactivity expiry.
-    cookie: {
-      httpOnly: true,
-      // "lax" (not "strict") so the session cookie reliably sticks when the app
-      // is reached from another device / through a tunnel (strict can drop the
-      // cookie in some navigation contexts, e.g. mobile Safari). Still safe: the
-      // API is same-origin and CSRF surface is minimal for this app.
-      sameSite: "lax",
-      secure: isProd,
-      maxAge: 15 * 60 * 1000,
-    },
+    rolling: SESSION_POLICY.rolling, // maxAge behaves as INACTIVITY expiry.
+    cookie: sessionCookieOptions(),
   });
   app.locals.sessionMiddleware = sessionMiddleware;
 
@@ -79,12 +88,21 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // identity without colliding on the shared session cookie. Additive — a
   // request with no token is unaffected.
   app.use(demoTokenAuth());
+  // Feature-module gate: per-org on/off switches enforced centrally (one table
+  // in server/modules.ts) so route files stay untouched. After session/passport
+  // so currentUser(req) is populated; before registerRoutes so it wins.
+  app.use(moduleGate());
 
   // Mint a demo token from valid demo credentials. Non-production only; the
   // 3-up demo console (/demo) calls this once per pane, then loads the real app
   // in an iframe with ?token=<t>. Requires the demo password, like normal login.
   if (!isProd) {
     app.post("/api/demo/login", async (req, res) => {
+      // Demo tokens are a synthetic-data affordance: refuse when the operator
+      // has deliberately switched the instance to real-PHI mode.
+      if (process.env.SYNTHETIC_DATA === "false") {
+        return res.status(403).json({ error: "demo_disabled" });
+      }
       const { orgCode, username, password } = (req.body ?? {}) as {
         orgCode?: string; username?: string; password?: string;
       };
@@ -103,23 +121,42 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   // Rate limiting is on by default; set RATE_LIMIT=off to disable (useful for
-  // local dev, the headless UI smoke test, and load testing).
-  if (opts.rateLimiting !== false && process.env.RATE_LIMIT !== "off") {
+  // local dev, the headless UI smoke test, and load testing). Whatever we decide
+  // here is RECORDED so the `auth-rate-limit` control reports the limiters this
+  // process actually mounted — not what an env var implies.
+  const rateLimitDisabledByOption = opts.rateLimiting === false;
+  const rateLimitDisabledByEnv = process.env.RATE_LIMIT === "off";
+  const rateLimitEnabled = !rateLimitDisabledByOption && !rateLimitDisabledByEnv;
+  setRateLimitState({
+    enabled: rateLimitEnabled,
+    reason: rateLimitEnabled
+      ? "enabled"
+      : rateLimitDisabledByEnv
+        ? "disabled_by_env"
+        : "disabled_by_app_option",
+  });
+  if (rateLimitEnabled) {
     // Tiered limits: stricter on auth, looser on general traffic.
     // Disable the X-Forwarded-For validation: behind a dev tunnel the proxy hop
     // count can differ from `trust proxy`, and a failed validation otherwise
     // throws and 500s the request (breaking login from a phone). We still get
     // correct client IPs via `trust proxy`; this just stops the hard failure.
     const authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000,
-      max: 50,
+      ...AUTH_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
+      // Count only FAILED auth attempts (status >= 400). The control we need is
+      // brute-force / credential-stuffing protection (§164.308(a)(5)(ii)(C)),
+      // and that is entirely about wrong guesses — a successful sign-in is not
+      // an attack. Counting successes too meant ordinary use burned the budget:
+      // every role switch costs 1 (or 2, since a miss retries the role's home
+      // org), and a whole demo room behind one hospital NAT shares a single IP,
+      // so a legitimate session could lock everyone out mid-demo.
+      skipSuccessfulRequests: true,
       validate: { xForwardedForHeader: false },
     });
     const generalLimiter = rateLimit({
-      windowMs: 60 * 1000,
-      max: 300,
+      ...GENERAL_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
       validate: { xForwardedForHeader: false },
@@ -131,6 +168,30 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   registerRoutes(app);
+
+  // Unified mobile: the installable PWA IS the full, responsive web app served
+  // at "/" (manifest + service worker live in webapp/). The old slim /m kit is
+  // retired.
+  //
+  // Old /m installs registered a service worker at /m/sw.js that CACHES the
+  // retired slim app and intercepts /m navigations (so a plain redirect never
+  // reaches them). Serve a self-destructing SW there: on activate it clears all
+  // caches, unregisters itself, and reloads open windows into the unified app.
+  // This heals stale devices on their next visit. Must precede the redirect.
+  app.get("/m/sw.js", (_req, res) => {
+    res.type("application/javascript").set("Cache-Control", "no-cache");
+    res.send(
+      'self.addEventListener("install",function(){self.skipWaiting();});\n' +
+        'self.addEventListener("activate",function(e){e.waitUntil((async function(){' +
+        'try{var k=await caches.keys();await Promise.all(k.map(function(x){return caches.delete(x);}));}catch(_){}' +
+        'try{await self.registration.unregister();}catch(_){}' +
+        'try{var cs=await self.clients.matchAll({type:"window"});cs.forEach(function(c){try{c.navigate("/");}catch(_){}});}catch(_){}' +
+        "})());});\n",
+    );
+  });
+  // Redirect /m and any /m/* to "/" so existing links, bookmarks, and home-screen
+  // installs land on the unified app. Registered BEFORE the SPA catch-all.
+  app.get(/^\/m(\/.*)?$/, (_req, res) => res.redirect(302, "/"));
 
   // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
   // from design/ui_kits/web-app (its own components, store.js, tokens, assets).

@@ -43,6 +43,7 @@ function OrgSettings() {
 
   return (
     <PageWrap>
+      <SettingsTabs />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
         <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>{org.code.slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -66,11 +67,16 @@ function OrgSettings() {
           <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation. Default 15." />
           <div style={{ marginTop: 14 }}>
             <FlagRow icon="phone-call" title="On-call providers only" desc="Restrict rotation to on-call hospitalists." on={s.onCallOnly} onToggle={() => a.setSetting("onCallOnly", !s.onCallOnly)} />
-            <FlagRow icon="activity" title="Active (on-shift) only" desc="Skip providers not working today." on={s.activeOnly} onToggle={() => a.setSetting("activeOnly", !s.activeOnly)} last />
+            <FlagRow icon="activity" title="Active (on-shift) only" desc="Skip providers not working today." on={s.activeOnly} onToggle={() => a.setSetting("activeOnly", !s.activeOnly)} />
+            <FlagRow icon="message-circle" title="STAT SMS fallback" desc="If a STAT message stays unacknowledged after escalation, send a PHI-free SMS nudge as a last resort. Requires an SMS carrier under a BAA." on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} last />
           </div>
-          <div style={{ marginTop: 14 }}>
-            <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={a.resetRotation}>Reset rotation index</Button>
-          </div>
+          {/* Resetting the index only affects SEQUENTIAL rotation; in lowest-census
+              mode next-up is census-driven, so the button would be a no-op. */}
+          {s.rotationMode === "sequential" && (
+            <div style={{ marginTop: 14 }}>
+              <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={a.resetRotation}>Reset rotation index</Button>
+            </div>
+          )}
         </Card>
 
         {/* Custom shift types */}
@@ -107,6 +113,26 @@ function OrgSettings() {
           <FlagRow icon="megaphone" title="Emergency broadcasts" desc="Org-wide urgent messaging." on={s.flags.broadcasts} onToggle={() => a.toggleFlag("broadcasts")} />
           <FlagRow icon="calendar-clock" title="Amion schedule sync" desc="External on-call import." on={s.flags.amion} onToggle={() => a.toggleFlag("amion")} last />
         </Card>
+
+        {/* Message retention (server-enforced purge, audited) */}
+        <Card style={{ padding: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <Icon name="clock" size={18} color="var(--primary)" />
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Message retention</h3>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted by an hourly, audited purge. "Keep everything" disables it.</p>
+          <select value={st.orgRetentionDays || 0} onChange={(e) => a.setOrgRetention(Number(e.target.value))}
+            style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            <option value={0}>Keep everything</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+            <option value={180}>180 days</option>
+            <option value={365}>1 year</option>
+          </select>
+        </Card>
+
+        {/* EHR deep links (Epic Haiku/Canto, Hyperspace, Cerner PowerChart) */}
+        <EhrDeepLinkCard />
 
         {/* Integrations */}
         <Card style={{ padding: 18 }}>
@@ -145,6 +171,77 @@ function OrgSettings() {
         <OrgDangerZone org={org} onDeleted={() => a.setNav("dashboard")} />
       )}
     </PageWrap>
+  );
+}
+
+// "Open in EHR" configuration: vendor + URL template with {ehrId}. Presets are
+// STARTING templates — the exact scheme/host/parameters come from the health
+// system's Epic or Cerner team, so a preset still carrying a YOUR-…-HOST
+// placeholder stays inactive until edited. Director surface; server validates.
+function EhrDeepLinkCard() {
+  const st = useStore();
+  const a = useActions();
+  const cfg = st.ehrConfig;
+  const [vendor, setVendor] = React.useState("epic");
+  const [template, setTemplate] = React.useState("");
+  const [dirty, setDirty] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  React.useEffect(() => { if (a.loadEhrConfig) a.loadEhrConfig(); }, []);
+  React.useEffect(() => { if (cfg && !dirty) { setVendor(cfg.vendor || "epic"); setTemplate(cfg.template || ""); } }, [cfg]);
+  const presets = (cfg && cfg.presets) || {};
+  const moduleOn = window.DT && window.DT.moduleOn ? window.DT.moduleOn("ehr.deepLinks") : true;
+  const applyPreset = (key) => { const p = presets[key]; if (!p) return; setVendor(p.vendor); setTemplate(p.template); setDirty(true); };
+  const save = () => {
+    if (!a.saveEhrConfig) return;
+    setSaving(true);
+    Promise.resolve(a.saveEhrConfig(vendor, template.trim())).then(() => setDirty(false)).catch(() => {}).finally(() => setSaving(false));
+  };
+  const preview = template ? template.replace(/\{ehrId\}/g, "12345678") : "";
+  return (
+    <Card style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Icon name="external-link" size={18} color="var(--primary)" />
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Open in EHR</h3>
+        {cfg && cfg.configured && moduleOn && <Badge status="accepted" icon="circle">Active</Badge>}
+        {cfg && !moduleOn && <Badge status="offline">Module off</Badge>}
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 12px", lineHeight: 1.45 }}>Adds an "Open in EHR" button to patient rows that deep-links the patient (by MRN/CSN) into Epic Haiku/Canto, Hyperspace or Cerner PowerChart. The template uses <code>{"{ehrId}"}</code>; the id is resolved server-side per audited click and never sent in notifications.</p>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {Object.keys(presets).map((k) => (
+          <button key={k} onClick={() => applyPreset(k)} title={presets[k].note}
+            style={{ padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (template === presets[k].template ? "var(--primary)" : "var(--border)"), background: template === presets[k].template ? "#EFF6FF" : "#fff", color: template === presets[k].template ? "var(--primary)" : "var(--foreground)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}>{presets[k].label}</button>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "end" }}>
+        <div>
+          <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Vendor</label>
+          <select value={vendor} onChange={(e) => { setVendor(e.target.value); setDirty(true); }}
+            style={{ height: 40, width: "100%", padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            <option value="epic">Epic</option>
+            <option value="cerner">Cerner</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+        <Field label="Launch URL template" icon="link" value={template} onChange={(v) => { setTemplate(v); setDirty(true); }} placeholder="epichaiku://launch?mrn={ehrId}" />
+      </div>
+      {(() => {
+        const sel = Object.keys(presets).find((k) => presets[k].template === template);
+        const note = sel ? presets[sel].note : null;
+        const placeholder = /YOUR-[A-Z0-9-]*HOST/i.test(template);
+        return (
+          <div style={{ marginTop: 8, fontSize: 11.5, color: placeholder ? "#92400E" : "var(--muted-foreground)", lineHeight: 1.45 }}>
+            {placeholder ? "Replace the YOUR-…-HOST placeholder with the launch URL your EHR team provides — the button stays hidden until you do. " : ""}
+            {note || "The exact URL scheme and parameters are issued by your health system's Epic / Cerner team."}
+            {preview && <div style={{ marginTop: 4, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>Preview: {preview}</div>}
+          </div>
+        );
+      })()}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
+        <Button size="sm" icon="save" onClick={save} disabled={saving || !dirty}>{saving ? "Saving…" : "Save"}</Button>
+        {template && <Button size="sm" variant="ghost" onClick={() => { setTemplate(""); setDirty(true); }}>Clear</Button>}
+        {!moduleOn && <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Saved settings apply once a developer switches on the "Open in EHR" module.</span>}
+      </div>
+    </Card>
   );
 }
 

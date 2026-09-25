@@ -13,10 +13,18 @@ export async function appendAudit(
   }
 }
 
-/** Record a PHI access (patients / assignments / patient-board routes). */
+/**
+ * Record a PHI access — every READ that returns clinical content, not only
+ * mutations. Exactly ONE row per request (never one per message/record), and
+ * the row carries identifiers only: `resourceId` is the record that was read
+ * (conversation id, patient id, …) and `patientId` the patient it concerns.
+ * Clinical content (message bodies, notes, names) MUST NOT be passed here —
+ * §164.528 accounting needs "who read what", not what it said.
+ */
 export async function logPhiAccess(
   req: Request,
   resource: string,
+  ids: { resourceId?: number | null; patientId?: number | null } = {},
 ): Promise<void> {
   try {
     const user = req.user as unknown as User | undefined;
@@ -25,6 +33,12 @@ export async function logPhiAccess(
       organizationId: user.organizationId,
       userId: user.id,
       resource,
+      resourceId: Number.isFinite(ids.resourceId as number)
+        ? (ids.resourceId as number)
+        : null,
+      patientId: Number.isFinite(ids.patientId as number)
+        ? (ids.patientId as number)
+        : null,
       method: req.method,
       ip: req.ip,
       userAgent: req.get("user-agent") ?? undefined,

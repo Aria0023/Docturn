@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { Button, Card, CardHeader, EmptyState, Input } from "@/components/ui";
 
 interface Org {
@@ -11,6 +13,8 @@ interface Org {
 
 export function DevConsole() {
   const qc = useQueryClient();
+  const { refresh } = useAuth();
+  const [, navigate] = useLocation();
   const { data: orgs = [] } = useQuery<Org[]>({
     queryKey: ["/api/dev/organizations"],
   });
@@ -27,6 +31,16 @@ export function DevConsole() {
       setName("");
       setCode("");
       qc.invalidateQueries({ queryKey: ["/api/dev/organizations"] });
+    },
+  });
+
+  // Enter an org as its senior admin (audited server-side session swap), then
+  // re-read the now-swapped session and land on that tenant's dashboard.
+  const enterOrg = useMutation({
+    mutationFn: (orgId: number) => api.post("/api/dev/manage-org", { orgId }),
+    onSuccess: async () => {
+      await refresh();
+      navigate("/");
     },
   });
 
@@ -81,6 +95,13 @@ export function DevConsole() {
                 <span className="ml-auto text-xs text-muted-foreground">
                   #{o.id}
                 </span>
+                <Button
+                  variant="secondary"
+                  disabled={enterOrg.isPending}
+                  onClick={() => enterOrg.mutate(o.id)}
+                >
+                  Enter
+                </Button>
               </li>
             ))}
           </ul>
