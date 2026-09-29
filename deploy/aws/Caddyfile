@@ -1,0 +1,22 @@
+# DocTurn — Caddy reverse proxy (installed to /etc/caddy/Caddyfile by
+# deploy/aws/bootstrap.sh, which replaces __DOMAIN__ with your hostname).
+#
+# Caddy obtains and renews a Let's Encrypt certificate for the hostname
+# automatically, serves HTTPS on :443, redirects :80 → :443, and proxies
+# everything (including the /ws WebSocket upgrade) to the Node app on :3000.
+# The app sets its own security headers (helmet) and trusts this proxy for the
+# client IP (TRUST_PROXY defaults on), so nothing else is needed here.
+
+__DOMAIN__ {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:3000
+
+	log {
+		# Access log stays PHI-free: method, path, status, latency — no bodies.
+		output file /var/log/caddy/access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+	}
+}

@@ -1,0 +1,52 @@
+# DocTurn — systemd unit (installed to /etc/systemd/system/docturn.service by
+# deploy/aws/bootstrap.sh).
+#
+# Runs the same thing `npm start` runs (see package.json), but invokes node
+# directly so the service never needs a writable npm cache. Configuration comes
+# ONLY from /etc/docturn/docturn.env, rendered from SSM Parameter Store by
+# deploy/aws/fetch-env-from-ssm.sh. The EnvironmentFile is REQUIRED (no "-"
+# prefix): if it is missing the unit refuses to start rather than silently
+# booting a demo-mode instance with an in-process database on a production box.
+
+[Unit]
+Description=DocTurn clinical communication server
+Documentation=https://github.com/Aria0023/Docturn/blob/main/docs/AWS_DEPLOYMENT_RUNBOOK.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=docturn
+Group=docturn
+WorkingDirectory=/opt/docturn
+EnvironmentFile=/etc/docturn/docturn.env
+ExecStart=/usr/bin/node --import /opt/docturn/scripts/shared-alias-loader.mjs /opt/docturn/dist/server/index.js
+Restart=always
+RestartSec=3
+# Give the process time to finish in-flight requests on stop/restart.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# ---- Hardening (the app only needs to READ its code and WRITE attachments) ----
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Encrypted attachment files (ATTACHMENT_DIR) live here and nowhere else.
+ReadWritePaths=/var/lib/docturn
+UMask=0027
+
+# Node logs to stdout/stderr → journald (`journalctl -u docturn`). The app's
+# log lines are designed to be PHI-free; the audit trail lives in the database.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=docturn
+
+[Install]
+WantedBy=multi-user.target
