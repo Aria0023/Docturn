@@ -132,9 +132,37 @@ convention converged on for the progress note (v6.5 → v7.4):
   to the H&P section order, with the same first-line/last-line anchors and
   full-rewrite-on-reprompt rule.
 
+# Progress Note Prompt — Simplified variant
+
+## Simplified v1.0 — CURRENT (alongside the full v7.14)
+
+`providence-progress-note-simplified-v1.0.json` — a separate, cleaner version of the
+progress note built from v7.14 and the provider's before/after example. Kept from
+v7.14: three-line header, tight demographics with `@TD@`, APSO order, GMLOS and
+anticipated-discharge algorithms, ARU rules, strict data isolation, generic-only med
+names, 11pt cap, banned letterhead, and **coding-grade problem titles** (etiology,
+trajectory word, `[POA]`). Changed:
+
+- `SIMPLIFIED_AP_STYLE_LOCK` — A&P lines are short plain sentences (about 12 words or
+  fewer), typically 4–7 per active problem (findings first, then actions), 1–3 per
+  chronic problem; trends in words; at most 1–2 key values per problem; no dates;
+  medication **names only** (doses live in Active Meds, except dose-change lines);
+  cross-references between related problems ("Related to lactic acidosis.").
+- `UNITS_FREE_VALUES_LOCK` — no units on labs or vitals anywhere ("Hemoglobin 5 on
+  admission, now 8."); units kept only where dropping them is unsafe or ambiguous
+  (med doses, O2 flow, SpO2/EF %, weight, I/O volumes).
+- One blank line after each problem title (matches the provider's "after" example);
+  spacing self-check added.
+- Two-Midnight status line on the first problem, **gated** on explicit
+  `admission_order` / `observation_yes_no`, suppressed on the ARU.
+- Compact objective data: one-line unit-free vitals, grouped labs with no ranges or
+  flags, impression-only imaging, terse exam baseline, brief hospital course and
+  overnight events ("No acute overnight events." default; therapy line only when
+  provided). All lists use literal escaped dashes; Active Meds uses safe abbreviations.
+
 # Progress Note Prompt
 
-## v7.10 — CURRENT: Epic-proof spacing (no headings, no &nbsp;, no HTML)
+## v7.10 — Epic-proof spacing (no headings, no &nbsp;, no HTML)
 
 **Use `providence-progress-note-v7.10.json`.** Fixes Epic paste spacing (e.g. Enter
 "skipping a row" when adding a plan line — caused by heading/paragraph space-after from
