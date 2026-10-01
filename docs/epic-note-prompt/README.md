@@ -151,7 +151,7 @@ trajectory word, `[POA]`). Changed:
 - `UNITS_FREE_VALUES_LOCK` — no units on labs or vitals anywhere ("Hemoglobin 5 on
   admission, now 8."); units kept only where dropping them is unsafe or ambiguous
   (med doses, O2 flow, SpO2/EF %, weight, I/O volumes).
-- One blank line after each problem title (matches the provider's "after" example);
+- v1.1: dash lines start directly under each problem title (no blank line), per provider request;
   spacing self-check added.
 - Two-Midnight status line on the first problem, **gated** on explicit
   `admission_order` / `observation_yes_no`, suppressed on the ARU.
