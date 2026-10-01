@@ -132,6 +132,22 @@ convention converged on for the progress note (v6.5 → v7.4):
   to the H&P section order, with the same first-line/last-line anchors and
   full-rewrite-on-reprompt rule.
 
+# H&P Prompt — Simplified variant
+
+## H&P Simplified v1.0 — CURRENT (alongside the full H&P v4.5)
+
+`providence-hnp-simplified-v1.0.json` — the H&P counterpart of the simplified progress
+note, built from H&P v4.5 using the identical simplified rules
+(`SIMPLIFIED_AP_STYLE_LOCK`, `UNITS_FREE_VALUES_LOCK`, same tight worked example):
+short plain A&P lines starting directly under each fully specific `[POA]` title, no
+units on labs/vitals, at most 1–2 key values per problem, medication names only in the
+A&P (full sigs stay in Home/Active Medications), cross-references between related
+problems. Also: concise unit-free HPI (about 4–8 sentences), one-line vitals, grouped
+labs without ranges/flags, impression-only ECG/imaging, terse 8-system exam, demographics
+tight block, 11pt cap, banned letterhead, spacing self-check. H&P-specific rules kept:
+traditional section order, gated Two-Midnight line, stroke NIHSS, verbatim C. diff
+prophylaxis line, CHF GDMT (names only), PMH/PSH dash lists.
+
 # Progress Note Prompt — Simplified variant
 
 ## Simplified v1.0 — CURRENT (alongside the full v7.14)
