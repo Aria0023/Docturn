@@ -132,6 +132,21 @@ convention converged on for the progress note (v6.5 → v7.4):
   to the H&P section order, with the same first-line/last-line anchors and
   full-rewrite-on-reprompt rule.
 
+# Consult Note Prompt — Balanced variant (recommended)
+
+## Consult Balanced v1.0 — CURRENT
+
+`providence-consult-balanced-v1.0.json` — built from consult v4.5 with the Balanced
+H&P's body and A&P rules (`BALANCED_AP_STYLE_LOCK`: concise sentence lines, 4–8 per
+problem, key values with trends and no units, compact medication sigs, key dates
+only, cross-references, dash lines directly under `[POA]` titles; concise unit-free
+HPI; compact unit-free objective data; demographics tight block; spacing self-check).
+Consult-specific pieces kept verbatim: 14pt three-line header (the only HTML
+exception, preserved in the spacing and word-safe locks), Consult Information block
+(`@ATTPROV@`, Date/Time), ASSESSMENT & RECOMMENDATIONS naming, gated Two-Midnight line
+with ARU suppression, barriers-only disposition, 85-minute MDM line. No H&P-only
+NIHSS / C. diff / GDMT rules were added.
+
 # H&P Prompt — Balanced variant (recommended)
 
 ## H&P Balanced v1.0 — CURRENT
