@@ -132,6 +132,22 @@ convention converged on for the progress note (v6.5 → v7.4):
   to the H&P section order, with the same first-line/last-line anchors and
   full-rewrite-on-reprompt rule.
 
+# Progress Note Prompt — Balanced variant (recommended)
+
+## Balanced v1.0 — CURRENT
+
+`providence-progress-note-balanced-v1.0.json` — the middle ground between the full v7.14
+and the simplified note, after the provider found the simplified A&P too sparse.
+Same structure as Simplified (header, tight demographics, APSO, compact unit-free
+vitals/labs, titles with `[POA]`, dash lines directly under titles). A&P per
+`BALANCED_AP_STYLE_LOCK`: concise sentences (about 20 words or fewer), 4–8 per active
+problem; key values with trends (admission → peak/nadir → today), no units; compact
+medication sigs ("ceftriaxone 2 g IV q24h"); antibiotic day counts; short MM/DD dates
+only for key events; cross-references between related problems.
+`NO_TWO_MIDNIGHT_STATEMENT_IN_PROGRESS_NOTE_LOCK`: progress notes never carry a
+two-midnight or observation statement (that stays on the H&P). Simplified was bumped to
+**v1.2** with the same two-midnight removal.
+
 # H&P Prompt — Simplified variant
 
 ## H&P Simplified v1.0 — CURRENT (alongside the full H&P v4.5)
