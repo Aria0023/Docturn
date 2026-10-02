@@ -132,6 +132,18 @@ convention converged on for the progress note (v6.5 → v7.4):
   to the H&P section order, with the same first-line/last-line anchors and
   full-rewrite-on-reprompt rule.
 
+# H&P Prompt — Balanced variant (recommended)
+
+## H&P Balanced v1.0 — CURRENT
+
+`providence-hnp-balanced-v1.0.json` — the H&P counterpart of the Balanced progress note:
+same `BALANCED_AP_STYLE_LOCK` (concise sentence lines, 4–8 per problem, key values with
+trends and no units, compact medication sigs, key dates only, cross-references, dash
+lines directly under `[POA]` titles), a concise unit-free HPI (about 5–10 sentences),
+and compact unit-free objective data. Unlike the progress note, the H&P KEEPS the gated
+Two-Midnight line on the main admitting diagnosis, plus stroke NIHSS, the verbatim
+C. diff prophylaxis line, and CHF GDMT (with compact sigs).
+
 # Progress Note Prompt — Balanced variant (recommended)
 
 ## Balanced v1.0 — CURRENT
