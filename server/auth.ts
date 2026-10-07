@@ -75,6 +75,67 @@ export function mfaEnrollmentGate(): RequestHandler {
   };
 }
 
+/** Paths (relative to /api) usable while a forced password change is pending. */
+const PASSWORD_GATE_EXEMPT: readonly RegExp[] = [
+  /^\/user\/?$/,
+  /^\/logout\/?$/,
+  /^\/account\/password\/?$/,
+  /^\/modules\/?$/,
+  /^\/config\/?$/,
+];
+
+/**
+ * Forced password change. Every provisioned or admin-reset account carries a
+ * one-time credential (users.must_change_password). Until the user replaces it
+ * via PATCH /api/account/password, every other /api route answers
+ * 403 { error: "password_change_required" }. Re-reads the user row on each
+ * request so the gate lifts the moment the password is changed.
+ */
+export function passwordChangeGate(): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      const me = req.user as unknown as User | undefined;
+      if (!me) return next();
+      if (PASSWORD_GATE_EXEMPT.some((re) => re.test(req.path))) return next();
+      const fresh = await storage().getUserById(me.id);
+      if (fresh?.mustChangePassword) {
+        return res.status(403).json({ error: "password_change_required" });
+      }
+      return next();
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
+
+/**
+ * The well-known demo password (and anything too short) can never be set on an
+ * account by a user or an administrator — on ANY instance, synthetic or not.
+ * Seed data is the only place it may exist.
+ */
+export function isForbiddenPassword(pw: string): boolean {
+  if (pw.length < 8) return true;
+  const demo = process.env.DEMO_PASSWORD || "docturn";
+  return pw === demo || pw.toLowerCase() === "docturn" || pw.toLowerCase() === "password";
+}
+
+/**
+ * One-time credential for a provisioned or reset account: 16 characters from an
+ * unambiguous alphabet (no 0/O/1/l/I), grouped for reading out over the phone.
+ * ~80 bits of entropy from crypto randomness. Returned to the administrator
+ * exactly once and never stored in clear.
+ */
+export function issueTemporaryPassword(): string {
+  const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(16);
+  let out = "";
+  for (let i = 0; i < 16; i++) {
+    if (i > 0 && i % 4 === 0) out += "-";
+    out += alphabet[bytes[i]! % alphabet.length];
+  }
+  return out;
+}
+
 /** scrypt with a per-user random salt, stored as `hash.salt` (both hex). */
 export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
@@ -144,6 +205,21 @@ export function configurePassport() {
           if (!user) return done(null, false, { message: "invalid_credentials" });
           const ok = await verifyPassword(password, user.passwordHash);
           if (!ok) return done(null, false, { message: "invalid_credentials" });
+          // Deactivated workforce member: a correct password still fails, with
+          // the same generic answer (never confirm the account exists) — but the
+          // attempt is audited at high risk so the org can see a leaver trying.
+          if (user.disabledAt) {
+            void appendAudit({
+              organizationId: user.organizationId,
+              userId: user.id,
+              action: "auth.login_denied_disabled",
+              resourceType: "user",
+              resourceId: user.id,
+              details: {},
+              riskLevel: "high",
+            });
+            return done(null, false, { message: "invalid_credentials" });
+          }
           return done(null, user as unknown as Express.User);
         } catch (err) {
           return done(err as Error);
@@ -159,6 +235,9 @@ export function configurePassport() {
   passport.deserializeUser(async (id: number, done) => {
     try {
       const user = await storage().getUserById(id);
+      // A deactivated account's live sessions die on their next request —
+      // deactivation is immediate, not "at next login".
+      if (user?.disabledAt) return done(null, false as unknown as Express.User);
       done(null, (user ?? false) as unknown as Express.User);
     } catch (err) {
       done(err as Error);
@@ -171,6 +250,7 @@ export function registerAuthRoutes(app: Express) {
   // Privileged-role MFA enrolment gate. Mounted here, before every /api route
   // that follows (registerRoutes calls this second, right after /api/health).
   app.use("/api", mfaEnrollmentGate());
+  app.use("/api", passwordChangeGate());
 
   // Self-registration → pending (a director approves). We model the pending
   // gate minimally here: a registration creates no active user yet.
@@ -386,19 +466,22 @@ export function registerAuthRoutes(app: Express) {
     const me = req.user as unknown as User;
     const current = String((req.body || {}).currentPassword || "");
     const next = String((req.body || {}).newPassword || "");
-    if (next.length < 8) return res.status(400).json({ error: "weak_password" });
+    // Too short, the demo password, or the same as the current one are all
+    // refused — on every instance, not only in real-PHI mode.
+    if (isForbiddenPassword(next) || next === current) return res.status(400).json({ error: "weak_password" });
     const fresh = await storage().getUserById(me.id);
     if (!fresh) return res.status(404).json({ error: "not_found" });
     const ok = await verifyPassword(current, fresh.passwordHash);
     if (!ok) return res.status(403).json({ error: "wrong_password" });
-    await storage().updateUser(me.id, { passwordHash: await hashPassword(next) });
+    const wasForced = !!fresh.mustChangePassword;
+    await storage().updateUser(me.id, { passwordHash: await hashPassword(next), mustChangePassword: false });
     await appendAudit({
       organizationId: me.organizationId,
       userId: me.id,
       action: "auth.password_change",
       resourceType: "user",
       resourceId: me.id,
-      details: {},
+      details: { forced: wasForced },
       riskLevel: "medium",
     });
     res.json({ ok: true });
@@ -413,6 +496,8 @@ declare module "express-session" {
     pendingMfaUserId?: number;
     /** Privileged user signed in without MFA while the org requires it. */
     mfaEnrollmentRequired?: boolean;
+    /** Developer who entered an impersonated / managed-org portal (dev.ts). */
+    impersonatorId?: number;
   }
 }
 

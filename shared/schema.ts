@@ -94,6 +94,13 @@ export const users = pgTable(
     credential: text("credential", { enum: CREDENTIAL }),
     phone: text("phone"),
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+    // Set on every provisioned / admin-reset account: the one-time credential
+    // must be replaced before anything but /api/user, /api/logout and
+    // /api/account/password works (server/auth.ts passwordChangeGate).
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    // Workforce termination (HIPAA §164.308(a)(3)(ii)(C)): a disabled account
+    // cannot sign in and its live sessions stop deserialising immediately.
+    disabledAt: timestamp("disabled_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => ({
@@ -425,6 +432,9 @@ export const mfaCredentials = pgTable("mfa_credentials", {
     .references(() => users.id),
   secret: text("secret").notNull(),
   activated: boolean("activated").notNull().default(false),
+  // Re-enrolment in progress: the NEW secret waits here until its first code
+  // verifies, so the live `secret` keeps protecting sign-in meanwhile.
+  pendingSecret: text("pending_secret"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -758,8 +768,15 @@ export type FeatureFlag = typeof featureFlags.$inferSelect;
 /** A user object safe to return over the API — never includes the password hash. */
 export type SafeUser = Pick<
   User,
-  "id" | "username" | "role" | "displayName" | "organizationId" | "credential"
->;
+  | "id"
+  | "username"
+  | "role"
+  | "displayName"
+  | "organizationId"
+  | "credential"
+  | "twoFactorEnabled"
+  | "mustChangePassword"
+> & { disabled: boolean };
 
 export function toSafeUser(u: User): SafeUser {
   return {
@@ -769,6 +786,11 @@ export function toSafeUser(u: User): SafeUser {
     displayName: u.displayName,
     organizationId: u.organizationId,
     credential: u.credential,
+    // Account-state flags the client needs to render truthfully: MFA badge,
+    // forced password change, and deactivation. Never the hash.
+    twoFactorEnabled: !!u.twoFactorEnabled,
+    mustChangePassword: !!u.mustChangePassword,
+    disabled: !!u.disabledAt,
   };
 }
 

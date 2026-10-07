@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { DbType } from "./db.js";
+import { attachmentStoreFor } from "./services/attachment-store.js";
 import { getDb } from "./db.js";
 import {
   assignments,
@@ -137,6 +138,16 @@ export interface GlobalRowCounts {
  * literally cannot read another tenant's rows through this interface. The
  * `developer` role bypasses scoping at the route layer (audited), never here.
  */
+/** What a patient purge removed, per table (audited by the callers). */
+export interface PurgeResult {
+  patients: number;
+  assignments: number;
+  consults: number;
+  conversations: number;
+  messages: number;
+  attachments: number;
+}
+
 export interface IStorage {
   // organizations
   getOrganization(id: number): Promise<Organization | undefined>;
@@ -154,7 +165,7 @@ export interface IStorage {
   getUserById(id: number): Promise<User | undefined>;
   getUserByUsername(orgId: number, username: string): Promise<User | undefined>;
   listUsers(orgId: number): Promise<User[]>;
-  createUser(user: Omit<User, "id" | "createdAt">): Promise<User>;
+  createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt">>): Promise<User>;
 
   // hospitalists
   getHospitalist(orgId: number, id: number): Promise<Hospitalist | undefined>;
@@ -412,7 +423,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.organizationId, orgId))
       .orderBy(asc(users.id));
   }
-  async createUser(user: Omit<User, "id" | "createdAt">) {
+  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt">>) {
     const [row] = await this.db.insert(users).values(user).returning();
     return row!;
   }
@@ -515,7 +526,16 @@ export class DatabaseStorage implements IStorage {
    * accepted assignments that remain. Returns the number of patients removed.
    * Used by the manual "clear" controls and the daily auto-clean sweep.
    */
-  async purgeOldPatients(orgId: number, olderThanMs: number): Promise<number> {
+  /**
+   * Purge patients older than the window (0 = all) together with EVERYTHING
+   * that references them — assignments, consults, and patient-linked care-team
+   * conversations with their messages, delivery rows and attachments — in ONE
+   * transaction. Previously the patient delete FK-failed on a linked
+   * conversation after assignments/consults were already gone (silent partial
+   * delete, hung request, stalled auto-clean). Returns per-table counts so the
+   * caller can audit exactly what left the system.
+   */
+  async purgeOldPatients(orgId: number, olderThanMs: number): Promise<PurgeResult> {
     const cutoff = olderThanMs > 0 ? new Date(Date.now() - olderThanMs) : null;
     const rows = await this.db
       .select({ id: patients.id })
@@ -526,16 +546,62 @@ export class DatabaseStorage implements IStorage {
           : eq(patients.organizationId, orgId),
       );
     const ids = rows.map((r) => r.id);
-    if (!ids.length) return 0;
-    await this.db
-      .delete(assignments)
-      .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids)));
-    await this.db
-      .delete(patientConsults)
-      .where(and(eq(patientConsults.organizationId, orgId), inArray(patientConsults.patientId, ids)));
-    await this.db
-      .delete(patients)
-      .where(and(eq(patients.organizationId, orgId), inArray(patients.id, ids)));
+    const empty: PurgeResult = { patients: 0, assignments: 0, consults: 0, conversations: 0, messages: 0, attachments: 0 };
+    if (!ids.length) return empty;
+
+    const attachmentRefs: string[] = [];
+    const result = await this.db.transaction(async (tx) => {
+      // Patient-linked threads and everything hanging off them, leaves first.
+      const convoRows = await tx
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(and(eq(conversations.organizationId, orgId), inArray(conversations.patientId, ids)));
+      const convoIds = convoRows.map((c) => c.id);
+      let messageCount = 0;
+      if (convoIds.length) {
+        const msgRows = await tx
+          .select({ id: messages.id })
+          .from(messages)
+          .where(inArray(messages.conversationId, convoIds));
+        const msgIds = msgRows.map((m) => m.id);
+        if (msgIds.length) {
+          const atts = await tx
+            .select({ ref: messageAttachments.dataBase64 })
+            .from(messageAttachments)
+            .where(inArray(messageAttachments.messageId, msgIds));
+          attachmentRefs.push(...atts.map((a) => a.ref));
+          await tx.delete(messageAttachments).where(inArray(messageAttachments.messageId, msgIds));
+          await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, msgIds));
+          await tx.delete(messages).where(inArray(messages.id, msgIds));
+          messageCount = msgIds.length;
+        }
+        await tx.delete(conversations).where(inArray(conversations.id, convoIds));
+      }
+      const gone = await tx
+        .delete(assignments)
+        .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids)))
+        .returning({ id: assignments.id });
+      const consultsGone = await tx
+        .delete(patientConsults)
+        .where(and(eq(patientConsults.organizationId, orgId), inArray(patientConsults.patientId, ids)))
+        .returning({ id: patientConsults.id });
+      await tx
+        .delete(patients)
+        .where(and(eq(patients.organizationId, orgId), inArray(patients.id, ids)));
+      return {
+        patients: ids.length,
+        assignments: gone.length,
+        consults: consultsGone.length,
+        conversations: convoIds.length,
+        messages: messageCount,
+        attachments: attachmentRefs.length,
+      } satisfies PurgeResult;
+    });
+    // Encrypted attachment files are removed only after the rows are committed
+    // (best effort — an orphaned ciphertext file is unreadable without its row).
+    for (const ref of attachmentRefs) {
+      try { await attachmentStoreFor(ref).delete(ref); } catch { /* best effort */ }
+    }
     // Keep census honest: it now equals each provider's remaining accepted load.
     const hosps = await this.listHospitalists(orgId);
     for (const h of hosps) {
@@ -547,7 +613,7 @@ export class DatabaseStorage implements IStorage {
         await this.updateHospitalist(orgId, h.id, { currentPatientCount: accepted.length });
       }
     }
-    return ids.length;
+    return result;
   }
   async updatePatient(orgId: number, id: number, patch: Partial<Patient>) {
     const [row] = await this.db
@@ -882,13 +948,20 @@ export class DatabaseStorage implements IStorage {
       );
     const ids = old.map((m) => m.id);
     if (ids.length === 0) return 0;
-    await this.db
-      .delete(messageAttachments)
+    // Collect store refs first so encrypted attachment FILES are removed too,
+    // not just the rows (otherwise ciphertext lingers on disk past retention).
+    const atts = await this.db
+      .select({ ref: messageAttachments.dataBase64 })
+      .from(messageAttachments)
       .where(inArray(messageAttachments.messageId, ids));
-    await this.db
-      .delete(messageDeliveryStatus)
-      .where(inArray(messageDeliveryStatus.messageId, ids));
-    await this.db.delete(messages).where(inArray(messages.id, ids));
+    await this.db.transaction(async (tx) => {
+      await tx.delete(messageAttachments).where(inArray(messageAttachments.messageId, ids));
+      await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, ids));
+      await tx.delete(messages).where(inArray(messages.id, ids));
+    });
+    for (const a of atts) {
+      try { await attachmentStoreFor(a.ref).delete(a.ref); } catch { /* best effort */ }
+    }
     return ids.length;
   }
   /** All consult rows for an org (analytics). */
@@ -1570,19 +1643,50 @@ export class DatabaseStorage implements IStorage {
       .where(eq(mfaCredentials.userId, userId));
     return row;
   }
+  /**
+   * Start (or restart) TOTP enrolment. An ACTIVE credential is never replaced
+   * here: the new secret is parked in pending_secret and only promoted by
+   * promotePendingMfaSecret() once its first code verifies — so a re-enrolment
+   * that is abandoned halfway leaves the user's existing authenticator working.
+   */
   async upsertMfaCredential(userId: number, secret: string) {
+    const existing = await this.getMfaCredential(userId);
+    if (existing?.activated) {
+      const [row] = await this.db
+        .update(mfaCredentials)
+        .set({ pendingSecret: secret })
+        .where(eq(mfaCredentials.userId, userId))
+        .returning();
+      return row!;
+    }
     await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, userId));
     const [row] = await this.db
       .insert(mfaCredentials)
-      .values({ userId, secret, activated: false })
+      .values({ userId, secret, activated: false, pendingSecret: null })
       .returning();
     return row!;
   }
   async activateMfaCredential(userId: number) {
     await this.db
       .update(mfaCredentials)
-      .set({ activated: true })
+      .set({ activated: true, pendingSecret: null })
       .where(eq(mfaCredentials.userId, userId));
+  }
+  /** Re-enrolment verified: the pending secret becomes the live one. */
+  async promotePendingMfaSecret(userId: number) {
+    const cred = await this.getMfaCredential(userId);
+    if (!cred?.pendingSecret) return false;
+    await this.db
+      .update(mfaCredentials)
+      .set({ secret: cred.pendingSecret, pendingSecret: null, activated: true })
+      .where(eq(mfaCredentials.userId, userId));
+    return true;
+  }
+  /** Remove every second factor for a user (self-disable or admin reset). */
+  async clearMfa(userId: number) {
+    await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, userId));
+    await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, userId));
+    await this.db.update(users).set({ twoFactorEnabled: false }).where(eq(users.id, userId));
   }
   async replaceBackupCodes(userId: number, hashes: string[]) {
     await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, userId));

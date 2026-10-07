@@ -148,6 +148,27 @@ const av = (await erApi("GET", `/api/messaging/availability/${P.me.id}`)).json;
 rec("phone sets DND; web sees availability dnd=true", av?.dnd === true, JSON.stringify(av));
 await chenApi("PATCH", "/api/settings/me", { key:"dnd", value:false });
 
+// ---- 8) credentials are REAL: the form posts what was typed
+{
+  const ctx = await br.newContext(PHONE); const page = await ctx.newPage();
+  await page.goto(BASE + "/", { waitUntil: "networkidle" }); await sleep(800);
+  const posted = [];
+  page.on("request", r => { if (r.url().endsWith("/api/login") && r.method() === "POST") { try { posted.push(JSON.parse(r.postData() || "{}")); } catch {} } });
+  const inputs = await page.locator("input").all();
+  await inputs[0].fill("ISPN"); await inputs[1].fill("patel"); await inputs[2].fill("not-the-password");
+  await page.locator('button:has-text("Sign in")').last().click(); await sleep(1500);
+  const meBad = await page.evaluate(() => fetch("/api/user", { credentials:"include" }).then(r => r.ok ? r.json() : null));
+  const errShown = /Wrong organization code, username or password/i.test(await text(page));
+  rec("login: wrong password is rejected — no session, error shown", !meBad && errShown, `me=${meBad?.username} err=${errShown}`);
+  rec("login: request body carries the TYPED credentials (not a demo substitute)", posted[0]?.username === "patel" && posted[0]?.password === "not-the-password" && posted[0]?.orgCode === "ISPN", JSON.stringify(posted[0] && { ...posted[0], password: posted[0].password === "not-the-password" ? "<typed>" : posted[0].password }));
+  await inputs[2].fill("docturn");
+  await page.locator('button:has-text("Sign in")').last().click();
+  const okP = await page.waitForFunction(() => !document.body.innerText.includes("Demo as role"), null, { timeout: 8000 }).then(()=>true).catch(()=>false);
+  const meP = await page.evaluate(() => fetch("/api/user", { credentials:"include" }).then(r => r.ok ? r.json() : null));
+  rec("login: typed username is honoured (patel signs in as patel, not the role's default account)", okP && meP?.username === "patel", `me=${meP?.username}`);
+  await ctx.close();
+}
+
 console.log("\n" + results.filter(r=>r[1]).length + " passed, " + results.filter(r=>!r[1]).length + " failed, " + results.length + " total");
 await P.page.screenshot({ path: "docs/mobile/interop-phone-final.png" }).catch(()=>{});
 await br.close();

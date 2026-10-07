@@ -8,10 +8,26 @@ function LoginScreen({ onLogin, appName }) {
   // Demo affordances (role picker, "any password" hint) exist ONLY in
   // synthetic-data mode — a real deployment shows a plain username/password form.
   const demoMode = _st.syntheticData !== false;
-  const [org, setOrg] = React.useState("ISPN");
-  const [user, setUser] = React.useState("chen");
-  const [pass, setPass] = React.useState("••••••••");
+  // The form submits EXACTLY what is in these fields. In synthetic-data mode the
+  // role picker pre-fills a seeded demo account as a convenience; on a real
+  // deployment the fields start empty and there is no picker.
+  const [org, setOrg] = React.useState("");
+  const [user, setUser] = React.useState("");
+  const [pass, setPass] = React.useState("");
   const [role, setRole] = React.useState("hospitalist");
+  const touched = React.useRef(false);
+  const demoFor = (r) => (window.DT && window.DT.demoAccount) ? window.DT.demoAccount(r) : { org: "ISPN", user: "chen", pass: "docturn" };
+  const fill = (d) => { setOrg(d.org); setUser(d.user); setPass(d.pass); };
+  const pickRole = (r) => { setRole(r); if (demoMode) fill(demoFor(r)); };
+  // Pre-fill once when we learn this is a synthetic instance (the flag arrives
+  // from /api/config) and the user hasn't started typing.
+  React.useEffect(() => { if (demoMode && !touched.current && !org && !user && !pass) fill(demoFor(role)); }, [demoMode]);
+  const typed = (setter) => (v) => { touched.current = true; setter(v); };
+  const submit = () => onLogin(role, org, user, pass);
+  const onEnter = { onKeyDown: (e) => { if (e.key === "Enter") submit(); } };
+  // iOS Safari autocapitalises and autocorrects text inputs by default — fatal
+  // for usernames/org codes. Also wire autocomplete so password managers work.
+  const idProps = { autoCapitalize: "none", autoCorrect: "off", spellCheck: false, ...onEnter };
 
   // Registration mode: request an account with the org code → pending approval.
   const [mode, setMode] = React.useState("signin"); // "signin" | "register"
@@ -61,16 +77,16 @@ function LoginScreen({ onLogin, appName }) {
 
           {mode === "signin" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <Field label="Organization code" icon="building-2" value={org} onChange={setOrg} help="Your hospital's short code." />
-            <Field label="Username" icon="user" value={user} onChange={setUser} />
-            <Field label="Password" icon="lock" type="password" value={pass} onChange={setPass} />
+            <Field label="Organization code" icon="building-2" value={org} onChange={typed(setOrg)} help="Your hospital's short code." placeholder="e.g. ISPN" inputProps={{ ...idProps, autoComplete: "organization", name: "orgCode" }} />
+            <Field label="Username" icon="user" value={user} onChange={typed(setUser)} inputProps={{ ...idProps, autoComplete: "username", name: "username" }} />
+            <Field label="Password" icon="lock" type="password" value={pass} onChange={typed(setPass)} inputProps={{ autoComplete: "current-password", name: "password", ...onEnter }} />
 
             {demoMode && (
             <div>
               <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Demo as role</label>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
                 {roles.map((r) => (
-                  <button key={r.id} onClick={() => setRole(r.id)}
+                  <button key={r.id} onClick={() => pickRole(r.id)}
                     style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "11px 6px",
                       borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12, fontWeight: 500,
                       border: `1px solid ${role === r.id ? "var(--primary)" : "var(--border)"}`,
@@ -89,14 +105,14 @@ function LoginScreen({ onLogin, appName }) {
                 <span>{loginError}</span>
               </div>
             )}
-            <Button full size="lg" onClick={() => onLogin(role, org, user)}>Sign in</Button>
+            <Button full size="lg" onClick={submit}>Sign in</Button>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center" }}>
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />
               Encrypted in transit · 15-min idle timeout · server-enforced roles
             </div>
             <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
-              {demoMode && <React.Fragment>Demo — pick a role and sign in. Org <b style={{ color: "var(--foreground)", fontWeight: 600 }}>ISPN</b> · any password. </React.Fragment>}
+              {demoMode && <React.Fragment>Demo — pick a role (the form pre-fills that seeded account; password <b style={{ color: "var(--foreground)", fontWeight: 600 }}>docturn</b>) and sign in. </React.Fragment>}
               New here? <button onClick={() => { setMode("register"); setRegMsg(null); setRegErr(null); }} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Create an account</button>.
             </div>
           </div>

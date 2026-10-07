@@ -65,18 +65,36 @@ export function registerPatientRoutes(app: Express) {
       const me = currentUser(req);
       const hours = Number((req.body ?? {}).olderThanHours);
       const olderThanMs = Number.isFinite(hours) ? Math.max(0, hours) * 3600_000 : 24 * 3600_000;
-      const removed = await storage().purgeOldPatients(me.organizationId, olderThanMs);
+      // The purge is a single transaction (storage.purgeOldPatients); a failure
+      // rolls everything back and is answered, never left to hang the request.
+      let result;
+      try {
+        result = await storage().purgeOldPatients(me.organizationId, olderThanMs);
+      } catch (err) {
+        console.error("[purge] failed", err);
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "maintenance.purge_failed",
+          resourceType: "patient",
+          resourceId: null,
+          details: { olderThanHours: olderThanMs / 3600_000, error: String((err as Error)?.message ?? err).slice(0, 200) },
+          riskLevel: "high",
+        });
+        return res.status(500).json({ error: "purge_failed" });
+      }
+      // Audit exactly what left the system, per table — not just a patient count.
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,
         action: "maintenance.purge_patients",
         resourceType: "patient",
         resourceId: null,
-        details: { removed, olderThanHours: olderThanMs / 3600_000 },
+        details: { removed: result.patients, ...result, olderThanHours: olderThanMs / 3600_000 },
         riskLevel: "medium",
       });
       broadcastAssignmentChange(me.organizationId);
-      res.json({ removed });
+      res.json({ removed: result.patients, ...result });
     },
   );
 }

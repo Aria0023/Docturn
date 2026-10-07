@@ -1,14 +1,17 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { censusOverrideSchema } from "@shared/schema";
-import { hashPassword } from "../auth.js";
+import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
 
 const createProviderSchema = z.object({
   username: z.string().min(3),
-  password: z.string().min(6),
+  // Accepted for backwards compatibility but IGNORED: the server mints a
+  // one-time credential and returns it once (see the handler). A director can
+  // never choose — let alone reuse the demo — password for someone else.
+  password: z.string().optional(),
   displayName: z.string().min(1),
   specialty: z.string().default("General"),
   patientCap: z.number().int().min(1).max(50).default(12),
@@ -125,15 +128,19 @@ export function registerProviderRoutes(app: Express) {
       );
       if (existing) return res.status(409).json({ error: "username_taken" });
 
+      // One-time credential: crypto-random, returned ONCE below for the director
+      // to hand over out-of-band, and forced to change at first sign-in.
+      const temporaryPassword = issueTemporaryPassword();
       const user = await storage().createUser({
         organizationId: me.organizationId,
         username: data.username,
-        passwordHash: await hashPassword(data.password),
+        passwordHash: await hashPassword(temporaryPassword),
         role: data.role,
         displayName: data.displayName,
         credential: data.credential ?? null,
         phone: null,
         twoFactorEnabled: false,
+        mustChangePassword: true,
       });
 
       let hospitalist = null;
@@ -162,7 +169,7 @@ export function registerProviderRoutes(app: Express) {
         details: { role: data.role },
         riskLevel: "low",
       });
-      res.status(201).json({ user: { id: user.id }, hospitalist });
+      res.status(201).json({ user: { id: user.id, username: user.username }, hospitalist, temporaryPassword });
     },
   );
 

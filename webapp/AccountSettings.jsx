@@ -44,16 +44,37 @@ function Switch({ on, onChange, label }) {
 
 /* Self-contained two-factor enrolment (TOTP) so Settings does not depend on the
    sign-in-time enrolment screen's props. Uses the same server routes. */
-function TwoFactorSetup({ onDone, onCancel }) {
+function TwoFactorSetup({ enrolled, onDone, onCancel }) {
   const a = useActions();
-  const [step, setStep] = React.useState("start");
+  // Already enrolled → "manage" (re-enrol / new backup codes / turn off), each a
+  // server-verified step-up: current password + a valid current code. The live
+  // authenticator keeps working until a NEW one is verified.
+  const [step, setStep] = React.useState(enrolled ? "manage" : "start");
   const [data, setData] = React.useState(null);
   const [code, setCode] = React.useState("");
+  const [pw, setPw] = React.useState("");
+  const [stepCode, setStepCode] = React.useState("");
+  const [doneTitle, setDoneTitle] = React.useState("Two-factor is on.");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const stepUpErr = (e) => {
+    const m = String((e && e.message) || "");
+    return m === "wrong_password" ? "That password is wrong." : m === "invalid_code" ? "That code didn't match — use a fresh code from your authenticator (or an unused backup code)." : m === "step_up_required" ? "Enter your password and a current code." : "Request failed — try again.";
+  };
+  const canStepUp = pw.length > 0 && stepCode.replace(/\s+/g, "").length >= 6 && !busy;
   const begin = () => {
     setBusy(true); setErr("");
-    Promise.resolve(a.mfaBeginEnrollment && a.mfaBeginEnrollment()).then((d) => { setData(d || {}); setStep("code"); }, (e) => setErr(String((e && e.message) || "Could not start enrolment."))).finally(() => setBusy(false));
+    const stepUp = enrolled ? { currentPassword: pw, code: stepCode } : undefined;
+    Promise.resolve(a.mfaBeginEnrollment && a.mfaBeginEnrollment(stepUp)).then((d) => { setData(d || {}); setStep("code"); }, (e) => setErr(enrolled ? stepUpErr(e) : String((e && e.message) || "Could not start enrolment."))).finally(() => setBusy(false));
+  };
+  const regenerate = () => {
+    setBusy(true); setErr("");
+    Promise.resolve(a.mfaRegenerateBackupCodes(pw, stepCode)).then((r) => { setData(r || {}); setDoneTitle("New backup codes issued — every previous code is now invalid."); setStep("done"); }, (e) => setErr(stepUpErr(e))).finally(() => setBusy(false));
+  };
+  const disable = () => {
+    if (!window.confirm("Turn off two-factor authentication? Your account will be protected by your password alone.")) return;
+    setBusy(true); setErr("");
+    Promise.resolve(a.mfaDisable(pw, stepCode)).then(() => { a.toast && a.toast({ tone: "accepted", title: "Two-factor turned off", msg: "Your password alone now protects this account." }); onDone(); }, (e) => setErr(stepUpErr(e))).finally(() => setBusy(false));
   };
   const verify = () => {
     setBusy(true); setErr("");
@@ -66,6 +87,17 @@ function TwoFactorSetup({ onDone, onCancel }) {
     <Modal title="Two-factor authentication" subtitle="Protect your account with a code from an authenticator app." icon="shield-check" onClose={onCancel}
       children={
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {step === "manage" && (
+            <React.Fragment>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--status-accepted)", fontWeight: 600, fontSize: 13 }}><Icon name="shield-check" size={16} />Two-factor is on for this account.</div>
+              <p style={{ fontSize: 13, color: "var(--muted-foreground)", margin: 0 }}>Changing it requires your password and a current code — so a stolen session alone can never weaken it. Your existing authenticator keeps working until a new one is verified.</p>
+              <Field label="Current password" icon="lock" type="password" value={pw} onChange={setPw} inputProps={{ autoComplete: "current-password" }} />
+              <Field label="Current 6-digit code (or a backup code)" icon="key-round" value={stepCode} onChange={setStepCode} placeholder="123456" inputProps={{ inputMode: "numeric", autoComplete: "one-time-code", autoCapitalize: "characters" }} />
+              <Button full onClick={begin} disabled={!canStepUp} style={{ opacity: canStepUp ? 1 : 0.55 }}>{busy ? "Working…" : "Set up a new authenticator"}</Button>
+              <Button full variant="outline" onClick={regenerate} disabled={!canStepUp} style={{ opacity: canStepUp ? 1 : 0.55 }}>New backup codes</Button>
+              <Button full variant="outline" onClick={disable} disabled={!canStepUp} style={{ opacity: canStepUp ? 1 : 0.55, color: "var(--destructive)" }}>Turn off two-factor</Button>
+            </React.Fragment>
+          )}
           {step === "start" && (
             <React.Fragment>
               <p style={{ fontSize: 13, color: "var(--muted-foreground)", margin: 0 }}>You'll scan a key into Google Authenticator, Microsoft Authenticator, 1Password or any TOTP app, then confirm with a 6-digit code.</p>
@@ -85,7 +117,7 @@ function TwoFactorSetup({ onDone, onCancel }) {
           )}
           {step === "done" && (
             <React.Fragment>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--status-accepted)", fontWeight: 600 }}><Icon name="check-check" size={16} />Two-factor is on.</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--status-accepted)", fontWeight: 600 }}><Icon name="check-check" size={16} />{doneTitle}</div>
               {backup.length > 0 && (
                 <React.Fragment>
                   <div style={{ fontSize: 13 }}>Save these one-time backup codes somewhere safe — each works once if you lose your phone:</div>
@@ -175,7 +207,9 @@ function AccountSettings({ onLock }) {
         <SettingsRow icon="key-round" title="Change password" sub="Choose a new password for your account" right={typeof ChangePasswordButton === "function" ? <ChangePasswordButton /> : null} />
         <SettingsRow icon="shield-check" title="Two-factor authentication"
           sub={user ? (user.twoFactorEnabled ? "On — authenticator app" : "Off — recommended for every clinical account") : "Checking…"}
-          right={user && user.twoFactorEnabled ? <Badge status="accepted">On</Badge> : <Button size="sm" variant="outline" onClick={() => setMfaOpen(true)}>Set up</Button>} />
+          right={user && user.twoFactorEnabled
+            ? <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Badge status="accepted">On</Badge><Button size="sm" variant="outline" onClick={() => setMfaOpen(true)}>Manage</Button></span>
+            : <Button size="sm" variant="outline" onClick={() => setMfaOpen(true)}>Set up</Button>} />
         {onLock && <SettingsRow icon="lock" title="Lock app now" sub="Require your password to continue" onClick={onLock} />}
       </SettingsGroup>
 
@@ -196,7 +230,7 @@ function AccountSettings({ onLock }) {
         <SettingsRow icon="log-out" title="Sign out" sub="Ends this session on this device" onClick={() => a.logout && a.logout()} />
       </SettingsGroup>
 
-      {mfaOpen && <TwoFactorSetup onDone={() => { setMfaOpen(false); refreshUser(); }} onCancel={() => setMfaOpen(false)} />}
+      {mfaOpen && <TwoFactorSetup enrolled={!!(user && user.twoFactorEnabled)} onDone={() => { setMfaOpen(false); refreshUser(); }} onCancel={() => setMfaOpen(false)} />}
     </div>
   );
 }

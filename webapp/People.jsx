@@ -30,6 +30,16 @@ function PersonRoleChip({ role, color }) {
   );
 }
 
+function PeopleIconButton({ title, icon, hoverColor, onClick }) {
+  return (
+    <button onClick={onClick} title={title} aria-label={title}
+      onMouseEnter={(e) => e.currentTarget.style.color = hoverColor} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+      style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}>
+      <Icon name={icon} size={16} />
+    </button>
+  );
+}
+
 function PeopleManager({ scopeOrg, domainRoles }) {
   const st = useStore();
   const a = useActions();
@@ -161,12 +171,28 @@ function PeopleManager({ scopeOrg, domainRoles }) {
                 <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: "1px solid var(--border)" }}>
                   <Avatar initials={peopleInitials(u.name)} size={34} tint="slate" />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{u.credential ? u.credential + (u.specialty ? " · " + u.specialty : "") : (u.specialty || PEOPLE_ROLE_LABEL[u.role])}</div>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ opacity: u.disabled ? 0.55 : 1 }}>{u.name}</span>
+                      {u.disabled && <Badge status="rejected">Access removed</Badge>}
+                      {!u.disabled && u.mustChangePassword && <Badge status="pending">Awaiting first sign-in</Badge>}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{u.credential ? u.credential + (u.specialty ? " · " + u.specialty : "") : (u.specialty || PEOPLE_ROLE_LABEL[u.role])}{u.username ? " · @" + u.username : ""}</div>
                   </div>
-                  <button onClick={() => a.removeUser(u.id)} title="Remove"
-                    onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                    style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>
+                  {/* Account lifecycle: issue a one-time password; remove or restore
+                      access (HIPAA workforce termination — immediate, audited). The
+                      destructive hard-delete stays developer-only. */}
+                  {u.role !== "developer" && (
+                    <PeopleIconButton title="Reset password (issues a one-time password)" icon="key-round" hoverColor="var(--primary)" onClick={() => a.resetUserPassword(u.id, u.name)} />
+                  )}
+                  {u.role !== "developer" && (
+                    <PeopleIconButton title="Reset two-factor (lost phone / no backup codes)" icon="shield-off" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
+                  )}
+                  {u.role !== "developer" && (u.disabled
+                    ? <PeopleIconButton title="Restore access" icon="user-check" hoverColor="var(--status-accepted)" onClick={() => a.reactivateUser(u.id)} />
+                    : <PeopleIconButton title="Remove access (deactivate)" icon="user-x" hoverColor="var(--destructive)" onClick={() => { if (window.confirm("Remove " + u.name + "'s access? They will be signed out and cannot sign in until restored.")) a.deactivateUser(u.id); }} />)}
+                  {st.session && st.session.role === "developer" && (
+                    <PeopleIconButton title="Delete account permanently" icon="trash-2" hoverColor="var(--destructive)" onClick={() => { if (window.confirm("Permanently delete " + u.name + "? Prefer 'Remove access' for anyone with clinical history.")) a.removeUser(u.id); }} />
+                  )}
                 </div>
               ))}
             </Card>

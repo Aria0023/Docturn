@@ -194,9 +194,13 @@ CREATE TABLE IF NOT EXISTS users (
   credential TEXT,
   phone TEXT,
   two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  disabled_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_uniq ON users(organization_id, username);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS hospitalists (
   id SERIAL PRIMARY KEY,
@@ -421,8 +425,10 @@ CREATE TABLE IF NOT EXISTS mfa_credentials (
   user_id INTEGER NOT NULL REFERENCES users(id),
   secret TEXT NOT NULL,
   activated BOOLEAN NOT NULL DEFAULT FALSE,
+  pending_secret TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE mfa_credentials ADD COLUMN IF NOT EXISTS pending_secret TEXT;
 
 CREATE TABLE IF NOT EXISTS mfa_backup_codes (
   id SERIAL PRIMARY KEY,

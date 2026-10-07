@@ -112,7 +112,7 @@ function Card({ children, style, onClick, hover }) {
   );
 }
 
-function Field({ label, icon, value, onChange, placeholder, type, help, error, textarea, rows }) {
+function Field({ label, icon, value, onChange, placeholder, type, help, error, textarea, rows, inputProps }) {
   const [focus, setFocus] = React.useState(false);
   const borderColor = error ? "var(--destructive)" : focus ? "var(--ring)" : "var(--input)";
   return (
@@ -122,7 +122,7 @@ function Field({ label, icon, value, onChange, placeholder, type, help, error, t
         {icon && <Icon name={icon} size={16} color="var(--muted-foreground)" style={{ marginTop: textarea ? 2 : 0 }} />}
         {textarea
           ? <textarea value={value} onChange={(e) => onChange && onChange(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} placeholder={placeholder} rows={rows || 3} style={{ border: "none", outline: "none", fontSize: 14, width: "100%", fontFamily: "inherit", background: "transparent", resize: "vertical", color: "var(--foreground)" }} />
-          : <input type={type || "text"} value={value} onChange={(e) => onChange && onChange(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} placeholder={placeholder} style={{ border: "none", outline: "none", fontSize: 14, width: "100%", fontFamily: "inherit", background: "transparent", color: "var(--foreground)" }} />}
+          : <input type={type || "text"} value={value} onChange={(e) => onChange && onChange(e.target.value)} onFocus={() => setFocus(true)} onBlur={() => setFocus(false)} placeholder={placeholder} {...(inputProps || {})} style={{ border: "none", outline: "none", fontSize: 16, width: "100%", fontFamily: "inherit", background: "transparent", color: "var(--foreground)" }} />}
       </div>
       {error ? <div style={{ fontSize: 11.5, color: "var(--destructive)", marginTop: 5, display: "flex", gap: 4, alignItems: "center" }}><Icon name="alert-circle" size={12} />{error}</div>
         : help ? <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 5 }}>{help}</div> : null}

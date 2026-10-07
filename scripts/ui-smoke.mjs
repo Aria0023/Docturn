@@ -138,11 +138,17 @@ const NAV = {
   hospitalist: ["dashboard", "history", "messages", "directory", "compliance"],
 };
 
+// The sign-in form submits the credentials it is given — nothing substitutes a
+// demo account any more — so the harness supplies the seeded demo credentials
+// itself. (Second arg kept for call-site compatibility; the demo org is derived
+// from the role: developer → DOCTURN, clinical roles → ISPN.)
+const demoLogin = (role) => { const d = DT.demoAccount(role); return DT.actions.login(role, d.org, d.user, d.pass); };
+
 await flush();
 rec("App mounted", !!window.document.querySelector("#root").children.length);
 
 for (const role of ["developer", "director", "er_director", "er_doctor", "hospitalist"]) {
-  await DT.actions.login(role, "ISPN");
+  await demoLogin(role, "ISPN");
   await flush(); await flush();
   const st = DT.getState();
   rec(`LOGIN as ${role}`, st.session && st.session.role === role, "session=" + JSON.stringify(st.session));
@@ -158,7 +164,7 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
 }
 
 // developer org CRUD
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 DT.actions.addTenant({ name: "Harness Test Hospital", code: "HARN", city: "Testville", state: "CA", timezone: "America/Los_Angeles" });
 await flush(); await flush();
 const harn = (DT.getState().orgs || []).find((o) => o.code === "HARN");
@@ -228,7 +234,7 @@ rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr),
 
 // Cross-org compliance overview: per-organization audit/PHI counts, separated by
 // org, for the developer. Plus the support directory hydrates users per org.
-await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 {
   const resp = await window.fetch("/api/dev/compliance-overview", { credentials: "include" });
   const arr = await resp.json().catch(() => []);
@@ -255,7 +261,7 @@ await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await 
 // opens must come back rendered for THIS organization with no unresolved
 // {placeholder} left in it. Driven through the real bridge actions the screen
 // calls (loadPolicyTemplates / loadPolicy), against the live server.
-await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+await demoLogin("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
   DT.actions.setNav("compliance-monitor");
   for (let i = 0; i < 10; i++) await flush();
@@ -294,7 +300,7 @@ await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await fl
 
 // developer enters an organization's FULL portal (org-scoped admin context) so
 // every per-org surface — compliance, directory, board, settings — is real.
-await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
   await DT.actions.manageOrg({ code: "ISPN" });
   for (let i = 0; i < 10; i++) await flush();
@@ -337,9 +343,9 @@ await flush();
 // clinical flow: ER doctor sends -> hospitalist receives -> accept.
 // Resolve the demo hospitalist's display name first so we route to EXACTLY the
 // account we then log in as (the seed roster uses real Amion names now).
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 const hospName = (DT.getState().me && DT.getState().me.name) || "";
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 let provs = DT.sortedProviders();
 for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
 const target = provs.find((p) => p.name === hospName) || provs[0];
@@ -348,7 +354,7 @@ if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
 rec("admission logged on send", (DT.getState().admissions || []).some((a) => a.initials === "ZZ"), "admissions=" + (DT.getState().admissions || []).length);
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 const got = (DT.getState().pending || []).find((p) => p.initials === "ZZ");
 rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + JSON.stringify((DT.getState().pending || []).map((p) => p.initials)));
 if (got) {
@@ -358,7 +364,7 @@ if (got) {
   // confirm the patient is on the dashboard census — not just the optimistic
   // local entry. Regression: reassigned/handed-off patients weren't appearing
   // because hydrate populated myPatients but not myAdmissions for hospitalists.
-  await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+  await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
   rec("hospitalist: census persists on rehydrate (myAdmissions from server)",
     (DT.getState().myAdmissions || []).some((a) => a.initials === "ZZ" && a.at),
     "myAdmissions=" + JSON.stringify((DT.getState().myAdmissions || []).map((a) => a.initials)));
@@ -367,7 +373,7 @@ if (got) {
 
 // ER physician MANUAL send, end-to-end through the real form (the user's bug):
 // type initials+room, switch to Manual, pick a NON-default provider, click Send.
-await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
 {
   let provs = DT.sortedProviders();
   for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
@@ -393,10 +399,10 @@ await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); awa
 }
 
 // Cross-user: import an Amion physician, then ER routes an admission to THEM.
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 await DT.actions.importProviders("ISPN", [{ name: "Roupen Guedikian", group: "Nocturnist", shift: "night" }]);
 await flush(); await flush();
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   // Provider hydration after import/login is async; poll briefly so the test
   // isn't racing the rehydrate (the app creates the user synchronously server-side).
@@ -419,7 +425,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // Messaging is backend-backed (cross-device): starting a conversation creates a
 // real server conversation and a sent message persists + round-trips.
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 {
   const who = DT.sortedProviders().find((p) => !/Chen/.test(p.name)) || DT.sortedProviders()[0];
   let conv = null;
@@ -436,7 +442,7 @@ await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
 }
 // Cross-user delivery: ER physician messages a hospitalist; the hospitalist
 // sees it on their OWN login (the real "works across devices" path).
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   const target = (DT.getState().directory || []).find((d) => /Chen/.test(d.name)) || (DT.getState().directory || [])[0];
   let ok = false, detail = "no target";
@@ -445,7 +451,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
     let conv = null;
     for (let i = 0; i < 12 && !conv; i++) { await flush(); conv = (DT.getState().conversations || []).find((c) => c.name === target.name); }
     if (conv) { DT.actions.sendMessage(conv.id, "X-user ping 42"); for (let i = 0; i < 12; i++) await flush(); }
-    await DT.actions.login("hospitalist", "ISPN"); for (let i = 0; i < 14; i++) await flush();
+    await demoLogin("hospitalist", "ISPN"); for (let i = 0; i < 14; i++) await flush();
     const conv2 = (DT.getState().conversations || []).find((c) => (c.messages || []).some((m) => m.text === "X-user ping 42"));
     ok = !!(conv2 && (conv2.messages || []).some((m) => m.text === "X-user ping 42" && !m.me));
     detail = "received=" + ok + " from=" + (conv2 && conv2.name);
@@ -456,7 +462,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 // On-call role addressing: the compose picker can address a ROLE (e.g. the next
 // hospitalist by rotation) that resolves to whoever holds it; selecting it opens
 // a direct conversation with the resolved holder (named after the role).
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let targets = [];
   try { targets = await DT.actions.listOnCallTargets(); } catch {}
@@ -478,28 +484,28 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // demo resilience: a wrong/stale org code (e.g. cached "MERCY") still signs in
 // via the role's canonical demo org, so the demo never dead-ends on org code.
-await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();
+await demoLogin("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();
 rec("login falls back to canonical org when the code is wrong/stale", (DT.getState().session || {}).role === "hospitalist", "session=" + JSON.stringify(DT.getState().session));
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)
 // then perform a dev action — the bridge should re-auth and succeed, not 401.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 window.__wipeSession();
-let recovered = false, recErr = "";
+// The server session is gone. The bridge must NOT re-authenticate on its own
+// (it holds no password, and silently signing in as a demo account was a real
+// security hole): the action fails, nothing is created, and the app returns to
+// the sign-in screen with a clear message.
 DT.actions.addTenant({ name: "Recovery Org", code: "RECOV", city: "X", state: "CA", timezone: "America/Los_Angeles" });
-// addTenant fire-and-forgets a 401 → self-heal re-auth → retry → hydrate (4
-// sequential round-trips); poll instead of racing a fixed wait.
-let recov = null;
-for (let i = 0; i < 15 && !recov; i++) { await flush(); recov = (DT.getState().orgs || []).find((o) => o.code === "RECOV"); }
-if (recov) {
-  try { await DT.actions.deleteTenant(recov); recovered = true; } catch (e) { recErr = e.message; }
-  for (let i = 0; i < 8; i++) await flush();
-}
-rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.getState().orgs || []).find((o) => o.code === "RECOV"), recErr || (recov ? "" : "addTenant failed after wipe"));
+let expired = false;
+for (let i = 0; i < 15 && !expired; i++) { await flush(); expired = !DT.getState().session && /session expired/i.test(DT.getState().loginError || ""); }
+const leaked = !!(DT.getState().orgs || []).find((o) => o.code === "RECOV");
+rec("session loss → sign-in screen, no silent re-login, nothing created on a dead session", expired && !leaked,
+  "session=" + JSON.stringify(DT.getState().session) + " loginError=" + DT.getState().loginError + " leaked=" + leaked);
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 6; i++) await flush();
 
 // role switcher: switching FROM developer (platform org) to a clinical role must
 // authenticate into the clinical tenant, not the platform org.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 DT.actions.setRole("hospitalist");
 await flush(); await flush();
 // Provider hydration is async; poll briefly so the assertion isn't racing it.
@@ -511,7 +517,7 @@ await flush(); await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
 // Developer ROOT access: open any user's portal (impersonation) and return.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 {
   const target = (DT.getState().devUsers || []).find((u) => u.role === "hospitalist" && u.org === "ISPN")
               || (DT.getState().devUsers || []).find((u) => u.role !== "developer");
@@ -529,7 +535,7 @@ await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 }
 
 // ER/Hospitalist directors can add midlevels (PA/NP) as credentialed consultants.
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 {
   await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
   await flush(); await flush(); await flush();
@@ -630,7 +636,7 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
   let bad = cases.filter(([n, want]) => R(n) !== want).map(([n, want]) => n + "→'" + R(n) + "'(want '" + want + "')");
   rec("room extraction: DISC/HALL/ICU/CCU/TELE/ED/OBS prefixes + no false positives", bad.length === 0, bad.join(" | "));
 }
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let prov = DT.sortedProviders()[0];
   for (let i = 0; i < 12 && !prov; i++) { await flush(); prov = DT.sortedProviders()[0]; }
@@ -647,7 +653,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // Consult services are driven by the live registered directory (consultants by
 // specialty + PA/NP midlevels), not hardcoded lists.
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   const dir = DT.getState().directory || [];
   const hasSpecialty = dir.some((d) => d.specialty);
@@ -672,7 +678,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 }
 
 // Consult services are director-editable (add / rename / set on-call / remove).
-await DT.actions.login("director", "ISPN"); await flush();
+await demoLogin("director", "ISPN"); await flush();
 {
   const n0 = (DT.getState().consultServices || []).length;
   DT.actions.addConsultService("Hematology"); await flush();
@@ -695,7 +701,7 @@ await DT.actions.login("director", "ISPN"); await flush();
     "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
 }
 // ER director can add/rename but NOT delete; delete stays with director + dev.
-await DT.actions.login("er_director", "ISPN"); await flush();
+await demoLogin("er_director", "ISPN"); await flush();
 {
   DT.actions.addConsultService("Pain Mgmt"); await flush();
   const svc = (DT.getState().consultServices || []).find((s) => s.name === "Pain Mgmt");
@@ -708,7 +714,7 @@ await DT.actions.login("er_director", "ISPN"); await flush();
 
 // Consult fan-out + acceptance: consulting a specialty creates a row per team
 // member; the board shows who was consulted and tracks who accepts/declines.
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let brd = DT.getState().board || [];
   for (let i = 0; i < 12 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
@@ -742,7 +748,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // ER physician can add a consultant on a patient they routed and see who was
 // called on their own board (the "sent" feed carries consult details).
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let snt = DT.getState().sent || [];
   for (let i = 0; i < 12 && snt.length === 0; i++) { await flush(); snt = DT.getState().sent || []; }
@@ -760,7 +766,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // Self-service password change: a wrong current password is rejected (so the
 // account is unchanged and demo logins keep working).
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 {
   const r = await DT.actions.changePassword("definitely-wrong-pass", "BrandNewPass123");
   rec("password change rejects an incorrect current password", r && r.ok === false, "r=" + JSON.stringify(r));
@@ -768,7 +774,7 @@ await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
 
 // Consulting a service with a NAMED on-call records that provider's name (not a
 // nameless "on-call team") — the requester sees who they called.
-await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+await demoLogin("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 {
   const card = (DT.getState().consultServices || []).find((s) => s.name === "Cardiology");
   if (card) DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
@@ -790,12 +796,12 @@ await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await f
 
 // Per-organization preferences: consult-service catalog + appearance/theme are
 // stored per tenant and survive a fresh login (persisted to org settings).
-await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+await demoLogin("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
   DT.actions.addConsultService("Smoke Consult Svc");
   DT.actions.setTheme({ appName: "SmokeBrand" });
   for (let i = 0; i < 10; i++) await flush();
-  await DT.actions.login("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
+  await demoLogin("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
   const st = DT.getState();
   rec("per-org consult catalog persists to the tenant",
     (st.consultServices || []).some((x) => x.name === "Smoke Consult Svc"),

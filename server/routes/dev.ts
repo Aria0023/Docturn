@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { devCreateUserSchema, toSafeUser } from "@shared/schema";
-import { hashPassword } from "../auth.js";
+import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { getExtractor } from "../services/ai-intake.js";
@@ -308,10 +308,13 @@ export function registerDevRoutes(app: Express) {
         allUsers.map((u) => ({
           id: u.id,
           name: u.displayName,
+          username: u.username,
           role: u.role,
           org: orgCode.get(u.organizationId) ?? "—",
           specialty: specByUser.get(u.id) ?? "",
           credential: u.credential,
+          disabled: !!u.disabledAt,
+          mustChangePassword: !!u.mustChangePassword,
         })),
       );
     },
@@ -376,17 +379,19 @@ export function registerDevRoutes(app: Express) {
           riskLevel: "medium",
         });
 
-        // Temporary credential issued out-of-band; here we set a random hash.
-        const tempHash = await hashPassword(Math.random().toString(36).slice(2));
+        // One-time credential: crypto-random, returned ONCE in this response for
+        // the developer to relay out-of-band, and forced to change on first use.
+        const temporaryPassword = issueTemporaryPassword();
         const user = await storage().createUser({
           organizationId: d.organizationId,
           username: d.username,
-          passwordHash: tempHash,
+          passwordHash: await hashPassword(temporaryPassword),
           role: d.role,
           displayName: d.displayName,
           credential: d.credential ?? null,
           phone: d.phone ?? null,
           twoFactorEnabled: false,
+          mustChangePassword: true,
         });
 
         if (d.role === "hospitalist") {
@@ -402,7 +407,7 @@ export function registerDevRoutes(app: Express) {
             shiftType: d.shiftType ?? "day",
           });
         }
-        res.status(201).json(toSafeUser(user));
+        res.status(201).json({ ...toSafeUser(user), temporaryPassword });
       } catch (err) {
         console.error("[dev] create user failed", err);
         if (!res.headersSent) res.status(500).json({ error: "create_failed" });
@@ -431,10 +436,42 @@ export function registerDevRoutes(app: Express) {
       });
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
+        // Remember who is really here so /api/dev/impersonate/stop can restore
+        // the developer WITHOUT a password (the client never holds one).
+        req.session.impersonatorId = me.id;
         res.json(toSafeUser(target));
       });
     },
   );
+
+  // Leave an impersonated / managed-org portal: swap the session back to the
+  // developer recorded at entry. Reachable while the session is the impersonated
+  // user (no developer role check — the session isn't a developer right now);
+  // the recorded developer must still exist, still be a developer and be active.
+  app.post("/api/dev/impersonate/stop", requireAuth, async (req, res, next) => {
+    const origId = req.session.impersonatorId;
+    if (!origId) return res.status(400).json({ error: "not_impersonating" });
+    const current = currentUser(req);
+    const orig = await storage().getUserById(origId);
+    if (!orig || orig.role !== "developer" || orig.disabledAt) {
+      delete req.session.impersonatorId;
+      return res.status(403).json({ error: "forbidden" });
+    }
+    await appendAudit({
+      organizationId: current.organizationId,
+      userId: orig.id,
+      action: "dev.impersonate_stop",
+      resourceType: "user",
+      resourceId: current.id,
+      details: { from: current.id, to: orig.id },
+      riskLevel: "high",
+    });
+    req.login(orig as unknown as Express.User, (err) => {
+      if (err) return next(err);
+      delete req.session.impersonatorId;
+      res.json(toSafeUser(orig));
+    });
+  });
 
   // Enter an organization's context as its senior admin (audited session swap)
   // so the developer gets that tenant's FULL portal — board, compliance,
@@ -469,6 +506,7 @@ export function registerDevRoutes(app: Express) {
       });
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);
+        req.session.impersonatorId = me.id; // /api/dev/impersonate/stop returns here
         res.json({ ...toSafeUser(admin), orgCode: org.code, orgName: org.name });
       });
     },

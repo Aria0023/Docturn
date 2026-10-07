@@ -331,10 +331,22 @@ in §7:
    → enrol with your authenticator app, save the backup codes offline.
 3. **Create your organization**: Developer console → Organizations → *New*
    (`POST /api/dev/organizations`).
-4. **Create the first users** in that org (`POST /api/dev/users`), or let
-   people **self-register** from the sign-in screen (`POST /api/register`):
-   registrations land as *pending* and a **director approves** them
-   (`/api/registrations/:id/approve`) — nobody gets in without an approval.
+4. **Create the first director** in that org (Developer console → People →
+   *Add*, i.e. `POST /api/dev/users`). The server mints a **one-time password**
+   and shows it to you **once** in a modal — hand it over in person or by
+   phone, never by chat/email. At their first sign-in the app holds them on a
+   **Set your password** screen until they choose their own (the demo password
+   and anything under 8 characters are refused everywhere). From then on the
+   director provisions clinicians the same way (Directory → People → *Add*),
+   or people **self-register** from the sign-in screen (`POST /api/register`)
+   and the director **approves** them (`/api/registrations/:id/approve`) —
+   nobody gets in without an approval.
+   **Account lifecycle** (Directory → People, or Developer console → People):
+   *Reset password* issues a fresh one-time password; *Remove access*
+   deactivates the account — sign-in refused **and** open sessions end on
+   their next request (HIPAA workforce termination); *Restore access* reverses
+   it; *Reset two-factor* clears a locked-out clinician's authenticator. Every
+   one of these is audited at high risk.
 5. In Developer console → **Modules**, turn **`security.mfaRequired` ON** for
    the org, so directors/ER directors must enrol MFA before they get privileged
    access. Leave `messaging.voice`, `messaging.attachments` etc. as you like —

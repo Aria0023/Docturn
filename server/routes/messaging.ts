@@ -1018,13 +1018,28 @@ export function registerMessagingRoutes(app: Express) {
         details: { messageId: msg.id, via: "forward" },
         riskLevel: "low",
       });
+      // Resolve the store FROM THE REF exactly like the primary attachment
+      // route: under ATTACHMENT_STORE=fs-encrypted the column holds "fsenc:<id>",
+      // not bytes — decoding it as base64 served 27 bytes of garbage.
+      let bytes: Buffer;
+      try {
+        bytes = await attachmentStoreFor(att.dataBase64).get(att.dataBase64);
+      } catch (err) {
+        if (err instanceof AttachmentStoreError) {
+          console.error("[attachments] forwarded fetch failed:", err.code, err.message);
+          return res
+            .status(err.code === "attachment_store_misconfigured" ? 503 : 404)
+            .json({ error: err.code === "attachment_store_misconfigured" ? "attachment_store_unavailable" : "not_found" });
+        }
+        throw err;
+      }
       res.setHeader("Content-Type", att.mimeType);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader(
         "Content-Disposition",
         'inline; filename="' + att.fileName.replace(/"/g, "") + '"',
       );
-      res.send(Buffer.from(att.dataBase64, "base64"));
+      res.send(bytes);
     },
   );
 

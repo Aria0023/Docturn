@@ -274,6 +274,9 @@ export async function syncAmion(
         credential: null,
         phone: null,
         twoFactorEnabled: false,
+        // Unusable until a director issues a one-time password
+        // (POST /api/accounts/:id/reset-password), which then must be changed.
+        mustChangePassword: true,
       });
       byName.set(key, user);
     }

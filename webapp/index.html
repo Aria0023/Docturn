@@ -71,6 +71,7 @@
 <script type="text/babel" src="LoginScreen.jsx"></script>
 <script type="text/babel" src="LockScreen.jsx"></script>
 <script type="text/babel" src="MfaScreen.jsx"></script>
+<script type="text/babel" src="ChangePasswordScreen.jsx"></script>
 <script type="text/babel" src="AppShell.jsx"></script>
 <script type="text/babel" src="HospitalistDashboard.jsx"></script>
 <script type="text/babel" src="HospitalistWork.jsx"></script>
@@ -324,11 +325,14 @@ function App() {
   // Second factor at sign-in for an enrolled account: the server holds the
   // login (202) until the code arrives, so there is no session yet.
   if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
   // The org requires MFA for this privileged role and the user hasn't enrolled:
   // the server 403s every other route, so hold the whole app (no navigation)
   // on the enrolment screen until /api/user says the block has lifted.
   if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
+  // A provisioned / admin-reset account still holds its one-time password: the
+  // server 403s every other route, so hold the app on the change screen.
+  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
@@ -524,6 +528,7 @@ function App() {
         <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
         <Toast toast={st.__toast} />
         {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+      <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
       </div>
     );
   }
@@ -557,6 +562,7 @@ function App() {
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />
       {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+      <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
     </div>
   );
 }

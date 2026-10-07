@@ -50,6 +50,12 @@
     if (!fallback || fallback === PLATFORM_ORG) return "ISPN";
     return fallback;
   }
+  // The seeded demo account for a role (synthetic-data mode only). Used to
+  // PRE-FILL the sign-in form and by the demo role switcher — never substituted
+  // for what a user actually typed.
+  DT.demoAccount = function (role) {
+    return { org: orgForRole(role), user: DEMO[role] || "chen", pass: "docturn" };
+  };
 
   // Remember the active role/org so we can transparently re-authenticate if the
   // server session goes away (15-min idle expiry, OR a dev-server restart that
@@ -59,6 +65,14 @@
   // (403 mfa_enrollment_required); de-dupes the state flip across the many
   // parallel hydrate calls that all fail the same way.
   var mfaFlagged = false;
+  // Same de-dupe for the forced password change (403 password_change_required).
+  var pwChangeFlagged = false;
+  // Auth epoch: bumped every time the session identity changes (login, role
+  // switch, impersonation in/out, logout). A 401 belonging to a request that
+  // was issued under an OLDER epoch is a stale response racing the swap — it
+  // must never be read as "the current session expired".
+  var authEpoch = 0;
+  function newAuthEpoch() { authEpoch++; }
   // Analytics (/api/metrics/comms, /api/reports/ops) are director-level.
   var PRIVILEGED = { director: 1, er_director: 1, developer: 1 };
 
@@ -85,22 +99,31 @@
     });
   }
 
-  // Which role/org to (re)authenticate as: a confirmed prior login if we have
-  // one, otherwise the role the UI is currently showing — so even a session that
-  // never really logged in (demo fallback after a transient server hiccup) can
-  // be promoted to a real session on demand.
-  function authHint() {
-    if (lastAuth) return lastAuth;
-    var sess = (DT.getState && DT.getState().session) || null;
-    if (sess && sess.role) return { role: sess.role, org: orgForRole(sess.role, sess.org) };
-    return null;
+  // Server-side session loss → sign-in screen, with the same PHI hygiene as an
+  // explicit logout (clinical slices + persisted snapshot cleared). De-duped so
+  // a burst of failing hydrate calls produces one transition and one message.
+  var sessionExpiring = false;
+  function expireSession() {
+    if (sessionExpiring) return;
+    sessionExpiring = true;
+    newAuthEpoch();
+    try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    meId = null; lastAuth = null;
+    dashHydrated = false; lastDashSnap = null;
+    mfaFlagged = false; pendingMfaFinish = null;
+    if (origLogout) origLogout();
+    DT.set(function (s) {
+      s.mfaEnrollmentRequired = false; s.mfaChallenge = null;
+      s.loginError = "Your session expired — please sign in again.";
+      return s;
+    });
+    setTimeout(function () { sessionExpiring = false; }, 2000);
   }
 
-  // Self-healing wrapper: on a 401 (no/expired session), re-authenticate as the
-  // active role once and retry — so a session that died mid-use, or never
-  // established, doesn't surface as a dead "unauthorized" button. Never recurses
-  // on the login call itself.
+  // API wrapper: surfaces MFA-enrolment gating and expired sessions to the UI.
+  // It never re-authenticates on the caller's behalf.
   function api(method, path, body) {
+    var epoch = authEpoch; // which session identity this request belongs to
     return rawApi(method, path, body).catch(function (e) {
       // The org requires MFA for privileged roles and this session hasn't
       // enrolled: the server answers everything but the enrolment routes this
@@ -113,15 +136,23 @@
         }
         throw e;
       }
-      var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
-      var hint = authHint();
-      // Token-mode panes authenticate by bearer token, not a re-loginable cookie
-      // session, so don't attempt the cookie self-heal there.
-      if (is401 && hint && path !== "/api/login" && !DEMO_TOKEN) {
-        return rawApi("POST", "/api/login", {
-          orgCode: hint.org, username: DEMO[hint.role] || "chen", password: "docturn",
-        }).then(function () { lastAuth = hint; return rawApi(method, path, body); });
+      // A provisioned / admin-reset account must replace its one-time password
+      // before anything else: route the UI to the change-password screen.
+      if (e && e.status === 403 && String(e.message) === "password_change_required") {
+        if (!pwChangeFlagged) {
+          pwChangeFlagged = true;
+          DT.set(function (s) { s.passwordChangeRequired = true; return s; });
+        }
+        throw e;
       }
+      var is401 = e && (e.status === 401 || String(e.message) === "unauthorized");
+      // The server session is gone (15-min idle expiry, restart, revocation).
+      // There is deliberately NO automatic re-login: the client never holds a
+      // password, and re-authenticating as a well-known demo account would both
+      // defeat the idle timeout and could swap a real user's session for a
+      // different account. Drop to the sign-in screen once (the parallel
+      // hydrate calls all fail together) and let the user authenticate again.
+      if (is401 && epoch === authEpoch && path !== "/api/login" && !DEMO_TOKEN && DT.getState().session) expireSession();
       throw e;
     });
   }
@@ -642,13 +673,23 @@
     return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
   }
 
-  function doLogin(role, org, user) {
-    var username = DEMO[role] || user || "chen";
-    var primary = orgForRole(role, org);
-    var canonical = canonicalOrg(role);
+  // Sign in with EXACTLY the credentials the user typed. No demo-account
+  // substitution, no org rewriting, no fallback retry with other credentials:
+  // the server decides, and the session's role comes from /api/user, never
+  // from the role picker (which, in synthetic mode, only pre-fills the form —
+  // see LoginScreen.jsx / DT.demoAccount).
+  function doLogin(role, org, user, pass) {
+    var orgCode = String(org || "").trim();
+    var username = String(user || "").trim();
+    var password = String(pass || "");
+    if (!orgCode || !username || !password) {
+      var ve = new Error("validation_error"); ve.status = 400;
+      return Promise.reject(ve);
+    }
 
-    function finish(u, orgCode) {
-      lastAuth = { role: u.role, org: orgForRole(u.role, org) }; // enable self-healing re-auth
+    function finish(u) {
+      lastAuth = { org: orgCode, username: u.username };
+      newAuthEpoch();
       meId = u.id;
       auditLoaded = false; // new login context → reload that org's audit on first hydrate
       prefsLoaded = false;
@@ -663,33 +704,28 @@
         // Privileged role in an org that requires MFA, not enrolled yet: the
         // login succeeded but the server 403s everything except enrolment.
         s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
+        s.passwordChangeRequired = !!u.mustChangePassword;
         return s;
       });
       mfaFlagged = !!u.mfaEnrollmentRequired;
+      pwChangeFlagged = !!u.mustChangePassword;
       if (u.mfaEnrollmentRequired) return Promise.resolve(u); // held at the enrolment screen; mfaEnrollmentDone() boots the rest
+      if (u.mustChangePassword) return Promise.resolve(u);    // held at the change-password screen; passwordChangeDone() boots the rest
       return bootSession(u);
     }
-    function attempt(orgCode) {
-      return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: "docturn" })
-        .then(function (r) {
-          if (r && r.twoFactorRequired) {
-            // Enrolled account: the server holds the login until a second
-            // factor arrives (POST /api/2fa/complete-login → finish()).
-            DT.set(function (s) { s.mfaChallenge = { org: orgCode, role: role, username: username }; s.session = null; s.loginError = null; return s; });
-            return null;
-          }
-          return get("/api/user").then(function (u) { return finish(u, orgCode); });
-        });
-    }
     // Second-factor completion re-enters the same finish() as a plain login.
-    pendingMfaFinish = function (u) { return finish(u, orgForRole(u.role, org)); };
+    pendingMfaFinish = function (u) { return finish(u); };
 
-    return attempt(primary).catch(function (e) {
-      // Demo resilience: a wrong/stale org code (cached "MERCY") shouldn't block
-      // sign-in — retry once with the role's canonical demo org.
-      if (!isNetworkError(e) && primary !== canonical) return attempt(canonical);
-      throw e;
-    });
+    return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: password })
+      .then(function (r) {
+        if (r && r.twoFactorRequired) {
+          // Enrolled account: the server holds the login until a second
+          // factor arrives (POST /api/2fa/complete-login → finish()).
+          DT.set(function (s) { s.mfaChallenge = { org: orgCode, role: role, username: username }; s.session = null; s.loginError = null; return s; });
+          return null;
+        }
+        return get("/api/user").then(function (u) { return finish(u); });
+      });
   }
 
   // Distinguish "backend unreachable" (fetch rejects with a TypeError) from
@@ -720,22 +756,34 @@
       /Failed to fetch|fetch failed|NetworkError|ECONNREFUSED|ERR_NETWORK|load failed/i.test(String(e && e.message));
   }
 
-  DT.actions.login = function (role, org, user) {
+  DT.actions.login = function (role, org, user, pass) {
     // Return the promise so callers that await login wait for hydrate to finish
     // (session + per-org prefs settled) before acting.
-    return doLogin(role, org, user).catch(function (e) {
+    return doLogin(role, org, user, pass).catch(function (e) {
+      var synthetic = DT.getState().syntheticData !== false;
       if (isNetworkError(e)) {
-        // Server down → demo login so the UI is still explorable offline.
-        origLogin(role, org, user);
-        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
+        if (synthetic) {
+          // Synthetic demo only: server down → local demo data so the UI is
+          // still explorable. Never on a real-PHI deployment, where a signed-in
+          // screen with fabricated patients would be actively dangerous.
+          origLogin(role, org, user);
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
+          return;
+        }
+        DT.set(function (s) {
+          s.loginError = "Can't reach the server. Check your connection and try again.";
+          s.__toast = { tone: "rejected", title: "Sign-in failed", msg: "Server unreachable." };
+          return s;
+        });
         return;
       }
-      // Server reachable but login failed (bad/missing account or org code).
+      // Server reachable but rejected the attempt. One generic message for bad
+      // org/user/password — the server deliberately doesn't say which.
       var why = String((e && e.message) || "");
-      var msg = /organization|not.?found/i.test(why) ? "That organization code wasn't found — try org code ISPN."
-        : role === "developer" ? devAccountHint()
-        : /credential/i.test(why) ? "Wrong account/password for this role."
-        : "That demo account isn't available on this deployment.";
+      var msg = why === "validation_error" ? "Enter your organization code, username and password."
+        : e && e.status === 429 ? "Too many sign-in attempts. Wait a few minutes and try again."
+        : "Wrong organization code, username or password.";
+      if (role === "developer" && synthetic) msg += " " + devAccountHint();
       DT.set(function (s) {
         s.loginError = "Sign-in failed: " + msg;
         s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };
@@ -750,9 +798,16 @@
   var origSetRole = DT.actions.setRole;
   DT.actions.setRole = function (role) {
     var st = DT.getState();
-    var org = (st.session && st.session.org) || "ISPN";
+    // Switching roles means signing in as that role's DEMO account — a
+    // synthetic-data convenience only. On a real-PHI deployment there are no
+    // demo accounts and this control is not rendered; refuse defensively.
+    if (st.syntheticData === false) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not available", msg: "Role switching is a demo-only feature. Sign out and sign in as the other account." }; return s; });
+      return;
+    }
     if (st.impersonating) DT.set(function (s) { s.impersonating = null; return s; }); // leaving the impersonated portal
-    doLogin(role, org).catch(function (e) {
+    var demo = DT.demoAccount(role);
+    doLogin(role, demo.org, demo.user, demo.pass).catch(function (e) {
       if (isNetworkError(e)) {
         if (origSetRole) origSetRole(role);
         return;
@@ -940,6 +995,16 @@
     DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
     return api("PATCH", "/api/settings/me", { key: key, value: value }).catch(function () {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Setting not saved", msg: "Couldn\u2019t reach the server." }; return s; });
+    });
+  };
+  // Forced change complete: lift the hold and boot the session the same way a
+  // plain login would (the user was parked on the change-password screen).
+  DT.actions.passwordChangeDone = function () {
+    pwChangeFlagged = false;
+    return get("/api/user").then(function (u) {
+      DT.set(function (s) { s.passwordChangeRequired = !!u.mustChangePassword; return s; });
+      if (u.mustChangePassword) return u; // server still says no — stay parked
+      return bootSession(u);
     });
   };
   DT.actions.changePassword = function (currentPassword, newPassword) {
@@ -1162,11 +1227,27 @@
   // talk to the server's existing TOTP routes. rawApi throughout: none of
   // these may self-heal into a demo re-login.
   var pendingMfaFinish = null; // set by doLogin so complete-login re-enters its finish()
-  DT.actions.mfaBeginEnrollment = function () {
-    return rawApi("POST", "/api/mfa/enroll", {});
+  // First enrolment needs nothing; RE-enrolment of an active authenticator is a
+  // step-up: current password + a valid current code, verified by the server.
+  DT.actions.mfaBeginEnrollment = function (stepUp) {
+    var body = stepUp && stepUp.currentPassword ? { currentPassword: stepUp.currentPassword, code: String(stepUp.code || "") } : {};
+    return rawApi("POST", "/api/mfa/enroll", body);
   };
   DT.actions.mfaVerifyEnrollment = function (code) {
     return rawApi("POST", "/api/mfa/verify", { code: String(code || "") });
+  };
+  DT.actions.mfaDisable = function (currentPassword, code) {
+    return rawApi("POST", "/api/mfa/disable", { currentPassword: currentPassword, code: String(code || "") });
+  };
+  DT.actions.mfaRegenerateBackupCodes = function (currentPassword, code) {
+    return rawApi("POST", "/api/mfa/backup-codes/regenerate", { currentPassword: currentPassword, code: String(code || "") });
+  };
+  // Administrator: clear a locked-out clinician's second factor (audited).
+  DT.actions.resetUserMfa = function (id, name) {
+    return api("POST", "/api/accounts/" + id + "/reset-mfa").then(function () {
+      refreshPeople();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Two-factor reset", msg: (name || "The user") + " can sign in with their password and enrol again." }; return s; });
+    }).catch(function (e) { accountError(e, "reset two-factor"); });
   };
   // After the user has saved their backup codes: confirm with the server that
   // the block is gone (it re-checks the DB), then boot the session normally.
@@ -1204,6 +1285,7 @@
   var origLogout = DT.actions.logout;
   DT.actions.logout = function () {
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    newAuthEpoch();
     meId = null;
     dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
     mfaFlagged = false; pendingMfaFinish = null;
@@ -1611,16 +1693,31 @@
     // the server enforces this too, but keep the client from ever asking.
     var role = data.role && data.role !== "developer" ? data.role : "hospitalist";
     var uname = name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 20) || ("dr" + Date.now());
-    var body = { username: uname, password: "docturn", displayName: name, role: role };
+    // No password is chosen here: the server mints a one-time credential and
+    // returns it exactly once, which we show the director to hand over.
+    var body = { username: uname, displayName: name, role: role };
     // Specialty/cap/shift only apply to hospitalists (who join the rotation).
     if (role === "hospitalist") {
       body.specialty = data.specialty || "Hospital Medicine";
       body.patientCap = parseInt(data.cap, 10) || 12;
       body.shiftType = data.shift || "day";
     }
-    api("POST", "/api/director/hospitalists", body).then(rehydrate).catch(function () {});
     var roleLabel = { hospitalist: "Provider", er_doctor: "ER doctor", er_director: "ER director", director: "Director" }[role] || "Provider";
-    DT.set(function (s) { s.__toast = { tone: "accepted", title: roleLabel + " added", msg: name + " added to " + (role === "hospitalist" ? "the group." : "the organization.") }; return s; });
+    return api("POST", "/api/director/hospitalists", body).then(function (res) {
+      rehydrate(); hydrateDevUsers();
+      revealCredential({ title: roleLabel + " added", name: name, username: (res && res.user && res.user.username) || uname, temporaryPassword: res && res.temporaryPassword });
+    }).catch(function (e) {
+      var msg = String(e && e.message) === "username_taken" ? "That username already exists in this organization." : "The server rejected the request.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not add " + roleLabel.toLowerCase(), msg: msg }; return s; });
+    });
+  };
+  // Show a freshly minted one-time password to the administrator — in a modal
+  // they must dismiss (never a toast that vanishes), and only in memory.
+  function revealCredential(c) {
+    DT.set(function (s) { s.__credentialReveal = c; return s; });
+  }
+  DT.actions.dismissCredentialReveal = function () {
+    DT.set(function (s) { s.__credentialReveal = null; return s; });
   };
   DT.actions.removeProvider = function (id) {
     api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
@@ -1648,8 +1745,10 @@
       });
     }
     function createOwn(p) {
+      // Server mints the one-time password; imported accounts are unusable
+      // until the director issues it (Reset password in People).
       return api("POST", "/api/director/hospitalists", {
-        username: unameFor(p.name), password: "docturn", displayName: p.name,
+        username: unameFor(p.name), displayName: p.name,
         specialty: p.group || "Hospital Medicine", patientCap: 12,
         shiftType: p.shift || "day", role: "hospitalist", working: true,
       });
@@ -1692,11 +1791,16 @@
   DT.actions.amionSyncNow = function () { return api("POST", "/api/amion/sync-now", {}); };
 
   // Developer: hydrate real cross-tenant users into the kit's devUsers shape.
+  // People an administrator may manage: developers read the cross-tenant list,
+  // directors / ER directors read their own org via /api/accounts (same shape).
   function hydrateDevUsers() {
-    return get("/api/dev/users").then(function (users) {
+    var role = (DT.getState().session || {}).role;
+    var path = role === "developer" ? "/api/dev/users" : "/api/accounts";
+    return get(path).then(function (users) {
       DT.set(function (s) {
         s.devUsers = (users || []).map(function (u) {
-          return { id: u.id, name: u.name, role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "", scope: u.role === "developer" ? "root" : "local" };
+          return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
+            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword, scope: u.role === "developer" ? "root" : "local" };
         });
         return s;
       });
@@ -1718,12 +1822,41 @@
       credential: form.credential || undefined,
       patientCap: form.cap ? parseInt(form.cap, 10) : undefined,
       shiftType: SHIFT_MAP[form.shift] || "day",
-    }).then(function () {
+    }).then(function (u) {
       hydrateDevUsers(); hydrateOrgs();
-      DT.set(function (s) { s.__toast = { tone: "accepted", title: "User created", msg: form.name + " added to " + form.org + "." }; return s; });
-    }).catch(function () {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create user", msg: "Check the form and try again." }; return s; });
+      revealCredential({ title: "User created in " + form.org, name: form.name, username: (u && u.username) || uname, temporaryPassword: u && u.temporaryPassword });
+    }).catch(function (e) {
+      var msg = String(e && e.message) === "username_taken" ? "That username already exists in " + form.org + "." : "Check the form and try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create user", msg: msg }; return s; });
     });
+  };
+  // ---- account lifecycle (director / ER director / developer) --------------
+  function refreshPeople() { hydrateDevUsers(); if ((DT.getState().session || {}).role === "developer") hydrateOrgs(); rehydrate(); }
+  function accountError(e, what) {
+    var m = String((e && e.message) || "");
+    var msg = m === "cannot_act_on_self" ? "You can't " + what + " your own account."
+      : m === "not_found" ? "That account isn't one you manage."
+      : m === "forbidden" ? "Your role can't " + what + " accounts."
+      : "The server rejected the request.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not " + what, msg: msg }; return s; });
+  }
+  DT.actions.deactivateUser = function (id) {
+    return api("POST", "/api/accounts/" + id + "/deactivate").then(function () {
+      refreshPeople();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Access removed", msg: "The account can no longer sign in; any open sessions end on their next request." }; return s; });
+    }).catch(function (e) { accountError(e, "deactivate"); });
+  };
+  DT.actions.reactivateUser = function (id) {
+    return api("POST", "/api/accounts/" + id + "/reactivate").then(function () {
+      refreshPeople();
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Access restored", msg: "The account can sign in again." }; return s; });
+    }).catch(function (e) { accountError(e, "reactivate"); });
+  };
+  DT.actions.resetUserPassword = function (id, name) {
+    return api("POST", "/api/accounts/" + id + "/reset-password").then(function (r) {
+      refreshPeople();
+      revealCredential({ title: "Password reset", name: name || (r && r.username), username: r && r.username, temporaryPassword: r && r.temporaryPassword });
+    }).catch(function (e) { accountError(e, "reset the password"); });
   };
   DT.actions.removeUser = function (id) {
     api("DELETE", "/api/dev/users/" + id).then(function () {
@@ -1744,6 +1877,7 @@
     return api("POST", "/api/dev/impersonate", { userId: Number(user.id) })
       .then(function () { return get("/api/user"); })
       .then(function (u) {
+        newAuthEpoch();
         meId = u.id;
         auditLoaded = false;
         prefsLoaded = false;
@@ -1759,9 +1893,26 @@
       })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open portal", msg: "Impersonation failed." }; return s; }); });
   };
+  // Leave the impersonated / managed-org portal. The SERVER swaps the session
+  // back to the developer it recorded at entry (POST /api/dev/impersonate/stop)
+  // — no password, no demo account, works on real-PHI deployments.
   DT.actions.stopImpersonating = function () {
-    return doLogin("developer").then(function () {
-      DT.set(function (s) { s.impersonating = null; return s; });
+    return api("POST", "/api/dev/impersonate/stop", {}).then(function (u) {
+      newAuthEpoch();
+      meId = u.id;
+      auditLoaded = false; prefsLoaded = false;
+      dashHydrated = false; lastDashSnap = null;
+      DT.set(function (s) {
+        s.impersonating = null;
+        s.session = { role: u.role, org: PLATFORM_ORG, user: u.username, name: u.displayName };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.ui.nav = "dashboard"; s.ui.notifOpen = false;
+        return s;
+      });
+      return bootSession(u);
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't leave portal", msg: "Sign out and sign back in as the developer." }; return s; });
+      console.error("[DocTurn] stopImpersonating failed:", e);
     });
   };
 
@@ -1774,6 +1925,7 @@
     if (id == null) { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open org", msg: "Unknown organization." }; return s; }); return; }
     return api("POST", "/api/dev/manage-org", { orgId: Number(id) })
       .then(function (u) {
+        newAuthEpoch();
         meId = u.id;
         auditLoaded = false;
         prefsLoaded = false;
@@ -1891,7 +2043,8 @@
       mfaFlagged = !!u.mfaEnrollmentRequired;
       if (u.mfaEnrollmentRequired) return; // held at the enrolment screen
       connectWs();
-      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      if (u.role === "developer") hydrateOrgs();
+      if (u.role === "developer" || u.role === "director" || u.role === "er_director") hydrateDevUsers(); // people they may manage
       hydrateBroadcasts();
       hydrate(u.role).then(function () { hydrateConversations(); });
     }).catch(function (e) { console.error("[DocTurn] demo token bootstrap failed", e); });
@@ -1908,6 +2061,7 @@
       if (!u || u.id == null) throw new Error("no_session");
       var orgCode = orgForRole(u.role, savedSess && savedSess.org);
       lastAuth = { role: u.role, org: orgCode };
+      newAuthEpoch();
       meId = u.id;
       auditLoaded = false;
       prefsLoaded = false;
@@ -1918,12 +2072,16 @@
         s.loginError = null;
         s.mfaChallenge = null;
         s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
+        s.passwordChangeRequired = !!u.mustChangePassword;
         return s;
       });
       mfaFlagged = !!u.mfaEnrollmentRequired;
+      pwChangeFlagged = !!u.mustChangePassword;
       if (u.mfaEnrollmentRequired) return; // held at the enrolment screen; mfaEnrollmentDone() boots the rest
+      if (u.mustChangePassword) return;    // held at the change-password screen; passwordChangeDone() boots the rest
       connectWs();
-      if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+      if (u.role === "developer") hydrateOrgs();
+      if (u.role === "developer" || u.role === "director" || u.role === "er_director") hydrateDevUsers(); // people they may manage
       hydrateMyPrefs();
       enableWebPush();
       if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
