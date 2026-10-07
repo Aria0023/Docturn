@@ -425,6 +425,9 @@ export function registerDevRoutes(app: Express) {
       const targetId = Number(req.body?.userId);
       const target = await storage().getUserById(targetId);
       if (!target) return res.status(404).json({ error: "not_found" });
+      // A deactivated account cannot be entered either: its sessions never
+      // deserialise, so impersonating it would only yield a dead session.
+      if (target.disabledAt) return res.status(409).json({ error: "account_disabled" });
       await appendAudit({
         organizationId: target.organizationId,
         userId: me.id,
@@ -485,7 +488,9 @@ export function registerDevRoutes(app: Express) {
       const orgId = Number(req.body?.orgId);
       const org = await storage().getOrganization(orgId);
       if (!org) return res.status(404).json({ error: "not_found" });
-      const users = await storage().listUsers(orgId);
+      // Only ACTIVE accounts can be entered — a deactivated one never
+      // deserialises, so the portal would be a dead session.
+      const users = (await storage().listUsers(orgId)).filter((u) => !u.disabledAt);
       // Prefer the broadest admin surface available in the tenant.
       const order = ["director", "er_director", "er_doctor", "hospitalist"];
       let admin = null;
