@@ -819,4 +819,12 @@ for (const r of results) {
   r.ok ? pass++ : fail++;
 }
 console.log(`\n${pass} passed, ${fail} failed, ${results.length} total`);
+// Bridge-level failures the kit logged via console.error (captured above) —
+// the fastest way to see WHY a flow test failed without re-running under a
+// debugger. Babel's size notice is noise.
+const bridgeErrors = errors.filter((e) => !/\[BABEL\]/.test(e));
+if (bridgeErrors.length) {
+  console.log(`\n---- captured console.error (${bridgeErrors.length}) ----`);
+  for (const e of bridgeErrors.slice(-40)) console.log("  " + e.slice(0, 300));
+}
 process.exit(fail ? 1 : 0);
