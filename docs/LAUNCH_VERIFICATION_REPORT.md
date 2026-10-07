@@ -10,6 +10,29 @@
 
 ---
 
+## 0. Remediation status (added after the audit)
+
+All seven launch blockers below were fixed on this branch after the audit and
+re-verified on a clean server before each push:
+
+| Blocker | Fix | Commit | Proof |
+|---|---|---|---|
+| LB-1 sign-in posted the demo account | credentials flow through verbatim; no silent re-login; demo prefill only in synthetic mode; auth-epoch guard for stale 401s | `a46c489` | `npm run test:login` 14/14 on synthetic **and** real-PHI; interop asserts the POST body |
+| LB-2 director-provisioned accounts got `docturn` | server mints a one-time password, forces a change at first sign-in, refuses the demo password everywhere | `a46c489` | `tests/accounts.test.ts` |
+| LB-3 MFA state lied / one click destroyed the authenticator | `/api/user.twoFactorEnabled`; step-up re-enrol with pending secret; disable, regenerate, admin reset; Settings "Manage" | `a46c489` | `tests/mfa-manage.test.ts` |
+| LB-4 purge non-transactional, stalled auto-clean | one transaction incl. patient threads/messages/attachments; per-table audit; per-org isolated sweep | `a46c489` | `tests/purge.test.ts` |
+| LB-5 no way to terminate access | `/api/accounts/:id/{deactivate,reactivate,reset-password,reset-mfa}`; deactivation ends live sessions immediately | `a46c489`, `6e4fd04` | `tests/accounts.test.ts` |
+| LB-6 real-PHI bootstrap dead-ended | consequence of LB-1/LB-2; runbook §10 rewritten for the one-time-password flow | `a46c489` | login E2E real-PHI leg |
+| LB-7 forwarded attachments served garbage | store resolved from the ref like the primary route | `a46c489` | `tests/forwarded-attachment.test.ts` |
+
+Final state after the fixes: server suite **28 files / 209 tests**, login E2E
+**14/14**, iPhone-viewport interop **21/21**, jsdom UI smoke **107/107** — all
+on a freshly started server. (Earlier smoke "failures" during remediation were
+traced to a leftover server process holding port 3000 — stale code and state —
+not to the product.)
+
+The §4 should-fix list and the §6 real-device checklist remain open.
+
 ## 1. Verdict
 
 **No-go.** The server core is genuinely solid — tenant isolation, RBAC, MFA mechanics, session expiry, rate limiting, messaging delivery, the routing algorithm and the honesty of the compliance monitor all held under adversarial probing — but seven launch blockers stand between this commit and a hospital. Four were confirmed by independent skeptic re-verification: the sign-in form discards whatever the user types and always posts the demo account `chen`/`docturn`, so no real user can sign in from the UI and on a real-PHI deployment nobody can; every clinician a director provisions gets the public demo password with no forced change; MFA shows "Off" to enrolled users and one click re-enrols without a password, destroying the live authenticator, with no disable or reset route; patient purge hangs on a foreign-key violation, silently deletes assignments/consults, and takes the hourly auto-clean down with it. Two were established by the completeness critic: there is no way to terminate a clinician's access, and the runbook's own real-PHI bootstrap yields a director account with an unknowable password. One was reported by the messaging probe and carried by the critic as open, but its skeptic record did not reach this report: forwarded attachments return 27 bytes of garbage under the production `fs-encrypted` store. The critic's recommendation is no-go; the confirmed blockers agree with it, so there is nothing to reconcile. None of the fixes is large and "go-with-fixes" is reachable in one focused sprint. **Fix list:** send the typed org/username/password from `webapp/LoginScreen.jsx:92` through `webapp/index.html:327` into `doLogin` (`webapp/api-bridge.js:645-693`) and delete every hardcoded `"docturn"` (`api-bridge.js:122, 673, 1614, 1652`); have `POST /api/director/hospitalists` mint a server-side one-time password and enforce a must-change flag; make `POST /api/mfa/enroll` require password + current code when MFA is on, keep the active secret until `/api/mfa/verify`, add disable/regenerate/admin-reset and return `twoFactorEnabled`; wrap `purgeOldPatients` in a transaction that clears `conversations.patient_id` and move auto-clean's try/catch inside the per-org loop; add `users.active` with a director deactivate route enforced in `deserializeUser` and the WebSocket upgrade; make `POST /api/dev/users` return or accept an initial password and add a reset route; resolve `fsenc:` refs through the attachment store in the forwarded-attachment route.
