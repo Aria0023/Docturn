@@ -29,6 +29,10 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
   const a = useActions();
   const commsMetrics = useStore().commsMetrics;
   React.useEffect(() => { a.loadCommsMetrics(); }, []);
+  // Phone layout: the time-limited Accept/Decline request comes FIRST (above
+  // the KPI strip), pending-card actions drop to their own full-width row, and
+  // each accepted row is two lines so the title column keeps its width.
+  const mobile = useIsMobile();
 
   // Accepted during THIS shift (since 7am); resets each morning.
   const since = shiftStart();
@@ -60,17 +64,18 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
     { key: "consult_response", label: "Consult response (avg)", value: fmtCommsDur(cm.consultResponseAvgSec) },
   ];
 
-  return (
-    <PageWrap>
+  const statsNode = (
       <CustomizableStats statKey="hospitalist:stats" metrics={statMetrics} stats={[
         { id: "pending", label: "Pending requests", value: pending.length, icon: "inbox", tint: "amber" },
         { id: "accepted", label: "Accepted this shift", value: shiftAdmits.length, icon: "check-circle-2", tint: "emerald" },
         { id: "census", label: "Current census", value: shiftAdmits.length, icon: "users", tint: "blue" },
         ...commsStatTiles(commsMetrics),
       ]} />
+  );
 
-      {/* Compact round-robin strip — small colored circles in order (next + you highlighted) */}
-      {ordered.length > 0 && (
+  const roundRobinNode = (
+      /* Compact round-robin strip — small colored circles in order (next + you highlighted) */
+      ordered.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
             <Icon name="route" size={13} color="var(--muted-foreground)" />
@@ -95,8 +100,11 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
             })}
           </div>
         </div>
-      )}
+      )
+  );
 
+  const pendingNode = (
+    <React.Fragment>
       <SectionTitle action={<Badge status="pending">{pending.length} awaiting</Badge>}>Incoming assignment requests</SectionTitle>
       {pending.length > 1 && (
         <div style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "-6px 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
@@ -111,7 +119,14 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
             <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 2 }}>You're all caught up.</div>
           </Card>
         )}
-        {sortedPending.map((p) => (
+        {sortedPending.map((p) => {
+          const actions = (
+            <div style={{ display: "flex", gap: 8, flex: "none", marginTop: mobile ? 12 : 0 }}>
+              <Button variant="outline" size="sm" icon="x" onClick={() => onDecline(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>Decline</Button>
+              <Button size="sm" icon="check" onClick={() => onAccept(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>Accept</Button>
+            </div>
+          );
+          return (
           <Card key={p.id} style={{ padding: 16 }}>
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <Avatar initials={p.initials} size={42} tint="amber" />
@@ -123,21 +138,26 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
                   {p.expiresAt ? <ExpiryBadge expiresAt={p.expiresAt} /> : <Badge status="pending">Pending</Badge>}
                 </div>
                 <div style={{ fontSize: 13.5, color: "var(--foreground)", marginTop: 4 }}>{p.complaint}</div>
-                <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 12.5, color: "var(--muted-foreground)" }}>
+                <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 12.5, color: "var(--muted-foreground)", flexWrap: "wrap" }}>
                   <span style={{ display: "flex", gap: 5, alignItems: "center" }}><Icon name="ambulance" size={13} />from {p.from}</span>
                   <span style={{ display: "flex", gap: 5, alignItems: "center" }}><Icon name="stethoscope" size={13} />{p.specialty}</span>
                   <span style={{ display: "flex", gap: 5, alignItems: "center" }}><Icon name="route" size={13} />{p.via}</span>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, flex: "none" }}>
-                <Button variant="outline" size="sm" icon="x" onClick={() => onDecline(p.id)}>Decline</Button>
-                <Button size="sm" icon="check" onClick={() => onAccept(p.id)}>Accept</Button>
-              </div>
+              {/* Desktop: actions sit inline at the right. Phone: a full-width
+                  row under the text so the text column is not squeezed to ~60px. */}
+              {!mobile && actions}
             </div>
+            {mobile && actions}
           </Card>
-        ))}
+          );
+        })}
       </div>
+    </React.Fragment>
+  );
 
+  const acceptedNode = (
+    <React.Fragment>
       <SectionTitle action={onOpenHistory && <Button size="sm" variant="ghost" icon="history" onClick={onOpenHistory}>3-day history</Button>}>
         Accepted this shift
       </SectionTitle>
@@ -146,7 +166,11 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
       </div>
       <Card style={{ padding: 0, overflow: "visible" }}>
         {shiftAdmits.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Nothing accepted yet this shift.</div>}
-        {shiftAdmits.map((p, i) => (
+        {shiftAdmits.map((p, i) => {
+          const consultAdd = onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />;
+          const time = <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>;
+          const message = <Button variant="ghost" size="sm" icon="message-square" style={mobile ? { height: 44, marginLeft: "auto" } : null} onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>;
+          return (
           <div key={p.id} style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <Avatar initials={p.initials} size={34} tint="blue" />
@@ -157,14 +181,35 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
                   {(!p.consultDetails || !p.consultDetails.length) && (p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}
                 </div>
               </div>
-              {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
-              <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>
-              <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
+              {/* Desktop: controls inline. Phone: second line under the text
+                  (the chip + time + Message otherwise leave the title 13px wide). */}
+              {!mobile && consultAdd}
+              {!mobile && time}
+              {!mobile && message}
             </div>
+            {mobile && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8, marginLeft: 48 }}>
+                {consultAdd}
+                {time}
+                {message}
+              </div>
+            )}
             {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 48, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
           </div>
-        ))}
+          );
+        })}
       </Card>
+    </React.Fragment>
+  );
+
+  // Desktop: KPI strip → round-robin → requests → accepted. Phone: the
+  // expiring Accept/Decline request is the first thing on Home.
+  return (
+    <PageWrap>
+      {mobile ? pendingNode : statsNode}
+      {mobile ? statsNode : roundRobinNode}
+      {mobile ? roundRobinNode : pendingNode}
+      {acceptedNode}
     </PageWrap>
   );
 }

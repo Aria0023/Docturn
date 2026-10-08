@@ -138,7 +138,7 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
   return (
     <React.Fragment>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 300, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(300px, calc(100vw - 24px))", maxWidth: "100%", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
         <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>Customize board</div>
           <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Show only the sections you use today.</div>
@@ -328,7 +328,8 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
   return (
     <BoardWrap>
       {(canCustomize || onPurge) && (
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, position: "relative" }}>
+        /* wraps at 375px: Clear 24h+ / Clear all / Customize board total ~378px */
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, position: "relative", flexWrap: "wrap" }}>
           {onPurge && <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>}
           {onPurge && <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients on the board? This can't be undone.")) onPurge(0); }}>Clear all</Button>}
           {canCustomize && <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => setCustomizing((v) => !v)}>Customize board</Button>}

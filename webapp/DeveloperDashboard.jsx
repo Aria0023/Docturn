@@ -111,6 +111,9 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
   const [roleFilter, setRoleFilter] = React.useState("ALL");
   const [collapsed, setCollapsed] = React.useState({});
   const [form, setForm] = React.useState({ org: (organizations[0] || {}).code || "", role: "hospitalist", name: "", email: "", specialty: "Hospital Medicine", cap: "15", shift: "rounding", scope: "local" });
+  // Phones: user rows are two lines (identity, then role chip + actions) and
+  // the filter/form rows wrap instead of overflowing the 362px content width.
+  const mobile = useIsMobile();
   const set = (k, v) => setForm((f) => Object.assign({}, f, (function () { var o = {}; o[k] = v; return o; })()));
   const isClinical = form.role === "hospitalist";
   const isDev = form.role === "developer";
@@ -128,24 +131,33 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
   scoped.forEach((u) => { (byOrg[u.org] = byOrg[u.org] || []).push(u); });
   const orgName = (code) => (organizations.find((o) => o.code === code) || {}).name || code;
 
-  const UserRow = ({ u, last }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: last ? "none" : "1px solid var(--border)" }}>
+  const UserRow = ({ u, last }) => {
+    const controls = (
+      <React.Fragment>
+        <RoleChip role={u.role} color={roleColors[u.role]} scope={u.scope} />
+        {onImpersonate && u.role !== "developer" && <button onClick={() => onImpersonate(u)} title={"Open " + u.name + "'s portal (root access)"}
+          onMouseEnter={(e) => e.currentTarget.style.color = "var(--primary)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 12px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)", flex: "none" }}><Icon name="log-in" size={13} />Open portal</button>}
+        {onRemoveUser && <button onClick={() => onRemoveUser(u.id)} title="Remove user"
+          onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+          style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>}
+      </React.Fragment>
+    );
+    return (
+    <div style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", padding: "11px 16px", borderTop: last ? "none" : "1px solid var(--border)" }}>
       <Avatar initials={userInitials(u.name)} size={34} tint="blue" />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: "1 1 0", minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.name}</div>
         <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
           {u.specialty ? u.specialty + " · " : ""}<span className="ds-mono">{u.org === "*" ? "all orgs" : u.org}</span>
         </div>
       </div>
-      <RoleChip role={u.role} color={roleColors[u.role]} scope={u.scope} />
-      {onImpersonate && u.role !== "developer" && <button onClick={() => onImpersonate(u)} title={"Open " + u.name + "'s portal (root access)"}
-        onMouseEnter={(e) => e.currentTarget.style.color = "var(--primary)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)", flex: "none" }}><Icon name="log-in" size={13} />Open portal</button>}
-      {onRemoveUser && <button onClick={() => onRemoveUser(u.id)} title="Remove user"
-        onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-        style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>}
+      {mobile
+        ? <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{controls}</div>
+        : controls}
     </div>
-  );
+    );
+  };
 
   return (
     <div style={{ marginTop: 24 }}>
@@ -200,14 +212,14 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
                 options={organizations.map((o) => ({ value: o.code, label: `${o.name} (${o.code})` }))} />
             </div>
           )}
-          <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
-            <div style={{ flex: 1 }}><Field label="Full name" icon="user" value={form.name} onChange={(v) => set("name", v)} placeholder="Dr. Jane Smith" /></div>
-            <div style={{ flex: 1 }}><Field label="Email" icon="mail" value={form.email} onChange={(v) => set("email", v)} placeholder="jane@hospital.com" /></div>
+          <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 160px", minWidth: 0 }}><Field label="Full name" icon="user" value={form.name} onChange={(v) => set("name", v)} placeholder="Dr. Jane Smith" /></div>
+            <div style={{ flex: "1 1 160px", minWidth: 0 }}><Field label="Email" icon="mail" value={form.email} onChange={(v) => set("email", v)} placeholder="jane@hospital.com" /></div>
           </div>
 
           {isClinical && (
-            <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end" }}>
-              <div style={{ flex: 1.4 }}><Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => set("specialty", v)} placeholder="e.g. Cardiology" /></div>
+            <div style={{ display: "flex", gap: 14, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ flex: "1.4 1 160px", minWidth: 0 }}><Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => set("specialty", v)} placeholder="e.g. Cardiology" /></div>
               <div style={{ width: 110 }}><Field label="Patient cap" icon="gauge" value={form.cap} onChange={(v) => set("cap", v)} /></div>
               <DSelect label="Shift type" icon="clock" value={form.shift} onChange={(v) => set("shift", v)}
                 options={[{ value: "rounding", label: "Rounding" }, { value: "swing", label: "Swing" }, { value: "nocturnist", label: "Nocturnist" }]} />
@@ -221,13 +233,13 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
         </Card>
       )}
 
-      {/* Filters — dropdowns */}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 14 }}>
-        <div style={{ width: 240 }}>
+      {/* Filters — dropdowns (wrap on phones; 240 + 200 + count exceed 362px) */}
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: mobile ? "1 1 150px" : "none", width: mobile ? undefined : 240, minWidth: 0 }}>
           <DSelect label="Organization" icon="building-2" value={orgFilter} onChange={setOrgFilter}
             options={[{ value: "ALL", label: "All organizations" }].concat(organizations.map((o) => ({ value: o.code, label: `${o.name} (${o.code})` })))} />
         </div>
-        <div style={{ width: 200 }}>
+        <div style={{ flex: mobile ? "1 1 130px" : "none", width: mobile ? undefined : 200, minWidth: 0 }}>
           <DSelect label="Role" icon="shield-half" value={roleFilter} onChange={setRoleFilter}
             options={[{ value: "ALL", label: "All roles" }].concat(DEV_ROLES.map(([id, label]) => ({ value: id, label })))} />
         </div>
@@ -263,14 +275,14 @@ function AddUserPanel({ organizations, devUsers = [], roleColors, onAddUser, onR
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px 11px 13px", border: "none", borderLeft: `3px solid ${accent}`, background: isOpen ? tintFor(accent) : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flex: "none" }} />
                 <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: accent, color: "#fff", fontWeight: 700, fontSize: 11.5, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code.slice(0, 2)}</span>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, flex: "1 1 0" }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2 }}>{orgName(code)}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, marginTop: 1 }}>
                     <span className="ds-mono">{code}</span>·{org.active ? <span style={{ color: "var(--status-accepted)", fontWeight: 600 }}>Active</span> : <span style={{ color: "var(--status-neutral)", fontWeight: 600 }}>Suspended</span>}
                   </div>
                 </div>
                 {/* colored per-role summary */}
-                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7 }}>
+                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", justifyContent: "flex-end", flex: "0 1 auto", minWidth: 0 }}>
                   {Object.keys(counts).map((rid) => (
                     <span key={rid} title={ROLE_LABEL[rid]} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: "var(--muted-foreground)" }}>
                       <span style={{ width: 9, height: 9, borderRadius: 3, background: roleColors[rid], flex: "none" }} />{counts[rid]}
@@ -348,15 +360,19 @@ function ModulesPanel({ organizations }) {
   const groups = [];
   registry.forEach((m) => { let g = groups.find((x) => x.name === m.group); if (!g) { g = { name: m.group, items: [] }; groups.push(g); } g.items.push(m); });
   const onCount = map ? registry.filter((m) => map[m.id] !== false).length : 0;
+  const mobile = useIsMobile();
+  const orgPicker = (
+    <div style={{ width: mobile ? "100%" : 280 }}>
+      <DSelect icon="building-2" value={orgCode} onChange={setOrgCode}
+        options={organizations.map((o) => ({ value: o.code, label: `${o.name} (${o.code})` }))} />
+    </div>
+  );
 
   return (
     <div style={{ marginTop: 24 }}>
-      <SectionTitle action={
-        <div style={{ width: 280 }}>
-          <DSelect icon="building-2" value={orgCode} onChange={setOrgCode}
-            options={organizations.map((o) => ({ value: o.code, label: `${o.name} (${o.code})` }))} />
-        </div>
-      }>Modules</SectionTitle>
+      {/* the 280px org picker sits beside the title on desktop, under it on phones */}
+      <SectionTitle action={!mobile && orgPicker}>Modules</SectionTitle>
+      {mobile && <div style={{ marginBottom: 12 }}>{orgPicker}</div>}
       <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: -8, marginBottom: 12 }}>
         Add or remove product functions for one organization with a click. The server enforces every switch — a disabled module's API answers <span className="ds-mono">404 module_disabled</span> and its navigation disappears.
         {map && <span> · <b>{onCount}</b> of {registry.length} on for <span className="ds-mono">{orgCode}</span></span>}
@@ -510,6 +526,10 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
   const [delOrg, setDelOrg] = React.useState(null); // org pending type-to-confirm delete
   const detected = React.useMemo(detectLocation, []);
   const [tform, setTform] = React.useState({ name: "", code: "", timezone: detected.timezone, autoLoc: true });
+  // Phone layout: KPI tiles 2-up, grid columns allowed to shrink (minWidth 0),
+  // and each organization row is two lines (identity, then status + actions)
+  // so Config/Manage/Delete stay inside the viewport.
+  const mobile = useIsMobile();
   // The developer's own tenant can't be deleted (it holds their session); the
   // server refuses it too. Hide the action for that row.
   const myOrgCode = String((((window.DT && window.DT.getState()) || {}).session || {}).org || "").toUpperCase();
@@ -537,32 +557,47 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
         <span style={{ fontSize: 12, color: "#94A3B8" }}>Every action on this surface is audited.</span>
       </div>
 
-      <div style={{ display: "flex", gap: 14, marginBottom: 22 }}>
-        <StatTile label="Organizations" value={organizations.length} icon="building-2" tint="blue" />
-        <StatTile label="Total users" value={totalUsers} icon="users" tint="emerald" />
-        <StatTile label="Assignments / 24h" value={totalAssign} icon="clipboard-list" tint="amber" />
-        <StatTile label="Uptime (30d)" value="99.98%" icon="activity" tint="slate" />
+      <div style={{ display: "flex", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
+        {[["Organizations", organizations.length, "building-2", "blue"], ["Total users", totalUsers, "users", "emerald"], ["Assignments / 24h", totalAssign, "clipboard-list", "amber"], ["Uptime (30d)", "99.98%", "activity", "slate"]].map(([label, value, icon, tint]) => (
+          // Phones: 2-up tiles (four 80px tiles clip "99.98%"); desktop: one row.
+          <div key={label} style={mobile ? { flex: "1 1 calc(50% - 7px)", minWidth: 0, display: "flex" } : { flex: 1, minWidth: 0, display: "flex" }}>
+            <StatTile label={label} value={value} icon={icon} tint={tint} />
+          </div>
+        ))}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.55fr 1fr", gap: 18, alignItems: "start" }}>
-        {/* Organizations table */}
-        <div>
+        {/* Organizations table — minWidth:0 lets the 1fr column actually shrink on phones */}
+        <div style={{ minWidth: 0 }}>
           <SectionTitle action={<Button size="sm" variant="default" icon="plus" onClick={() => setNewTenant(true)}>New tenant</Button>}>Organizations</SectionTitle>
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: 12, borderBottom: "1px solid var(--border)" }}>
               <Field icon="search" value={query} onChange={setQuery} placeholder="Search by name or code…" />
             </div>
-            {orgs.map((o, i) => (
+            {orgs.map((o, i) => {
+              const actions = (
+                <React.Fragment>
+                  {o.active ? <Badge status="accepted">Active</Badge> : <Badge status="offline">Suspended</Badge>}
+                  {/* Config = per-org rules/permissions; Manage = enter the org's full portal */}
+                  <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => onSelectOrg && onSelectOrg(o)}>Config</Button>
+                  <Button size="sm" icon="log-in" onClick={() => onManageOrg && onManageOrg(o)}>Manage</Button>
+                  {onDeleteTenant && o.code.toUpperCase() !== myOrgCode && (
+                    <Button size="sm" variant="ghost" icon="trash-2" title={"Delete " + o.name}
+                      style={{ color: "var(--destructive)", marginLeft: mobile ? "auto" : undefined }} onClick={() => setDelOrg(o)} />
+                  )}
+                </React.Fragment>
+              );
+              return (
               <div key={o.code}
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                style={{ display: "flex", alignItems: "center", gap: 13, padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", transition: "background .12s" }}>
+                style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", transition: "background .12s" }}>
                 <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: o.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: o.active ? "var(--primary)" : "var(--status-neutral)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                   {o.code.slice(0, 2)}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: "1 1 140px", minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{o.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", gap: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <span className="ds-mono">{o.code}</span><span>·</span><span>{[o.city, o.state].filter(Boolean).join(", ") || o.timezone}</span>
                   </div>
                 </div>
@@ -570,21 +605,18 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                   <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{o.users}</div>
                   <div style={{ fontSize: 11, color: "var(--muted-foreground)" }}>users</div>
                 </div>
-                {o.active ? <Badge status="accepted">Active</Badge> : <Badge status="offline">Suspended</Badge>}
-                {/* Config = per-org rules/permissions; Manage = enter the org's full portal */}
-                <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => onSelectOrg && onSelectOrg(o)}>Config</Button>
-                <Button size="sm" icon="log-in" onClick={() => onManageOrg && onManageOrg(o)}>Manage</Button>
-                {onDeleteTenant && o.code.toUpperCase() !== myOrgCode && (
-                  <Button size="sm" variant="ghost" icon="trash-2" title={"Delete " + o.name}
-                    style={{ color: "var(--destructive)" }} onClick={() => setDelOrg(o)} />
-                )}
+                {/* Desktop: status + actions inline. Phone: a wrapping second line. */}
+                {mobile
+                  ? <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{actions}</div>
+                  : actions}
               </div>
-            ))}
+              );
+            })}
           </Card>
         </div>
 
         {/* Right column: system health, AI monitor */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           <Card style={{ padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
               <Icon name="server" size={18} color="var(--primary)" />

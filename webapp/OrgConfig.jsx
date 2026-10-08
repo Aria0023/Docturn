@@ -45,15 +45,17 @@ function InheritTag({ overridden, onReset }) {
 }
 
 function RuleRow({ icon, title, desc, control, scope, overridden, onReset }) {
+  // Wraps on phones: the text keeps ≥180px and the inherit tag + control drop
+  // to a second line (right-aligned) instead of squeezing the title to ~35px.
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderTop: "1px solid var(--border)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "14px 16px", borderTop: "1px solid var(--border)" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={16} /></span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: "1 1 180px", minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
         <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{desc}</div>
       </div>
       {scope !== "*" && <InheritTag overridden={overridden} onReset={onReset} />}
-      <div style={{ flex: "none" }}>{control}</div>
+      <div style={{ flex: "none", marginLeft: "auto" }}>{control}</div>
     </div>
   );
 }
@@ -112,15 +114,17 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
     : [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["compliance", "Compliance", "shield-check"]];
   const plat = (DT.getState().enterprise || {}).platform || {};
   const setPlat = (sec, k, v) => a.setEnterprisePlatform(sec, k, v);
+  const mobile = useIsMobile();
 
   return (
     <PageWrap>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+      {/* Header — wraps so the badge/"Manage full portal" button land under the
+          title on phones instead of past the viewport edge */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
         <span style={{ width: 42, height: 42, borderRadius: "var(--radius-md)", background: isEnt ? "#1E293B" : "#DBEAFE", color: isEnt ? "#7DD3FC" : "var(--primary)", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           {isEnt ? <Icon name="globe" size={20} /> : (scope || "").slice(0, 2)}
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: "1 1 180px", minWidth: 0 }}>
           <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0, letterSpacing: "-.01em" }}>{title}</h2>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{isEnt ? "Applies to all tenants" : <span className="ds-mono">{scope}</span>} · individualized configuration</div>
         </div>
@@ -129,13 +133,15 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
       </div>
       <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5, marginBottom: 16, maxWidth: 720 }}>{sub}</div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, borderBottom: "1px solid var(--border)" }}>
+      {/* Tabs — a single non-wrapping strip that scrolls sideways within the
+          viewport, so the Compliance tab is reachable on a phone without
+          panning the whole page. */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, borderBottom: "1px solid var(--border)", flexWrap: "nowrap", overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", maxWidth: "100%" }}>
         {TABS.map(([id, label, icon]) => {
           const on = tab === id;
           return (
             <button key={id} onClick={() => setTab(id)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", border: "none", borderBottom: on ? "2px solid var(--primary)" : "2px solid transparent", background: "transparent", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "var(--font-sans)", marginBottom: -1 }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", minHeight: mobile ? 44 : undefined, flex: "none", whiteSpace: "nowrap", border: "none", borderBottom: on ? "2px solid var(--primary)" : "2px solid transparent", background: "transparent", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}>
               <Icon name={icon} size={15} />{label}
             </button>
           );

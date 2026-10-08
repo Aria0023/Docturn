@@ -114,13 +114,15 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
   );
 }
 
-function ReassignSelect({ providers, onPick }) {
+function ReassignSelect({ providers, onPick, mobile }) {
+  // Clamped to its container (a select sizes itself to its WIDEST option, so a
+  // long provider name must not push it off a phone screen); 44px tall on phones.
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
       <Icon name="repeat" size={13} color="var(--muted-foreground)" style={{ position: "absolute", left: 10, pointerEvents: "none" }} />
       <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
-        style={{ appearance: "none", WebkitAppearance: "none", height: 32, padding: "0 26px 0 28px", borderRadius: "var(--radius-md)",
-          border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)",
+        style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 32, maxWidth: "100%", minWidth: 0, padding: "0 26px 0 28px", borderRadius: "var(--radius-md)",
+          border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 12.5, fontWeight: 600, color: "var(--foreground)",
           fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         <option value="">Reassign…</option>
         {providers.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
@@ -341,7 +343,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 
           {/* Consult services — multi-select */}
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed var(--border)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, flexWrap: "wrap" }}>
               <Icon name="users-round" size={15} color="var(--muted-foreground)" />
               <span style={{ fontSize: 13, fontWeight: 600 }}>Consult services</span>
               <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>optional · select multiple</span>
@@ -423,6 +425,10 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 // Patient board panel — the running log of patients this ER provider routed and
 // their acceptance status. Self-contained (no PageWrap) for use as a widget.
 function RoutedBoardPanel({ sent, providers, onReassign, onAddConsult, onRespondConsult, consultServices }) {
+  // Phone rows are two lines — avatar + title + status badge, then the
+  // "+ Consult" chip and Reassign select — so the title column keeps its width
+  // and the badge never leaves the viewport.
+  const mobile = useIsMobile();
   const dayOrder = ["Today", "Yesterday"];
   const grouped = {};
   (sent || []).forEach((s, idx) => { (grouped[s.day] = grouped[s.day] || []).push({ ...s, idx }); });
@@ -442,6 +448,8 @@ function RoutedBoardPanel({ sent, providers, onReassign, onAddConsult, onRespond
               const TINT = { accepted: "emerald", declined: "slate", sent: "blue", rerouted: "amber", expired: "slate" };
               const accent = ACCENT[s.status] || "transparent";
               const accepted = s.status === "accepted", declined = s.status === "declined";
+              const consultAdd = onAddConsult && s.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(s.patientId, spec)} />;
+              const reassign = <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} mobile={mobile} />;
               return (
               <div key={s.idx} style={{ padding: "12px 16px 12px 13px", borderTop: i ? "1px solid var(--border)" : "none", borderLeft: `3px solid ${accent}`, background: accepted ? "var(--status-accepted-bg)" : declined ? "var(--status-rejected-bg)" : "transparent" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -455,10 +463,17 @@ function RoutedBoardPanel({ sent, providers, onReassign, onAddConsult, onRespond
                       ))}
                     </div>
                   </div>
-                  {onAddConsult && s.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(s.patientId, spec)} />}
-                  <ReassignSelect providers={providers} onPick={(name) => onReassign(s.id, name)} />
-                  <Badge status={s.status}>{(STATUS[s.status] || {}).label || s.status}</Badge>
+                  {!mobile && consultAdd}
+                  {!mobile && reassign}
+                  {/* flex:none + nowrap: the status pill never shrinks or wraps */}
+                  <span style={{ flex: "none", display: "inline-flex", whiteSpace: "nowrap" }}><Badge status={s.status}>{(STATUS[s.status] || {}).label || s.status}</Badge></span>
                 </div>
+                {mobile && (consultAdd || reassign) && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8, marginLeft: 46 }}>
+                    {consultAdd}
+                    {reassign}
+                  </div>
+                )}
                 {s.consultDetails && s.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 440 }}><ConsultRoster details={s.consultDetails} onRespond={onRespondConsult} /></div> : null}
               </div>
               );

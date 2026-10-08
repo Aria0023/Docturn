@@ -26,11 +26,11 @@ function ErStat({ label, value, icon, tint, sub }) {
   );
 }
 
-function ErShiftSelect({ shifts, value, onChange }) {
+function ErShiftSelect({ shifts, value, onChange, mobile }) {
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
       <select value={value} onChange={(e) => onChange(e.target.value)}
-        style={{ appearance: "none", WebkitAppearance: "none", height: 28, padding: "0 24px 0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+        style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 28, maxWidth: "100%", padding: "0 24px 0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 12, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         {shifts.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
       <Icon name="chevron-down" size={12} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
@@ -43,10 +43,11 @@ function ErShiftSelect({ shifts, value, onChange }) {
 
 function ErDiversionPanel({ diversion, onToggleDiversion }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: "var(--radius-md)",
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderRadius: "var(--radius-md)",
       background: diversion ? "var(--status-rejected-bg)" : "var(--status-accepted-bg)", border: `1px solid ${diversion ? "var(--status-rejected)" : "var(--status-accepted)"}` }}>
       <Icon name={diversion ? "octagon-alert" : "circle-check-big"} size={20} color={diversion ? "var(--status-rejected)" : "var(--status-accepted)"} />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* flex-basis 200px: on a phone the button wraps under the text instead of squeezing it */}
+      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: diversion ? "var(--status-rejected)" : "var(--status-accepted)" }}>{diversion ? "ER is on diversion" : "ER is accepting patients"}</div>
         <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{diversion ? "Incoming ambulances are being diverted. EMS and all providers were notified." : "Normal operations — incoming transfers and walk-ins are accepted."}</div>
       </div>
@@ -88,9 +89,12 @@ function ErRosterPanel({ erPhysicians, shifts, onToggle, onUpdate, onSetShift, o
   const [name, setName] = React.useState("");
   const [shift, setShift] = React.useState("day");
   const onShift = (erPhysicians || []).filter((p) => p.working);
+  // Phone rows: identity on line 1, shift/on-off/remove on a wrapping line 2 —
+  // inline they leave the name column ~0.5px wide at 390px.
+  const mobile = useIsMobile();
   return (
     <Card style={{ padding: 18 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
         <Icon name="ambulance" size={18} color="var(--primary)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>ER physicians</h3>
         <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>· {onShift.length} of {erPhysicians.length} on shift</span>
@@ -98,40 +102,50 @@ function ErRosterPanel({ erPhysicians, shifts, onToggle, onUpdate, onSetShift, o
       </div>
 
       {adding && (
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", margin: "12px 0 6px", padding: 12, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
-          <div style={{ flex: 1 }}><Field label="Physician name" icon="user" value={name} onChange={setName} placeholder="Dr. Jane Smith" /></div>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", margin: "12px 0 6px", padding: 12, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+          <div style={{ flex: "1 1 180px", minWidth: 0 }}><Field label="Physician name" icon="user" value={name} onChange={setName} placeholder="Dr. Jane Smith" /></div>
           <div>
             <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Shift</label>
-            <ErShiftSelect shifts={shifts} value={shift} onChange={setShift} />
+            <ErShiftSelect shifts={shifts} value={shift} onChange={setShift} mobile={mobile} />
           </div>
           <Button size="sm" icon="check" onClick={() => { if (name.trim()) { onAdd({ name, shift }); setName(""); setAdding(false); } }}>Add</Button>
         </div>
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
-        {(erPhysicians || []).map((p) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", opacity: p.working ? 1 : 0.62 }}>
+        {(erPhysicians || []).map((p) => {
+          const controls = (
+            <React.Fragment>
+              <ErShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} mobile={mobile} />
+              <button onClick={() => onToggle(p.id)} title={p.working ? "End shift" : "Start shift"}
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 11px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
+                  border: "1px solid var(--border)", background: p.working ? "var(--status-accepted-bg)" : "#fff", color: p.working ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
+                <Icon name={p.working ? "toggle-right" : "toggle-left"} size={13} />{p.working ? "On shift" : "Off"}
+              </button>
+              <button onClick={() => onRemove(p.id)} title="Remove"
+                onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+                style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>
+            </React.Fragment>
+          );
+          return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", opacity: p.working ? 1 : 0.62 }}>
             <div style={{ position: "relative", flex: "none" }}>
               <Avatar initials={p.avatar} size={38} tint={p.working ? "blue" : "slate"} />
-              <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} /></span>
+              {/* display:flex so the dot sits on the avatar rim, not 10px up in a line box */}
+              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} /></span>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ flex: "1 1 0", minWidth: 0 }}>
               <EditableText value={p.name} onSave={(v) => onUpdate(p.id, { name: v })} size={14} weight={600} />
               <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
                 <Icon name="clipboard-plus" size={12} />{p.admitsToday} admit{p.admitsToday === 1 ? "" : "s"} today
               </div>
             </div>
-            <ErShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} />
-            <button onClick={() => onToggle(p.id)} title={p.working ? "End shift" : "Start shift"}
-              style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 11px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
-                border: "1px solid var(--border)", background: p.working ? "var(--status-accepted-bg)" : "#fff", color: p.working ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
-              <Icon name={p.working ? "toggle-right" : "toggle-left"} size={13} />{p.working ? "On shift" : "Off"}
-            </button>
-            <button onClick={() => onRemove(p.id)} title="Remove"
-              onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-              style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>
+            {mobile
+              ? <div style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{controls}</div>
+              : controls}
           </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
