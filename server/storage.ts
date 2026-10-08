@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import type { AuditInput } from "./audit.js";
 import type { DbType } from "./db.js";
 import { attachmentStoreFor } from "./services/attachment-store.js";
 import { getDb } from "./db.js";
@@ -66,6 +67,25 @@ import {
 
 /** Insert shape for a patient — the EHR id (MRN/CSN) is optional. */
 export type NewPatient = Omit<Patient, "id" | "createdAt" | "ehrId"> & { ehrId?: string | null };
+
+/** The executor handed to a `db.transaction()` callback. */
+type Tx = Parameters<Parameters<DbType["transaction"]>[0]>[0];
+
+/** Insert shape for one row of the six-year retained compliance archive. */
+export type NewRetainedComplianceRecord = Omit<RetainedComplianceRecord, "id" | "archivedAt">;
+
+/**
+ * WHERE clause selecting a tenant's rows in a table whose organization_id is
+ * nullable but whose user_id is one of the tenant's users: `org = id OR
+ * user_id IN (users)`. Used by the archive + cascade so a user-keyed row with
+ * a NULL (or foreign) organization is still treated as the tenant's.
+ */
+function tenantRowsScope(orgId: number, userIds: number[]) {
+  return (
+    orgCol: typeof auditLogs.organizationId | typeof phiAccessLogs.organizationId | typeof securityIncidents.organizationId | typeof smsHistory.organizationId,
+    userCol: typeof auditLogs.userId | typeof phiAccessLogs.userId | typeof securityIncidents.userId | typeof smsHistory.userId,
+  ) => (userIds.length ? or(eq(orgCol, orgId), inArray(userCol, userIds))! : eq(orgCol, orgId));
+}
 
 /**
  * Normalize a timestamp aggregate. Depending on driver, `min()`/`max()` over a
@@ -323,10 +343,13 @@ export interface IStorage {
   getFeatureFlag(orgId: number, flag: string): Promise<boolean>;
 
   // audit & phi
-  appendAudit(row: Omit<AuditLog, "id" | "createdAt">): Promise<void>;
+  /** Insert one audit row and return it (callers cross-reference its id). */
+  appendAudit(row: AuditInput): Promise<AuditLog>;
   logPhiAccess(row: {
     organizationId: number;
     userId: number;
+    /** The real operator when `userId` is an impersonated identity. */
+    impersonatorUserId?: number | null;
     resource: string;
     /** Id of the specific record read (conversation id, patient id, …). */
     resourceId?: number | null;
@@ -339,6 +362,10 @@ export interface IStorage {
   countPhiAccess(orgId: number): Promise<number>;
   /** Copy an org's audit/PHI/security rows into the six-year retained archive. */
   archiveComplianceRecords(orgId: number, reason: string): Promise<number>;
+  /** Write one record straight into the retained archive (e.g. the deletion of the tenant itself). */
+  appendRetainedComplianceRecord(
+    row: NewRetainedComplianceRecord,
+  ): Promise<RetainedComplianceRecord>;
   listRetainedComplianceRecords(
     orgId?: number,
     limit?: number,
@@ -1108,12 +1135,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── audit & phi ──────────────────────────────────────────────────────────────
-  async appendAudit(row: Omit<AuditLog, "id" | "createdAt">) {
-    await this.db.insert(auditLogs).values(row);
+  async appendAudit(row: AuditInput): Promise<AuditLog> {
+    const [stored] = await this.db
+      .insert(auditLogs)
+      .values({ ...row, impersonatorUserId: row.impersonatorUserId ?? null })
+      .returning();
+    return stored!;
   }
   async logPhiAccess(row: {
     organizationId: number;
     userId: number;
+    impersonatorUserId?: number | null;
     resource: string;
     resourceId?: number | null;
     patientId?: number | null;
@@ -1123,6 +1155,7 @@ export class DatabaseStorage implements IStorage {
   }) {
     await this.db.insert(phiAccessLogs).values({
       ...row,
+      impersonatorUserId: row.impersonatorUserId ?? null,
       resourceId: row.resourceId ?? null,
       patientId: row.patientId ?? null,
     });
@@ -1168,14 +1201,26 @@ export class DatabaseStorage implements IStorage {
    * tenant-delete path.
    */
   async archiveComplianceRecords(orgId: number, reason: string) {
-    const [org] = await this.db
+    return this.db.transaction((tx) => this.archiveComplianceRecordsIn(tx, orgId, reason));
+  }
+  /**
+   * The archive step proper, on a caller-supplied transaction so the tenant
+   * cascade can commit "archived AND deleted" atomically. Rows are selected by
+   * `organization_id = org OR user_id IN (the org's users)`: a row filed under
+   * a NULL org but keyed to a tenant user (the historical mfa.failed shape)
+   * is still that tenant's history, must be retained with it — and must leave
+   * with it, or its users FK blocks the delete.
+   */
+  private async archiveComplianceRecordsIn(tx: Tx, orgId: number, reason: string) {
+    const [org] = await tx
       .select()
       .from(organizations)
       .where(eq(organizations.id, orgId));
-    const orgUsers = await this.db
+    const orgUsers = await tx
       .select()
       .from(users)
       .where(eq(users.organizationId, orgId));
+    const userIds = orgUsers.map((u) => u.id);
     const userById = new Map(orgUsers.map((u) => [u.id, u]));
     const who = (userId: number | null) => {
       const u = userId != null ? userById.get(userId) : undefined;
@@ -1191,19 +1236,25 @@ export class DatabaseStorage implements IStorage {
       organizationName: org?.name ?? null,
       archivedReason: reason,
     };
+    const scope = tenantRowsScope(orgId, userIds);
 
-    const audits = await this.db
-      .select()
-      .from(auditLogs)
-      .where(eq(auditLogs.organizationId, orgId));
-    const phi = await this.db
+    const audits = await tx.select().from(auditLogs).where(scope(auditLogs.organizationId, auditLogs.userId));
+    const phi = await tx
       .select()
       .from(phiAccessLogs)
-      .where(eq(phiAccessLogs.organizationId, orgId));
-    const incidents = await this.db
+      .where(scope(phiAccessLogs.organizationId, phiAccessLogs.userId));
+    const incidents = await tx
       .select()
       .from(securityIncidents)
-      .where(eq(securityIncidents.organizationId, orgId));
+      .where(scope(securityIncidents.organizationId, securityIncidents.userId));
+
+    // Keep the operator attribution of impersonated rows in the archive too:
+    // the archive has no column for it, so it travels in `details`.
+    const withOperator = (
+      details: Record<string, unknown> | null,
+      operator: number | null,
+    ): Record<string, unknown> | null =>
+      operator != null ? { ...(details ?? {}), onBehalfOf: operator } : details;
 
     const rows = [
       ...audits.map((a) => ({
@@ -1217,7 +1268,7 @@ export class DatabaseStorage implements IStorage {
         patientId: null,
         method: null,
         ip: null,
-        details: a.details ?? null,
+        details: withOperator(a.details ?? null, a.impersonatorUserId),
         riskLevel: a.riskLevel,
         occurredAt: a.createdAt,
       })),
@@ -1232,7 +1283,7 @@ export class DatabaseStorage implements IStorage {
         patientId: p.patientId ?? null,
         method: p.method,
         ip: p.ip ?? null,
-        details: null,
+        details: withOperator(null, p.impersonatorUserId),
         riskLevel: "medium",
         occurredAt: p.createdAt,
       })),
@@ -1253,8 +1304,12 @@ export class DatabaseStorage implements IStorage {
       })),
     ];
     if (!rows.length) return 0;
-    await this.db.insert(retainedComplianceRecords).values(rows);
+    await tx.insert(retainedComplianceRecords).values(rows);
     return rows.length;
+  }
+  async appendRetainedComplianceRecord(row: NewRetainedComplianceRecord) {
+    const [stored] = await this.db.insert(retainedComplianceRecords).values(row).returning();
+    return stored!;
   }
   /** Retained compliance history, optionally for one (possibly deleted) org. */
   async listRetainedComplianceRecords(orgId?: number, limit = 500) {
@@ -1537,73 +1592,116 @@ export class DatabaseStorage implements IStorage {
     // and finally the org itself. This lets a developer delete an entire tenant
     // from the Danger Zone, matching how platforms (GitHub/Stripe) delete orgs.
     //
+    // ONE transaction: either the whole tenant leaves (archived first) or
+    // nothing does. The statement-by-statement version could stop halfway on a
+    // foreign key the cascade did not cover, leaving an org with its users and
+    // messages gone but its row still present — half-deleted and, since every
+    // retry hit the same FK, undeletable.
+    //
     // EXCEPT the compliance trail: audit_logs / phi_access_logs /
     // security_incidents are FK-bound to organizations + users, so they cannot
     // stay behind — but §164.316(b)(2)(i) requires six years of retention. They
     // are copied into `retained_compliance_records` FIRST (denormalized, no FKs)
-    // and only then deleted, so the history outlives the tenant.
-    await this.archiveComplianceRecords(id, "organization_deleted");
+    // inside the same transaction and only then deleted, so the history
+    // outlives the tenant and a rolled-back attempt leaves no duplicate copy.
+    const attachmentRefs: string[] = [];
+    await this.db.transaction(async (tx) => {
+      await this.archiveComplianceRecordsIn(tx, id, "organization_deleted");
 
-    const orgUsers = await this.db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.organizationId, id));
-    const userIds = orgUsers.map((u) => u.id);
-    const orgMessages = await this.db
-      .select({ id: messages.id })
-      .from(messages)
-      .where(eq(messages.organizationId, id));
-    const messageIds = orgMessages.map((m) => m.id);
+      const orgUsers = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.organizationId, id));
+      const userIds = orgUsers.map((u) => u.id);
+      const orgMessages = await tx
+        .select({ id: messages.id })
+        .from(messages)
+        .where(eq(messages.organizationId, id));
+      const messageIds = orgMessages.map((m) => m.id);
+      const scope = tenantRowsScope(id, userIds);
 
-    // leaf rows that point at messages / broadcasts / assignments
-    // Attachments reference messages(id) — delete them before the messages, or
-    // the whole cascade fails with a FK violation (surfaced as 409
-    // org_has_linked_records for any tenant that ever uploaded a file).
-    await this.db.delete(messageAttachments).where(eq(messageAttachments.organizationId, id));
-    if (messageIds.length) {
-      // Belt and braces: an attachment uploaded by a since-moved user could
-      // carry a different organization_id while still pointing at this org's
-      // message. Clear those by message id too.
-      await this.db.delete(messageAttachments).where(inArray(messageAttachments.messageId, messageIds));
-      await this.db.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, messageIds));
+      // leaf rows that point at messages / broadcasts / assignments
+      // Attachments reference messages(id) — delete them before the messages, or
+      // the whole cascade fails with a FK violation (surfaced as 409
+      // org_has_linked_records for any tenant that ever uploaded a file).
+      // Collect the encrypted-store refs so the ciphertext FILES go too, once
+      // the rows are committed.
+      const atts = await tx
+        .select({ ref: messageAttachments.dataBase64 })
+        .from(messageAttachments)
+        .where(
+          messageIds.length
+            ? or(eq(messageAttachments.organizationId, id), inArray(messageAttachments.messageId, messageIds))!
+            : eq(messageAttachments.organizationId, id),
+        );
+      attachmentRefs.push(...atts.map((a) => a.ref));
+      await tx.delete(messageAttachments).where(eq(messageAttachments.organizationId, id));
+      if (messageIds.length) {
+        // Belt and braces: an attachment uploaded by a since-moved user could
+        // carry a different organization_id while still pointing at this org's
+        // message. Clear those by message id too.
+        await tx.delete(messageAttachments).where(inArray(messageAttachments.messageId, messageIds));
+        await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, messageIds));
+      }
+      if (userIds.length) {
+        // Delivery rows are keyed by user, not org.
+        await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.userId, userIds));
+      }
+      await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
+      await tx.delete(assignments).where(eq(assignments.organizationId, id));
+      await tx.delete(patientConsults).where(eq(patientConsults.organizationId, id));
+      await tx.delete(messages).where(eq(messages.organizationId, id));
+      await tx.delete(conversations).where(eq(conversations.organizationId, id));
+      await tx.delete(emergencyBroadcasts).where(eq(emergencyBroadcasts.organizationId, id));
+      // Composer templates reference organizations AND (personal ones) users.
+      // This was the one table missing from the cascade, so any tenant that
+      // had saved a template could never be deleted.
+      await tx
+        .delete(messageTemplates)
+        .where(
+          userIds.length
+            ? or(eq(messageTemplates.organizationId, id), inArray(messageTemplates.ownerUserId, userIds))!
+            : eq(messageTemplates.organizationId, id),
+        );
+      // patients reference hospitalists + users(er_doctor); delete before both
+      await tx.delete(patients).where(eq(patients.organizationId, id));
+      await tx.delete(hospitalists).where(eq(hospitalists.organizationId, id));
+      await tx.delete(careTeamMembers).where(eq(careTeamMembers.organizationId, id));
+      await tx.delete(deviceTokens).where(eq(deviceTokens.organizationId, id));
+      await tx.delete(userPreferences).where(eq(userPreferences.organizationId, id));
+      // user-keyed rows with no org column
+      if (userIds.length) {
+        await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
+        await tx.delete(mfaCredentials).where(inArray(mfaCredentials.userId, userIds));
+      }
+      // org-scoped config / logs (some reference users via updated_by / user_id)
+      await tx
+        .delete(complianceAttestations)
+        .where(eq(complianceAttestations.organizationId, id));
+      await tx.delete(suggestions).where(eq(suggestions.organizationId, id));
+      await tx.delete(featureFlags).where(eq(featureFlags.organizationId, id));
+      await tx.delete(orgSettings).where(eq(orgSettings.organizationId, id));
+      await tx.delete(equipment).where(eq(equipment.organizationId, id));
+      await tx.delete(beds).where(eq(beds.organizationId, id));
+      await tx.delete(departments).where(eq(departments.organizationId, id));
+      // Nullable-org, user-keyed tables: take the user-keyed rows too (they
+      // were archived above under this tenant), or the users delete FK-fails.
+      await tx.delete(smsHistory).where(scope(smsHistory.organizationId, smsHistory.userId));
+      await tx.delete(phiAccessLogs).where(scope(phiAccessLogs.organizationId, phiAccessLogs.userId));
+      await tx.delete(securityIncidents).where(scope(securityIncidents.organizationId, securityIncidents.userId));
+      await tx.delete(auditLogs).where(scope(auditLogs.organizationId, auditLogs.userId));
+      await tx.delete(pendingRegistrations).where(eq(pendingRegistrations.organizationId, id));
+      await tx.delete(landingPageSettings).where(eq(landingPageSettings.organizationId, id));
+      await tx.delete(contactPageSettings).where(eq(contactPageSettings.organizationId, id));
+      // now the users, then the org
+      await tx.delete(users).where(eq(users.organizationId, id));
+      await tx.delete(organizations).where(eq(organizations.id, id));
+    });
+    // Encrypted attachment files are removed only after the rows are committed
+    // (best effort — an orphaned ciphertext file is unreadable without its row).
+    for (const ref of attachmentRefs) {
+      try { await attachmentStoreFor(ref).delete(ref); } catch { /* best effort */ }
     }
-    await this.db.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
-    await this.db.delete(assignments).where(eq(assignments.organizationId, id));
-    await this.db.delete(patientConsults).where(eq(patientConsults.organizationId, id));
-    await this.db.delete(messages).where(eq(messages.organizationId, id));
-    await this.db.delete(conversations).where(eq(conversations.organizationId, id));
-    await this.db.delete(emergencyBroadcasts).where(eq(emergencyBroadcasts.organizationId, id));
-    // patients reference hospitalists + users(er_doctor); delete before both
-    await this.db.delete(patients).where(eq(patients.organizationId, id));
-    await this.db.delete(hospitalists).where(eq(hospitalists.organizationId, id));
-    await this.db.delete(careTeamMembers).where(eq(careTeamMembers.organizationId, id));
-    await this.db.delete(deviceTokens).where(eq(deviceTokens.organizationId, id));
-    await this.db.delete(userPreferences).where(eq(userPreferences.organizationId, id));
-    // user-keyed rows with no org column
-    if (userIds.length) {
-      await this.db.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
-      await this.db.delete(mfaCredentials).where(inArray(mfaCredentials.userId, userIds));
-    }
-    // org-scoped config / logs (some reference users via updated_by / user_id)
-    await this.db
-      .delete(complianceAttestations)
-      .where(eq(complianceAttestations.organizationId, id));
-    await this.db.delete(suggestions).where(eq(suggestions.organizationId, id));
-    await this.db.delete(featureFlags).where(eq(featureFlags.organizationId, id));
-    await this.db.delete(orgSettings).where(eq(orgSettings.organizationId, id));
-    await this.db.delete(equipment).where(eq(equipment.organizationId, id));
-    await this.db.delete(beds).where(eq(beds.organizationId, id));
-    await this.db.delete(departments).where(eq(departments.organizationId, id));
-    await this.db.delete(smsHistory).where(eq(smsHistory.organizationId, id));
-    await this.db.delete(phiAccessLogs).where(eq(phiAccessLogs.organizationId, id));
-    await this.db.delete(securityIncidents).where(eq(securityIncidents.organizationId, id));
-    await this.db.delete(auditLogs).where(eq(auditLogs.organizationId, id));
-    await this.db.delete(pendingRegistrations).where(eq(pendingRegistrations.organizationId, id));
-    await this.db.delete(landingPageSettings).where(eq(landingPageSettings.organizationId, id));
-    await this.db.delete(contactPageSettings).where(eq(contactPageSettings.organizationId, id));
-    // now the users, then the org
-    await this.db.delete(users).where(eq(users.organizationId, id));
-    await this.db.delete(organizations).where(eq(organizations.id, id));
   }
   async countOrgUsers(orgId: number): Promise<number> {
     const rows = await this.db

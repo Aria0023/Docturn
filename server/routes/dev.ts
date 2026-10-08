@@ -7,9 +7,20 @@ import { getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
 import { storage } from "../storage.js";
 
+/** A positive integer route/body id, or null (→ 400) for anything else. */
+function parseId(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /**
  * Developer console: cross-tenant administration. The developer role bypasses
- * org-scoping deliberately; EVERY cross-tenant action is audited before/with it.
+ * org-scoping deliberately; EVERY cross-tenant action is audited before/with it
+ * — READS included. A read of ONE tenant is filed in that tenant's trail (so
+ * its director can see the platform looked); a cross-tenant list is filed in
+ * the developer's own (platform) org, never with organization_id NULL, where no
+ * view, archive or compliance count could ever show it. Audit details carry
+ * ids and counts only.
  */
 export function registerDevRoutes(app: Express) {
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
@@ -32,11 +43,24 @@ export function registerDevRoutes(app: Express) {
     requireAuth,
     requireRole("developer"),
     async (req, res) => {
+      const me = currentUser(req);
       const raw = req.query.orgId;
-      const orgId = raw != null && raw !== "" ? Number(raw) : undefined;
-      if (orgId != null && !Number.isFinite(orgId)) {
+      const orgId = raw != null && raw !== "" ? parseId(raw) : undefined;
+      if (orgId === null) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // Audited BEFORE the read. The archived org usually no longer exists, so
+      // the row cannot be filed under it (FK); it goes in the operator's org
+      // with the target id in details.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.archive_read",
+        resourceType: "organization",
+        resourceId: orgId ?? null,
+        details: { orgId: orgId ?? null },
+        riskLevel: "low",
+      });
       res.json(await storage().listRetainedComplianceRecords(orgId));
     },
   );
@@ -45,7 +69,17 @@ export function registerDevRoutes(app: Express) {
     "/api/dev/organizations",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.orgs_list",
+        resourceType: "organization",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const orgs = await storage().listOrganizations();
       const withCounts = await Promise.all(
         orgs.map(async (o) => ({
@@ -100,7 +134,8 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res) => {
       const me = currentUser(req);
-      const id = Number(req.params.id);
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
       // Never let a developer delete the org their own account lives in — it
@@ -118,20 +153,60 @@ export function registerDevRoutes(app: Express) {
           .json({ error: "org_not_empty", users: userCount });
       }
       try {
+        // One transaction (storage.deleteOrganization): a failure here means
+        // NOTHING was deleted and the tenant is exactly as it was.
         await storage().deleteOrganization(id);
       } catch (err) {
         console.error("[dev] org delete failed", err);
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "dev.org_delete_failed",
+          resourceType: "organization",
+          resourceId: id,
+          details: { code: org.code, users: userCount },
+          riskLevel: "high",
+        });
         return res.status(409).json({ error: "org_has_linked_records" });
       }
-      await appendAudit({
-        organizationId: null,
+      // The tenant is gone, so the deletion is recorded where it CAN be read:
+      // (1) in the operator's own (platform) org trail — never organization_id
+      // NULL, which no view, count or archive would ever surface — and (2) as a
+      // retained record under the deleted tenant's id, alongside the six-year
+      // archive of everything else that happened in it.
+      const stored = await appendAudit({
+        organizationId: me.organizationId,
         userId: me.id,
         action: "dev.org_delete",
         resourceType: "organization",
         resourceId: id,
-        details: { code: org.code },
+        details: { code: org.code, deletedOrganizationId: id, users: userCount, force },
         riskLevel: "high",
       });
+      try {
+        await storage().appendRetainedComplianceRecord({
+          sourceTable: "audit_logs",
+          sourceId: stored?.id ?? 0,
+          organizationId: id,
+          organizationCode: org.code,
+          organizationName: org.name,
+          userId: me.id,
+          userUsername: me.username,
+          userDisplayName: me.displayName,
+          action: "dev.org_delete",
+          resourceType: "organization",
+          resourceId: id,
+          patientId: null,
+          method: null,
+          ip: null,
+          details: { code: org.code, users: userCount, force, operatorOrganizationId: me.organizationId },
+          riskLevel: "high",
+          occurredAt: stored?.createdAt ?? new Date(),
+          archivedReason: "organization_deleted",
+        });
+      } catch (err) {
+        console.error("[dev] failed to retain org delete record", err);
+      }
       res.status(204).end();
     },
   );
@@ -182,9 +257,20 @@ export function registerDevRoutes(app: Express) {
     requireAuth,
     requireRole("developer"),
     async (req, res) => {
-      const id = Number(req.params.id);
+      const me = currentUser(req);
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.org_read",
+        resourceType: "organization",
+        resourceId: id,
+        details: { orgId: id },
+        riskLevel: "low",
+      });
       const settings: Record<string, unknown> = {};
       for (const k of ORG_SETTING_KEYS) {
         const v = await storage().getOrgSetting(id, k);
@@ -216,7 +302,17 @@ export function registerDevRoutes(app: Express) {
     "/api/dev/compliance-overview",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.compliance_overview",
+        resourceType: "organization",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const orgs = await storage().listOrganizations();
       const rows = await Promise.all(
         orgs.map(async (o) => {
@@ -252,9 +348,23 @@ export function registerDevRoutes(app: Express) {
     requireAuth,
     requireRole("developer"),
     async (req, res) => {
-      const id = Number(req.params.id);
+      const me = currentUser(req);
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
+      // Medium risk, written BEFORE the read: this exposes the tenant's
+      // PHI-ACCESS accounting (who read which patient), itself sensitive
+      // metadata. The row is therefore part of the trail it returns.
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.audit_read",
+        resourceType: "organization",
+        resourceId: id,
+        details: { orgId: id },
+        riskLevel: "medium",
+      });
       const [audit, phi] = await Promise.all([
         storage().listAuditLogs(id, 100),
         storage().listPhiAccess(id, 50),
@@ -296,7 +406,17 @@ export function registerDevRoutes(app: Express) {
     "/api/dev/users",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.users_list",
+        resourceType: "user",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const [allUsers, orgs, hosps] = await Promise.all([
         storage().listAllUsers(),
         storage().listOrganizations(),

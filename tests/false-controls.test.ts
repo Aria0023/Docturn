@@ -150,6 +150,75 @@ describe("F1 — PHI reads are audited with a record identifier", () => {
     // A refused read disclosed nothing, so it must not appear as a PHI access.
     expect((await phiRows(orgId)).length).toBe(before);
   });
+
+  // A.CON-SHO-10 / A.CON-SHO-30: the consults read used to audit BEFORE it
+  // checked anything, so a foreign, nonexistent or non-numeric patient id
+  // produced a phantom §164.528 row (or a hung request) for a read that
+  // disclosed nothing. Ownership is now checked first and a refused read is
+  // never accounted as a disclosure.
+  it("consults read of a cross-org / unknown / malformed patient id is refused with NO PHI row", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const { agent: chen } = await login(ctx.app, { username: "chen" });
+
+    const other = await ctx.storage.createOrganization({
+      name: "Other Hospital",
+      code: "OTHR",
+      city: null,
+      state: null,
+      timezone: "America/New_York",
+      assignmentTimeoutMin: 10,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+    const foreign = await ctx.storage.createPatient({
+      organizationId: other.id,
+      initials: "FP",
+      roomNumber: "1",
+      issueSummary: "foreign tenant's patient",
+      specialty: null,
+      department: "MED",
+      acuity: null,
+      status: "waiting",
+      erDoctorId: null,
+      assignedHospitalistId: null,
+    });
+
+    const beforeMine = (await phiRows(orgId)).length;
+    const beforeTheirs = (await phiRows(other.id)).length;
+
+    // Cross-tenant: 404 (no existence oracle), not 200 [].
+    const cross = await chen.get("/api/patients/" + foreign.id + "/consults");
+    expect(cross.status).toBe(404);
+    // Nonexistent in any tenant: 404.
+    expect((await chen.get("/api/patients/999999/consults")).status).toBe(404);
+    // Malformed ids: 400 — and the request RESPONDS instead of hanging.
+    for (const bad of ["abc", "0", "-1", "1.5"]) {
+      const res = await chen.get("/api/patients/" + bad + "/consults");
+      expect(res.status, "id " + bad).toBe(400);
+    }
+
+    // None of the refused reads disclosed anything, so none is a PHI access.
+    expect((await phiRows(orgId)).length).toBe(beforeMine);
+    expect((await phiRows(other.id)).length).toBe(beforeTheirs);
+
+    // A legitimate read of an OWNED patient still writes exactly one row.
+    const mine = ctx.seedResult.patientIds.sc!;
+    await chen.get("/api/patients/" + mine + "/consults").expect(200);
+    const rows = await phiRows(orgId);
+    expect(rows.length).toBe(beforeMine + 1);
+    expect(rows[0]!.resource).toBe("patient-consults");
+    expect(rows[0]!.patientId).toBe(mine);
+  });
+
+  it("the platform developer cannot read a tenant's consults (403, no PHI row)", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const { agent: dev } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    const before = (await phiRows(orgId)).length;
+    const res = await dev.get("/api/patients/" + ctx.seedResult.patientIds.sc + "/consults");
+    expect(res.status).toBe(403);
+    expect((await phiRows(orgId)).length).toBe(before);
+  });
 });
 
 /* ─────────────────── F2 — retention purge actually purges ───────────────── */

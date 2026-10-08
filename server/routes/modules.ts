@@ -35,6 +35,20 @@ export function registerModuleRoutes(app: Express) {
     if (!canRead) return res.status(403).json({ error: "forbidden" });
     const org = await storage().getOrganization(orgId);
     if (!org) return res.status(404).json({ error: "not_found" });
+    // A developer reading a tenant's switches is a cross-tenant read: one
+    // ids-only row in that tenant's trail, before the read. A director's
+    // own-org read is not.
+    if (me.role === "developer") {
+      await appendAudit({
+        organizationId: orgId,
+        userId: me.id,
+        action: "dev.modules_read",
+        resourceType: "organization",
+        resourceId: orgId,
+        details: { orgId },
+        riskLevel: "low",
+      });
+    }
     res.json({ orgId, modules: await getModules(orgId), registry: MODULES });
   });
 
