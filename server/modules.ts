@@ -75,6 +75,10 @@ export function requireModule(id: string) {
 // existing route files need no per-route `requireModule` wrapper. Mounted in
 // server/app.ts after session/passport and before registerRoutes(). Add a
 // module = add a row to shared/modules.ts + a row here.
+//
+// Every rule must match at least one REGISTERED route: tests/modules.test.ts
+// walks the Express router and fails on a rule that gates nothing, so the
+// table can never again carry a path that looks protected but isn't served.
 // ---------------------------------------------------------------------------
 export interface GateRule {
   /** Regex tested against req.path (no query string). */
@@ -101,7 +105,6 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Routing
   { path: /^\/api\/assignments(\/|$)/, module: "routing.assignments" },
   { path: /^\/api\/consults(\/|$)/, module: "routing.consults" },
-  { path: /^\/api\/consult-services(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/patients\/[^/]+\/consults(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/messaging\/on-call-targets(\/|$)/, module: "routing.roleMessaging" },
   // Messaging
@@ -117,7 +120,6 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Schedule
   { path: /^\/api\/amion(\/|$)/, module: "schedule.amion" },
   { path: /^\/api\/oncall(\/|$)/, module: "oncall.board" },
-  { path: /^\/api\/on-call(\/|$)/, module: "oncall.board" },
   // Operations
   { path: /^\/api\/metrics(\/|$)/, module: "ops.analytics" },
   { path: /^\/api\/reports(\/|$)/, module: "ops.analytics" },
@@ -125,8 +127,7 @@ export const GATE_TABLE: readonly GateRule[] = [
   // routes still exercised by existing flows, and ops.resources defaults OFF.
   { path: /^\/api\/resources(\/|$)/, module: "ops.resources" },
   { path: /^\/api\/maintenance\/purge$/, module: "ops.retention" },
-  // Platform
-  { path: /^\/api\/settings\/appearance(\/|$)/, module: "platform.appearance" },
+  // Platform — theming is written through PATCH /api/org/preferences { theme }.
   { path: /^\/api\/org\/preferences$/, module: "platform.appearance", methods: ["PATCH"], when: bodyHasTheme },
   { path: /^\/api\/cms(\/|$)/, module: "platform.cms" },
 ];

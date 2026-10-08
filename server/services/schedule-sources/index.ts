@@ -1,3 +1,5 @@
+import { MODULES } from "@shared/modules";
+import { isModuleEnabled } from "../../modules.js";
 import type { DatabaseStorage } from "../../storage.js";
 import { amionConfig, amionConfigured } from "../amion.js";
 import { createAmionSource } from "./amion.js";
@@ -19,8 +21,27 @@ export { createEpicSource } from "./epic-fhir.js";
 /** Org setting holding the selected source id. */
 export const SOURCE_SETTING_KEY = "scheduleSource";
 
+/**
+ * The feature module that must be ON for a source to be offered, selected or
+ * served (shared/modules.ts). The manual list is maintained in DocTurn itself
+ * and needs none. This is the single place the board, the source picker, the
+ * default resolution and the registry consult, so the schedule.* switches
+ * cannot be honoured by one surface and ignored by another.
+ */
+export const SOURCE_MODULE: Readonly<Record<ScheduleSourceId, string | null>> = {
+  amion: "schedule.amion",
+  epic: "schedule.epic",
+  manual: null,
+};
+
 export function isScheduleSourceId(v: unknown): v is ScheduleSourceId {
   return typeof v === "string" && (SCHEDULE_SOURCE_IDS as readonly string[]).includes(v);
+}
+
+/** True when the org may use this source (its module is on, or it needs none). */
+export async function sourceModuleEnabled(orgId: number, id: ScheduleSourceId): Promise<boolean> {
+  const mod = SOURCE_MODULE[id];
+  return mod ? isModuleEnabled(orgId, mod) : true;
 }
 
 export interface SourceRegistry {
@@ -28,10 +49,39 @@ export interface SourceRegistry {
   all(): ScheduleSource[];
 }
 
+/**
+ * Wrap a source so that, for an org whose module is switched off, it serves
+ * NO slots and reports configured:false with a "switched off" message — even
+ * if a caller asks for it directly. The underlying snapshot is left intact so
+ * switching the module back on restores the board without a re-sync.
+ */
+function moduleGated(src: ScheduleSource, moduleId: string): ScheduleSource {
+  const label = MODULES.find((m) => m.id === moduleId)?.label ?? moduleId;
+  return {
+    id: src.id,
+    async fetch(orgId) {
+      if (!(await isModuleEnabled(orgId, moduleId))) return [];
+      return src.fetch(orgId);
+    },
+    async status(orgId) {
+      const base = await src.status(orgId);
+      if (await isModuleEnabled(orgId, moduleId)) return base;
+      // Keep the source's own hint (e.g. which credentials it needs) and add
+      // the switch state, so the operator sees everything that is true.
+      const off = `${label} is switched off for this organization (module ${moduleId}); the board reads the manual list instead.`;
+      return {
+        ...base,
+        configured: false,
+        message: base.message ? `${base.message} ${off}` : off,
+      };
+    },
+  };
+}
+
 export function createSourceRegistry(db: DatabaseStorage, deps: { epic?: EpicClientDeps } = {}): SourceRegistry {
   const sources: Record<ScheduleSourceId, ScheduleSource> = {
-    amion: createAmionSource(db),
-    epic: createEpicSource(db, deps.epic),
+    amion: moduleGated(createAmionSource(db), SOURCE_MODULE.amion!),
+    epic: moduleGated(createEpicSource(db, deps.epic), SOURCE_MODULE.epic!),
     manual: createManualSource(db),
   };
   return {
@@ -41,20 +91,36 @@ export function createSourceRegistry(db: DatabaseStorage, deps: { epic?: EpicCli
 }
 
 /**
- * The source an org should read from: its explicit choice, else Amion when the
- * live feed is configured for this org, else the manual list.
+ * The source an org should read from when it has made no explicit choice:
+ * Amion when the live feed is configured for this org AND schedule.amion is
+ * on for it, else the manual list.
  */
 export async function defaultSourceFor(db: DatabaseStorage, orgId: number): Promise<ScheduleSourceId> {
   if (amionConfigured()) {
     const org = await db.getOrganizationByCode(amionConfig().orgCode);
-    if (org && org.id === orgId) return "amion";
+    if (org && org.id === orgId && (await sourceModuleEnabled(orgId, "amion"))) return "amion";
   }
   return "manual";
 }
 
-export async function getSelectedSource(db: DatabaseStorage, orgId: number): Promise<{ id: ScheduleSourceId; explicit: boolean }> {
+export interface SelectedSource {
+  id: ScheduleSourceId;
+  /** A director chose this source (as opposed to the default resolution). */
+  explicit: boolean;
+  /**
+   * Set when the director's stored choice is a source whose module is switched
+   * off for this org: the board falls back to the manual list, and the stored
+   * choice is kept so switching the module back on restores it.
+   */
+  overridden?: { source: ScheduleSourceId; module: string };
+}
+
+export async function getSelectedSource(db: DatabaseStorage, orgId: number): Promise<SelectedSource> {
   const raw = await db.getOrgSetting(orgId, SOURCE_SETTING_KEY);
-  if (isScheduleSourceId(raw)) return { id: raw, explicit: true };
+  if (isScheduleSourceId(raw)) {
+    if (await sourceModuleEnabled(orgId, raw)) return { id: raw, explicit: true };
+    return { id: "manual", explicit: false, overridden: { source: raw, module: SOURCE_MODULE[raw]! } };
+  }
   return { id: await defaultSourceFor(db, orgId), explicit: false };
 }
 
@@ -67,7 +133,7 @@ export async function setSelectedSource(
   await db.setOrgSetting(orgId, SOURCE_SETTING_KEY, id, actorUserId);
 }
 
-/** Slots from the org's selected source (never fabricated). */
+/** Slots from the org's selected source (never fabricated, never from a switched-off module). */
 export async function fetchSelectedSlots(
   db: DatabaseStorage,
   registry: SourceRegistry,

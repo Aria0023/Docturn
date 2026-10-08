@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { hashPassword } from "../auth.js";
+import { isModuleEnabled } from "../modules.js";
 import { storage, type DatabaseStorage } from "../storage.js";
 
 /**
@@ -361,20 +362,64 @@ export async function getAmionStatus(
 let bootTimer: NodeJS.Timeout | null = null;
 let loopTimer: NodeJS.Timeout | null = null;
 
+export type ScheduledAmionSyncOutcome =
+  | "synced"
+  | "skipped_not_configured"
+  | "skipped_org_missing"
+  | "skipped_module_off";
+
+/**
+ * One scheduled tick. The automated pull runs ONLY while the feed is
+ * configured AND the org's `schedule.amion` module is on — switching the
+ * module off in the developer console stops the loop's work (and the board
+ * stops serving Amion slots, see schedule-sources/index.ts) without touching
+ * the stored snapshot, so switching it back on resumes seamlessly.
+ */
+export async function runScheduledAmionSync(
+  db: DatabaseStorage = storage(),
+): Promise<ScheduledAmionSyncOutcome> {
+  const cfg = amionConfig();
+  if (!cfg.url) return "skipped_not_configured";
+  const org = await db.getOrganizationByCode(cfg.orgCode);
+  if (!org) return "skipped_org_missing";
+  if (!(await isModuleEnabled(org.id, "schedule.amion"))) return "skipped_module_off";
+  await syncAmion(db);
+  return "synced";
+}
+
 export function startAmionSyncLoop() {
   const cfg = amionConfig();
   if (!cfg.url || loopTimer) return;
+  // Log the module-off skip once per off-period, not on every tick.
+  let announcedOff = false;
   const run = () => {
-    syncAmion(storage()).catch((err) =>
-      console.error("[amion] sync failed:", sanitizeError(err, cfg.url)),
-    );
+    runScheduledAmionSync()
+      .then((outcome) => {
+        if (outcome === "skipped_module_off") {
+          if (!announcedOff) {
+            console.log(
+              `[amion] scheduled sync paused — schedule.amion is switched off for org ${cfg.orgCode}; resumes when switched back on`,
+            );
+            announcedOff = true;
+          }
+          return;
+        }
+        if (announcedOff && outcome === "synced") {
+          console.log(`[amion] scheduled sync resumed — schedule.amion is on for org ${cfg.orgCode}`);
+        }
+        announcedOff = false;
+        if (outcome === "skipped_org_missing") {
+          console.error(`[amion] sync skipped: no organization with code ${cfg.orgCode}`);
+        }
+      })
+      .catch((err) => console.error("[amion] sync failed:", sanitizeError(err, cfg.url)));
   };
   bootTimer = setTimeout(run, 5_000);
   bootTimer.unref?.();
   loopTimer = setInterval(run, cfg.intervalMin * 60_000);
   loopTimer.unref?.();
   console.log(
-    `[amion] schedule sync enabled — org ${cfg.orgCode}, every ${cfg.intervalMin} min`,
+    `[amion] schedule sync enabled — org ${cfg.orgCode}, every ${cfg.intervalMin} min (while module schedule.amion is on)`,
   );
 }
 

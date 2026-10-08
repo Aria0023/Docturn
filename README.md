@@ -142,5 +142,7 @@ design/               # full design-system handoff + UI kits the client is built
   provider exists (preferring a different provider than the one who just declined), and zero when
   none do.
 - `rotation.selectNext` never returns a provider from another org, never one at/over cap unless cap
-  relief raised every working provider's cap, and prefers the lowest census.
+  relief raised the cap of every working provider in the round-robin shift set (relief never touches
+  off-shift providers, and a lone provider is re-offered a rerouted patient without any relief), and
+  prefers the lowest census. `previewNext` ("Next up") applies the same eligibility.
 - Messaging never delivers a message to a non-participant.

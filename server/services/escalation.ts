@@ -15,8 +15,10 @@ import {
  * unacknowledged at the escalate step. Sent to the unresponsive recipient's
  * phone; the body carries NO PHI (a generic wake-up). Gated per-org by the
  * `statSmsFallback` setting (default ON) so the operator/developer can turn it
- * off. Without SMS credentials the carrier adapter is a no-op stub, so this is
- * always safe to call. Errors never interrupt the sweep.
+ * off. Without SMS credentials the carrier adapter is the recording console
+ * stub outside production; in production it fails closed (typed
+ * sms_unavailable throw — see services/sms.ts), which lands in the catch below:
+ * no sms_history row, `false` returned. Errors never interrupt the sweep.
  */
 async function sendStatSmsFallback(
   s: IStorage,

@@ -2,7 +2,30 @@ import { beforeEach, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import { MODULES, moduleDefaults, resolveModules } from "@shared/modules";
 import { createTestApp, login, type TestContext } from "./helpers.js";
-import { invalidateModules } from "../server/modules.js";
+import { GATE_TABLE, invalidateModules } from "../server/modules.js";
+
+/**
+ * Every route Express actually serves, with `:params` replaced by a literal
+ * segment so gate regexes can be tested against a concrete path. Routes with
+ * RegExp paths (SPA fallbacks) carry no API surface and are skipped.
+ */
+function registeredRoutes(app: unknown): Array<{ path: string; methods: string[] }> {
+  type Layer = { route?: { path: string | string[] | RegExp; methods: Record<string, boolean> } };
+  const stack = (app as { _router?: { stack: Layer[] } })._router?.stack ?? [];
+  const out: Array<{ path: string; methods: string[] }> = [];
+  for (const layer of stack) {
+    if (!layer.route) continue;
+    const paths = Array.isArray(layer.route.path) ? layer.route.path : [layer.route.path];
+    const methods = Object.entries(layer.route.methods)
+      .filter(([, on]) => on)
+      .map(([m]) => m.toUpperCase());
+    for (const p of paths) {
+      if (typeof p !== "string") continue;
+      out.push({ path: p.replace(/:[A-Za-z0-9_]+\??/g, "1"), methods });
+    }
+  }
+  return out;
+}
 
 const devLogin = (ctx: TestContext) =>
   login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
@@ -149,6 +172,20 @@ describe("feature modules — API + central gate", () => {
       .post("/api/messaging/send")
       .send({ conversationId: convo.id, content: "later", priority: "routine" })
       .expect(201);
+  });
+
+  it("every GATE_TABLE rule matches at least one registered route for one of its methods (no dead rules)", () => {
+    const routes = registeredRoutes(ctx.app);
+    expect(routes.length).toBeGreaterThan(50); // sanity: the router walk saw the real app
+    const dead = GATE_TABLE.filter(
+      (rule) =>
+        !routes.some(
+          (r) =>
+            rule.path.test(r.path) &&
+            (!rule.methods || r.methods.includes("_ALL") || rule.methods.some((m) => r.methods.includes(m))),
+        ),
+    );
+    expect(dead.map((r) => `${r.module} ${String(r.path)}`)).toEqual([]);
   });
 
   it("unauthenticated requests pass through the gate to auth (401, not 404)", async () => {
