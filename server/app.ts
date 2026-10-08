@@ -30,6 +30,7 @@ import { moduleGate } from "./modules.js";
 import { registerNumericParams } from "./params.js";
 import { createSessionStore } from "./session-store.js";
 import { storage } from "./storage.js";
+import { mountWebapp, type WebappOptions } from "./webapp-static.js";
 import { toSafeUser } from "@shared/schema";
 
 export interface CreateAppOptions {
@@ -42,6 +43,12 @@ export interface CreateAppOptions {
    * legacy (spoofable) hop count. See resolveTrustProxy() in server/config.ts.
    */
   trustProxy?: boolean | string | number;
+  /**
+   * How the web client is served (server/webapp-static.ts): the precompiled
+   * bundle from `npm run build:webapp`, or the no-build kit with in-browser
+   * Babel. Default "auto": the bundle in production when a fresh build exists.
+   */
+  webapp?: WebappOptions;
 }
 
 /**
@@ -294,27 +301,15 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     fileURLToPath(new URL("../client/dist", import.meta.url)),
     join(process.cwd(), "client/dist"),
   ];
-  const uiDir = candidates.find((d) => existsSync(d)) || wiredKit;
+  const uiDir = opts.webapp?.dir ?? (candidates.find((d) => existsSync(d)) || wiredKit);
   if (existsSync(uiDir)) {
-    // No-cache for the kit: it's plain <script> files with no content hashing,
-    // so a browser that caches api-bridge.js/*.jsx would keep running stale
-    // client code after a pull. Always revalidate (dev tool; assets are local).
-    app.use(
-      express.static(uiDir, {
-        etag: true,
-        lastModified: true,
-        setHeaders: (res) => {
-          res.setHeader("Cache-Control", "no-cache, must-revalidate");
-        },
-      }),
-    );
-    // Convenience alias for the side-by-side demo console (served from demo.html
-    // by express.static; without this the SPA fallback below would shadow it).
-    app.get("/demo", (_req, res) => res.redirect("/demo.html"));
-    app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
-      res.setHeader("Cache-Control", "no-cache, must-revalidate");
-      res.sendFile(join(uiDir, "index.html"));
-    });
+    // The shell, /sw.js (carrying the shell's full precache list), compressed
+    // static files, cache headers and the SPA fallback, in bundle mode (the
+    // precompiled build) or dev mode (in-browser Babel). The shell document and
+    // every unhashed file stay `no-cache, must-revalidate` (a browser must never
+    // keep running stale client code after a deploy); only content-hashed build
+    // files are long-lived/immutable. See server/webapp-static.ts.
+    mountWebapp(app, uiDir, opts.webapp);
   }
 
   // Consistent error shape. Honours the 4xx status body-parser / http-errors

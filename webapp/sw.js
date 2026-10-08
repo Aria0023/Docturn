@@ -4,62 +4,130 @@
  * on a phone home screen, like TigerConnect/PerfectServe.
  *
  * HIPAA-aware caching: only the static app shell (html/css/js/jsx/vendor/icons)
- * is cached. /api and /ws are NEVER cached — those responses can carry PHI and
- * must always go to the network over TLS. Push payloads are content-free.
+ * is cached. /api and /ws are NEVER cached and never answered from a cache —
+ * those responses can carry PHI and must always go to the network over TLS.
+ * Push payloads are content-free.
+ *
+ * Offline shell (A.CON-SHO-43). The server prepends
+ *   self.__DT_SHELL__ = { version, precache: [...], immutable: "/dist/" }
+ * to this file (server/webapp-static.ts): the shell's version and EVERY file it
+ * needs — index.html, the stylesheet, every script (in dev: vendor React,
+ * Babel, lucide, store.js, api-bridge.js and every .jsx; in a build: the
+ * hashed bundles), the manifest, icons and the images the screens use. So:
+ *   • install precaches the complete shell, all-or-nothing: if any file fails,
+ *     the install fails and the previously installed worker — with its own
+ *     complete cache — stays in charge (no more silent `.catch(() => {})`);
+ *   • every deploy that changes the shell changes these bytes, so the browser
+ *     installs a new worker, which precaches the new shell BEFORE it activates
+ *     and deletes the old cache — a version bump never leaves a blank shell,
+ *     and the cached index.html is always the one matching its scripts;
+ *   • a fresh install works offline from the second launch on, i.e. as soon
+ *     as the first online load has finished installing the worker.
  */
-const VERSION = "docturn-v2";
+const SHELL = self.__DT_SHELL__ || {
+  // Served without the server (static preview): a minimal, still-honest shell.
+  version: "static",
+  precache: ["/index.html", "/tokens.css", "/manifest.webmanifest"],
+  immutable: null,
+};
+const CACHE_PREFIX = "docturn-";
+const CACHE = CACHE_PREFIX + "shell-" + SHELL.version;
+const OFFLINE_SHELL = "/index.html";
 
-// Core shell so the app opens offline. Unhashed dev files → we revalidate in the
-// background (stale-while-revalidate) so a pull is picked up on next load.
-const SHELL = ["/", "/index.html", "/tokens.css", "/manifest.webmanifest"];
+// PHI boundary. Exact path segments: "/api-bridge.js" (the app's own script,
+// needed offline) is NOT an API path, "/api/..." and "/ws" are.
+function isApiOrWs(pathname) {
+  return pathname === "/api" || pathname.indexOf("/api/") === 0 || pathname === "/ws" || pathname.indexOf("/ws/") === 0;
+}
+
+const PRECACHE = (SHELL.precache || []).filter(function (u) {
+  try {
+    const url = new URL(u, self.location.origin);
+    return url.origin === self.location.origin && !isApiOrWs(url.pathname);
+  } catch (e) {
+    return false;
+  }
+});
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(VERSION).then((c) => c.addAll(SHELL)).catch(() => {}),
-  );
-  self.skipWaiting();
+  event.waitUntil((async () => {
+    const existed = await caches.has(CACHE);
+    const cache = await caches.open(CACHE);
+    try {
+      // Cache.addAll is atomic: one failed or non-OK response and nothing is
+      // stored. The rejection fails this install, so the browser keeps the
+      // current worker (and its complete cache) and retries on its next update
+      // check. Requests use the normal HTTP cache: unhashed files are served
+      // `no-cache` (always revalidated) and hashed ones are immutable, so what
+      // lands here is exactly what the server is serving now.
+      await cache.addAll(PRECACHE);
+    } catch (err) {
+      if (!existed) await caches.delete(CACHE);
+      throw err;
+    }
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))),
-    ).then(() => self.clients.claim()),
-  );
+  event.waitUntil((async () => {
+    // Only now — with this version's complete shell in place — drop the old
+    // versions (including the pre-versioning "docturn-v2" cache).
+    const keys = await caches.keys();
+    await Promise.all(keys.filter((k) => k !== CACHE && k.indexOf(CACHE_PREFIX) === 0).map((k) => caches.delete(k)));
+    // Start the navigation request in parallel with worker start-up.
+    if (self.registration.navigationPreload) {
+      try { await self.registration.navigationPreload.enable(); } catch (e) { /* optional */ }
+    }
+    await self.clients.claim();
+  })());
 });
+
+// The cache is written ONLY by install: it is always exactly one version's
+// complete, consistent shell. (Refreshing entries from online responses would
+// mix files of a newer deploy — whose own worker may have failed to install —
+// into this version's offline shell.)
+function fromCache(req) {
+  return caches.match(req, { ignoreVary: true });
+}
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   let url;
-  try { url = new URL(req.url); } catch { return; }
+  try { url = new URL(req.url); } catch (e) { return; }
   if (url.origin !== self.location.origin) return;
-  // Never touch API/WS — PHI-bearing, always network.
-  if (url.pathname.startsWith("/api") || url.pathname.startsWith("/ws")) return;
+  // Never touch API/WS — PHI-bearing, always network, never cached.
+  if (isApiOrWs(url.pathname)) return;
+  if (url.pathname === "/sw.js") return;
 
-  // SPA navigations: network-first, fall back to cached shell when offline.
+  // Navigations: network-first (a deploy shows on the next launch); offline,
+  // the precached shell of THIS worker's version, whose scripts are all here.
   if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(() => caches.match("/index.html").then((r) => r || caches.match("/"))),
-    );
+    event.respondWith((async () => {
+      try {
+        const preloaded = await event.preloadResponse;
+        if (preloaded) return preloaded;
+        return await fetch(req);
+      } catch (e) {
+        const shell = await caches.match(OFFLINE_SHELL, { cacheName: CACHE, ignoreVary: true }) || await caches.match(OFFLINE_SHELL, { ignoreVary: true });
+        return shell || Response.error();
+      }
+    })());
     return;
   }
 
-  // Static assets: NETWORK-FIRST. The dev files (index.html scripts, .jsx, css)
-  // are unhashed, so serving cache-first / stale-while-revalidate meant a deploy
-  // only showed up on the SECOND load — installed PWAs would sit on stale code
-  // indefinitely. Fetch fresh when online (and refresh the cache), fall back to
-  // the cached copy only when the network is unavailable.
+  // Content-hashed build files never change under a given URL: cache-first.
+  if (SHELL.immutable && url.pathname.indexOf(SHELL.immutable) === 0) {
+    event.respondWith(fromCache(req).then((hit) => hit || fetch(req)));
+    return;
+  }
+
+  // Everything else (unhashed shell files, icons, images): network-first so a
+  // pull/deploy is picked up immediately; the cached copy only when the
+  // network is unavailable.
   event.respondWith(
-    fetch(req)
-      .then((res) => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put(req, copy)).catch(() => {});
-        }
-        return res;
-      })
-      .catch(() => caches.match(req)),
+    fetch(req).catch(() => fromCache(req).then((hit) => hit || Response.error())),
   );
 });
 
