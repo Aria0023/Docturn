@@ -138,6 +138,38 @@ export interface GlobalRowCounts {
  * literally cannot read another tenant's rows through this interface. The
  * `developer` role bypasses scoping at the route layer (audited), never here.
  */
+/**
+ * Remove the stored bytes behind attachment refs (a no-op for inline "db" refs,
+ * an unlink for "fsenc:" files). Returns how many could NOT be removed; the
+ * caller decides whether that is worth an audit row. Never throws.
+ */
+export async function deleteAttachmentFiles(refs: string[]): Promise<number> {
+  let failures = 0;
+  for (const ref of refs) {
+    try {
+      await attachmentStoreFor(ref).delete(ref);
+    } catch {
+      failures++;
+    }
+  }
+  return failures;
+}
+
+/** What a retention purge removed for one org (audited by the sweep). */
+export interface RetentionPurgeResult {
+  messages: number;
+  /** Attachment rows removed with those messages. */
+  attachments: number;
+  /** Encrypted attachment FILES the store could not remove (rows are gone). */
+  fileDeleteFailures: number;
+}
+
+/** What an orphan (never-linked) attachment purge removed for one org. */
+export interface OrphanPurgeResult {
+  attachments: number;
+  fileDeleteFailures: number;
+}
+
 /** What a patient purge removed, per table (audited by the callers). */
 export interface PurgeResult {
   patients: number;
@@ -235,7 +267,19 @@ export interface IStorage {
     orgId: number,
     patientId: number,
   ): Promise<Conversation | undefined>;
-  purgeMessagesOlderThan(orgId: number, cutoff: Date): Promise<number>;
+  purgeMessagesOlderThan(orgId: number, cutoff: Date): Promise<RetentionPurgeResult>;
+  purgeUnlinkedAttachmentsOlderThan(
+    orgId: number,
+    cutoff: Date,
+  ): Promise<OrphanPurgeResult>;
+  /** A covering/forward copy of `originalMessageId` already in `conversationId`, if any. */
+  findForwardedCopy(
+    orgId: number,
+    conversationId: number,
+    originalMessageId: number,
+  ): Promise<Message | undefined>;
+  /** Every covering copy (DND / escalation) made of an original message. */
+  listCoveringCopies(orgId: number, originalMessageId: number): Promise<Message[]>;
   listConsultsForOrg(orgId: number): Promise<PatientConsult[]>;
   countMessagesSince(orgId: number, since: Date): Promise<number>;
   listStatAckLatencies(orgId: number): Promise<number[]>;
@@ -939,7 +983,7 @@ export class DatabaseStorage implements IStorage {
    * interrupted purge leaves orphan-free data (children gone, parents intact)
    * and the next sweep simply finishes the job.
    */
-  async purgeMessagesOlderThan(orgId: number, cutoff: Date) {
+  async purgeMessagesOlderThan(orgId: number, cutoff: Date): Promise<RetentionPurgeResult> {
     const old = await this.db
       .select({ id: messages.id })
       .from(messages)
@@ -947,7 +991,7 @@ export class DatabaseStorage implements IStorage {
         and(eq(messages.organizationId, orgId), lt(messages.createdAt, cutoff)),
       );
     const ids = old.map((m) => m.id);
-    if (ids.length === 0) return 0;
+    if (ids.length === 0) return { messages: 0, attachments: 0, fileDeleteFailures: 0 };
     // Collect store refs first so encrypted attachment FILES are removed too,
     // not just the rows (otherwise ciphertext lingers on disk past retention).
     const atts = await this.db
@@ -959,10 +1003,56 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.messageId, ids));
       await tx.delete(messages).where(inArray(messages.id, ids));
     });
-    for (const a of atts) {
-      try { await attachmentStoreFor(a.ref).delete(a.ref); } catch { /* best effort */ }
-    }
-    return ids.length;
+    const fileDeleteFailures = await deleteAttachmentFiles(atts.map((a) => a.ref));
+    return { messages: ids.length, attachments: atts.length, fileDeleteFailures };
+  }
+  /**
+   * Remove attachments that were uploaded but never linked to a message
+   * (message_id NULL) before the cutoff — abandoned uploads whose bytes would
+   * otherwise sit in the store forever. Rows first, then the encrypted files.
+   */
+  async purgeUnlinkedAttachmentsOlderThan(orgId: number, cutoff: Date): Promise<OrphanPurgeResult> {
+    const gone = await this.db
+      .delete(messageAttachments)
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          isNull(messageAttachments.messageId),
+          lt(messageAttachments.createdAt, cutoff),
+        ),
+      )
+      .returning({ ref: messageAttachments.dataBase64 });
+    if (gone.length === 0) return { attachments: 0, fileDeleteFailures: 0 };
+    const fileDeleteFailures = await deleteAttachmentFiles(gone.map((a) => a.ref));
+    return { attachments: gone.length, fileDeleteFailures };
+  }
+  async findForwardedCopy(orgId: number, conversationId: number, originalMessageId: number) {
+    const [row] = await this.db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          eq(messages.conversationId, conversationId),
+          isNull(messages.deletedAt),
+          sql`${messages.forwardedFrom}->>'messageId' = ${String(originalMessageId)}`,
+        ),
+      )
+      .limit(1);
+    return row;
+  }
+  async listCoveringCopies(orgId: number, originalMessageId: number) {
+    return this.db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          isNull(messages.deletedAt),
+          sql`${messages.forwardedFrom}->>'messageId' = ${String(originalMessageId)}`,
+          sql`${messages.forwardedFrom}->>'coveringFor' IS NOT NULL`,
+        ),
+      );
   }
   /** All consult rows for an org (analytics). */
   async listConsultsForOrg(orgId: number) {
@@ -1559,6 +1649,9 @@ export class DatabaseStorage implements IStorage {
     // Attachments reference messages(id) — delete them before the messages, or
     // the whole cascade fails with a FK violation (surfaced as 409
     // org_has_linked_records for any tenant that ever uploaded a file).
+    // Their store refs are collected FIRST so the encrypted files go too
+    // (deleting the rows alone left the tenant's ciphertext on disk).
+    const attachmentRefs = await this.listAttachmentRefsForOrg(id, messageIds);
     await this.db.delete(messageAttachments).where(eq(messageAttachments.organizationId, id));
     if (messageIds.length) {
       // Belt and braces: an attachment uploaded by a since-moved user could
@@ -1604,6 +1697,27 @@ export class DatabaseStorage implements IStorage {
     // now the users, then the org
     await this.db.delete(users).where(eq(users.organizationId, id));
     await this.db.delete(organizations).where(eq(organizations.id, id));
+    // Rows are gone; now the encrypted attachment files (best effort — a
+    // failure here leaves unreadable ciphertext behind, never tenant data).
+    const failures = await deleteAttachmentFiles(attachmentRefs);
+    if (failures) console.error(`[storage] org ${id} deleted but ${failures} attachment file(s) could not be removed`);
+  }
+  /** Store refs of every attachment row belonging to an org (by org id and by its messages). */
+  private async listAttachmentRefsForOrg(orgId: number, messageIds: number[]): Promise<string[]> {
+    const refs = new Set<string>();
+    const byOrg = await this.db
+      .select({ ref: messageAttachments.dataBase64 })
+      .from(messageAttachments)
+      .where(eq(messageAttachments.organizationId, orgId));
+    for (const a of byOrg) refs.add(a.ref);
+    if (messageIds.length) {
+      const byMessage = await this.db
+        .select({ ref: messageAttachments.dataBase64 })
+        .from(messageAttachments)
+        .where(inArray(messageAttachments.messageId, messageIds));
+      for (const a of byMessage) refs.add(a.ref);
+    }
+    return [...refs];
   }
   async countOrgUsers(orgId: number): Promise<number> {
     const rows = await this.db
