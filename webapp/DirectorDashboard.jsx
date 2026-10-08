@@ -4,8 +4,9 @@
    (Day call / Swing / Nights) with editable hours, and manage the round-robin —
    including taking a provider off rotation even while they are on shift. */
 
-function Stepper({ label, value, onDec, onInc }) {
-  const btn = { width: 24, height: 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" };
+function Stepper({ label, value, onDec, onInc, mobile }) {
+  // Phones: 40×44 buttons so the −/+ are real tap targets.
+  const btn = { width: mobile ? 40 : 24, height: mobile ? 44 : 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" };
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontWeight: 500 }}>{label}</span>
@@ -18,12 +19,12 @@ function Stepper({ label, value, onDec, onInc }) {
   );
 }
 
-function ShiftSelect({ shifts, value, onChange }) {
+function ShiftSelect({ shifts, value, onChange, mobile }) {
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
       <select value={value} onChange={(e) => onChange(e.target.value)}
-        style={{ appearance: "none", WebkitAppearance: "none", height: 28, padding: "0 24px 0 10px", borderRadius: "var(--radius-md)",
-          border: "1px solid var(--border)", background: "var(--secondary)", fontSize: 12, fontWeight: 600, color: "var(--foreground)",
+        style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 28, maxWidth: "100%", padding: "0 24px 0 10px", borderRadius: "var(--radius-md)",
+          border: "1px solid var(--border)", background: "var(--secondary)", fontSize: mobile ? 16 : 12, fontWeight: 600, color: "var(--foreground)",
           fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         {shifts.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
@@ -37,6 +38,10 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   // response and message volume. Hydrated on login for directors; the strip's
   // comms KPIs read from it so nothing is duplicated across two sources.
   const opsReport = useStore().opsReport;
+  // Phone layout: provider rows become two lines (identity, then controls) so
+  // Census/Cap/Rotation/On-Off/Remove are reachable instead of clipped by the
+  // roster Card's overflow:hidden; header/bulk rows wrap instead of overflowing.
+  const mobile = useIsMobile();
 
   const [dragId, setDragId] = React.useState(null);
   const [overId, setOverId] = React.useState(null);
@@ -149,7 +154,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const bulkNode = (
     /* Bulk controls bar */
     <Card style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Icon name="layers" size={16} color="var(--primary)" />
         <span style={{ fontSize: 13, fontWeight: 700 }}>Mass set daily census limit</span>
         <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#fff" }}>
@@ -158,7 +163,8 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
         </div>
         <Button size="sm" variant="default" icon="check" onClick={() => { const n = parseInt(capInput, 10); if (n > 0) onSetAllCap(n); }}>Apply to all</Button>
       </div>
-      <div style={{ width: 1, height: 28, background: "var(--border)" }} />
+      {/* vertical divider only makes sense when everything sits on one line */}
+      {!mobile && <div style={{ width: 1, height: 28, background: "var(--border)" }} />}
       <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
         <Button size="sm" variant="outline" icon="toggle-left" onClick={() => onBulkWorking(false)} style={allOff ? { opacity: .5 } : null}>All off shift</Button>
         <Button size="sm" variant="outline" icon="toggle-right" onClick={() => onBulkWorking(true)} style={allOn ? { opacity: .5 } : null}>All on shift</Button>
@@ -169,9 +175,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
 
   const nextUpNode = nextProvider && (
     /* Next up — who receives the next admission (lowest census / first in order) */
-    <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)" }}>
+    <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)" }}>
       <Avatar initials={nextProvider.avatar} size={40} tint="emerald" />
-      <div style={{ minWidth: 0, flex: 1 }}>
+      <div style={{ minWidth: 0, flex: "1 1 180px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           <Badge status="sent">Next up</Badge>
           <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider.name}</span>
@@ -195,10 +201,11 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
           const group = providers.filter((p) => p.shift === shift.id);
           return (
             <div key={shift.id}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, padding: "0 2px" }}>
+              {/* wraps on phones: label + hours + "N providers" exceed 362px otherwise (page wobble) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, rowGap: 6, marginBottom: 8, padding: "0 2px", flexWrap: "wrap" }}>
                 <Avatar initials="" size={10} tint={SHIFT_TINT[shift.id]} />
                 <EditableText value={shift.label} onSave={(val) => onRenameShift(shift.id, val)} size={14} weight={700} />
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 2 }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 2, flexWrap: "wrap" }}>
                   <Icon name="clock" size={13} color="var(--muted-foreground)" />
                   <input type="time" value={shift.start} onChange={(e) => onUpdateShift(shift.id, { start: e.target.value })} style={timeStyle} />
                   <span style={{ color: "var(--muted-foreground)", fontSize: 12 }}>–</span>
@@ -218,7 +225,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                     onDragEnd={inRot ? () => { setDragId(null); setOverId(null); } : undefined}
                     onDragOver={inRot ? (e) => { e.preventDefault(); if (overId !== p.id) setOverId(p.id); } : undefined}
                     onDrop={inRot ? (e) => { e.preventDefault(); handleDrop(p.id); } : undefined}
-                    style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none",
+                    style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none",
                       background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "transparent"),
                       borderLeft: isNext ? "3px solid var(--primary)" : "3px solid transparent",
                       opacity: dragId === p.id ? 0.5 : 1, cursor: inRot ? "grab" : "default", transition: "background .12s, opacity .12s" }}>
@@ -234,22 +241,29 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       )}
                     </span>
                     <Avatar initials={p.avatar} size={34} tint={p.working ? "emerald" : "slate"} />
-                    <div style={{ width: 170, flex: "none", minWidth: 0 }}>
+                    {/* Desktop keeps the fixed 170px name column so the shift selects
+                        line up across rows; phones give the name the rest of line 1. */}
+                    <div style={mobile ? { flex: "1 1 0", minWidth: 0 } : { width: 170, flex: "none", minWidth: 0 }}>
                       <EditableText value={p.name} onSave={(val) => onUpdateProvider(p.id, { name: val })} size={13.5} weight={600} />
                       <div><EditableText value={p.specialty} onSave={(val) => onUpdateProvider(p.id, { specialty: val })} size={12} weight={400} color="var(--muted-foreground)" placeholder="Add specialty" /></div>
                     </div>
-                    <ShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} />
-                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 18 }}>
-                      <Stepper label="Census" value={p.census} onDec={() => onAdjustCensus(p.id, -1)} onInc={() => onAdjustCensus(p.id, 1)} />
-                      <Stepper label="Cap" value={p.cap} onDec={() => onAdjustCap(p.id, -1)} onInc={() => onAdjustCap(p.id, 1)} />
-                      <div style={{ width: 1, height: 24, background: "var(--border)" }} />
+                    {!mobile && <ShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} />}
+                    {/* Controls: inline at the right on desktop; a wrapping second
+                        line (full row width) on phones. */}
+                    <div style={mobile
+                      ? { flexBasis: "100%", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }
+                      : { marginLeft: "auto", display: "flex", alignItems: "center", gap: 18 }}>
+                      {mobile && <ShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} mobile />}
+                      <Stepper label="Census" value={p.census} onDec={() => onAdjustCensus(p.id, -1)} onInc={() => onAdjustCensus(p.id, 1)} mobile={mobile} />
+                      <Stepper label="Cap" value={p.cap} onDec={() => onAdjustCap(p.id, -1)} onInc={() => onAdjustCap(p.id, 1)} mobile={mobile} />
+                      {!mobile && <div style={{ width: 1, height: 24, background: "var(--border)" }} />}
                       <button onClick={() => onToggleRotation(p.id)} title={p.inRotation ? "In round-robin — click to remove" : "Off rotation — click to add"}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
                           border: `1px solid ${p.inRotation ? "var(--primary)" : "var(--border)"}`, background: p.inRotation ? "var(--primary-tint, #EFF6FF)" : "#fff", color: p.inRotation ? "var(--primary)" : "var(--muted-foreground)" }}>
                         <Icon name={p.inRotation ? "route" : "route-off"} size={12} />{p.inRotation ? "Rotation" : "Off"}
                       </button>
                       <button onClick={() => onToggleWorking(p.id)} title="Toggle shift"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", border: "none", background: "transparent", fontFamily: "var(--font-sans)" }}>
+                        style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", border: "none", background: "transparent", fontFamily: "var(--font-sans)", minHeight: mobile ? 44 : undefined, padding: mobile ? "0 4px" : undefined }}>
                         <span style={{ width: 40, height: 24, borderRadius: 99, position: "relative", flex: "none", background: p.working ? "var(--status-accepted)" : "var(--status-neutral-bg)", transition: "background .2s" }}>
                           <span style={{ position: "absolute", top: 3, left: p.working ? 19 : 3, width: 18, height: 18, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
                         </span>
@@ -257,7 +271,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       </button>
                       <button onClick={() => onRemoveProvider(p.id)} title="Remove provider"
                         onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                        style={{ width: 28, height: 28, flex: "none", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={15} /></button>
+                        style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, flex: "none", marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={15} /></button>
                     </div>
                   </div>
                 ); })}

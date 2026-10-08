@@ -22,11 +22,23 @@ const CUSTOM_SELECT_STYLE = {
   borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 13,
   fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer",
 };
+// Builder text inputs. On phones the controls are 16px / 44px tall so iOS
+// Safari does not zoom on focus and the fields are comfortable tap targets.
+function customInputStyle(mobile) {
+  return { width: "100%", height: mobile ? 44 : 36, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 13, fontFamily: "var(--font-sans)", color: "var(--foreground)", outline: "none" };
+}
+// The builder / add-stat popovers are anchored to the control ROW (not the
+// button) and clamped to the viewport, so on a 375px phone they open fully
+// on-screen instead of 37–92px past the left edge.
+function popoverStyle(width, pad) {
+  return { position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(" + width + "px, calc(100vw - 32px))", maxWidth: "100%", maxHeight: "70vh", overflowY: "auto", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: pad };
+}
 
 function CustomStatSelect({ value, onChange, children }) {
+  const mobile = useIsMobile();
   return (
     <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={CUSTOM_SELECT_STYLE}>{children}</select>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={mobile ? Object.assign({}, CUSTOM_SELECT_STYLE, { height: 44, fontSize: 16 }) : CUSTOM_SELECT_STYLE}>{children}</select>
       <Icon name="chevron-down" size={13} color="var(--muted-foreground)" style={{ position: "absolute", right: 9, pointerEvents: "none" }} />
     </div>
   );
@@ -35,6 +47,9 @@ function CustomStatSelect({ value, onChange, children }) {
 function CustomizableStats({ statKey, stats, metrics }) {
   const a = useActions();
   useStore(); // subscribe so layout + custom-stat changes re-render
+  // Phones: tiles 2-up (instead of one 180px-min tile per row) and the builder
+  // popover anchored/clamped to the viewport.
+  const mobile = useIsMobile();
   const catalog = metrics || [];
 
   // Merge predefined tiles with the user's custom tiles into one render list —
@@ -97,27 +112,28 @@ function CustomizableStats({ statKey, stats, metrics }) {
 
   return (
     <div>
-      {/* subtle control row above the tiles */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      {/* subtle control row above the tiles — position:relative so the popovers
+          below anchor to the whole row's right edge (always on-screen). */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap", position: "relative" }}>
         {editing && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted-foreground)" }}>
             <Icon name="grip-vertical" size={13} />Drag to reorder · remove, add or build stats
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {editing && (
-            <div style={{ position: "relative" }}>
+            <div>
               <Button size="sm" variant="outline" icon="plus" onClick={() => { setBuilding((v) => !v); setAdding(false); }}>New stat</Button>
               {building && (
                 <React.Fragment>
                   <div onClick={() => setBuilding(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 300, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 14 }}>
+                  <div style={popoverStyle(300, 14)}>
                     <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 12 }}>Build a stat box</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                       <div>
                         <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, marginBottom: 5 }}>Label</label>
                         <input value={form.label} onChange={(e) => setForm(Object.assign({}, form, { label: e.target.value }))} placeholder="e.g. Beds open"
-                          style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 13, fontFamily: "var(--font-sans)", color: "var(--foreground)", outline: "none" }} />
+                          style={customInputStyle(mobile)} />
                       </div>
                       <div>
                         <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, marginBottom: 5 }}>Show</label>
@@ -130,7 +146,7 @@ function CustomizableStats({ statKey, stats, metrics }) {
                         <div>
                           <label style={{ display: "block", fontSize: 12.5, fontWeight: 500, marginBottom: 5 }}>Value</label>
                           <input value={form.manualValue} onChange={(e) => setForm(Object.assign({}, form, { manualValue: e.target.value }))} placeholder="e.g. 42 or “On track”"
-                            style={{ width: "100%", height: 36, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 13, fontFamily: "var(--font-sans)", color: "var(--foreground)", outline: "none" }} />
+                            style={customInputStyle(mobile)} />
                         </div>
                       )}
                       <div style={{ display: "flex", gap: 10 }}>
@@ -158,12 +174,12 @@ function CustomizableStats({ statKey, stats, metrics }) {
             </div>
           )}
           {editing && hiddenStats.length > 0 && (
-            <div style={{ position: "relative" }}>
+            <div>
               <Button size="sm" variant="outline" icon="plus" onClick={() => { setAdding((v) => !v); setBuilding(false); }}>Add stat ({hiddenStats.length})</Button>
               {adding && (
                 <React.Fragment>
                   <div onClick={() => setAdding(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 260, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 6 }}>
+                  <div style={popoverStyle(260, 6)}>
                     {hiddenStats.map((id) => (
                       <button key={id} onClick={() => { a.toggleStat(statKey, id); setAdding(false); }}
                         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
@@ -192,10 +208,14 @@ function CustomizableStats({ statKey, stats, metrics }) {
       )}
 
       {visible.length > 0 && (
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: mobile ? 14 : 18 }}>
           {visible.map((id) => {
             const s = byId[id];
             const isOver = overId === id && dragId && dragId !== id;
+            // Phones: two tiles per row (gap 14 → each takes half minus 7px), so a
+            // six-tile strip is 3 rows instead of 6 and the content below it
+            // (e.g. an expiring Accept/Decline request) stays near the fold.
+            const tileFlex = mobile ? { flex: "1 1 calc(50% - 7px)", minWidth: 0 } : { flex: 1, minWidth: 180 };
             return (
               <div key={id}
                 draggable={editing}
@@ -203,7 +223,7 @@ function CustomizableStats({ statKey, stats, metrics }) {
                 onDragOver={editing ? (e) => { e.preventDefault(); setOverId(id); } : undefined}
                 onDragEnd={editing ? () => { setDragId(null); setOverId(null); } : undefined}
                 onDrop={editing ? (e) => { e.preventDefault(); move(id); } : undefined}
-                style={{ position: "relative", flex: 1, minWidth: 180, display: "flex", borderRadius: "var(--radius-lg)", outline: isOver ? "2px dashed var(--primary)" : "none", outlineOffset: 3, opacity: dragId === id ? 0.5 : 1, cursor: editing ? "grab" : "default" }}>
+                style={{ position: "relative", ...tileFlex, display: "flex", borderRadius: "var(--radius-lg)", outline: isOver ? "2px dashed var(--primary)" : "none", outlineOffset: 3, opacity: dragId === id ? 0.5 : 1, cursor: editing ? "grab" : "default" }}>
                 {editing && s.custom && (
                   <button onClick={() => a.removeCustomStat(statKey, id)} title="Delete custom stat"
                     onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
