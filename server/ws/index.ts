@@ -27,9 +27,19 @@ interface ClientMeta {
   /** express-session id the socket authenticated with; null for demo tokens. */
   sessionId: string | null;
   isAlive: boolean;
+  /** When this socket last had a typing event relayed (throttle clock). */
+  typingLastAt: number;
+  /** The typing state that was last relayed for this socket. */
+  typingLastState: boolean | null;
 }
 
 const HEARTBEAT_MS = 20_000;
+/**
+ * Per-socket floor between relayed typing events. A real keyboard produces one
+ * typing_start then a typing_stop ~2.5 s later; anything faster is a flood,
+ * and every relayed event costs one conversation lookup plus a fan-out.
+ */
+export const TYPING_MIN_INTERVAL_MS = 500;
 
 export class WsHub implements WsFanout {
   private wss: WebSocketServer;
@@ -58,7 +68,14 @@ export class WsHub implements WsFanout {
       return;
     }
     const { userId, organizationId, sessionId } = session;
-    this.meta.set(ws, { userId, organizationId, sessionId, isAlive: true });
+    this.meta.set(ws, {
+      userId,
+      organizationId,
+      sessionId,
+      isAlive: true,
+      typingLastAt: 0,
+      typingLastState: null,
+    });
     if (!this.clients.has(userId)) this.clients.set(userId, new Set());
     this.clients.get(userId)!.add(ws);
 
@@ -90,7 +107,7 @@ export class WsHub implements WsFanout {
   private onMessage(ws: WebSocket, raw: string) {
     const m = this.meta.get(ws);
     if (!m) return;
-    let msg: { type?: string; conversationId?: number; participantIds?: number[] };
+    let msg: { type?: string; conversationId?: unknown };
     try {
       msg = JSON.parse(raw);
     } catch {
@@ -102,18 +119,40 @@ export class WsHub implements WsFanout {
         break;
       case "typing_start":
       case "typing_stop": {
-        // Relay typing intent to the other participants of the conversation.
-        const targets = (msg.participantIds ?? []).filter((id) => id !== m.userId);
-        this.sendToUsers(targets, {
-          type: "user_typing",
-          userId: m.userId,
-          conversationId: msg.conversationId,
-          typing: msg.type === "typing_start",
-        });
+        // Relay typing intent to the OTHER participants of the conversation —
+        // resolved server-side from the sender's own org. Any participant list
+        // the client sends is ignored: it used to be trusted verbatim, which
+        // let a socket push typing events to any user in any tenant.
+        const conversationId = msg.conversationId;
+        if (!Number.isInteger(conversationId) || (conversationId as number) <= 0) break;
+        const typing = msg.type === "typing_start";
+        // Throttle BEFORE the lookup so a flood never amplifies into database
+        // reads or fan-out. A start→stop transition always gets through once,
+        // so a peer is never left showing "typing…" because the stop was dropped.
+        const now = Date.now();
+        const stopAfterStart = !typing && m.typingLastState === true;
+        if (now - m.typingLastAt < TYPING_MIN_INTERVAL_MS && !stopAfterStart) break;
+        m.typingLastAt = now;
+        m.typingLastState = typing;
+        void this.relayTyping(m, conversationId as number, typing);
         break;
       }
       default:
         break;
+    }
+  }
+
+  /** Org-scoped lookup; the sender must be a member; fan out to the rest. */
+  private async relayTyping(m: ClientMeta, conversationId: number, typing: boolean) {
+    try {
+      const convo = await storage().getConversation(m.organizationId, conversationId);
+      if (!convo || !convo.participantIds.includes(m.userId)) return;
+      this.sendToUsers(
+        convo.participantIds.filter((id) => id !== m.userId),
+        { type: "user_typing", userId: m.userId, conversationId, typing },
+      );
+    } catch {
+      /* a failed lookup drops the event — typing is best-effort */
     }
   }
 

@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import {
   acknowledgeSchema,
   attachmentUploadSchema,
@@ -16,6 +16,11 @@ import { appendAudit, logPhiAccess } from "../audit.js";
 import { requireModule, isModuleEnabled } from "../modules.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { isDnd, resolveCovering } from "../services/escalation.js";
+import {
+  deliverViaCoveringThread,
+  findDirectThread,
+  forwardedAttachmentIds,
+} from "../services/covering.js";
 import { notificationDeps } from "../services/notifications.js";
 import { previewNext } from "../services/rotation.js";
 import {
@@ -68,6 +73,112 @@ const PATIENT_THREAD_OVERSIGHT_ROLES = new Set<string>([
 function base64ByteSize(b64: string): number {
   const clean = b64.replace(/=+$/, "");
   return Math.floor((clean.length * 3) / 4);
+}
+
+/**
+ * RFC 6266 Content-Disposition for an uploaded file name. Node refuses header
+ * values with characters outside Latin-1 or with CR/LF (ERR_INVALID_CHAR), so
+ * a raw CJK / Cyrillic / emoji name — or one with a stray newline — used to
+ * make the attachment GET hang after the audit row was already written. Emit a
+ * printable-ASCII `filename=` fallback and, when the name needs it, the RFC
+ * 5987 `filename*=UTF-8''…` form every current browser prefers.
+ */
+export function contentDispositionInline(fileName: string): string {
+  // Control characters can never be part of a header value.
+  const clean = fileName.replace(/[\x00-\x1f\x7f]/g, "").trim() || "attachment";
+  const ascii = clean.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  let out = `inline; filename="${ascii}"`;
+  if (ascii !== clean) {
+    try {
+      // attr-char per RFC 5987: percent-encode everything else (as UTF-8).
+      const ext = encodeURIComponent(clean).replace(
+        /['()*]/g,
+        (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase(),
+      );
+      out += `; filename*=UTF-8''${ext}`;
+    } catch {
+      // Lone surrogates make encodeURIComponent throw; the ASCII fallback stands.
+    }
+  }
+  return out;
+}
+
+/**
+ * Parse a single `Range: bytes=a-b` / `a-` / `-n` header against a known
+ * length (RFC 7233). Returns null when there is no usable range (absent,
+ * malformed, multi-range or an a>b spec — all of which mean "send the whole
+ * body with 200"), "unsatisfiable" when the start is past the end (416), or
+ * the inclusive byte window to serve with 206.
+ */
+export function parseByteRange(
+  header: string | undefined,
+  total: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null;
+  const [, a, b] = m;
+  if (a === "" && b === "") return null;
+  if (a === "") {
+    // Suffix range: the last n bytes.
+    const n = Number(b);
+    if (!Number.isSafeInteger(n)) return null;
+    if (n === 0 || total === 0) return "unsatisfiable";
+    return { start: Math.max(0, total - n), end: total - 1 };
+  }
+  const start = Number(a);
+  if (!Number.isSafeInteger(start)) return null;
+  if (start >= total) return "unsatisfiable";
+  const requestedEnd = b === "" ? total - 1 : Number(b);
+  if (!Number.isSafeInteger(requestedEnd) || requestedEnd < start) return null;
+  return { start, end: Math.min(requestedEnd, total - 1) };
+}
+
+/**
+ * Serve attachment bytes with a safe Content-Disposition and HTTP Range
+ * support, so <audio> scrubbing works (browsers seek with Range requests and
+ * refuse to seek without Accept-Ranges) and iOS Safari can probe the media
+ * with its initial `bytes=0-1` request. Shared by both byte-serving routes.
+ */
+export function sendAttachmentBytes(
+  req: Request,
+  res: Response,
+  att: { fileName: string; mimeType: string },
+  bytes: Buffer,
+) {
+  res.setHeader("Content-Type", att.mimeType);
+  // Never let a browser MIME-sniff user-uploaded bytes into something
+  // executable, even though the upload allowlist already excludes HTML/JS.
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Disposition", contentDispositionInline(att.fileName));
+  res.setHeader("Accept-Ranges", "bytes");
+  const total = bytes.length;
+  const range = parseByteRange(req.headers.range, total);
+  if (range === "unsatisfiable") {
+    res.setHeader("Content-Range", `bytes */${total}`);
+    return res.status(416).end();
+  }
+  if (range) {
+    res.status(206);
+    res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${total}`);
+    res.setHeader("Content-Length", String(range.end - range.start + 1));
+    return res.end(bytes.subarray(range.start, range.end + 1));
+  }
+  res.setHeader("Content-Length", String(total));
+  res.end(bytes);
+}
+
+/**
+ * API shape of a conversation. A direct thread's stored `name` is the label
+ * the CREATOR addressed it with ("Next hospitalist (Dr. X)") — never a shared
+ * title: the other party would see a thread named after themselves. So for
+ * direct threads `name` is served as null (each client then falls back to the
+ * other participant's display name) and the label travels as `addressedAs`
+ * for a secondary "addressed as …" line.
+ */
+function conversationView<T extends Conversation>(c: T) {
+  if (c.type !== "direct") return { ...c, addressedAs: null as string | null };
+  return { ...c, name: null as string | null, addressedAs: c.name ?? null };
 }
 
 /** A single addressable on-call / role target the compose picker can message. */
@@ -232,11 +343,16 @@ async function fanOutMessage(
   }
 
   // DND forwarding: a recipient who is off/do-not-disturb with a designated
-  // covering provider gets their messages forwarded — the covering provider is
-  // added to the conversation and delivered THIS message, so nothing sits
-  // unseen behind a DND flag (DND without forwarding is clinically unsafe).
-  let notifyIds = [...convo.participantIds];
+  // covering provider gets THIS message forwarded to that provider, so nothing
+  // sits unseen behind a DND flag (DND without forwarding is clinically
+  // unsafe). The copy lands in a sender ↔ covering thread with provenance
+  // (services/covering.ts) — the covering provider is NEVER joined to the
+  // original conversation, so they see only messages sent while coverage is
+  // active, never the thread's prior history, and nothing has to be undone
+  // when coverage ends.
+  const notifyIds = [...convo.participantIds];
   const forwardedTo: number[] = [];
+  let attachmentIds: number[] | null = null;
   for (const uid of convo.participantIds) {
     if (uid === me.id) continue;
     if (!(await isDnd(storage(), uid))) continue;
@@ -244,26 +360,29 @@ async function fanOutMessage(
     if (
       coveringId == null ||
       coveringId === me.id ||
-      notifyIds.includes(coveringId) ||
+      notifyIds.includes(coveringId) || // already a member: they have it
       forwardedTo.includes(coveringId)
     )
       continue;
-    await storage().addConversationParticipant(
-      me.organizationId,
-      convo.id,
+    if (attachmentIds == null) {
+      attachmentIds = (
+        await storage().listAttachmentsForMessages(me.organizationId, [message.id])
+      )
+        .map((a) => a.id)
+        .concat(forwardedAttachmentIds(message));
+    }
+    const dndUser = await storage().getUser(me.organizationId, uid);
+    const delivery = await deliverViaCoveringThread(storage(), {
+      orgId: me.organizationId,
+      sender: me,
+      original: message,
+      originalConvo: convo,
+      coveringFor: uid,
+      coveringForName: dndUser?.displayName ?? "",
       coveringId,
-    );
-    await storage().createDeliveryStatuses([
-      {
-        messageId: message.id,
-        userId: coveringId,
-        deliveredAt: new Date(),
-        readAt: null,
-        acknowledgedAt: null,
-        realertedAt: null,
-        escalatedAt: null,
-      },
-    ]);
+      reason: "dnd",
+      attachmentIds,
+    });
     forwardedTo.push(coveringId);
     await appendAudit({
       organizationId: me.organizationId,
@@ -271,25 +390,32 @@ async function fanOutMessage(
       action: "message.dnd_forwarded",
       resourceType: "message",
       resourceId: message.id,
-      details: { dndUserId: uid, coveringUserId: coveringId },
+      details: {
+        dndUserId: uid,
+        coveringUserId: coveringId,
+        // Ids only: the thread + copy the covering provider received.
+        coveringConversationId: delivery.conversationId,
+        coveringMessageId: delivery.messageId,
+        createdThread: delivery.createdThread,
+      },
       riskLevel: "medium",
     });
   }
-  notifyIds = notifyIds.concat(forwardedTo);
 
   notificationDeps().ws.sendToUsers(notifyIds, {
     type: "MESSAGE_RECEIVED",
     message,
   });
   // Content-free push wake-up so the message reaches a closed phone. Never
-  // includes message text or patient data (push services have no BAA).
+  // includes message text or patient data (push services have no BAA). The
+  // covering providers get the same wake-up for their copy.
   const pushTitle =
     message.priority === "stat"
       ? "STAT secure message"
       : message.priority === "urgent"
         ? "Urgent secure message"
         : "New secure message";
-  for (const uid of notifyIds) {
+  for (const uid of notifyIds.concat(forwardedTo)) {
     if (uid === me.id) continue;
     void notificationDeps().push.send(uid, { title: pushTitle }).catch(() => {});
   }
@@ -298,13 +424,6 @@ async function fanOutMessage(
 
 // Roles that may create/edit/delete ORG-WIDE message templates.
 const TEMPLATE_ORG_ROLES = new Set<string>(["director", "er_director", "developer"]);
-
-/** Attachment ids a forwarded message carries by reference (ids only, no bytes). */
-function forwardedAttachmentIds(m: Message): number[] {
-  const ff = m.forwardedFrom as (Record<string, unknown> | null) | undefined;
-  const ids = ff && Array.isArray(ff.attachmentIds) ? ff.attachmentIds : [];
-  return ids.filter((x): x is number => Number.isInteger(x));
-}
 
 export function registerMessagingRoutes(app: Express) {
   app.get("/api/messaging/on-call-targets", requireAuth, async (req, res) => {
@@ -449,15 +568,7 @@ export function registerMessagingRoutes(app: Express) {
       throw err;
     }
 
-    res.setHeader("Content-Type", att.mimeType);
-    // Never let a browser MIME-sniff user-uploaded bytes into something
-    // executable, even though the upload allowlist already excludes HTML/JS.
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader(
-      "Content-Disposition",
-      'inline; filename="' + att.fileName.replace(/"/g, "") + '"',
-    );
-    res.send(bytes);
+    sendAttachmentBytes(req, res, att, bytes);
   });
 
   // Availability of a peer, so a 1:1 thread can show an auto-response status:
@@ -532,7 +643,7 @@ export function registerMessagingRoutes(app: Express) {
         (d) => d.userId === me.id && !d.readAt,
       ).length;
       out.push({
-        ...c,
+        ...conversationView(c),
         lastMessage: msgs.at(-1) ?? null,
         unreadCount: unread,
       });
@@ -557,11 +668,13 @@ export function registerMessagingRoutes(app: Express) {
     const convo = await storage().createConversation({
       organizationId: me.organizationId,
       type: parsed.data.type,
+      // For a direct thread this is the creator's addressing label (e.g. the
+      // on-call role picked), served back as `addressedAs` — see conversationView.
       name: parsed.data.name ?? null,
       participantIds,
       patientId: null,
     });
-    res.status(201).json(convo);
+    res.status(201).json(conversationView(convo));
   });
 
   // Patient-linked care-team thread: ONE conversation per patient, named after
@@ -909,15 +1022,7 @@ export function registerMessagingRoutes(app: Express) {
         // duplicate direct conversation.
         if (members.length === 2) {
           const other = members.find((m) => m !== me.id)!;
-          const existing = (
-            await storage().listConversationsForUser(me.organizationId, me.id)
-          ).find(
-            (c) =>
-              c.type === "direct" &&
-              c.participantIds.length === 2 &&
-              c.participantIds.includes(other),
-          );
-          if (existing) target = existing;
+          target = await findDirectThread(storage(), me.organizationId, me.id, other);
         }
         if (!target) {
           target = await storage().createConversation({
@@ -1033,13 +1138,7 @@ export function registerMessagingRoutes(app: Express) {
         }
         throw err;
       }
-      res.setHeader("Content-Type", att.mimeType);
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader(
-        "Content-Disposition",
-        'inline; filename="' + att.fileName.replace(/"/g, "") + '"',
-      );
-      res.send(bytes);
+      sendAttachmentBytes(req, res, att, bytes);
     },
   );
 
@@ -1210,24 +1309,60 @@ export function registerMessagingRoutes(app: Express) {
     res.status(204).end();
   });
 
+  // Recall (unsend) a message the caller sent. The advertised rule — module
+  // blurb "Sender can recall an unread message" — is enforced here: once any
+  // recipient has read it (or a covering copy of it), it can no longer be
+  // recalled (409 already_read). A recall removes the message AND every
+  // covering copy made of it, and tells every affected thread live so an open
+  // conversation drops it immediately instead of on the next re-hydrate.
   app.delete("/api/messaging/messages/:id", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: "not_found" });
     const msg = await storage().getMessage(me.organizationId, id);
     if (!msg) return res.status(404).json({ error: "not_found" });
     if (msg.senderId !== me.id) {
       return res.status(403).json({ error: "forbidden" });
     }
-    await storage().softDeleteMessage(me.organizationId, id);
+    // Idempotent: a retry after a lost 204 is not an error and is not re-audited.
+    if (msg.deletedAt) return res.status(204).end();
+
+    const copies = await storage().listCoveringCopies(me.organizationId, id);
+    const targets = [msg, ...copies];
+    const delivery = await storage().listDeliveryForMessages(targets.map((t) => t.id));
+    const recipientRows = delivery.filter((d) => d.userId !== me.id);
+    const readBy = new Set(recipientRows.filter((d) => d.readAt).map((d) => d.userId));
+    if (readBy.size > 0) {
+      return res.status(409).json({ error: "already_read", readBy: readBy.size });
+    }
+
+    for (const t of targets) {
+      await storage().softDeleteMessage(me.organizationId, t.id);
+    }
     await appendAudit({
       organizationId: me.organizationId,
       userId: me.id,
       action: "message.delete",
       resourceType: "message",
       resourceId: id,
-      details: {},
+      details: {
+        conversationId: msg.conversationId,
+        recipients: new Set(recipientRows.map((d) => d.userId)).size,
+        coveringCopies: copies.map((c) => c.id),
+      },
       riskLevel: "low",
     });
+    // Live removal in every thread that held it (same pattern as the ack route).
+    for (const t of targets) {
+      const convo = await storage().getConversation(me.organizationId, t.conversationId);
+      if (!convo) continue;
+      notificationDeps().ws.sendToUsers(convo.participantIds, {
+        type: "MESSAGE_RECALLED",
+        messageId: t.id,
+        conversationId: t.conversationId,
+        userId: me.id,
+      });
+    }
     res.status(204).end();
   });
 }

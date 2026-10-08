@@ -2,7 +2,13 @@ import type { IStorage } from "../storage.js";
 import { storage } from "../storage.js";
 import { appendAudit } from "../audit.js";
 import { getNotificationProfile } from "../config.js";
+import { isModuleEnabled } from "../modules.js";
 import { notificationDeps } from "./notifications.js";
+import {
+  deliverViaCoveringThread,
+  forwardedAttachmentIds,
+  type CoveringDelivery,
+} from "./covering.js";
 
 /**
  * PHI-free SMS fallback — the last-resort nudge when a STAT message is still
@@ -45,16 +51,26 @@ async function sendStatSmsFallback(
  *
  *   unacked after `realertMs`   → re-alert the recipient (WS + content-free push)
  *   unacked after `escalateMs`  → escalate to the recipient's covering provider:
- *                                 add them to the conversation, deliver the
- *                                 message to them, notify, and audit (risk high)
+ *                                 deliver the message to them in a sender ↔
+ *                                 covering thread (see services/covering.ts —
+ *                                 the original thread's membership is never
+ *                                 changed), notify, and audit (risk high)
  *
  * Each step fires exactly once per recipient (realerted_at / escalated_at on the
  * delivery row). No PHI leaves the system: pushes are generic wake-ups and audit
  * details carry ids only.
+ *
+ * MODULE SWITCH: the whole loop is the `messaging.escalation` module. The HTTP
+ * module gate cannot reach a background timer, so the sweep checks the switch
+ * itself, once per org per sweep, and skips every row of an org that has it
+ * off — no re-alert, no escalation, no SMS nudge, no audit row, and the
+ * delivery rows are left untouched (so switching the module back on resumes
+ * the loop for anything still unacknowledged).
  */
 
 const REALERT_MS_DEFAULT = 2 * 60_000;
 const ESCALATE_MS_DEFAULT = 5 * 60_000;
+export const ESCALATION_MODULE = "messaging.escalation";
 
 /** The covering provider a user designated (user_preferences.coveringUserId). */
 export async function resolveCovering(
@@ -79,19 +95,51 @@ export interface EscalationOptions {
   escalateMs?: number;
 }
 
+export interface EscalationSweepResult {
+  realerted: number;
+  escalated: number;
+  /** Unacked STAT delivery rows left alone because their org has the module off. */
+  skippedModuleOff: number;
+}
+
+// Orgs whose "module off" state has already been logged this process — the
+// sweep runs every 15 s, so log on the transition, not every tick.
+const loggedOff = new Set<number>();
+
 export async function runStatEscalationSweep(
   s: IStorage,
   opts: EscalationOptions = {},
-): Promise<{ realerted: number; escalated: number }> {
+): Promise<EscalationSweepResult> {
   const realertMs = opts.realertMs ?? REALERT_MS_DEFAULT;
   const escalateMs = opts.escalateMs ?? ESCALATE_MS_DEFAULT;
   const deps = notificationDeps();
   const now = Date.now();
   let realerted = 0;
   let escalated = 0;
+  let skippedModuleOff = 0;
 
   const rows = await s.listUnackedStatDeliveries();
+  // Resolve the module switch once per org per sweep (the module cache is 5 s,
+  // but the lookup is still a settings read per row without this).
+  const enabledByOrg = new Map<number, boolean>();
   for (const row of rows) {
+    let on = enabledByOrg.get(row.organizationId);
+    if (on === undefined) {
+      on = await isModuleEnabled(row.organizationId, ESCALATION_MODULE);
+      enabledByOrg.set(row.organizationId, on);
+      if (!on && !loggedOff.has(row.organizationId)) {
+        loggedOff.add(row.organizationId);
+        console.log(
+          `[escalation] ${ESCALATION_MODULE} is off for org ${row.organizationId}: unacknowledged STAT deliveries are not re-alerted or escalated`,
+        );
+      }
+      if (on) loggedOff.delete(row.organizationId);
+    }
+    if (!on) {
+      skippedModuleOff++;
+      continue; // before ANY side effect
+    }
+
     const age = now - new Date(row.createdAt).getTime();
 
     // Step 1 — re-alert the original recipient.
@@ -115,44 +163,80 @@ export async function runStatEscalationSweep(
         row.organizationId,
         row.userId,
       );
+      let delivery: CoveringDelivery | null = null;
       if (coveringId != null && coveringId !== row.senderId) {
-        await s.addConversationParticipant(
-          row.organizationId,
-          row.conversationId,
-          coveringId,
-        );
-        // Give the covering provider their own delivery row for THIS message so
-        // it shows unread (and re-enters this sweep if they don't ack either).
-        const existing = await s.listDeliveryForMessages([row.messageId]);
-        if (!existing.some((d) => d.userId === coveringId)) {
-          await s.createDeliveryStatuses([
-            {
+        const [convo, message, sender, unresponsive] = await Promise.all([
+          s.getConversation(row.organizationId, row.conversationId),
+          s.getMessage(row.organizationId, row.messageId),
+          s.getUser(row.organizationId, row.senderId),
+          s.getUser(row.organizationId, row.userId),
+        ]);
+        if (convo && message && sender) {
+          if (convo.participantIds.includes(coveringId)) {
+            // Already a member of the thread (e.g. a care-team group): they
+            // hold the message already — make sure it shows unread for them
+            // and re-enters this sweep if they don't ack either.
+            const existing = await s.listDeliveryForMessages([row.messageId]);
+            if (!existing.some((d) => d.userId === coveringId)) {
+              await s.createDeliveryStatuses([
+                {
+                  messageId: row.messageId,
+                  userId: coveringId,
+                  deliveredAt: new Date(),
+                  readAt: null,
+                  acknowledgedAt: null,
+                  realertedAt: new Date(), // covering starts past the re-alert step
+                  escalatedAt: new Date(), // and never re-escalates from this row
+                },
+              ]);
+            }
+            delivery = {
+              conversationId: row.conversationId,
               messageId: row.messageId,
-              userId: coveringId,
-              deliveredAt: new Date(),
-              readAt: null,
-              acknowledgedAt: null,
-              realertedAt: new Date(), // covering starts past the re-alert step
-              escalatedAt: new Date(), // and never re-escalates from this row
-            },
-          ]);
+              createdThread: false,
+              duplicate: false,
+            };
+          } else {
+            // Not a member: deliver a provenance-stamped copy in the sender ↔
+            // covering thread. Never joins them to the original conversation.
+            const attachmentIds = (
+              await s.listAttachmentsForMessages(row.organizationId, [message.id])
+            )
+              .map((a) => a.id)
+              .concat(forwardedAttachmentIds(message));
+            delivery = await deliverViaCoveringThread(s, {
+              orgId: row.organizationId,
+              sender,
+              original: message,
+              originalConvo: convo,
+              coveringFor: row.userId,
+              coveringForName: unresponsive?.displayName ?? "",
+              coveringId,
+              reason: "escalation",
+              attachmentIds,
+            });
+          }
+          deps.ws.sendToUsers([coveringId], {
+            type: "STAT_ESCALATED",
+            // Where the covering provider can open it (the copy's thread when
+            // they are not a member of the original).
+            messageId: delivery.messageId,
+            conversationId: delivery.conversationId,
+            originalMessageId: row.messageId,
+            originalConversationId: row.conversationId,
+            forUserId: row.userId,
+          });
+          deps.ws.sendToUsers([row.senderId, row.userId], {
+            type: "MESSAGE_ACK", // reuse: nudges clients to re-hydrate the thread
+            messageId: row.messageId,
+            conversationId: row.conversationId,
+            userId: coveringId,
+          });
+          await deps.push
+            .send(coveringId, { title: "Escalated STAT message needs attention" })
+            .catch(() => {});
+          escalated++;
         }
-        deps.ws.sendToUsers([coveringId], {
-          type: "STAT_ESCALATED",
-          messageId: row.messageId,
-          conversationId: row.conversationId,
-          forUserId: row.userId,
-        });
-        deps.ws.sendToUsers([row.senderId, row.userId], {
-          type: "MESSAGE_ACK", // reuse: nudges clients to re-hydrate the thread
-          messageId: row.messageId,
-          conversationId: row.conversationId,
-          userId: coveringId,
-        });
-        await deps.push
-          .send(coveringId, { title: "Escalated STAT message needs attention" })
-          .catch(() => {});
-        escalated++;
       }
       // Last-resort PHI-free SMS nudge to the unresponsive recipient (default
       // on; developer/operator can disable per org). No-op stub without creds.
@@ -168,7 +252,7 @@ export async function runStatEscalationSweep(
         organizationId: row.organizationId,
         userId: null,
         action:
-          coveringId != null
+          delivery != null
             ? "message.stat_escalated"
             : "message.stat_escalation_no_covering",
         resourceType: "message",
@@ -176,13 +260,16 @@ export async function runStatEscalationSweep(
         details: {
           unresponsiveUserId: row.userId,
           coveringUserId: coveringId,
+          // Ids only: where the covering provider received it.
+          coveringConversationId: delivery?.conversationId ?? null,
+          coveringMessageId: delivery?.messageId ?? null,
           smsFallback: smsSent,
         },
         riskLevel: "high",
       });
     }
   }
-  return { realerted, escalated };
+  return { realerted, escalated, skippedModuleOff };
 }
 
 let timer: NodeJS.Timeout | null = null;

@@ -60,7 +60,11 @@ describe("on-call message addressing", () => {
       .post("/api/messaging/conversations")
       .send({ type: "direct", name: cardio.label, participantIds: [cardio.userId] });
     expect(convo.status).toBe(201);
-    expect(convo.body.name).toBe("On-call Cardiology");
+    // The role label is the CALLER's addressing context, not a shared title:
+    // a direct thread is served with name null (each side falls back to the
+    // other person's name) and the label as addressedAs (A.CON-MIN-15).
+    expect(convo.body.name).toBeNull();
+    expect(convo.body.addressedAs).toBe("On-call Cardiology");
     const sent = await erDoc
       .post("/api/messaging/send")
       .send({ conversationId: convo.body.id, content: "consult please" });

@@ -1,17 +1,37 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { runStatEscalationSweep } from "../server/services/escalation.js";
+import { invalidateModules } from "../server/modules.js";
 
 /**
  * STAT non-response loop + DND covering forwarding.
  * The sweep is invoked directly with zero thresholds (age > 0ms immediately),
  * against the same seeded app the API agents talk to.
+ *
+ * A.CON-SHO-22: the covering provider is delivered a provenance-stamped COPY in
+ * a sender ↔ covering thread — they are never joined to the original thread.
+ * A.CON-SHO-20/33: the whole loop is off when messaging.escalation is off.
  */
 describe("stat escalation + dnd forwarding", () => {
   let ctx: TestContext;
   beforeEach(async () => {
     ctx = await createTestApp();
+    invalidateModules();
   });
+
+  /** The 1:1 thread between two users as one of them sees it in the list. */
+  async function directThreadBetween(
+    agent: import("supertest").Agent,
+    otherUserId: number,
+    excludeId?: number,
+  ) {
+    const list = (await agent.get("/api/messaging/conversations").expect(200)).body as Array<{
+      id: number; type: string; participantIds: number[]; name: string | null;
+    }>;
+    return list.find(
+      (c) => c.id !== excludeId && c.type === "direct" && c.participantIds.length === 2 && c.participantIds.includes(otherUserId),
+    );
+  }
 
   async function directConvo(
     agent: import("supertest").Agent,
@@ -61,29 +81,59 @@ describe("stat escalation + dnd forwarding", () => {
     ).toBe(true);
     expect(ctx.push.sent.some((p) => p.userId === chenId)).toBe(true);
 
-    // Sweep 2: escalation — covering provider joins + is delivered the message.
+    // Sweep 2: escalation — the covering provider is delivered a COPY in a
+    // sender ↔ covering thread. The original 1:1 thread's membership is
+    // untouched (no permanent join, no history exposure).
     out = await runStatEscalationSweep(ctx.storage, {
       realertMs: 0,
       escalateMs: 0,
     });
     expect(out.escalated).toBe(1);
-    const updated = await ctx.storage.getConversation(
-      orgId,
-      convo.id,
+    const updated = await ctx.storage.getConversation(orgId, convo.id);
+    expect(updated!.participantIds).not.toContain(patelId);
+    expect(updated!.participantIds).toEqual(convo.participantIds);
+    const { agent: patel } = await login(ctx.app, { username: "patel" });
+    expect((await patel.get(`/api/messaging/conversations/${convo.id}/messages`)).status).toBe(403);
+    const coveringThread = await directThreadBetween(patel, ctx.seedResult.userIds["er.doc"]!);
+    expect(coveringThread).toBeTruthy();
+    const copies = (await patel.get(`/api/messaging/conversations/${coveringThread!.id}/messages`).expect(200)).body as Array<{
+      id: number; content: string; priority: string; forwardedFrom: Record<string, unknown> | null;
+    }>;
+    expect(copies).toHaveLength(1);
+    expect(copies[0]!.content).toBe("STAT bed 4");
+    expect(copies[0]!.priority).toBe("stat");
+    expect(copies[0]!.forwardedFrom).toMatchObject({
+      messageId,
+      conversationId: convo.id,
+      coveringFor: chenId,
+      reason: "escalation",
+    });
+    const copyDelivery = await ctx.storage.listDeliveryForMessages([copies[0]!.id]);
+    expect(copyDelivery.some((d) => d.userId === patelId && !d.readAt)).toBe(true);
+    const escalatedEvt = ctx.ws.delivered.find(
+      (d) =>
+        (d.message as { type?: string }).type === "STAT_ESCALATED" &&
+        d.userIds.includes(patelId),
     );
-    expect(updated!.participantIds).toContain(patelId);
-    const delivery = await ctx.storage.listDeliveryForMessages([messageId]);
-    expect(delivery.some((d) => d.userId === patelId)).toBe(true);
-    expect(
-      ctx.ws.delivered.some(
-        (d) =>
-          (d.message as { type?: string }).type === "STAT_ESCALATED" &&
-          d.userIds.includes(patelId),
-      ),
-    ).toBe(true);
-    // Audit row records the escalation with ids only (no PHI).
+    expect(escalatedEvt).toBeTruthy();
+    // The event points the covering provider at the thread they CAN open.
+    expect(escalatedEvt!.message).toMatchObject({
+      conversationId: coveringThread!.id,
+      messageId: copies[0]!.id,
+      originalMessageId: messageId,
+      forUserId: chenId,
+    });
+    // Audit row records the escalation with ids only (no PHI), incl. where it went.
     const audit = await ctx.storage.listAuditLogs(orgId, 50);
-    expect(audit.some((a) => a.action === "message.stat_escalated")).toBe(true);
+    const row = audit.find((a) => a.action === "message.stat_escalated");
+    expect(row).toBeTruthy();
+    expect(row!.details).toMatchObject({
+      unresponsiveUserId: chenId,
+      coveringUserId: patelId,
+      coveringConversationId: coveringThread!.id,
+      coveringMessageId: copies[0]!.id,
+    });
+    expect(JSON.stringify(row!.details)).not.toContain("bed 4");
 
     // Sweep 3: idempotent — nothing new fires for the same delivery.
     out = await runStatEscalationSweep(ctx.storage, {
@@ -175,32 +225,147 @@ describe("stat escalation + dnd forwarding", () => {
     expect(again.realerted + again.escalated).toBe(0);
   });
 
-  it("DND forwards new messages to the covering provider at send time", async () => {
+  it("DND forwards new messages to the covering provider at send time — via a covering thread, never by joining the 1:1", async () => {
     const orgId = ctx.seedResult.orgId;
     const chenId = ctx.seedResult.userIds.chen!;
     const patelId = ctx.seedResult.userIds.patel!;
+    const erId = ctx.seedResult.userIds["er.doc"]!;
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
     const { agent: chenAgent } = await login(ctx.app, { username: "chen" });
+    const { agent: patel } = await login(ctx.app, { username: "patel" });
+
+    // Pre-DND history the covering provider must NEVER see.
+    const convo = await directConvo(er, chenId);
+    await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "private history before DND" }).expect(201);
+
     await chenAgent.patch("/api/settings/me").send({ key: "dnd", value: true }).expect(200);
     await chenAgent
       .patch("/api/settings/me")
       .send({ key: "coveringUserId", value: patelId })
       .expect(200);
 
-    const { agent: er } = await login(ctx.app, { username: "er.doc" });
-    const convo = await directConvo(er, chenId);
+    ctx.push.sent = [];
     const sent = await er
       .post("/api/messaging/send")
       .send({ conversationId: convo.id, content: "Are you rounding?" });
     expect(sent.status).toBe(201);
     expect(sent.body.forwardedTo).toContain(patelId);
 
-    // Covering provider became a participant and received a delivery row.
+    // The original thread is unchanged: still er.doc ↔ chen only; patel is
+    // forbidden from it and the pre-DND history stays private.
     const updated = await ctx.storage.getConversation(orgId, convo.id);
-    expect(updated!.participantIds).toContain(patelId);
+    expect(updated!.participantIds.sort()).toEqual([erId, chenId].sort());
+    expect((await patel.get(`/api/messaging/conversations/${convo.id}/messages`)).status).toBe(403);
     const delivery = await ctx.storage.listDeliveryForMessages([sent.body.id]);
-    expect(delivery.some((d) => d.userId === patelId && !d.readAt)).toBe(true);
+    expect(delivery.some((d) => d.userId === patelId)).toBe(false);
+
+    // Patel got a copy in an er.doc ↔ patel thread, with provenance, unread,
+    // and only the message sent while coverage was active.
+    const coveringThread = await directThreadBetween(patel, erId);
+    expect(coveringThread).toBeTruthy();
+    const copies = (await patel.get(`/api/messaging/conversations/${coveringThread!.id}/messages`).expect(200)).body as Array<{
+      id: number; content: string; senderId: number; forwardedFrom: Record<string, unknown> | null;
+    }>;
+    expect(copies.map((m) => m.content)).toEqual(["Are you rounding?"]);
+    expect(copies[0]!.senderId).toBe(erId);
+    expect(copies[0]!.forwardedFrom).toMatchObject({
+      messageId: sent.body.id,
+      conversationId: convo.id,
+      senderId: erId,
+      coveringFor: chenId,
+      reason: "dnd",
+    });
+    const copyDelivery = await ctx.storage.listDeliveryForMessages([copies[0]!.id]);
+    expect(copyDelivery.some((d) => d.userId === patelId && !d.readAt)).toBe(true);
+    // Live + push to the covering provider; the audit row names the copy.
+    expect(ctx.ws.delivered.some((d) => (d.message as { type?: string }).type === "MESSAGE_RECEIVED" && d.userIds.includes(patelId))).toBe(true);
+    expect(ctx.push.sent.some((p) => p.userId === patelId)).toBe(true);
     const audit = await ctx.storage.listAuditLogs(orgId, 50);
-    expect(audit.some((a) => a.action === "message.dnd_forwarded")).toBe(true);
+    const row = audit.find((a) => a.action === "message.dnd_forwarded");
+    expect(row).toBeTruthy();
+    expect(row!.details).toMatchObject({ dndUserId: chenId, coveringUserId: patelId, coveringConversationId: coveringThread!.id, coveringMessageId: copies[0]!.id });
+
+    // A second message reuses the same covering thread (no duplicate threads)
+    // and the sender sees the copies in it too.
+    await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "second" }).expect(201);
+    const threads = (await patel.get("/api/messaging/conversations").expect(200)).body as Array<{ type: string; participantIds: number[] }>;
+    expect(threads.filter((c) => c.type === "direct" && c.participantIds.includes(erId))).toHaveLength(1);
+    const erView = (await er.get(`/api/messaging/conversations/${coveringThread!.id}/messages`).expect(200)).body as Array<{ content: string }>;
+    expect(erView.map((m) => m.content)).toEqual(["Are you rounding?", "second"]);
+  });
+
+  it("a STAT forwarded at send time is not copied again when the sweep escalates it", async () => {
+    const chenId = ctx.seedResult.userIds.chen!;
+    const patelId = ctx.seedResult.userIds.patel!;
+    const erId = ctx.seedResult.userIds["er.doc"]!;
+    const { agent: chenAgent } = await login(ctx.app, { username: "chen" });
+    await chenAgent.patch("/api/settings/me").send({ key: "dnd", value: true }).expect(200);
+    await chenAgent.patch("/api/settings/me").send({ key: "coveringUserId", value: patelId }).expect(200);
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const convo = await directConvo(er, chenId);
+    await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "STAT now", priority: "stat" }).expect(201);
+
+    const out = await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(out.escalated).toBe(1);
+    const { agent: patel } = await login(ctx.app, { username: "patel" });
+    const coveringThread = await directThreadBetween(patel, erId);
+    const copies = (await patel.get(`/api/messaging/conversations/${coveringThread!.id}/messages`).expect(200)).body as Array<{ content: string }>;
+    expect(copies.filter((m) => m.content === "STAT now")).toHaveLength(1);
+  });
+
+  it("does nothing — no re-alert, escalation, SMS or audit — when messaging.escalation is off for the org", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const chenId = ctx.seedResult.userIds.chen!;
+    const patelId = ctx.seedResult.userIds.patel!;
+    await ctx.storage.updateUser(chenId, { phone: "+15550002222" });
+    const { agent: chenAgent } = await login(ctx.app, { username: "chen" });
+    await chenAgent.patch("/api/settings/me").send({ key: "coveringUserId", value: patelId }).expect(200);
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const convo = await directConvo(er, chenId);
+    const sent = await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "STAT bed 9", priority: "stat" });
+    expect(sent.status).toBe(201);
+
+    // Developer switches the module off for this org.
+    await ctx.storage.setOrgSetting(orgId, "modules", { "messaging.escalation": false }, null);
+    invalidateModules();
+
+    ctx.ws.delivered = [];
+    ctx.push.sent = [];
+    ctx.sms.sent = [];
+    const auditBefore = (await ctx.storage.listAuditLogs(orgId, 200)).length;
+    const out = await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(out).toEqual({ realerted: 0, escalated: 0, skippedModuleOff: 1 });
+    expect(ctx.ws.delivered.filter((d) => ["STAT_REALERT", "STAT_ESCALATED", "MESSAGE_RECEIVED", "MESSAGE_ACK"].includes((d.message as { type: string }).type))).toHaveLength(0);
+    expect(ctx.push.sent).toHaveLength(0);
+    expect(ctx.sms.sent).toHaveLength(0);
+    expect((await ctx.storage.listAuditLogs(orgId, 200)).length).toBe(auditBefore);
+    // Delivery row untouched (so switching back on resumes the loop) and the
+    // original thread unchanged.
+    const [row] = await ctx.storage.listDeliveryForMessages([sent.body.id]).then((r) => r.filter((d) => d.userId === chenId));
+    expect(row!.realertedAt).toBeNull();
+    expect(row!.escalatedAt).toBeNull();
+    expect((await ctx.storage.getConversation(orgId, convo.id))!.participantIds).toEqual(convo.participantIds);
+
+    // Switch back on → the loop resumes for the still-unacked STAT.
+    await ctx.storage.setOrgSetting(orgId, "modules", { "messaging.escalation": true }, null);
+    invalidateModules();
+    const resumed = await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(resumed.realerted).toBe(1);
+    expect(resumed.escalated).toBe(1);
+    expect(resumed.skippedModuleOff).toBe(0);
+  });
+
+  it("the switch is transitive: messaging.priority off also stops the escalation loop", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const chenId = ctx.seedResult.userIds.chen!;
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const convo = await directConvo(er, chenId);
+    await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "STAT", priority: "stat" }).expect(201);
+    await ctx.storage.setOrgSetting(orgId, "modules", { "messaging.priority": false }, null);
+    invalidateModules();
+    const out = await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(out.realerted + out.escalated).toBe(0);
+    expect(out.skippedModuleOff).toBe(1);
   });
 
   it("exposes a peer's availability (DND + covering) for the 1:1 banner", async () => {
