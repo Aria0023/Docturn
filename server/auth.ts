@@ -15,7 +15,7 @@ import {
 import { storage } from "./storage.js";
 import { appendAudit } from "./audit.js";
 import { getModules } from "./modules.js";
-import { REGISTER_RATE_LIMIT, getRateLimitState } from "./config.js";
+import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, clientIpKey, getRateLimitState } from "./config.js";
 
 // promisify() picks the 3-argument overload; we always pass explicit parameters.
 const scryptAsync = promisify(scrypt) as unknown as (
@@ -538,7 +538,9 @@ export function isUniqueViolation(err: unknown): boolean {
 /**
  * Express 4 does not catch a rejected async handler: the request would hang
  * with no response and the client's buttons stay disabled (the SHO-8 symptom).
- * Route every async handler here through next(err) → the JSON error handler.
+ * server/async-errors.ts now patches Express app-wide (imported first by
+ * createApp); this explicit wrapper is kept so these handlers forward to
+ * next(err) → the JSON error handler even where that patch is not loaded.
  */
 type AsyncHandler = (req: Request, res: import("express").Response, next: import("express").NextFunction) => Promise<unknown>;
 const wrap = (fn: AsyncHandler): RequestHandler => (req, res, next) => {
@@ -556,14 +558,18 @@ export function registerAuthRoutes(app: Express) {
   // every accepted request lands in a director's queue. The auth limiter in
   // app.ts counts failures only (brute force is about wrong guesses), so a
   // second limiter here counts EVERY request, 201s included. Honours the same
-  // on/off decision createApp() recorded (RATE_LIMIT=off, rateLimiting:false).
+  // on/off decision createApp() recorded (RATE_LIMIT=off, rateLimiting:false),
+  // and keys/answers exactly like the limiters in app.ts: clientIpKey() (the
+  // address resolved under the trusted-proxy list, IPv6 bucketed by /64) and
+  // the shared RATE_LIMIT_RESPONSE body. Supplying a keyGenerator also bypasses
+  // the library's X-Forwarded-For validation, so nothing can throw and 500.
   const registerLimiter: RequestHandler = getRateLimitState().enabled
     ? rateLimit({
         ...REGISTER_RATE_LIMIT,
         standardHeaders: true,
         legacyHeaders: false,
-        validate: { xForwardedForHeader: false },
-        message: { error: "too_many_requests" },
+        keyGenerator: clientIpKey,
+        message: RATE_LIMIT_RESPONSE,
       })
     : (_req, _res, next) => next();
 

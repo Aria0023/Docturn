@@ -36,7 +36,7 @@ the login screen should map these codes rather than show a generic failure:
 | Password shorter than 8, the demo password, or "password" | `400 weak_password` | Same floor as PATCH /api/account/password (A.CON-SHO-16). |
 | Username already has an account | `201 { pending: true }` — same as a fresh request | Never a username oracle (A.CON-SHO-11). The row reaches the queue with `usernameTaken: true`; approving it answers `409 username_taken`, denying clears it. |
 | A request for that username is already pending | `409 request_pending` | One pending row per (org, username), enforced by a partial unique index (A.CON-SHO-8). A denied request frees the name. |
-| More than 10 requests per IP per hour (when rate limiting is on) | `429 too_many_requests` | Counts successes too; the auth limiter counts only failures (A.CON-SHO-15). |
+| More than 10 requests per client per hour (when rate limiting is on) | `429 rate_limited` | Counts successes too; the auth limiter counts only failures (A.CON-SHO-15). Same body and same client key as every other limiter (`clientIpKey`: trusted-proxy address, IPv6 per /64). |
 
 Queue actions are idempotent: approving an approved request → `200 { userId,
 alreadyApproved: true }`; denying a denied one → `200 { ok, alreadyDenied }`;

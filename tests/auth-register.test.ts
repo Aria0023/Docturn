@@ -244,7 +244,8 @@ describe("self-registration", () => {
         .send({ orgCode: "ISPN", username: `flood.${i}`, displayName: "Flood", requestedRole: "hospitalist", password: GOOD });
       statuses.push(res.status);
       if (res.status === 429) {
-        expect(res.body).toEqual({ error: "too_many_requests" });
+        // The same body every limiter in the app answers with (RATE_LIMIT_RESPONSE).
+        expect(res.body).toEqual({ error: "rate_limited" });
         expect(res.headers["ratelimit-limit"]).toBe("10");
       }
     }
@@ -253,5 +254,29 @@ describe("self-registration", () => {
     // Nothing beyond the cap reached the queue.
     const rows = await ctx.storage.listPendingRegistrations(ctx.seedResult.orgId);
     expect(rows.filter((r) => r.username.startsWith("flood.")).length).toBe(10);
+  });
+
+  it("the registration limiter buckets like every other limiter (clientIpKey: one IPv6 /64 is one client)", async () => {
+    // Behind a trusted loopback proxy the client address comes from
+    // X-Forwarded-For. A single device rotating its IPv6 interface id must not
+    // get a fresh 10/h budget per address: the key is the /64, exactly as the
+    // login limiters in server/app.ts key it.
+    const limited = createApp({ sessionSecret: "test-secret", rateLimiting: true, trustProxy: true });
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await supertest(limited)
+        .post("/api/register")
+        .set("X-Forwarded-For", `2001:db8:4:2::${(i + 1).toString(16)}`)
+        .send({ orgCode: "ISPN", username: `v6flood.${i}`, displayName: "Flood", requestedRole: "hospitalist", password: GOOD });
+      statuses.push(res.status);
+    }
+    expect(statuses.slice(0, 10).every((s) => s === 201)).toBe(true);
+    expect(statuses.slice(10)).toEqual([429, 429]);
+    // A different /64 is a different client and still has its budget.
+    const other = await supertest(limited)
+      .post("/api/register")
+      .set("X-Forwarded-For", "2001:db8:4:3::1")
+      .send({ orgCode: "ISPN", username: "v6other", displayName: "Other", requestedRole: "hospitalist", password: GOOD });
+    expect(other.status).toBe(201);
   });
 });
