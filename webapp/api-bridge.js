@@ -449,10 +449,26 @@
   function dirByUserId(uid) {
     return personForUserId(uid);
   }
+  // Sender-side receipt (A.CON-SHO-26), derived ONLY from the server's
+  // per-recipient delivery rows — never assumed:
+  //   "read"      every recipient has read (or acknowledged) it;
+  //   "delivered" it reached every recipient's inbox, not yet read by all;
+  //   "sent"      stored on the server, delivery not recorded yet.
+  // The device's own "sending" / "failed" states come from the outbox below.
+  function receiptFor(deliveries) {
+    var rows = deliveries || [];
+    if (!rows.length) return "sent";
+    if (rows.every(function (d) { return !!(d.readAt || d.acknowledgedAt); })) return "read";
+    if (rows.every(function (d) { return !!d.deliveredAt; })) return "delivered";
+    return "sent";
+  }
   function mapMessage(m) {
+    var mine = m.senderId === meId;
+    var receipt = mine ? receiptFor(m.deliveries) : null;
     return {
-      id: m.id, me: m.senderId === meId, text: m.content,
-      at: new Date(m.createdAt || Date.now()).getTime(), read: true,
+      id: m.id, me: mine, text: m.content,
+      at: new Date(m.createdAt || Date.now()).getTime(),
+      receipt: receipt, read: receipt === "read",
       priority: m.priority || "routine",
       ackCount: m.ackCount || 0,
       readCount: m.readCount || 0,
@@ -492,7 +508,7 @@
               patientId: c.patientId != null ? c.patientId : null,
               typing: false,
               participantIds: c.participantIds || [],
-              messages: (row.msgs || []).map(mapMessage),
+              messages: mergeOutbox(c.id, (row.msgs || []).map(mapMessage)),
             };
           });
           return s;
@@ -500,6 +516,117 @@
       });
     }).catch(function () { /* keep whatever's there on failure */ });
   }
+
+  // ---- outbox: messages this device is sending or failed to send ----------
+  // A send is never shown as delivered before the server says so: the bubble
+  // reads "Sending…" until POST /send answers, and a refused or offline send
+  // stays in the thread as "Not sent" with its text, priority and attachments
+  // kept for Retry / Edit (A.CON-SHO-26, A.CON-SHO-40). Held in memory only —
+  // message text is PHI and never touches localStorage — and dropped on sign-out.
+  var outbox = [];
+  var outboxSeq = 0;
+  function outboxView(o) {
+    return {
+      id: null, localId: o.localId, local: true, me: true, text: o.text, at: o.at,
+      receipt: o.status, read: false, failReason: o.reason || null,
+      priority: o.priority, ackCount: 0, readCount: 0, ackedByMe: false,
+      attachments: o.attachments, forwardedFrom: null, deliveries: [],
+    };
+  }
+  // Server messages first, then this conversation's unsent ones, by time. A
+  // "sending" entry whose server copy has already arrived (the WS fan-out can
+  // beat the POST response) is not shown twice.
+  function mergeOutbox(convoId, serverMsgs) {
+    var mine = outbox.filter(function (o) { return o.convoId === convoId && o.owner === meId; });
+    if (!mine.length) return serverMsgs;
+    var claimed = {};
+    var extra = mine.filter(function (o) {
+      if (o.status !== "sending") return true;
+      var twin = serverMsgs.find(function (m) {
+        return m.me && !claimed[m.id] && m.text === o.text && m.priority === o.priority && m.at >= o.at - 60000;
+      });
+      if (twin) { claimed[twin.id] = true; return false; }
+      return true;
+    }).map(outboxView);
+    return serverMsgs.concat(extra).sort(function (x, y) { return x.at - y.at; });
+  }
+  function refreshOutbox(convoId) {
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (c.id !== convoId) return c;
+        var server = (c.messages || []).filter(function (m) { return !m.local; });
+        return Object.assign({}, c, { messages: mergeOutbox(c.id, server) });
+      });
+      return s;
+    });
+  }
+  // Why a send failed, in words a clinician can act on.
+  function sendFailure(e, o) {
+    var code = String((e && e.message) || "");
+    var offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    if (offline || isNetworkError(e)) return { code: "offline", text: "No connection — not sent." };
+    if (/module_disabled/.test(code) && o.priority !== "routine") return { code: "priority_disabled", text: "Not sent — " + (o.priority === "stat" ? "STAT" : "urgent") + " messaging is switched off for your organization." };
+    if (/module_disabled/.test(code)) return { code: "module_disabled", text: "Not sent — this feature is switched off for your organization." };
+    if (e && e.status === 401) return { code: "session", text: "Not sent — your session expired." };
+    if (e && (e.status === 403 || e.status === 404)) return { code: "no_access", text: "Not sent — you can no longer post in this conversation." };
+    if (e && e.status === 429) return { code: "rate_limited", text: "Not sent — too many requests; try again in a moment." };
+    return { code: "server", text: "Not sent — the server couldn't accept it." };
+  }
+  function postOutbox(o) {
+    o.status = "sending"; o.reason = null; o.at = o.at || Date.now();
+    refreshOutbox(o.convoId);
+    var body = { conversationId: Number(o.convoId), content: o.text, priority: o.priority };
+    var ids = o.attachments.map(function (a) { return a.id; }).filter(function (n) { return n != null; });
+    if (ids.length) body.attachmentIds = ids;
+    return api("POST", "/api/messaging/send", body).then(function (res) {
+      outbox = outbox.filter(function (x) { return x !== o; });
+      // Swap the local bubble for the stored message right away ("sent"), then
+      // re-sync for the server's delivery rows ("delivered").
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (c) {
+          if (c.id !== o.convoId) return c;
+          var server = (c.messages || []).filter(function (m) { return !m.local && !(res && m.id === res.id); });
+          if (res && res.id != null) server = server.concat([Object.assign(mapMessage(res), { attachments: o.attachments })]);
+          return Object.assign({}, c, { messages: mergeOutbox(c.id, server) });
+        });
+        return s;
+      });
+      hydrateConversations();
+      return { ok: true, message: res };
+    }).catch(function (e) {
+      if (outbox.indexOf(o) < 0) return { ok: false };
+      o.status = "failed"; o.reason = sendFailure(e, o);
+      refreshOutbox(o.convoId);
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: o.reason.text.replace(/^Not sent — /, "") }; return s; });
+      return { ok: false, reason: o.reason };
+    });
+  }
+  function findOutbox(localId) { return outbox.find(function (o) { return o.localId === localId; }) || null; }
+  // Retry a failed message as-is, or (when only its priority was refused) as routine.
+  DT.actions.retryMessage = function (localId, opts) {
+    var o = findOutbox(localId);
+    if (!o || o.status === "sending") return Promise.resolve({ ok: false });
+    if (opts && opts.asRoutine) o.priority = "routine";
+    o.at = Date.now();
+    return postOutbox(o);
+  };
+  // Take a failed message back into the composer (Edit): returns its draft and
+  // removes the "Not sent" bubble.
+  DT.actions.takeFailedMessage = function (localId) {
+    var o = findOutbox(localId);
+    if (!o || o.status !== "failed") return null;
+    outbox = outbox.filter(function (x) { return x !== o; });
+    refreshOutbox(o.convoId);
+    return { text: o.text, priority: o.priority, attachments: o.attachments.slice() };
+  };
+  // Nothing unsent outlives the session that wrote it.
+  var outboxSession = null;
+  if (DT.subscribe) DT.subscribe(function () {
+    var sess = DT.getState().session || null;
+    if (sess === outboxSession) return;
+    outboxSession = sess;
+    outbox = []; readPosted = {};
+  });
 
   // ---- live WebSocket ------------------------------------------------------
   // Cookie-authenticated socket at /ws. Refreshes messaging on MESSAGE_RECEIVED
@@ -520,6 +647,49 @@
         if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
         // A STAT/urgent message was acknowledged — refresh so ack counts update.
         else if (ev.type === "MESSAGE_ACK") hydrateConversations();
+        // The sender recalled a message (A.CON-SHO-25): drop it from the thread
+        // at once — even while it is open on screen — then re-sync previews and
+        // unread counts from the server.
+        else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) {
+          DT.set(function (s) {
+            s.conversations = (s.conversations || []).map(function (c) {
+              if (ev.conversationId != null && c.id !== ev.conversationId) return c;
+              var msgs = (c.messages || []).filter(function (m) { return m.id !== ev.messageId; });
+              return msgs.length === (c.messages || []).length ? c : Object.assign({}, c, { messages: msgs });
+            });
+            return s;
+          });
+          hydrateConversations();
+        }
+        // Someone read messages in a thread I'm in (A.CON-SHO-26): flip their
+        // delivery rows, so my receipt turns "Read" and a group's "Seen by"
+        // count moves live. Unknown messages fall back to a re-sync.
+        else if (ev.type === "MESSAGE_READ" && Array.isArray(ev.messageIds)) {
+          var readAt = ev.readAt || new Date().toISOString();
+          var found = 0;
+          DT.set(function (s) {
+            s.conversations = (s.conversations || []).map(function (c) {
+              if (ev.conversationId != null && c.id !== ev.conversationId) return c;
+              var touched = false;
+              var msgs = (c.messages || []).map(function (m) {
+                if (m.id == null || ev.messageIds.indexOf(m.id) < 0) return m;
+                var hit = false;
+                var dl = (m.deliveries || []).map(function (d) {
+                  if (d.userId !== ev.userId || d.readAt) return d;
+                  hit = true;
+                  return Object.assign({}, d, { readAt: readAt, status: d.acknowledgedAt ? "acknowledged" : "read" });
+                });
+                if (!hit) return m;
+                touched = true; found++;
+                var receipt = m.me ? receiptFor(dl) : null;
+                return Object.assign({}, m, { deliveries: dl, readCount: dl.filter(function (d) { return !!d.readAt; }).length, receipt: receipt, read: receipt === "read" });
+              });
+              return touched ? Object.assign({}, c, { messages: msgs }) : c;
+            });
+            return s;
+          });
+          if (!found) hydrateConversations();
+        }
         // Real typing indicator: a peer relayed typing_start/stop through the
         // server (see server/ws). Flip the convo's flag, with a 5s safety expiry
         // in case the stop event is lost.
@@ -549,7 +719,12 @@
             if (!(s.broadcasts || []).some(function (x) { return x.id === b.id; })) {
               s.broadcasts = [mapBroadcast(b)].concat(s.broadcasts || []);
             }
-            if (b.senderId !== meId) s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "urgent"), msg: b.message + (b.ackRequired !== false && b.severity !== "info" ? " · acknowledgement required" : "") };
+            // A broadcast that needs my acknowledgement is announced by the
+            // pinned banner (with its Acknowledge button); raising a toast for
+            // it as well put a second, tap-swallowing copy over that very
+            // button (A.CON-SHO-2). Only broadcasts with no banner get a toast.
+            var bannered = mapBroadcast(b).ackReq && (!DT.moduleOn || DT.moduleOn("broadcasts"));
+            if (b.senderId !== meId && !bannered) s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "info"), msg: b.message };
             return s;
           });
           hydrateBroadcasts();
@@ -1296,12 +1471,22 @@
 
   // ---- messaging overrides (backend-backed, cross-device) ------------------
   var origStartConversation = DT.actions.startConversation;
+  // Called by the thread view while a conversation is ON SCREEN (visible pane,
+  // foreground tab) — including when new messages land in it — so the sender's
+  // receipt means "seen". Each message id is posted once per session.
+  var readPosted = {};
   DT.actions.openConversation = function (id) {
     var convo = (DT.getState().conversations || []).find(function (c) { return c.id === id; });
-    DT.set(function (s) { s.conversations = (s.conversations || []).map(function (c) { return c.id === id ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; });
+    var st0 = DT.getState();
+    if (st0.__activeConvo !== id || (convo && convo.unread)) {
+      DT.set(function (s) { s.conversations = (s.conversations || []).map(function (c) { return c.id === id && c.unread ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; });
+    }
     if (convo) {
-      var ids = (convo.messages || []).filter(function (m) { return !m.me && m.id; }).map(function (m) { return m.id; });
-      if (ids.length) api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {});
+      var ids = (convo.messages || []).filter(function (m) { return !m.me && m.id != null && !readPosted[m.id]; }).map(function (m) { return m.id; });
+      if (ids.length) {
+        ids.forEach(function (mid) { readPosted[mid] = true; });
+        api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () { ids.forEach(function (mid) { delete readPosted[mid]; }); });
+      }
     }
   };
   // Upload a File as a base64 attachment; resolves to {id, fileName, mimeType,
@@ -1331,22 +1516,72 @@
       reader.readAsDataURL(file);
     });
   };
-  DT.actions.sendMessage = function (id, text, priority, attachmentIds) {
+  // Send through the outbox: the bubble reads "Sending…" until the server
+  // stores it, and a refusal / lost connection leaves a "Not sent" bubble with
+  // Retry and Edit instead of a message that only LOOKS sent. `attachments` may
+  // be ids or the uploaded {id, fileName, …} objects (kept for Edit). Resolves
+  // to {ok, reason?}.
+  DT.actions.sendMessage = function (id, text, priority, attachments) {
     var t = (text || "").trim();
-    var atts = Array.isArray(attachmentIds) ? attachmentIds.filter(function (n) { return n != null; }) : [];
-    if (!t && !atts.length) return;
+    var atts = (Array.isArray(attachments) ? attachments : []).filter(function (a) { return a != null; })
+      .map(function (a) { return typeof a === "object" ? a : { id: a }; })
+      .filter(function (a) { return a.id != null; });
+    if (!t && !atts.length) return Promise.resolve({ ok: false });
     var pri = priority === "stat" || priority === "urgent" ? priority : "routine";
+    var o = { localId: "local-" + (++outboxSeq) + "-" + Date.now(), owner: meId, convoId: id, text: t, priority: pri, attachments: atts, at: Date.now(), status: "sending", reason: null };
+    outbox.push(o);
     DT.set(function (s) {
-      s.conversations = (s.conversations || []).map(function (c) {
-        return c.id === id ? Object.assign({}, c, { messages: (c.messages || []).concat([{ id: "tmp" + Date.now(), me: true, text: t, at: Date.now(), read: true, priority: pri, ackCount: 0, attachments: [] }]), unread: 0 }) : c;
-      });
+      s.conversations = (s.conversations || []).map(function (c) { return c.id === id && c.unread ? Object.assign({}, c, { unread: 0 }) : c; });
       return s;
     });
-    var body = { conversationId: Number(id), content: t, priority: pri };
-    if (atts.length) body.attachmentIds = atts;
-    api("POST", "/api/messaging/send", body)
-      .then(function () { hydrateConversations(); })
-      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: "Couldn't reach the server." }; return s; }); });
+    return postOutbox(o);
+  };
+  // Recall (unsend) my own message while nobody has read it yet. The server
+  // enforces the unread-only rule (409 already_read) and tells every
+  // participant (MESSAGE_RECALLED); this removes it here immediately.
+  DT.actions.recallMessage = function (convoId, messageId) {
+    if (messageId == null) return Promise.resolve(false);
+    return api("DELETE", "/api/messaging/messages/" + messageId).then(function () {
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (c) {
+          return c.id === convoId ? Object.assign({}, c, { messages: (c.messages || []).filter(function (m) { return m.id !== messageId; }) }) : c;
+        });
+        s.__toast = { tone: "accepted", title: "Message recalled", msg: "Removed for everyone in this conversation." };
+        return s;
+      });
+      hydrateConversations();
+      return true;
+    }).catch(function (e) {
+      var why = String((e && e.message) || "");
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't recall", msg: /already_read/.test(why) ? "It has already been read, so it can't be recalled." : /module_disabled/.test(why) ? "Message recall is switched off for your organization." : /forbidden/.test(why) ? "You can only recall your own messages." : "Try again." }; return s; });
+      hydrateConversations();
+      return false;
+    });
+  };
+  // Attachment bytes for the in-app viewer / download (A.NEE-NEE-1/2). Fetched
+  // by THIS document with its own credentials and returned as a Blob, so
+  // viewing or saving a file never opens a new browsing context (an installed
+  // iOS app's Safari view does not share the app's session cookie and showed
+  // raw {"error":"unauthorized"}). Only the app's own attachment routes are
+  // fetchable; `cache: "no-store"` keeps PHI bytes out of the HTTP cache. A 401
+  // means the session is gone: the app returns to sign-in like any other call.
+  DT.actions.fetchAttachment = function (url, opts) {
+    if (!/^\/api\/messaging\/(attachments\/\d+|messages\/\d+\/attachments\/\d+)$/.test(String(url || ""))) {
+      return Promise.reject(Object.assign(new Error("bad_url"), { status: 0 }));
+    }
+    var headers = {};
+    if (DEMO_TOKEN) headers["Authorization"] = "Bearer " + DEMO_TOKEN;
+    if (opts && opts.range) headers["Range"] = opts.range;
+    var epoch = authEpoch;
+    return fetch(url, { credentials: "include", headers: headers, cache: "no-store" }).then(function (r) {
+      if (!r.ok) {
+        var err = new Error(r.status === 401 ? "unauthorized" : r.status === 403 ? "forbidden" : r.status === 404 ? "not_found" : "http_" + r.status);
+        err.status = r.status;
+        if (r.status === 401 && epoch === authEpoch && !DEMO_TOKEN && DT.getState().session) expireSession();
+        throw err;
+      }
+      return r.blob().then(function (blob) { return { blob: blob, type: (r.headers.get("Content-Type") || blob.type || "").split(";")[0] }; });
+    });
   };
   // Acknowledge a STAT/urgent message (stronger than read). Optimistic, then syncs.
   DT.actions.acknowledgeMessage = function (convoId, messageId) {
@@ -1564,7 +1799,8 @@
         bannerEl = document.createElement("div");
         bannerEl.id = "dt-broadcast-banner";
         bannerEl.setAttribute("role", "alert");
-        bannerEl.style.cssText = "position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:45;width:min(640px,calc(100vw - 24px));display:flex;flex-direction:column;gap:8px;font-family:inherit;";
+        // Below the notch / status bar of an installed iPhone app (viewport-fit=cover).
+        bannerEl.style.cssText = "position:fixed;top:calc(10px + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:45;width:min(640px,calc(100vw - 24px));display:flex;flex-direction:column;gap:8px;font-family:inherit;";
         document.body.appendChild(bannerEl);
       }
       bannerEl.innerHTML = "";
@@ -1586,7 +1822,8 @@
         btn.type = "button";
         btn.textContent = "Acknowledge";
         btn.setAttribute("data-broadcast-ack", String(b.id));
-        btn.style.cssText = "flex:none;padding:8px 14px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:12.5px;font-family:inherit;color:#fff;background:" + (critical ? "#B91C1C" : "#B45309") + ";";
+        // A real 44px target on every device, not only coarse-pointer ones.
+        btn.style.cssText = "flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;color:#fff;background:" + (critical ? "#B91C1C" : "#B45309") + ";";
         btn.onclick = function () { DT.actions.ackBroadcast(b.id); };
         row.appendChild(txt); row.appendChild(btn);
         bannerEl.appendChild(row);

@@ -1301,11 +1301,44 @@ export function registerMessagingRoutes(app: Express) {
     res.status(204).end();
   });
 
+  // Mark messages read for the caller, and tell the thread's other
+  // participants live (A.CON-SHO-26) so a sender's receipt turns "Read" without
+  // a reload. Only messages that were unread IN THE CALLER'S OWN delivery row
+  // produce a frame: a repeat call is silent, and nobody can fake a receipt for
+  // a message they never received. The frame carries ids only, never content.
   app.post("/api/messaging/messages/mark-read", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const parsed = markReadSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const before = await storage().listDeliveryForMessages(parsed.data.messageIds);
+    const newlyRead = Array.from(
+      new Set(before.filter((d) => d.userId === me.id && !d.readAt).map((d) => d.messageId)),
+    );
     await storage().markRead(me.id, parsed.data.messageIds);
+    if (newlyRead.length) {
+      const readAt = new Date().toISOString();
+      const byConvo = new Map<number, number[]>();
+      for (const mid of newlyRead) {
+        const msg = await storage().getMessage(me.organizationId, mid);
+        if (!msg || msg.deletedAt || msg.senderId === me.id) continue;
+        const ids = byConvo.get(msg.conversationId) ?? [];
+        ids.push(mid);
+        byConvo.set(msg.conversationId, ids);
+      }
+      for (const [conversationId, messageIds] of byConvo) {
+        const convo = await storage().getConversation(me.organizationId, conversationId);
+        if (!convo) continue;
+        const others = convo.participantIds.filter((uid) => uid !== me.id);
+        if (!others.length) continue;
+        notificationDeps().ws.sendToUsers(others, {
+          type: "MESSAGE_READ",
+          conversationId,
+          messageIds,
+          userId: me.id,
+          readAt,
+        });
+      }
+    }
     res.status(204).end();
   });
 
