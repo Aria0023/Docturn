@@ -4,11 +4,19 @@
 #   sudo bash /opt/docturn/deploy/aws/update.sh [branch]
 #
 # Pulls the branch (as root, which holds the read-only deploy key), rebuilds as
-# the unprivileged `docturn` user, restarts the service and checks health. The
-# schema is applied automatically on start (SCHEMA_SQL is idempotent/additive).
+# the unprivileged `docturn` user (`npm run build`: server + precompiled web
+# client), restarts the service and checks health. The schema is applied
+# automatically on start (SCHEMA_SQL is idempotent/additive).
 #
-# NOTE: until the session store is moved to Postgres (runbook §15.1) a restart
-# signs every user out. Do updates at a quiet hour.
+# Sessions are stored in Postgres (DATABASE_URL → connect-pg-simple), so a
+# restart does not sign anyone out; open WebSockets drop for the few seconds of
+# the restart and the clients reconnect and catch up (runbook §16).
+#
+# Health is read from http://127.0.0.1:3000 — the app binds loopback in
+# production (HOST unset), which is exactly where Caddy proxies to. Its
+# /api/health answers {"ok":true,"db":"up","persistent":…,"storage":…,
+# "durable":…,"secure":…}; "secure" is false on this direct loopback request
+# and is checked through the domain instead (runbook §9).
 set -euo pipefail
 
 APP_DIR=/opt/docturn
@@ -50,12 +58,17 @@ chmod +x "$APP_DIR/deploy/aws/"*.sh
 systemctl daemon-reload
 
 log "restarting docturn"
+SINCE=$(date '+%Y-%m-%d %H:%M:%S')
 systemctl restart docturn
 for _ in $(seq 1 20); do
   sleep 1
-  if HEALTH=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null); then
+  if HEALTH=$(curl -fsS http://127.0.0.1:3000/api/health 2>/dev/null) && grep -q '"ok":true' <<<"$HEALTH"; then
     echo "health: $HEALTH"
-    grep -q '"persistent":true' <<<"$HEALTH" || echo "WARNING: persistent:false — the app is NOT on RDS. Check DATABASE_URL." >&2
+    grep -q '"persistent":true' <<<"$HEALTH" && grep -q '"storage":"postgres"' <<<"$HEALTH" \
+      || echo "WARNING: not on Postgres (persistent/storage) — the app is NOT on RDS and sessions are in memory. Check DATABASE_URL." >&2
+    if journalctl -u docturn --since "$SINCE" --no-pager 2>/dev/null | grep -q '\[webapp\] serving the in-browser-Babel client'; then
+      echo "WARNING: the precompiled web client was not usable — phones get the slow in-browser-Babel kit. See: journalctl -u docturn | grep webapp" >&2
+    fi
     log "updated to $AFTER"
     exit 0
   fi

@@ -3,9 +3,17 @@
 #
 # Caddy obtains and renews a Let's Encrypt certificate for the hostname
 # automatically, serves HTTPS on :443, redirects :80 → :443, and proxies
-# everything (including the /ws WebSocket upgrade) to the Node app on :3000.
-# The app sets its own security headers (helmet) and trusts this proxy for the
-# client IP (TRUST_PROXY defaults on), so nothing else is needed here.
+# everything (including the /ws WebSocket upgrade) to the Node app on
+# 127.0.0.1:3000 — the app binds loopback in production (HOST unset), so this
+# proxy is the only way in. The app sets its own security headers (helmet, CSP)
+# and believes X-Forwarded-For / X-Forwarded-Proto only from a loopback peer,
+# i.e. from this Caddy (TRUST_PROXY default "loopback"), so nothing else is
+# needed here. Check: https://<domain>/api/health must say "secure":true.
+#
+# Compression: Node already serves the web client brotli/gzip-compressed and
+# leaves API responses uncompressed; `encode` passes the pre-compressed files
+# through untouched and compresses the remaining (JSON API) responses. See
+# docs/AWS_DEPLOYMENT_RUNBOOK.md §15 before deciding to keep or drop it.
 
 __DOMAIN__ {
 	encode zstd gzip

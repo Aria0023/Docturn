@@ -35,6 +35,11 @@ window.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, r
 window.scrollTo = () => {};
 if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 window.alert = () => {}; window.confirm = () => true; window.prompt = () => "x";
+// jsdom cannot open windows ("Not implemented: window.open"). Answer like a
+// popup blocker does (null) — the callers (topbar "Mobile view", Open in EHR)
+// handle a null window — and count the calls so the sweep's reach is visible.
+let windowOpenCalls = 0;
+window.open = () => { windowOpenCalls++; return null; };
 
 // ---- error capture --------------------------------------------------------
 const errors = [];
@@ -114,21 +119,48 @@ const inputByPlaceholder = (sub) => [...window.document.querySelectorAll("input,
 
 
 // Buttons that change session/identity — skipped so the sweep doesn't flood
-// /api/login (role switcher) or log itself out mid-test.
-const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "developer", "log out", "sign out", "logout", "lock",
+// /api/login (role switcher / sign-in tiles) or sign out / lock itself mid-test.
+// Matched against a button's visible text AND its aria-label and title: the
+// Sidebar's "Sign out" and the Topbar's "Lock app" are icon-only (empty
+// textContent), and a text-only match let the sweep sign itself out, so every
+// later sweep ran on the sign-in screen (A.CON-SHO-5).
+const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "hospitalist director", "developer",
+  "log out", "sign out", "logout", "lock", "lock app", "return to developer",
   // destructive maintenance buttons — don't wipe data mid-sweep
   "clear all", "clear 24h+", "clear logs"]);
+const buttonKeys = (b) => [b.textContent, b.getAttribute("aria-label"), b.getAttribute("title")]
+  .map((s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase()).filter(Boolean);
+const isSkipped = (b) => buttonKeys(b).some((k) => SKIP_LABELS.has(k));
+const describeButton = (b) => buttonKeys(b)[0] || "<unlabelled button>";
+// The app lock is React state in index.html (no DT flag), so look for the lock dialog.
+const lockScreenShown = () => !!window.document.querySelector('[aria-labelledby="dt-lock-title"]');
+const sweepBlocker = (role) => {
+  const s = DT.getState().session;
+  if (!s) return "signed out";
+  if (s.role !== role) return `session is ${s.role}, not ${role}`;
+  if (lockScreenShown()) return "app is locked";
+  return "";
+};
 async function clickEveryButton(roleLabel, screen) {
+  const label = `${roleLabel} · ${screen}`;
+  // An honest sweep: it must run inside the signed-in app for this role, not on
+  // the sign-in or lock screen that a previous click left behind.
+  const pre = sweepBlocker(roleLabel);
+  if (pre) { rec(`${label}: sweep runs signed in as ${roleLabel}`, false, `${pre} before sweeping ${screen}`); return; }
   const before = errors.length;
-  let clicked = 0;
+  let clicked = 0, broke = "";
   for (const b of [...window.document.querySelectorAll("button")]) {
-    if (SKIP_LABELS.has((b.textContent || "").trim().toLowerCase())) continue;
+    if (isSkipped(b)) continue;
     try { b.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })); clicked++; await sleep(3); }
     catch (e) { errors.push(`click threw [${roleLabel}/${screen}]: ${e.message}`); }
+    const why = sweepBlocker(roleLabel);
+    if (why) { broke = `clicking "${describeButton(b)}" left the app (${why}); sweep stopped`; break; }
   }
   await flush();
+  if (!broke) { const why = sweepBlocker(roleLabel); if (why) broke = `${why} after the sweep`; }
   const newErrs = errors.length - before;
-  rec(`${roleLabel} · ${screen}: clicked ${clicked} buttons`, newErrs === 0, newErrs ? errors.slice(before).join(" | ") : "");
+  const detail = [broke, newErrs ? errors.slice(before).join(" | ") : ""].filter(Boolean).join(" | ");
+  rec(`${label}: clicked ${clicked} buttons`, newErrs === 0 && !broke, detail);
 }
 
 const NAV = {
@@ -385,8 +417,13 @@ await demoLogin("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flus
   if (initEl && roomEl && pick) {
     setInput(initEl, "QX"); setInput(roomEl, "disc 44"); await flush();
     const manualTab = btnByText(/^Manual$/); if (manualTab) manualTab.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
-    const provBtn = allButtons().find((b) => (b.textContent || "").includes(pick.name));
+    // The provider's row in the Manual picker reads "<name> … <census>/<cap>";
+    // other widgets the dashboard may show (e.g. an on-shift list the sweep
+    // added) carry the same name, so match the picker row specifically.
+    const cands = allButtons().filter((b) => (b.textContent || "").includes(pick.name));
+    const provBtn = cands.find((b) => (b.textContent || "").includes(`${pick.census}/${pick.cap}`)) || cands[0];
     if (provBtn) provBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
+    detail = "pick=" + pick.name + " cands=" + JSON.stringify(cands.map((b) => (b.textContent || "").slice(0, 60))) + " ";
     const before = (DT.getState().admissions || []).length;
     const sendBtn = btnByText(/^Send assignment/);
     const disabled = sendBtn && (sendBtn.style.pointerEvents === "none" || sendBtn.disabled);
@@ -394,7 +431,7 @@ await demoLogin("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flus
     await flush(); await flush();
     const adm = (DT.getState().admissions || [])[0];
     manualOk = (DT.getState().admissions || []).length > before && adm && adm.initials === "QX" && adm.provider === pick.name;
-    detail = "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
+    detail += "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
   }
   rec("ER manual send routes to the chosen provider (end-to-end)", manualOk, detail);
 }
@@ -514,7 +551,9 @@ for (let i = 0; i < 12 && (DT.getState().providers || []).length < 4; i++) await
 const swSess = DT.getState().session || {};
 rec("role switch developer→hospitalist works", swSess.role === "hospitalist" && (DT.getState().providers || []).length >= 4, "session=" + JSON.stringify(swSess));
 DT.actions.setRole("developer");
-await flush(); await flush();
+// setRole does not return its sign-in promise, and a sign-in now costs a real
+// scrypt verification on the server — poll (≤ 3 s) instead of racing it.
+for (let i = 0; i < 40 && (DT.getState().session || {}).role !== "developer"; i++) await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
 // Developer ROOT access: open any user's portal (impersonation) and return.
@@ -539,9 +578,13 @@ await demoLogin("developer", "ISPN"); await flush(); await flush();
 await demoLogin("developer", "ISPN"); await flush();
 {
   await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
-  await flush(); await flush(); await flush();
-  const np = (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
-  rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP", "np=" + JSON.stringify(np && { n: np.name, c: np.credential }));
+  // addUser is fire-and-forget (POST, then a devUsers re-hydrate); creating the
+  // account hashes its temporary password with scrypt, so poll (≤ 3 s).
+  const findNp = () => (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
+  for (let i = 0; i < 40 && !findNp(); i++) await flush();
+  const np = findNp();
+  rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP",
+    "np=" + JSON.stringify(np && { n: np.name, c: np.credential }) + " toast=" + JSON.stringify(DT.getState().__toast || null).slice(0, 160));
 }
 
 // Amion → shift types: importing detected intervals adds matching shift types
@@ -819,7 +862,7 @@ for (const r of results) {
   if (!r.ok && r.detail) console.log(`      ↳ ${r.detail.slice(0, 400)}`);
   r.ok ? pass++ : fail++;
 }
-console.log(`\n${pass} passed, ${fail} failed, ${results.length} total`);
+console.log(`\n${pass} passed, ${fail} failed, ${results.length} total (window.open answered null ${windowOpenCalls}×)`);
 // Bridge-level failures the kit logged via console.error (captured above) —
 // the fastest way to see WHY a flow test failed without re-running under a
 // debugger. Babel's size notice is noise.

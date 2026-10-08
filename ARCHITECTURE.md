@@ -19,10 +19,11 @@
 
 ```
                     ┌────────────────────────────────┐
-                    │  webapp/  (no-build React)     │
-                    │  UMD React + in-browser Babel  │
+                    │  webapp/  React PWA            │
+                    │  dev: in-browser Babel         │
+                    │  prod: precompiled bundle      │
                     │  store.js  ← local state       │
-                    │  api-bridge.js → live API      │
+                    │  api-bridge.js → live API + ws │
                     └───────────────┬────────────────┘
                                     │ same-origin, session cookie
                                     ▼
@@ -59,9 +60,15 @@ while still running real Postgres in production.
 present, otherwise in-process PGlite (Postgres compiled to WASM). Same schema,
 same Drizzle queries, same code paths.
 
-**Consequences.** (a) Tests and dev need no external database. (b) A single
-`ephemeral` boolean distinguishes the two, which `/api/health` now exposes as
-`persistent` so a deployment can be checked at a glance. (c) **Gotcha, fixed:**
+**Consequences.** (a) Tests and dev need no external database. (b) The handle
+records which store is running — `postgres`, `pglite-disk` (`./.pglite` or
+`PGLITE_DIR`: survives restarts, single process, **not** encrypted at rest) or
+`pglite-memory` (tests) — and `/api/health` exposes it as
+`{persistent, storage, durable, secure}`; `persistent:true` still means "real
+Postgres", which is what `deploy/aws/update.sh` checks. (c) With
+`DATABASE_URL`, sessions live in Postgres too (`connect-pg-simple` on the app's
+own pool, table `session`), so a restart or deploy no longer signs everyone
+out; PGlite keeps the in-memory session store. (d) **Gotcha, fixed:**
 `ensureSchema` was originally a no-op on the real-Postgres branch, on the
 assumption that `drizzle-kit push` would provision it. A fresh cloud database
 therefore booted with **zero tables**. It now applies the same idempotent
@@ -173,47 +180,79 @@ answerable from one table without filtering the noise of every UI action.
 (b) They must be kept separately complete; auditing a write is not auditing a
 read. (c) Neither log may contain clinical content — identifiers only.
 
-### ADR-010: Attachments are base64 in the database — pilot only
+### ADR-010: Attachment bytes: base64 in the database by default, AES-256-GCM files for real PHI
 
-**Decision.** Uploaded files are stored as base64 in `message_attachments`,
-access-checked per participant and audited on view.
+**Decision.** `server/services/attachment-store.ts` has two stores, chosen by
+`ATTACHMENT_STORE`. The default `db` keeps the bytes as base64 in
+`message_attachments` — a synthetic-pilot shortcut. `fs-encrypted` (with
+`ATTACHMENT_DIR` and a 32-byte `ATTACHMENT_KEY`) writes each upload as an
+AES-256-GCM file (random IV, auth tag) and stores only an opaque ref in the
+row; if the key is missing or invalid, uploads are refused rather than stored
+in plaintext. Either way, access is checked per participant and audited on view.
 
-**Consequences.** (a) Zero infrastructure to stand up for a synthetic pilot.
-(b) **Explicitly unfit for real PHI:** no application-layer encryption, no AV
-scanning, and the blobs land in every backup. Real PHI requires object storage
-behind a BAA with signed URLs. The code says so where the bytes are written.
-(c) Attachment rows carry a `message_id` FK, which made them a hidden
-participant in two cascade bugs — see ADR-016.
+**Consequences.** (a) Zero infrastructure for a synthetic pilot. (b) The `db`
+store is **unfit for real PHI** (no application-layer encryption, blobs in every
+backup) and the compliance monitor warns while it is active; the AWS runbook
+sets `fs-encrypted`. Still missing for scale: object storage behind a BAA,
+antivirus scanning, signed-URL delivery. (c) Attachment rows carry a
+`message_id` FK, which made them a hidden participant in two cascade bugs — see
+ADR-016; the retention purge deletes the encrypted file with its message.
 
-### ADR-011: The webapp has no build step
+### ADR-011: No build step in development; a precompiled bundle in production
 
-**Context.** The UI began as a designer's kit of `.jsx` files served verbatim.
+**Context.** The UI began as a designer's kit of `.jsx` files served verbatim,
+compiled in the browser. On a phone that meant ~5.7 MB of development React,
+Babel and JSX and seconds of main-thread compilation on every launch.
 
-**Decision.** React and Babel are vendored locally and JSX is compiled in the
-browser. `api-bridge.js` overrides store actions to call the live API.
+**Decision.** React and Babel are vendored locally; `api-bridge.js` overrides
+store actions to call the live API. Development serves the kit as-is (JSX
+compiled in the browser). `npm run build:webapp` (part of `npm run build`)
+compiles every script with the same Babel options, bundles them with
+production React, content-hashes and precompresses the output, and records the
+sha256 of every source; `server/webapp-static.ts` serves that bundle when
+`NODE_ENV=production` (or `WEBAPP_BUNDLE=on`) and the recorded hashes match the
+files on disk — a stale or partial build is refused and the dev kit is served
+with a warning.
 
-**Consequences.** (a) Edit a file, reload, done — no bundler. (b) Assets are
-unhashed, which interacts badly with caching (ADR-012). (c) **CSP is disabled**
-because in-browser Babel needs `unsafe-eval` — so any XSS would have full
-access to whatever the client keeps in memory or storage. That is a real cost
-of this decision and is why ADR-013 matters.
+**Consequences.** (a) Edit a file, reload, done — in development. (b) Production
+ships ~1.5 MB raw / ~270 KB brotli instead of ~5.7 MB raw; hashed files are
+cached immutably, the shell is always revalidated. Only static files are
+compressed by Node; API responses are not. (c) A Content-Security-Policy is
+enforced in both modes (`default-src 'self'`, no plugins, no framing by other
+origins, `connect-src` limited to this origin and its WebSocket). Dev mode
+needs `script-src 'unsafe-inline'` for the in-browser compiler; the bundle's
+shell has no inline script, so its policy drops it. `'unsafe-inline'` in dev
+does not stop an injected script from running, which is one reason ADR-013
+matters.
 
-### ADR-012: The service worker is network-first for app code
+### ADR-012: The service worker precaches one complete, versioned shell
 
-**Context.** The static-asset strategy was stale-while-revalidate. Because the
-app's files are unhashed, an installed PWA served **old code on first load**
-and only revalidated in the background. Deploys appeared not to take. This cost
-hours of debugging where fixes "didn't work" — they had shipped fine and were
-being served from cache.
+**Context.** The first strategy was stale-while-revalidate over unhashed
+files: an installed PWA served **old code on first load** and deploys appeared
+not to take. The network-first replacement fixed that, but its install-time
+precache held only `index.html`, the stylesheet and the manifest, the scripts
+were cached piecemeal by later loads, and `/api-bridge.js` was excluded by the
+`/api` prefix — so the offline shell was blank after a fresh install or a
+deploy, and an offline sign-in ran the kit without its API bridge.
 
-**Decision.** App code is fetched network-first, with cache as an offline
-fallback only. The cache version was bumped so old caches are purged on
-activate.
+**Decision.** The server serves `/sw.js` with the shell's version and its
+COMPLETE precache list (every script, the stylesheet, manifest, icons;
+derived from `index.html` or the build manifest; never `/api` or `/ws`, matched
+by exact path segment). Install precaches all of it or fails, leaving the
+previous worker and cache in charge; activate deletes old caches only once the
+new one is complete; only install writes the cache. Hashed files are served
+cache-first, everything else network-first with the precached copy as the
+offline fallback; offline navigations get the precached shell.
 
-**Consequences.** (a) A deploy is visible on the next load. (b) Slightly more
-network on a warm start. (c) **For anyone verifying this app in a headless
-browser: pass `serviceWorkers: "block"`, or you will screenshot the previous
-build and believe it.**
+**Consequences.** (a) A deploy changes the shell version, hence the worker's
+bytes, hence a new install that precaches the new shell before taking over.
+(b) The app opens offline from the first launch after the worker has
+installed (one online visit), and shows the sign-in screen — clinical data
+always needs the network (ADR-008, ADR-013). (c) `npm run test:offline`
+proves this in real Chromium for both serving modes. (d) **For anyone
+verifying a UI change in a headless browser: pass `serviceWorkers: "block"`
+unless the service worker is what you are testing, or a stale worker can show
+you the previous build.**
 
 ### ADR-013: PHI is not persisted to browser storage
 
@@ -227,7 +266,14 @@ after login. Logout and lock clear the store key.
 
 **Consequences.** (a) A cold load re-fetches rather than showing instant stale
 clinical data — correct trade. (b) Layout customization still restores
-instantly, and still syncs across devices server-side.
+instantly, and still syncs across devices server-side. (c) Identity (`me`,
+`session`) is persisted only while signed in; sign-out leaves no name or user
+id in storage. (d) Because sign-out purges the snapshot, nothing in browser
+storage can be trusted to say *which kind of deployment* this is: the kit's
+offline demo (fabricated patients) is entered only when the server answered
+`/api/config` with `syntheticData:true` in the same page load, and a real
+session that loses its connection never keeps an optimistic admission or
+broadcast — it says nothing was sent (`tests/offline-signin.test.ts`).
 
 ### ADR-014: The lock screen re-authenticates against the server
 
@@ -239,7 +285,10 @@ client makes no local judgement about correctness.
 
 **Consequences.** (a) The control is real, and inherits the auth rate limiter.
 (b) The genuine automatic-logoff control remains the **server's** 15-minute
-rolling idle expiry; this screen is its companion, not a substitute.
+rolling idle expiry; this screen is its companion, not a substitute. (c) The
+lock is a storage flag shared by every tab, so a reload (F5) shows the lock
+screen again, and background polling pauses while locked so it cannot keep the
+rolling session alive.
 
 ### ADR-015: Rate limiting is on by default and must stay on
 
@@ -302,6 +351,33 @@ removed or found broken, the claim comes down in the same change.
 credentials are env-only, never in the database, never logged — saying so
 plainly was the better claim anyway.
 
+### ADR-019: Bind to loopback in production and trust proxies by address, never by hop count
+
+**Context.** `trust proxy` was the hop count `1`: "whatever connected to me is
+a proxy". Anyone able to reach the Node port directly could set
+`X-Forwarded-For` and choose their own `req.ip` — their rate-limit bucket and
+the address written to audit rows.
+
+**Decision.** `TRUST_PROXY` resolves to an address list (`server/config.ts`
+`resolveTrustProxy`): unset/`1`/`true` → `loopback` (Caddy on the same host,
+the documented AWS topology); `0`/`false` → nothing; otherwise a comma list of
+IPs, CIDRs and the keywords `loopback`, `linklocal`, `uniquelocal` (e.g. a
+PaaS load balancer on a private network — `render.yaml` uses `uniquelocal`). A
+legacy hop count ≥ 2 still works but is logged as spoofable. In production the
+server binds `127.0.0.1` unless `HOST` is set, so only the local proxy can
+reach it; a platform that connects over the network sets `HOST=0.0.0.0`.
+Forwarded headers are believed only from a trusted peer and only one hop.
+
+**Consequences.** (a) Behind Caddy nothing needs configuring. (b) A deployment
+whose proxy is not on the host must set both `HOST` and `TRUST_PROXY`, or it
+does not answer (loopback bind) or refuses sign-in with `insecure_transport`
+(the Secure cookie needs the proxy's `X-Forwarded-Proto` to be believed).
+`/api/health` reports `secure` so an operator can check through the proxy.
+(c) The address matching itself lives in `proxy-addr`; 2.0.7 let an IPv4 peer
+match an IPv6 trust range (GHSA-jqcg-44mw-7w3h), so the lockfile pins 2.0.8+
+and `tests/dependency-advisories.test.ts` checks both the version and the
+behaviour.
+
 ---
 
 ## Verification discipline
@@ -315,11 +391,19 @@ Nothing here is called "working" because it compiles.
   fine and the cache was stale.
 - **Security fixes are verified by re-running the exploit**, not by reading the
   patch: confirm it fails against the old code and passes against the new.
-- **The seed gate is real.** `/api/health` reports `persistent`, and the boot log
-  states which database and which seeding mode is active — so a deployment can be
-  checked rather than assumed.
-- **Wait for the server to be seeded, not merely listening.** `/api/health`
-  returns 200 before seeding finishes; poll a real login instead.
+- **The seed gate is real.** `/api/health` reports `persistent` / `storage` /
+  `durable` / `secure`, and the boot log states which database, session store,
+  proxy trust and seeding mode are active — so a deployment can be checked
+  rather than assumed.
+- **A healthy server is not proof the seed worked.** The server only starts
+  listening after its seed/ensure step, but a failure in that step is logged
+  (`[db] seed/ensure failed`) and the server listens anyway; a 200 from
+  `/api/health` therefore does not prove the demo accounts exist. Poll a real
+  login instead.
+- **Live-server harnesses are release gates.** `npm run test:ui`, `test:rt`,
+  `test:e2e` and the Chromium checks under `scripts/` exit non-zero on any
+  failed check, and the UI sweep fails if it ever finds itself signed out or
+  locked instead of on the screen it is named after.
 
 ---
 

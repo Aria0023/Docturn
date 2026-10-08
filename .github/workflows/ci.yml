@@ -111,14 +111,16 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      # Report (not block): production-dependency advisories are surfaced as a
-      # warning. Blocking is intentionally off because the current high-severity
-      # item (drizzle-orm SQLi advisory) needs a major-version upgrade tracked
-      # separately; flip `|| ...` to a hard failure once deps are clean.
+      # Production-dependency advisories. The tree is clean (express 4.22.3,
+      # proxy-addr 2.0.8, body-parser 1.20.8, qs 6.16.0, drizzle-orm 0.45.2 —
+      # tests/dependency-advisories.test.ts pins them), so a high/critical
+      # advisory now FAILS the build. Moderates are reported as a warning.
       - name: Dependency audit (production deps)
         run: |
+          npm audit --omit=dev --audit-level=moderate \
+            || echo "::warning title=Dependency audit::Moderate advisories in production deps — run 'npm audit --omit=dev' and upgrade."
           npm audit --omit=dev --audit-level=high \
-            || echo "::warning title=Dependency audit::High/critical vulnerabilities in production deps — run 'npm audit --omit=dev' and upgrade."
+            || { echo "::error title=Dependency audit::High/critical vulnerabilities in production deps — run 'npm audit --omit=dev' and upgrade."; exit 1; }
       # Secret scanning IS blocking — a real credential must never merge. Values
       # are redacted so nothing sensitive is ever printed to the build log.
       - name: Secret scan (gitleaks, redacted)

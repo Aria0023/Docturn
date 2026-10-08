@@ -18,6 +18,15 @@
   var DT = window.DT;
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
+  // True only once GET /api/config has answered syntheticData:true in THIS page
+  // load. The offline demo fallbacks (sign-in, role switch) require it; the
+  // store's persisted `syntheticData` flag is a banner default, not evidence.
+  var serverSaidSynthetic = false;
+  // True while the signed-in UI is the kit's LOCAL demo (entered by the offline
+  // fallbacks below), never for a real server session. Only a local demo may
+  // keep optimistic results when the network fails; a real session must say
+  // that nothing reached the server.
+  var localDemoSession = false;
   var meId = null;   // current user's backend id (for messaging "me" / participants)
   var auditLoaded = false; // fetch the per-org audit trail once per context, then only while viewing Compliance
   var prefsLoaded = false; // load per-org consult catalog + theme once per context (later rehydrates keep local edits)
@@ -113,7 +122,7 @@
     newAuthEpoch();
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
-    meId = null; lastAuth = null;
+    meId = null; lastAuth = null; localDemoSession = false;
     dashHydrated = false; lastDashSnap = null;
     mfaFlagged = false; pendingMfaFinish = null;
     // UI flags first, then the store's logout (which purges the persisted
@@ -1163,6 +1172,7 @@
     }
 
     function finish(u) {
+      localDemoSession = false;
       lastAuth = { org: orgCode, username: u.username };
       newAuthEpoch();
       meId = u.id;
@@ -1241,11 +1251,16 @@
     return doLogin(role, org, user, pass).catch(function (e) {
       var synthetic = DT.getState().syntheticData !== false;
       if (isNetworkError(e)) {
-        if (synthetic) {
+        if (synthetic && serverSaidSynthetic) {
           // Synthetic demo only: server down → local demo data so the UI is
           // still explorable. Never on a real-PHI deployment, where a signed-in
-          // screen with fabricated patients would be actively dangerous.
+          // screen with fabricated patients would be actively dangerous — and
+          // the store's flag alone does not prove which deployment this is: it
+          // defaults to ON and sign-out purges the snapshot that remembers it,
+          // so an installed app relaunched offline would otherwise "sign in"
+          // to fabricated data on a real-PHI instance (A.CON-MIN-9).
           origLogin(role, org, user);
+          localDemoSession = true;
           DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
           return;
         }
@@ -1288,7 +1303,11 @@
     var demo = DT.demoAccount(role);
     doLogin(role, demo.org, demo.user, demo.pass).catch(function (e) {
       if (isNetworkError(e)) {
-        if (origSetRole) origSetRole(role);
+        // Same rule as sign-in: a local role flip onto demo data only when the
+        // server has confirmed, in this page load, that this is a synthetic
+        // instance.
+        if (serverSaidSynthetic && origSetRole) { origSetRole(role); localDemoSession = true; return; }
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: "No connection — nothing was changed." }; return s; });
         return;
       }
       var msg = role === "developer" ? devAccountHint()
@@ -1884,7 +1903,7 @@
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
     newAuthEpoch();
-    meId = null; lastAuth = null;
+    meId = null; lastAuth = null; localDemoSession = false;
     dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
     mfaFlagged = false; pwChangeFlagged = false; pendingMfaFinish = null;
     // UI flags BEFORE the store's logout: it purges the persisted snapshot,
@@ -2365,17 +2384,21 @@
     }).then(function (p) {
       return api("POST", "/api/assignments", { patientId: p.id, mode: mode, hospitalistId: bid(provider.id) });
     }).then(rehydrate).catch(function (e) {
-      // Network failure → keep the optimistic row (offline demo mode). But a
-      // server REJECTION (e.g. this tab's session is signed in as a different
-      // role because two tabs in one browser share a cookie) must NOT look like
-      // success: undo the optimistic row and tell the user what happened.
-      if (isNetworkError(e)) return;
+      // Network failure in the LOCAL offline demo → keep the optimistic row. In
+      // a real session a network failure means the admission never reached the
+      // server and nobody was notified, and a server REJECTION (e.g. this tab is
+      // signed in as a different role because two tabs in one browser share a
+      // cookie) must not look like success either: undo the optimistic row and
+      // say what happened.
+      var offline = isNetworkError(e);
+      if (offline && localDemoSession) return;
       var why = String((e && e.message) || "");
       DT.set(function (s) {
         s.sent = (s.sent || []).filter(function (x) { return x.id !== sentId; });
         s.admissions = (s.admissions || []).filter(function (x) { return x.id !== admId; });
         s.__toast = { tone: "rejected", title: "Couldn't send assignment",
-          msg: /forbidden|role|unauthor/i.test(why)
+          msg: offline ? "No connection — the admission was NOT sent and nobody was notified. Send it again when you're back online."
+          : /forbidden|role|unauthor/i.test(why)
             ? "This tab isn't signed in as an ER physician. Two tabs in one browser share a login — use a separate browser or device per user."
             : (/no.?provider/i.test(why) ? "No eligible hospitalist is on shift to receive this." : "The server rejected this admission — please retry.") };
         return s;
@@ -2433,10 +2456,12 @@
       });
       return hydrateBroadcasts();
     }).catch(function (e) {
-      // Backend unreachable → the kit's local demo behaviour; a server
-      // REJECTION must not look like success.
-      if (isNetworkError(e) && origSendBroadcast) return origSendBroadcast(data);
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: String((e && e.message) || "The server rejected it.") }; return s; });
+      // Backend unreachable → the kit's local behaviour, but ONLY in the local
+      // offline demo; in a real session nobody was alerted and the sender must
+      // know. A server REJECTION must not look like success either.
+      var offline = isNetworkError(e);
+      if (offline && localDemoSession && origSendBroadcast) return origSendBroadcast(data);
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: offline ? "No connection — nobody was alerted. Send it again when you're back online." : String((e && e.message) || "The server rejected it.") }; return s; });
     });
   };
   DT.actions.addProvider = function (data) {
@@ -2813,6 +2838,7 @@
     return rawApi("GET", "/api/user").then(function (u) {
       if (!u || u.id == null) throw new Error("no_session");
       var orgCode = orgForRole(u.role, savedSess && savedSess.org);
+      localDemoSession = false;
       lastAuth = { role: u.role, org: orgCode };
       newAuthEpoch();
       meId = u.id;
@@ -2857,8 +2883,11 @@
   // Load public client config (synthetic-data flag + app name) before/after login
   // so the test-only banner reflects the server. Defaults to synthetic ON.
   rawApi("GET", "/api/config").then(function (cfg) {
-    if (cfg) DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
-  }).catch(function () { /* keep the safe default (synthetic on) */ });
+    if (cfg) {
+      serverSaidSynthetic = cfg.syntheticData === true;
+      DT.set(function (s) { s.syntheticData = cfg.syntheticData !== false; return s; });
+    }
+  }).catch(function () { /* keep the banner default (synthetic on); serverSaidSynthetic stays false */ });
 
   // ==== modules: per-org feature switches (server-enforced) — BEGIN =========
   // Registry + effective map come from /api/modules (shared/modules.ts). The
