@@ -23,6 +23,7 @@ import {
   AUTH_RATE_LIMIT,
   SESSION_POLICY,
   getRateLimitState,
+  getSessionStoreState,
   securityHeaders,
   sessionCookieOptions,
 } from "../config.js";
@@ -244,30 +245,50 @@ const checks: Record<string, CheckFn> = {
     };
   },
 
-  /** Presence and length only — the secret's value is never read or exported. */
+  /**
+   * Presence and length only — the secret's value is never read or exported.
+   * Also names the session STORE this process actually built (server/
+   * session-store.ts records it): a long secret only lets sessions survive a
+   * restart when they are persisted in Postgres; with the in-memory store a
+   * restart still signs everyone out, and the detail says so.
+   */
   "session-secret": async () => {
     const raw = process.env.SESSION_SECRET;
     const present = typeof raw === "string" && raw.length > 0;
     const length = present ? raw.length : 0;
+    const storeState = getSessionStoreState();
+    const storeNote =
+      storeState.kind === "postgres"
+        ? " Sessions are persisted in the Postgres `session` table (connect-pg-simple), so they survive a restart and are shared across instances."
+        : storeState.kind === "memory"
+          ? " Sessions are held in this process's memory (PGlite instance): a restart signs every user out regardless of the secret, and a second instance cannot share them."
+          : "";
+    const evidence = {
+      minimumLength: 32,
+      sessionStore: storeState.kind,
+      sessionStoreReason: storeState.reason,
+      source: "server/session-store.ts (the store createApp() mounted)",
+    };
     if (!present) {
       return {
         status: "fail",
         detail:
-          "SESSION_SECRET is not set in the environment, so the app is signing sessions with a per-process random fallback: every restart invalidates all sessions and multiple instances cannot share them.",
-        evidence: { set: false, length: 0, minimumLength: 32 },
+          "SESSION_SECRET is not set in the environment, so the app is signing sessions with a per-process random fallback: every restart invalidates all sessions and multiple instances cannot share them." +
+          storeNote,
+        evidence: { set: false, length: 0, ...evidence },
       };
     }
     if (length < 32) {
       return {
         status: "fail",
-        detail: `SESSION_SECRET is set but is only ${length} characters; at least 32 are required.`,
-        evidence: { set: true, length, minimumLength: 32 },
+        detail: `SESSION_SECRET is set but is only ${length} characters; at least 32 are required.${storeNote}`,
+        evidence: { set: true, length, ...evidence },
       };
     }
     return {
       status: "pass",
-      detail: `SESSION_SECRET is supplied by the environment and is ${length} characters long.`,
-      evidence: { set: true, length, minimumLength: 32 },
+      detail: `SESSION_SECRET is supplied by the environment and is ${length} characters long.${storeNote}`,
+      evidence: { set: true, length, ...evidence },
     };
   },
 
@@ -301,17 +322,32 @@ const checks: Record<string, CheckFn> = {
   /**
    * Deliberately never "pass": the application can see WHICH database it is
    * talking to, but disk encryption and the BAA live in the hosting tier.
+   * The PGlite wording is precise about what the store IS: on disk it
+   * persists across restarts (it is not ephemeral) and the application does
+   * not encrypt it — plain data files on the local filesystem.
    */
   "encryption-at-rest": async () => {
-    const ephemeral = getHandle().ephemeral;
+    const h = getHandle();
+    const detail =
+      h.storage === "postgres"
+        ? "The database is a persistent external Postgres (DATABASE_URL is set). Code inside the application cannot observe disk-level encryption or backup encryption — a human must confirm the storage tier's encryption-at-rest setting and the signed BAA with the provider."
+        : h.storage === "pglite-disk"
+          ? "The database is the on-disk PGlite store (PGLITE_DIR) — a single-process dev/trial database. Its data PERSISTS across restarts, and the application does NOT encrypt it: the rows are plain PGlite data files on the local disk, so no encryption-at-rest claim can be made. A human must move this instance onto a managed Postgres with encryption at rest under a signed BAA and confirm it."
+          : "The database is an in-memory PGlite instance — data does not survive a restart, nothing is written to disk, and no encryption-at-rest claim applies. This is a test configuration, not a deployment: a human must confirm the real deployment runs on a managed Postgres with encryption at rest under a signed BAA.";
     return {
       status: "manual",
-      detail: ephemeral
-        ? "The database is the EPHEMERAL in-process store (PGlite) — data does not survive a restart and no encryption-at-rest claim can be made. A human must move this instance onto a managed Postgres with encryption at rest under a signed BAA and confirm it."
-        : "The database is a persistent external Postgres (DATABASE_URL is set). Code inside the application cannot observe disk-level encryption or backup encryption — a human must confirm the storage tier's encryption-at-rest setting and the signed BAA with the provider.",
+      detail,
       evidence: {
-        persistent: !ephemeral,
-        driver: ephemeral ? "pglite (in-process)" : "postgres (external)",
+        persistent: !h.ephemeral,
+        storage: h.storage,
+        durable: h.durable,
+        applicationEncryptsDatabaseFiles: false,
+        driver:
+          h.storage === "postgres"
+            ? "postgres (external)"
+            : h.storage === "pglite-disk"
+              ? "pglite (in-process, on-disk data directory, unencrypted)"
+              : "pglite (in-process, in-memory)",
         whatCodeCannotSee: [
           "disk / volume encryption setting",
           "backup encryption and retention",

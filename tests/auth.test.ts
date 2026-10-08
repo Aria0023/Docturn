@@ -61,9 +61,17 @@ describe("auth", () => {
   it("health endpoint reports the database is up", async () => {
     const res = await supertest(ctx.app).get("/api/health");
     expect(res.status).toBe(200);
-    // `persistent` distinguishes a real Postgres from the ephemeral in-process
-    // store; tests run on the latter, so it is false here.
-    expect(res.body).toEqual({ ok: true, db: "up", persistent: false });
+    // `persistent` distinguishes a real Postgres from the in-process PGlite
+    // store; `storage`/`durable` say precisely which store this is (tests run
+    // on the in-memory one); `secure` is whether THIS request was HTTPS.
+    expect(res.body).toEqual({
+      ok: true,
+      db: "up",
+      persistent: false,
+      storage: "pglite-memory",
+      durable: false,
+      secure: false,
+    });
   });
 
   it("never exposes passwordHash in the registration approval queue", async () => {

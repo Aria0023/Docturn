@@ -3,14 +3,31 @@ import { sql } from "drizzle-orm";
 import { getDb, getHandle } from "../db.js";
 
 export function registerHealthRoutes(app: Express) {
-  app.get("/api/health", async (_req, res) => {
+  app.get("/api/health", async (req, res) => {
     try {
       await getDb().execute(sql`SELECT 1`);
-      // `persistent` = backed by a real Postgres (data survives restarts).
-      // false = ephemeral in-process PGlite (a fresh deploy that hasn't been
-      // wired to a database yet) — an at-a-glance check that the persistent
-      // multi-user setup is actually live.
-      res.json({ ok: true, db: "up", persistent: !getHandle().ephemeral });
+      const h = getHandle();
+      // Unauthenticated endpoint: describe the store truthfully, never leak a
+      // filesystem path or connection detail.
+      //  persistent — backed by a real external Postgres (DATABASE_URL). The
+      //               deploy scripts (deploy/aws/update.sh) key on this to
+      //               confirm the app is on RDS and not a local store.
+      //  storage    — postgres | pglite-disk | pglite-memory (server/db.ts).
+      //  durable    — rows survive a process restart. TRUE for the on-disk
+      //               PGlite store too: it is a single-process, unencrypted
+      //               dev/trial database, not an ephemeral one.
+      //  secure     — whether THIS request was seen as HTTPS (directly or via a
+      //               trusted X-Forwarded-Proto). In production the session
+      //               cookie is Secure, so if a curl through the proxy shows
+      //               false here, logins will be refused (insecure_transport).
+      res.json({
+        ok: true,
+        db: "up",
+        persistent: !h.ephemeral,
+        storage: h.storage,
+        durable: h.durable,
+        secure: req.secure,
+      });
     } catch {
       res.status(503).json({ ok: false, db: "down" });
     }

@@ -13,10 +13,33 @@ import * as schema from "@shared/schema";
 
 export type DbType = ReturnType<typeof drizzlePg<typeof schema>>;
 
+/**
+ * Where the rows actually live. Spelled out because "ephemeral" alone was
+ * misleading: an on-disk PGlite store DOES survive a restart — it is simply a
+ * single-process, unencrypted dev/trial database, not a production one.
+ *
+ *  - postgres       external Postgres via DATABASE_URL (RDS etc.). Durable,
+ *                   multi-instance, encryption-at-rest is the hosting tier's.
+ *  - pglite-disk    PGlite data files under `dataDir` (PGLITE_DIR, default
+ *                   ./.pglite). Durable across restarts, single process only,
+ *                   NOT encrypted by the application — plain files on disk.
+ *  - pglite-memory  PGlite with no directory (tests). Gone when the process
+ *                   exits.
+ */
+export type DbStorageKind = "postgres" | "pglite-disk" | "pglite-memory";
+
 export interface DbHandle {
   db: DbType;
   /** Whether we are running on in-process PGlite (true) or a real Postgres pool. */
   ephemeral: boolean;
+  /** Precise description of the store (see DbStorageKind). */
+  storage: DbStorageKind;
+  /** PGlite data directory when storage === "pglite-disk". Never sent to clients. */
+  dataDir?: string;
+  /** Rows survive a process restart (postgres and pglite-disk). */
+  durable: boolean;
+  /** The pg.Pool behind a real Postgres handle (shared with the session store). */
+  pool?: pg.Pool;
   /** Push the schema. Only meaningful for PGlite; for real PG use `drizzle-kit push`. */
   ensureSchema: () => Promise<void>;
   close: () => Promise<void>;
@@ -115,6 +138,9 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
     return {
       db,
       ephemeral: false,
+      storage: "postgres",
+      durable: true,
+      pool,
       ensureSchema: async () => {
         // A fresh cloud Postgres (e.g. a new Render database) starts with zero
         // tables. Apply the SAME idempotent DDL we use for PGlite so the app
@@ -131,13 +157,16 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
     };
   }
 
-  // PGlite: persistent dir for the app (so `seed` and `dev` share state),
-  // in-memory for tests (isolation).
+  // PGlite: on-disk directory for the app (so `seed` and `dev` share state and
+  // data persists across restarts), in-memory for tests (isolation).
   const client = opts.pgliteDir ? new PGlite(opts.pgliteDir) : new PGlite();
   const db = drizzlePglite(client, { schema }) as unknown as DbType;
   return {
     db,
     ephemeral: true,
+    storage: opts.pgliteDir ? "pglite-disk" : "pglite-memory",
+    ...(opts.pgliteDir ? { dataDir: opts.pgliteDir } : {}),
+    durable: Boolean(opts.pgliteDir),
     ensureSchema: async () => {
       await pushSchema(client);
     },
