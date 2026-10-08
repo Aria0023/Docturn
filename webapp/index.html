@@ -137,7 +137,13 @@
   }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
-     behind hospital/corporate firewalls that block unpkg). -->
+     behind hospital/corporate firewalls that block unpkg).
+     This document is the DEVELOPMENT shell (development React + in-browser
+     Babel). `npm run build:webapp` (scripts/build-webapp.mjs) turns it into
+     webapp/dist/index.html: the inline script above and the scripts below are
+     bundled in order with production React, every text/babel script is
+     precompiled, and nothing inline is left. Production serves that build and
+     refuses a stale one (server/webapp-static.ts), so edit THIS file. -->
 <script src="/assets/vendor/react.js"></script>
 <script src="/assets/vendor/react-dom.js"></script>
 <script src="/assets/vendor/babel.min.js"></script>

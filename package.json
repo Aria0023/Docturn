@@ -10,8 +10,9 @@
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "dev:client": "npm --prefix client install && npm --prefix client run dev",
-    "build": "npm run build:client && tsc -p tsconfig.json",
+    "build": "npm run build:client && npm run build:webapp && tsc -p tsconfig.json",
     "build:client": "npm --prefix client install --include=dev && npm --prefix client run build",
+    "build:webapp": "node scripts/build-webapp.mjs",
     "start": "node --import ./scripts/shared-alias-loader.mjs dist/server/index.js",
     "serve": "tsx server/index.ts",
     "seed": "tsx server/seed.ts",
@@ -23,6 +24,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:e2e": "node scripts/interop-unified.mjs",
     "test:login": "node scripts/login-e2e.mjs",
+    "test:offline": "tsx scripts/pwa-offline-check.mjs",
+    "perf:load": "node scripts/load-perf.mjs",
     "test:interop": "node scripts/interop-unified.mjs"
   },
   "dependencies": {
