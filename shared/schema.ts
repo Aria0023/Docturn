@@ -300,6 +300,12 @@ export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").references(() => organizations.id),
   userId: integer("user_id").references(() => users.id),
+  // The REAL operator when `user_id` is a borrowed identity: a developer who
+  // entered an impersonated / managed-org session (server/audit.ts merges it
+  // from the request context). NULL for an ordinary session. No FK on purpose:
+  // the attribution must outlive the operator account and never block a
+  // tenant or user delete.
+  impersonatorUserId: integer("impersonator_user_id"),
   action: text("action").notNull(),
   resourceType: text("resource_type"),
   resourceId: integer("resource_id"),
@@ -319,6 +325,9 @@ export const phiAccessLogs = pgTable("phi_access_logs", {
   // tenant deletion), and it must never carry clinical content — ids only.
   resourceId: integer("resource_id"),
   patientId: integer("patient_id"),
+  // WHO was really at the keyboard when `user_id` is an impersonated identity
+  // (§164.528 names the person, not the borrowed login). NULL otherwise; no FK.
+  impersonatorUserId: integer("impersonator_user_id"),
   method: text("method").notNull(),
   ip: text("ip"),
   userAgent: text("user_agent"),

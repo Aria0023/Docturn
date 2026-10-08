@@ -373,6 +373,10 @@ CREATE TABLE IF NOT EXISTS phi_access_logs (
 -- and nullable so stores written before these columns existed keep their rows.
 ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS resource_id INTEGER;
 ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS patient_id INTEGER;
+-- The real operator behind an impersonated / managed-org session (NULL for an
+-- ordinary session; no FK so it outlives the operator account).
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS impersonator_user_id INTEGER;
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS impersonator_user_id INTEGER;
 
 -- Six-year compliance archive: audit / PHI-access / security rows copied out of
 -- a tenant before it is deleted, denormalized and WITHOUT foreign keys so they

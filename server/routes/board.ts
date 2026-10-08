@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createConsultSchema, updateConsultSchema, type PatientConsult } from "@shared/schema";
 import { logPhiAccess } from "../audit.js";
+import { parseId } from "../params.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -120,18 +121,34 @@ export function registerBoardRoutes(app: Express) {
     },
   );
 
-  // Consults feed the board's Consultants column.
-  app.get("/api/patients/:id/consults", requireAuth, async (req, res) => {
-    const me = currentUser(req);
-    const patientId = Number(req.params.id);
-    // Consults are clinical content about a named patient — audited per read,
-    // with the patient identified so §164.528 accounting can be answered.
-    await logPhiAccess(req, "patient-consults", {
-      resourceId: patientId,
-      patientId,
-    });
-    res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
-  });
+  // Consults feed the board's Consultants column. Same audience as the board
+  // itself: clinical roles only — platform operators don't read tenant PHI.
+  app.get(
+    "/api/patients/:id/consults",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      // Validate, then prove ownership, and only THEN account the read: a
+      // malformed, foreign or unknown id discloses nothing, so it must not
+      // leave a §164.528 row behind (and NaN must never reach the database,
+      // where it used to throw and hang the request). The app-wide :id guard
+      // (server/params.ts) answers a malformed id with 404 before this runs;
+      // re-checked here so the handler is safe on its own.
+      const patientId = parseId(req.params.id);
+      if (patientId === null) return res.status(404).json({ error: "not_found" });
+      const patient = await storage().getPatient(me.organizationId, patientId);
+      // Cross-tenant and nonexistent look identical — no existence oracle.
+      if (!patient) return res.status(404).json({ error: "not_found" });
+      // Consults are clinical content about a named patient — audited per read,
+      // with the patient identified so §164.528 accounting can be answered.
+      await logPhiAccess(req, "patient-consults", {
+        resourceId: patientId,
+        patientId,
+      });
+      res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
+    },
+  );
 
   app.post(
     "/api/patients/:id/consults",

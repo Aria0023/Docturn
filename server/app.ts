@@ -10,6 +10,7 @@ import express, { type Express, type NextFunction, type Request, type RequestHan
 import session from "express-session";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
+import { actorContextMiddleware } from "./audit.js";
 import { configurePassport, verifyPassword } from "./auth.js";
 import {
   ACCOUNT_RATE_LIMIT,
@@ -115,6 +116,13 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // identity without colliding on the shared session cookie. Additive — a
   // request with no token is unaffected.
   app.use(demoTokenAuth());
+  // Request-scoped actor context: who is REALLY acting when the session is an
+  // impersonated / managed-org one (server/routes/dev.ts records the developer
+  // in req.session.impersonatorId). appendAudit()/logPhiAccess() merge it into
+  // every audit + PHI-access row written during the request, so no route has
+  // to know. After session/passport so the session is resolved; before the
+  // routes so every handler runs inside the context.
+  app.use(actorContextMiddleware());
   // Feature-module gate: per-org on/off switches enforced centrally (one table
   // in server/modules.ts) so route files stay untouched. After session/passport
   // so currentUser(req) is populated; before registerRoutes so it wins.

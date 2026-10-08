@@ -130,11 +130,16 @@ export function registerMfaRoutes(app: Express) {
     const parsed = completeLoginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
 
+    // Resolve the pending account FIRST so a failed factor is filed under the
+    // user's own organization: a NULL-org row is invisible to every tenant
+    // audit view and to the six-year archive, and (being user-keyed) used to
+    // FK-block that tenant's force-delete.
+    const user = await storage().getUserById(pendingId);
     const ok = await completeSecondFactor(pendingId, parsed.data.code);
     if (!ok) {
       await appendAudit({
-        organizationId: null,
-        userId: pendingId,
+        organizationId: user?.organizationId ?? null,
+        userId: user ? pendingId : null,
         action: "mfa.failed",
         resourceType: "user",
         resourceId: pendingId,
@@ -144,7 +149,6 @@ export function registerMfaRoutes(app: Express) {
       return res.status(401).json({ error: "invalid_code" });
     }
 
-    const user = await storage().getUserById(pendingId);
     if (!user) return res.status(401).json({ error: "invalid_code" });
     delete req.session.pendingMfaUserId;
     req.login(user as unknown as Express.User, (err) => {
