@@ -47,13 +47,19 @@ function LoginScreen({ onLogin, appName }) {
     { id: "director", label: "Hospitalist director", icon: "clipboard-list" },
     { id: "developer", label: "Developer", icon: "terminal" },
   ];
-  const regRoles = roles.filter((r) => r.id !== "developer"); // no self-register as root
+  // Only the roles the server accepts from a stranger (SELF_REGISTRABLE_ROLES in
+  // shared/schema.ts): POST /api/register answers 400 role_not_self_registrable
+  // for director / ER director / developer, which an administrator provisions.
+  const regRoles = roles.filter((r) => r.id === "hospitalist" || r.id === "er_doctor");
+  // Same floor the server enforces (MIN_PASSWORD_LENGTH + isForbiddenPassword in
+  // server/auth.ts); the demo/default-password refusal is the server's to make.
+  const REG_MIN_PASSWORD = 8;
 
   function submitRegister() {
     if (regBusy) return;
     setRegErr(null); setRegMsg(null);
-    if (!reg.org.trim() || !reg.name.trim() || reg.user.trim().length < 3 || reg.pass.length < 6) {
-      setRegErr("Enter an org code, your name, a username (3+ chars) and a password (6+ chars).");
+    if (!reg.org.trim() || !reg.name.trim() || reg.user.trim().length < 3 || reg.pass.length < REG_MIN_PASSWORD) {
+      setRegErr("Enter an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).");
       return;
     }
     setRegBusy(true);
@@ -61,7 +67,14 @@ function LoginScreen({ onLogin, appName }) {
       .then(function () { setRegMsg("Request sent — a director will review and approve your account. You can sign in once approved."); setReg(Object.assign({}, reg, { name: "", user: "", pass: "" })); })
       .catch(function (e) {
         var m = String((e && e.message) || "");
-        setRegErr(/organization/i.test(m) ? "That organization code wasn't found." : /taken/i.test(m) ? "That username is already taken." : /pending/i.test(m) ? "A request for that username is already awaiting approval." : "Couldn't send the request — please try again.");
+        setRegErr(
+          /weak_password/.test(m) ? "Choose a stronger password: at least " + REG_MIN_PASSWORD + " characters, and not a demo or default password."
+          : /role_not_self_registrable/.test(m) ? "Director accounts are set up by an administrator. Request a Hospitalist or ER physician account."
+          : (e && e.status === 429) || /rate_limited/.test(m) ? "Too many requests from this device. Wait a few minutes and try again."
+          : /organization/i.test(m) ? "That organization code wasn't found."
+          : /pending/i.test(m) ? "A request for that username is already awaiting approval."
+          : /validation_error/.test(m) ? "Check the form: an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters)."
+          : "Couldn't send the request — please try again.");
       })
       .finally(function () { setRegBusy(false); });
   }
@@ -141,7 +154,7 @@ function LoginScreen({ onLogin, appName }) {
             <Field label="Organization code" icon="building-2" value={reg.org} onChange={(v) => setReg(Object.assign({}, reg, { org: v }))} help="The code your hospital gave you (e.g. ISPN)." {...ORG_PROPS} />
             <Field label="Full name" icon="user" value={reg.name} onChange={(v) => setReg(Object.assign({}, reg, { name: v }))} placeholder="Dr. Jane Smith" name="name" autoComplete="name" autoCapitalize="words" autoCorrect="off" spellCheck={false} enterKeyHint="next" />
             <Field label="Username" icon="at-sign" value={reg.user} onChange={(v) => setReg(Object.assign({}, reg, { user: v }))} placeholder="jsmith" {...USER_PROPS} />
-            <Field label="Password" icon="lock" type="password" value={reg.pass} onChange={(v) => setReg(Object.assign({}, reg, { pass: v }))} help="At least 6 characters." name="new-password" autoComplete="new-password" enterKeyHint="done" />
+            <Field label="Password" icon="lock" type="password" value={reg.pass} onChange={(v) => setReg(Object.assign({}, reg, { pass: v }))} help={"At least " + REG_MIN_PASSWORD + " characters, not a demo or default password."} name="new-password" autoComplete="new-password" enterKeyHint="done" />
             <div>
               <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>I'm a…</label>
               {roleGrid(regRoles, reg.role, (id) => setReg(Object.assign({}, reg, { role: id })))}
