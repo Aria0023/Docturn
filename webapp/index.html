@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Every asset below is root-absolute and the base is the origin root, so a
+     deep link such as /messages/42 or a trailing-slash path (which the SPA
+     fallback answers with this document) loads the same shell instead of
+     requesting /messages/tokens.css and failing nosniff (A.CON-SHO-58). -->
+<base href="/">
 <title>DocTurn — Clinical Web App (Extended UI Kit)</title>
 <!-- PWA: the full web app is installable to a phone home screen and push-capable. -->
 <link rel="manifest" href="/manifest.webmanifest">
@@ -27,12 +32,60 @@
     window.__dtInstallEvent = e;
     window.dispatchEvent(new Event("dt-installable"));
   });
+  // App lock flag (A.CON-SHO-7). The lock must survive a reload, so the flag —
+  // plus the non-PHI identity the lock screen needs to re-authenticate (org
+  // code, username, display name, role) — lives in storage under its OWN key:
+  // DT.purgePersisted() drops the store snapshot on lock and leaves this
+  // intact, and every tab of this browser sees the same locked state
+  // (localStorage; sessionStorage if that is unavailable). It is cleared only
+  // by a successful server re-authentication or by signing out. api-bridge.js
+  // reads isLocked() to pause its background polling while locked.
+  window.__dtLock = (function () {
+    var KEY = "docturn.lock";
+    function stores() {
+      var out = [];
+      try { if (window.localStorage) out.push(window.localStorage); } catch (e) {}
+      try { if (window.sessionStorage) out.push(window.sessionStorage); } catch (e) {}
+      return out;
+    }
+    function read() {
+      var raw = null;
+      stores().some(function (s) { try { raw = s.getItem(KEY); } catch (e) { raw = null; } return !!raw; });
+      if (!raw) return null;
+      try { var v = JSON.parse(raw); return (v && v.locked && v.org && v.user) ? v : null; } catch (e) { return null; }
+    }
+    return {
+      KEY: KEY,
+      read: read,
+      isLocked: function () { return !!read(); },
+      set: function (identity) {
+        if (!identity || !identity.org || !identity.user) return false;
+        var v = JSON.stringify({ locked: true, at: Date.now(), org: identity.org, user: identity.user, name: identity.name || null, role: identity.role || null });
+        return stores().some(function (s) { try { s.setItem(KEY, v); return true; } catch (e) { return false; } });
+      },
+      clear: function () { stores().forEach(function (s) { try { s.removeItem(KEY); } catch (e) {} }); },
+    };
+  })();
 </script>
-<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="/tokens.css">
 <style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  /* Safe-area insets (notch / home indicator / landscape ears) as variables:
+     one source of truth for both shells, and a test stylesheet can override
+     them to simulate a Face-ID iPhone (A.CON-SHO-42/45/46/60, A.CON-NEE-2). */
+  :root {
+    --sai-top: env(safe-area-inset-top, 0px);
+    --sai-right: env(safe-area-inset-right, 0px);
+    --sai-bottom: env(safe-area-inset-bottom, 0px);
+    --sai-left: env(safe-area-inset-left, 0px);
+  }
+  /* iOS polish (A.CON-MIN-16): no grey UA tap flash on controls, no rubber-band
+     over-scroll of the whole document behind the fixed shells, no automatic
+     text inflation when the phone rotates. */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { font-family: var(--font-sans); color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  /* Controls act on the first tap: no 300 ms double-tap-zoom wait. */
+  button, [role="button"], a, label, select, input, textarea { touch-action: manipulation; }
   :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: hsl(214 25% 86%); border-radius: 99px; border: 2px solid #fff; }
@@ -40,21 +93,57 @@
   @keyframes dt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
+  /* Mobile shell height: 100vh for engines without dvh (iOS < 15.4), 100dvh
+     where supported so Safari's collapsing toolbar never leaves a gap. An
+     inline style object cannot hold two values for one property, hence a class. */
+  .dt-mobile-shell { height: 100vh; height: 100dvh; }
+  /* Demo-only topbar controls hide on narrow desktop windows (A.CON-MIN-10). */
+  @media (max-width: 1000px) { .dt-hide-narrow { display: none !important; } }
   /* Phone: collapse the kit's inline multi-column grids to a single column so
-     dashboards/forms stack instead of overflowing. */
+     dashboards/forms stack instead of overflowing. Grids that must keep their
+     columns (the login role picker, A.CON-MIN-12) opt out with data-keep-cols. */
   @media (max-width: 760px) {
-    div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+    div[style*="grid-template-columns"]:not([data-keep-cols]) { grid-template-columns: 1fr !important; }
+    div[data-keep-cols="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     img, svg, table { max-width: 100%; }
+  }
+  /* Phones and other touch devices ------------------------------------------ */
+  @media (max-width: 760px), ((hover: none) and (pointer: coarse)) {
+    /* iOS Safari zooms the page when a focused control's font is under 16px and
+       the zoom sticks in the installed PWA. A stylesheet !important beats the
+       kit's inline React styles, so this one rule covers every current and
+       future control (A.CON-SHO-12/44/51/57). The viewport meta deliberately
+       keeps user scaling (no maximum-scale=1). */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+    select, textarea { font-size: 16px !important; }
+    /* The kit's Field wrapper (components.jsx) grows from 40px to a 44pt row. */
+    .dt-field { height: auto !important; min-height: 44px; }
+    /* Legibility floor: no UI text under 12px on a phone (A.CON-MIN-11). The
+       kit sets sizes inline (React serialises fontSize: 10.5 as
+       "font-size: 10.5px"), so match those attribute values and floor them —
+       this reaches every screen, not just the shell. */
+    [style*="font-size: 5px"], [style*="font-size: 5."], [style*="font-size: 6px"], [style*="font-size: 6."],
+    [style*="font-size: 7px"], [style*="font-size: 7."], [style*="font-size: 8px"], [style*="font-size: 8."],
+    [style*="font-size: 9px"], [style*="font-size: 9."], [style*="font-size: 10px"], [style*="font-size: 10."],
+    [style*="font-size: 11px"], [style*="font-size: 11."] { font-size: 12px !important; }
+  }
+  @media (hover: none) and (pointer: coarse) {
+    /* 44×44 CSS px minimum tap target for every control (Apple HIG, WCAG
+       2.5.5) — min-* wins over the kit's inline width/height (A.CON-SHO-52). */
+    button, [role="button"], select,
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]) { min-height: 44px; }
+    button, [role="button"] { min-width: 44px; }
+    input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; }
   }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
      behind hospital/corporate firewalls that block unpkg). -->
-<script src="assets/vendor/react.js"></script>
-<script src="assets/vendor/react-dom.js"></script>
-<script src="assets/vendor/babel.min.js"></script>
-<script src="assets/vendor/lucide.min.js"></script>
-<script src="store.js"></script>
-<script src="api-bridge.js"></script>
+<script src="/assets/vendor/react.js"></script>
+<script src="/assets/vendor/react-dom.js"></script>
+<script src="/assets/vendor/babel.min.js"></script>
+<script src="/assets/vendor/lucide.min.js"></script>
+<script src="/store.js"></script>
+<script src="/api-bridge.js"></script>
 </head>
 <body>
 <template id="__bundler_thumbnail">
@@ -65,42 +154,42 @@
 </template>
 <div id="root"></div>
 
-<script type="text/babel" src="components.jsx"></script>
-<script type="text/babel" src="InstallPrompt.jsx"></script>
-<script type="text/babel" src="CustomizableStats.jsx"></script>
-<script type="text/babel" src="LoginScreen.jsx"></script>
-<script type="text/babel" src="LockScreen.jsx"></script>
-<script type="text/babel" src="MfaScreen.jsx"></script>
-<script type="text/babel" src="ChangePasswordScreen.jsx"></script>
-<script type="text/babel" src="AppShell.jsx"></script>
-<script type="text/babel" src="HospitalistDashboard.jsx"></script>
-<script type="text/babel" src="HospitalistWork.jsx"></script>
-<script type="text/babel" src="HospitalistHistory.jsx"></script>
-<script type="text/babel" src="ErDoctorDashboard.jsx"></script>
-<script type="text/babel" src="DirectorDashboard.jsx"></script>
-<script type="text/babel" src="AdmissionsLog.jsx"></script>
-<script type="text/babel" src="ErDirectorDashboard.jsx"></script>
-<script type="text/babel" src="CustomizableDashboard.jsx"></script>
-<script type="text/babel" src="ConsultServices.jsx"></script>
-<script type="text/babel" src="RegistrationApprovals.jsx"></script>
-<script type="text/babel" src="Messaging.jsx"></script>
-<script type="text/babel" src="Directory.jsx"></script>
-<script type="text/babel" src="CareTeam.jsx"></script>
-<script type="text/babel" src="PatientBoard.jsx"></script>
-<script type="text/babel" src="DeveloperDashboard.jsx"></script>
-<script type="text/babel" src="OrgConfig.jsx"></script>
-<script type="text/babel" src="ComplianceOverview.jsx"></script>
-<script type="text/babel" src="SupportDirectory.jsx"></script>
-<script type="text/babel" src="Compliance.jsx"></script>
-<script type="text/babel" src="ComplianceMonitor.jsx"></script>
-<script type="text/babel" src="Broadcasts.jsx"></script>
-<script type="text/babel" src="ScheduleSync.jsx"></script>
-<script type="text/babel" src="OnCallBoard.jsx"></script>
-<script type="text/babel" src="AccountSettings.jsx"></script>
-<script type="text/babel" src="OrgSettings.jsx"></script>
-<script type="text/babel" src="RoleManagement.jsx"></script>
-<script type="text/babel" src="People.jsx"></script>
-<script type="text/babel" src="Appearance.jsx"></script>
+<script type="text/babel" src="/components.jsx"></script>
+<script type="text/babel" src="/InstallPrompt.jsx"></script>
+<script type="text/babel" src="/CustomizableStats.jsx"></script>
+<script type="text/babel" src="/LoginScreen.jsx"></script>
+<script type="text/babel" src="/LockScreen.jsx"></script>
+<script type="text/babel" src="/MfaScreen.jsx"></script>
+<script type="text/babel" src="/ChangePasswordScreen.jsx"></script>
+<script type="text/babel" src="/AppShell.jsx"></script>
+<script type="text/babel" src="/HospitalistDashboard.jsx"></script>
+<script type="text/babel" src="/HospitalistWork.jsx"></script>
+<script type="text/babel" src="/HospitalistHistory.jsx"></script>
+<script type="text/babel" src="/ErDoctorDashboard.jsx"></script>
+<script type="text/babel" src="/DirectorDashboard.jsx"></script>
+<script type="text/babel" src="/AdmissionsLog.jsx"></script>
+<script type="text/babel" src="/ErDirectorDashboard.jsx"></script>
+<script type="text/babel" src="/CustomizableDashboard.jsx"></script>
+<script type="text/babel" src="/ConsultServices.jsx"></script>
+<script type="text/babel" src="/RegistrationApprovals.jsx"></script>
+<script type="text/babel" src="/Messaging.jsx"></script>
+<script type="text/babel" src="/Directory.jsx"></script>
+<script type="text/babel" src="/CareTeam.jsx"></script>
+<script type="text/babel" src="/PatientBoard.jsx"></script>
+<script type="text/babel" src="/DeveloperDashboard.jsx"></script>
+<script type="text/babel" src="/OrgConfig.jsx"></script>
+<script type="text/babel" src="/ComplianceOverview.jsx"></script>
+<script type="text/babel" src="/SupportDirectory.jsx"></script>
+<script type="text/babel" src="/Compliance.jsx"></script>
+<script type="text/babel" src="/ComplianceMonitor.jsx"></script>
+<script type="text/babel" src="/Broadcasts.jsx"></script>
+<script type="text/babel" src="/ScheduleSync.jsx"></script>
+<script type="text/babel" src="/OnCallBoard.jsx"></script>
+<script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/OrgSettings.jsx"></script>
+<script type="text/babel" src="/RoleManagement.jsx"></script>
+<script type="text/babel" src="/People.jsx"></script>
+<script type="text/babel" src="/Appearance.jsx"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect } = React;
@@ -240,7 +329,7 @@ function Toast({ toast }) {
   const ic = { accepted: "check-circle-2", sent: "send", rejected: "alert-triangle" }[tone] || "check-circle-2";
   const fg = { accepted: "var(--status-accepted)", sent: "var(--status-active)", rejected: "var(--destructive)" }[tone];
   return (
-    <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50, animation: "dt-toast-in .25s ease" }}>
+    <div role="status" style={{ position: "fixed", top: "calc(18px + var(--sai-top))", right: "calc(18px + var(--sai-right))", zIndex: 50, animation: "dt-toast-in .25s ease", maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))" }}>
       <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
         <Icon name={ic} size={18} color={fg} style={{ marginTop: 1 }} />
         <div>
@@ -255,9 +344,9 @@ function Toast({ toast }) {
 function RoleSwitcher({ role, onChange }) {
   const roles = [["hospitalist", "Hospitalist"], ["er_doctor", "ER physician"], ["er_director", "ER director"], ["director", "Hosp. director"], ["developer", "Developer"]];
   return (
-    <div style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+    <div role="group" aria-label="Demo as role" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)", width: "max-content" }}>
       {roles.map(([id, label]) => (
-        <button key={id} onClick={() => onChange(id)}
+        <button key={id} type="button" onClick={() => onChange(id)} aria-pressed={role === id}
           style={{ padding: "6px 11px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
             background: role === id ? "#fff" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
             boxShadow: role === id ? "var(--shadow-sm)" : "none" }}>{label}</button>
@@ -271,7 +360,7 @@ function NotificationsPanel({ open, items, onClose }) {
   return (
     <React.Fragment>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "fixed", top: 58, right: 18, width: 344, zIndex: 41, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+      <div style={{ position: "fixed", top: "calc(58px + var(--sai-top))", right: "calc(18px + var(--sai-right))", width: 344, maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))", zIndex: 41, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
         <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ fontSize: 14, fontWeight: 700 }}>Notifications</span>
           <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{items.length} recent</span>
@@ -299,29 +388,80 @@ function App() {
   const a = useActions();
   const role = st.session && st.session.role;
   const nav = st.ui.nav;
-  const [locked, setLocked] = React.useState(false);
-  // Locking the screen also drops the persisted snapshot — a locked workstation
-  // must not leave anything readable in localStorage for someone with devtools.
-  const lockNow = React.useCallback(() => { try { DT.purgePersisted(); } catch (e) {} setLocked(true); }, []);
+  // App lock (A.CON-SHO-7). The source of truth is the storage flag written by
+  // window.__dtLock (see <head>): it survives F5 and is shared by every tab, so
+  // a reload can never bypass the lock. React state mirrors it.
+  const lockApi = window.__dtLock || null;
+  const [lockFlag, setLockFlag] = React.useState(() => (lockApi ? lockApi.read() : null));
+  const locked = !!lockFlag;
+  const navBeforeLock = React.useRef(null);
+  const lockNow = React.useCallback(() => {
+    const s = DT.getState();
+    const sess = s && s.session;
+    if (!sess || !sess.org || !sess.user) return;
+    navBeforeLock.current = s.ui && s.ui.nav;
+    // Locking also drops the persisted snapshot — a locked workstation must not
+    // leave anything readable in localStorage for someone with devtools.
+    try { DT.purgePersisted(); } catch (e) {}
+    const identity = { org: sess.org, user: sess.user, name: sess.name, role: sess.role };
+    if (lockApi) lockApi.set(identity);
+    setLockFlag((lockApi && lockApi.read()) || Object.assign({ locked: true }, identity));
+    try { a.toggleNotif(false); } catch (e) {}
+  }, []);
+  // Unlock = a successful server re-authentication (LockScreen → DT.actions.login),
+  // which also re-hydrates every clinical slice. Put the user back where they were.
+  const unlocked = React.useCallback(() => {
+    if (lockApi) lockApi.clear();
+    setLockFlag(null);
+    const back = navBeforeLock.current; navBeforeLock.current = null;
+    if (back) { try { a.setNav(back); } catch (e) {} }
+  }, []);
+  const signedOutFromLock = React.useCallback(() => { if (lockApi) lockApi.clear(); setLockFlag(null); navBeforeLock.current = null; }, []);
+  // Another tab of this browser locked or unlocked: follow it. On an unlock
+  // elsewhere, that tab's re-authentication may have replaced the session
+  // cookie while this tab's socket and data went stale → re-establish them.
+  React.useEffect(() => {
+    if (!lockApi) return;
+    const onStorage = (e) => {
+      if (e.key !== null && e.key !== lockApi.KEY) return;
+      const v = lockApi.read();
+      setLockFlag(v);
+      if (!v && e.oldValue && a.rehydrate) { try { a.rehydrate(); } catch (err) {} }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const isMobile = useIsMobile();
   const [drawer, setDrawer] = React.useState(false);
   React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
 
   // Idle auto-lock (HIPAA). Resets on any interaction; locks after 15 min idle.
+  // Not armed while already locked.
   React.useEffect(() => {
-    if (!role) return;
+    if (!role || locked) return;
     let timer;
     const arm = () => { clearTimeout(timer); timer = setTimeout(lockNow, 15 * 60 * 1000); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
     return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, arm)); };
-  }, [role]);
+  }, [role, locked]);
 
   useEffect(() => {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
+  // Locked: render ONLY the lock screen — no shell and no screens (their polling
+  // effects unmount, api-bridge pauses its own poll), nothing readable in the
+  // DOM behind an overlay. Shown even before the session restore completes
+  // after a reload: the identity comes from the flag, and unlocking is a real
+  // POST /api/login that re-establishes the session and re-fetches everything.
+  if (locked) {
+    const sess = st.session || {};
+    const identity = { org: lockFlag.org || sess.org, user: lockFlag.user || sess.user, name: lockFlag.name || sess.name || "", role: lockFlag.role || sess.role || role };
+    const me = st.me || (identity.name ? { name: identity.name, avatar: identity.name.replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase(), role: identity.role } : null);
+    return <React.Fragment><ThemeStyle theme={st.theme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
+  }
   // Second factor at sign-in for an enrolled account: the server holds the
   // login (202) until the code arrives, so there is no session yet.
   if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
@@ -463,45 +603,53 @@ function App() {
     const primaryIds = primaryTabs.map((t) => t.id);
     const moreActive = !primaryIds.includes(nav);
     const msgUnread = (st.conversations || []).some((c) => c.unread > 0);
+    // Tab bar geometry (A.CON-SHO-42/45/46/60): the bar's 58px tab row sits
+    // ABOVE the home-indicator inset, so under the global border-box sizing its
+    // height must be 58px + inset (not 58px with the inset as padding, which
+    // squashed the tabs to 23px on Face-ID iPhones). `main` reserves exactly
+    // the same amount so nothing hides behind the bar and no dead band appears
+    // above it (the thread composer therefore adds NO inset of its own).
     const TABBAR_H = 58;
+    const TABBAR_TOTAL = "calc(" + TABBAR_H + "px + var(--sai-bottom))";
     return (
-      <div style={{ height: "100dvh", background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
         <InstallPrompt />
-        {/* mobile top bar (nav lives in the bottom tab bar) */}
-        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 14px" }}>
+        {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
+        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
+            <h1 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</h1>
           </div>
-          <button onClick={() => a.toggleNotif()} title="Notifications" style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-            <Icon name="bell" size={18} />
-            {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
+          <button type="button" onClick={() => a.toggleNotif()} title="Notifications" aria-label={DT.unreadNotifs() > 0 ? "Notifications (" + DT.unreadNotifs() + " unread)" : "Notifications"} style={{ position: "relative", width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+            <Icon name="bell" size={20} />
+            {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
           </button>
-          <button onClick={lockNow} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
+          <button type="button" onClick={lockNow} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: nav === "messages" ? "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" : "calc(" + TABBAR_H + "px + env(safe-area-inset-bottom, 0px))" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
 
-        {/* Bottom tab bar */}
-        <nav style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_H, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
+        {/* Bottom tab bar: full-bleed background, content inset by the side
+            safe areas in landscape (A.CON-NEE-2), tab row above the home indicator. */}
+        <nav aria-label="Primary" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
           {primaryTabs.map((t) => {
             const on = nav === t.id;
             return (
-              <button key={t.id} onClick={() => a.setNav(t.id)}
-                style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative" }}>
+              <button key={t.id} type="button" onClick={() => a.setNav(t.id)} aria-current={on ? "page" : undefined}
+                style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative", padding: 0 }}>
                 <div style={{ position: "relative" }}>
                   <Icon name={t.icon} size={22} />
                   {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid #fff" }} />}
                 </div>
-                <span style={{ fontSize: 10.5, fontWeight: 600 }}>{MOBILE_LABEL[t.id] || t.label}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>{MOBILE_LABEL[t.id] || t.label}</span>
               </button>
             );
           })}
-          <button onClick={() => setDrawer(true)}
-            style={{ flex: 1, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit" }}>
+          <button type="button" onClick={() => setDrawer(true)} aria-label="More" aria-expanded={drawer}
+            style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", padding: 0 }}>
             <Icon name="menu" size={22} />
-            <span style={{ fontSize: 10.5, fontWeight: 600 }}>More</span>
+            <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>More</span>
           </button>
         </nav>
 
@@ -509,9 +657,9 @@ function App() {
         {drawer && (
           <React.Fragment>
             <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(15,23,42,.45)" }} />
-            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 264, maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column" }}>
+            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: "calc(264px + var(--sai-left))", maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingBottom: "var(--sai-bottom)" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-                <Sidebar role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
+                <Sidebar fill role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
               </div>
               {st.syntheticData !== false && (
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
@@ -527,14 +675,13 @@ function App() {
         )}
         <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
         <Toast toast={st.__toast} />
-        {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
       <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
       <ThemeStyle theme={st.theme} />
       <SyntheticBanner on={st.syntheticData} />
       <InstallPrompt />
@@ -548,20 +695,20 @@ function App() {
           onBell={() => a.toggleNotif()}
           onLock={lockNow}
           right={st.syntheticData !== false ? <React.Fragment>
-            <button onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
+            <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
               title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
               <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
             </button>
-            <RoleSwitcher role={role} onChange={a.setRole} />
+            {/* The demo role switcher scrolls inside its slot instead of pushing the page wider (A.CON-MIN-10). */}
+            <div style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}><RoleSwitcher role={role} onChange={a.setRole} /></div>
           </React.Fragment> : null} />
         {impersonationBanner}
-        <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       </div>
       <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />
-      {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
       <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
     </div>
   );

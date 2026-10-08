@@ -1,8 +1,12 @@
 /* DocTurn web-app UI kit — app shell: sidebar + topbar */
 
 // Reactive viewport check so layouts can switch to a phone-friendly form.
+// A phone stays a phone in landscape (A.CON-MIN-10): a touch-only device whose
+// viewport is short (≤500px tall — iPhone 14 landscape is 844×390) keeps the
+// bottom-tab shell even though its width exceeds the breakpoint; a desktop
+// window of the same width (mouse, tall) still gets the sidebar.
 function useIsMobile(bp) {
-  var q = "(max-width: " + (bp || 760) + "px)";
+  var q = "(max-width: " + (bp || 760) + "px), ((hover: none) and (pointer: coarse) and (max-height: 500px))";
   var read = function () { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
   var ref = React.useState(read);
   var m = ref[0], setM = ref[1];
@@ -16,11 +20,14 @@ function useIsMobile(bp) {
   return m;
 }
 
-function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, appName }) {
+// `fill`: inside the phone drawer the sidebar fills its scroll container
+// (min-height 100%) instead of being a sticky 100vh column, so the account
+// actions in its footer are on screen without scrolling the drawer.
+function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, appName, fill }) {
   const who = me || { name: "Dr. Jordan Chen", avatar: "JC" };
   const name = appName || "DocTurn";
   return (
-    <aside style={{ width: compact ? 68 : 232, flex: "none", background: "#fff", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0, transition: "width .2s" }}>
+    <aside style={{ width: fill ? "100%" : (compact ? 68 : 232), flex: "none", background: "#fff", borderRight: fill ? "none" : "1px solid var(--border)", display: "flex", flexDirection: "column", height: fill ? "auto" : "100vh", minHeight: fill ? "100%" : undefined, position: fill ? "static" : "sticky", top: 0, transition: "width .2s" }}>
       <div style={{ padding: compact ? "18px 0 14px" : "18px 18px 14px", display: "flex", alignItems: "center", justifyContent: compact ? "center" : "flex-start", gap: 9 }}>
         <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, flex: "none" }}>{name.charAt(0).toUpperCase()}</span>
         {!compact && <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-.02em" }}>{name}</span>}
@@ -44,27 +51,35 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
         })}
       </nav>
       <div style={{ padding: 12, borderTop: "1px solid var(--border)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: compact ? 0 : "8px 10px", justifyContent: compact ? "center" : "flex-start", borderRadius: "var(--radius-md)" }}>
+        {/* Identity on one row, the four account actions on their own row below:
+            the actions are 44×44 tap targets on touch devices (index.html
+            coarse-pointer rule, A.CON-SHO-52), which no longer fit beside the
+            name in a 232px sidebar or the 264px phone drawer. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: compact ? 0 : "6px 6px 2px", justifyContent: compact ? "center" : "flex-start" }}>
           <Avatar initials={who.avatar} size={34} />
           {!compact && <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden" }}>
               {onRenameMe ? <EditableText value={who.name} onSave={onRenameMe} size={13} weight={600} /> : <span style={{ fontWeight: 600 }}>{who.name}</span>}
             </div>
-            <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
           </div>}
-          {!compact && onNav && <button onClick={() => onNav("account")} title="Settings"
-            onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-            style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
-            <Icon name="settings" size={16} />
-          </button>}
-          {!compact && <DndButton />}
-          {!compact && <ChangePasswordButton />}
-          {!compact && <button onClick={onLogout} title="Sign out"
-            onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-            style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
-            <Icon name="log-out" size={16} />
-          </button>}
         </div>
+        {!compact && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 4, marginTop: 6 }}>
+            {onNav ? <button type="button" onClick={() => onNav("account")} title="Settings" aria-label="Settings"
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+              <Icon name="settings" size={16} />
+            </button> : <span />}
+            <DndButton />
+            <ChangePasswordButton />
+            <button type="button" onClick={onLogout} title="Sign out" aria-label="Sign out"
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+              style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+              <Icon name="log-out" size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );
@@ -91,9 +106,9 @@ function DndButton() {
   function disable() { a.setMyPref("dnd", false); a.toast({ tone: "accepted", title: "Do not disturb off", msg: "You're receiving messages directly again." }); }
   return (
     <React.Fragment>
-      <button onClick={() => (prefs.dnd ? disable() : setOpen(true))} title={prefs.dnd ? "DND on — tap to turn off" + (coveringName ? " (covering: " + coveringName + ")" : "") : "Do not disturb"}
-        onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = prefs.dnd ? "#FEF3C7" : "transparent"}
-        style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: prefs.dnd ? "#FEF3C7" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: prefs.dnd ? "#B45309" : "var(--muted-foreground)" }}>
+      <button type="button" onClick={() => (prefs.dnd ? disable() : setOpen(true))} title={prefs.dnd ? "DND on — tap to turn off" + (coveringName ? " (covering: " + coveringName + ")" : "") : "Do not disturb"} aria-label={prefs.dnd ? "Do not disturb is on — turn off" : "Do not disturb"} aria-pressed={!!prefs.dnd}
+        onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = prefs.dnd ? "var(--status-pending-bg)" : "transparent"}
+        style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: prefs.dnd ? "var(--status-pending-bg)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: prefs.dnd ? "var(--status-pending-fg)" : "var(--muted-foreground)" }}>
         <Icon name="moon" size={16} />
       </button>
       {open && (
@@ -143,18 +158,18 @@ function ChangePasswordButton() {
   }
   return (
     <React.Fragment>
-      <button onClick={() => setOpen(true)} title="Change password"
+      <button type="button" onClick={() => setOpen(true)} title="Change password" aria-label="Change password"
         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-        style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+        style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
         <Icon name="key-round" size={16} />
       </button>
       {open && (
         <Modal title="Change password" subtitle="Set a new password for your account." icon="key-round" onClose={() => setOpen(false)}
           children={
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <Field label="Current password" icon="lock" type="password" value={cur} onChange={setCur} placeholder="Current password" />
-              <Field label="New password" icon="key-round" type="password" value={next} onChange={setNext} placeholder="At least 8 characters" />
-              <Field label="Confirm new password" icon="key-round" type="password" value={confirm} onChange={setConfirm} placeholder="Re-enter new password" />
+              <Field label="Current password" icon="lock" type="password" value={cur} onChange={setCur} placeholder="Current password" name="current-password" autoComplete="current-password" />
+              <Field label="New password" icon="key-round" type="password" value={next} onChange={setNext} placeholder="At least 8 characters" name="new-password" autoComplete="new-password" />
+              <Field label="Confirm new password" icon="key-round" type="password" value={confirm} onChange={setConfirm} placeholder="Re-enter new password" name="confirm-password" autoComplete="new-password" />
               {err && <div style={{ fontSize: 12.5, color: "var(--destructive)" }}>{err}</div>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
                 <Button variant="outline" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
@@ -186,29 +201,32 @@ function SyntheticBanner({ on }) {
 
 function Topbar({ title, subtitle, working, onToggleWorking, right, onBell, notifCount = 0, onLock }) {
   return (
-    <header style={{ height: 64, borderBottom: "1px solid var(--border)", background: "rgba(255,255,255,.85)", backdropFilter: "blur(6px)", position: "sticky", top: 0, zIndex: 5, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px" }}>
-      <div>
+    // minHeight (not a fixed height) + wrap: a long title or the demo-mode
+    // controls in `right` wrap onto a second line instead of spilling over the
+    // content at 800–1000px windows (A.CON-MIN-10).
+    <header style={{ minHeight: 64, borderBottom: "1px solid var(--border)", background: "rgba(255,255,255,.85)", backdropFilter: "blur(6px)", position: "sticky", top: 0, zIndex: 5, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "6px 14px", padding: "8px 28px" }}>
+      <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{title}</div>
         {subtitle && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{subtitle}</div>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0, maxWidth: "100%" }}>
         {right}
         {onToggleWorking && (
-          <button onClick={onToggleWorking} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+          <button type="button" onClick={onToggleWorking} aria-pressed={!!working} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap" }}>
             <StatusDot status={working ? "online" : "offline"} pulse={working} />
             {working ? "On shift" : "Off shift"}
           </button>
         )}
-        <button onClick={onBell} title="Notifications"
+        <button type="button" onClick={onBell} title="Notifications" aria-label={notifCount > 0 ? "Notifications (" + notifCount + " unread)" : "Notifications"}
           onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
-          style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="bell" size={18} color="var(--foreground)" />
-          {notifCount > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{notifCount}</span>}
+          {notifCount > 0 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{notifCount}</span>}
         </button>
         {onLock && (
-          <button onClick={onLock} title="Lock app"
+          <button type="button" onClick={onLock} title="Lock app" aria-label="Lock app"
             onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
-            style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
             <Icon name="lock" size={17} color="var(--foreground)" />
           </button>
         )}
@@ -296,7 +314,11 @@ function applyTheme(theme) {
   root.setProperty("--ring-ch", ch);
   root.setProperty("--primary", "hsl(" + ch + ")");
   root.setProperty("--ring", "hsl(" + ch + ")");
-  root.setProperty("--status-active", theme.accent || "#2563EB");
+  // The "active" status family follows the accent, clamped dark enough to read
+  // AA on its tint (A.CON-SHO-53): text/dot shade at ≤46% lightness, badge text
+  // at ≤40%. The default accent (#2563EB, L 53%) alone is 4.24:1 on #DBEAFE.
+  root.setProperty("--status-active", "hsl(" + hsl.h + " " + hsl.s + "% " + Math.min(hsl.l, 46) + "%)");
+  root.setProperty("--status-active-fg", "hsl(" + hsl.h + " " + hsl.s + "% " + Math.min(hsl.l, 40) + "%)");
   // soft + faint accent tints used for active surfaces
   root.setProperty("--primary-tint", "hsl(" + hsl.h + " " + Math.min(hsl.s, 90) + "% 95%)");
   root.setProperty("--primary-tint-2", "hsl(" + hsl.h + " " + Math.min(hsl.s, 90) + "% 90%)");

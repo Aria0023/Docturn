@@ -83,7 +83,8 @@ const html = read("index.html");
 // Load exactly the JSX files index.html loads, in the same order, so a newly
 // added screen (MfaScreen, OnCallBoard, …) can never silently drop out of the
 // smoke and fail "App mounted" for a reason unrelated to the product.
-const JSX_FILES = [...html.matchAll(/<script[^>]*src="([A-Za-z0-9_-]+\.jsx)"/g)].map((m) => m[1]);
+// index.html references its scripts root-absolute ("/Foo.jsx", A.CON-SHO-58); accept either form.
+const JSX_FILES = [...html.matchAll(/<script[^>]*src="\/?([A-Za-z0-9_-]+\.jsx)"/g)].map((m) => m[1]);
 if (JSX_FILES.length === 0) { console.log("FATAL: no .jsx script tags found in index.html"); process.exit(2); }
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);
 if (!inlineApp) { console.log("FATAL: could not find inline App script in index.html"); process.exit(2); }

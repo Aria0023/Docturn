@@ -519,7 +519,10 @@ function Messaging() {
             )}
           </div>
         )}
-        <div style={{ flex: "none", padding: isMobile ? "10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px)" : 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
+        {/* No safe-area term here: the mobile shell's <main> already reserves the
+            tab bar height + home-indicator inset (index.html), so adding it again
+            left a blank band above the tab bar (A.CON-SHO-45/46/60). */}
+        <div style={{ flex: "none", padding: isMobile ? "10px 12px" : 16, background: "#fff", borderTop: "1px solid var(--border)", display: "flex", gap: 10, alignItems: "center" }}>
           <input ref={fileInputRef} type="file" multiple accept="image/*,application/pdf,video/mp4" onChange={onPickFiles} style={{ display: "none" }} />
           {recording ? (
             <React.Fragment>
@@ -546,7 +549,7 @@ function Messaging() {
                 </button>
               )}
               <div style={{ flex: 1 }}>
-                <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()}
+                <input value={draft} onChange={(e) => { setDraft(e.target.value); if (a.setTyping) a.setTyping(conv.id, !!e.target.value); }} onKeyDown={(e) => e.key === "Enter" && send()} enterKeyHint="send" autoCapitalize="sentences" aria-label="Message"
                   placeholder={conv.broadcast ? "Replies disabled for broadcasts" : (priority === "stat" ? "Type a STAT message…" : priority === "urgent" ? "Type an urgent message…" : "Type a secure message…")} disabled={conv.broadcast}
                   style={{ width: "100%", height: isMobile ? 46 : 40, border: (priority === "stat" ? "2px solid #B91C1C" : priority === "urgent" ? "2px solid #B45309" : "1.5px solid #94A3B8"), borderRadius: isMobile ? 23 : "var(--radius-md)", padding: isMobile ? "0 18px" : "0 14px", fontSize: isMobile ? 16 : 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: conv.broadcast ? "var(--secondary)" : "#F1F5F9" }} />
               </div>

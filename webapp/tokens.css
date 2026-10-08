@@ -24,11 +24,11 @@
   --secondary-ch:            210 40% 96%;   /* == muted == accent */
   --muted-ch:                210 40% 96%;
   --accent-ch:               210 40% 96%;
-  --muted-foreground-ch:     215 16% 47%;
+  --muted-foreground-ch:     215 19% 43%;   /* ≥4.5:1 on --secondary as well as on white (WCAG AA; A.CON-SHO-53) */
   --border-ch:               214 32% 91%;   /* == input border */
   --input-ch:                214 32% 91%;
   --ring-ch:                 221 83% 53%;
-  --destructive-ch:          0 84% 60%;
+  --destructive-ch:          0 72% 51%;     /* #DC2626 — white text on it reads 4.8:1 (AA; A.CON-SHO-53) */
 
   /* --- Composed semantic tokens (use these in components) ---------------- */
   --primary:              hsl(var(--primary-ch));
@@ -69,17 +69,28 @@
   --medical-success:    hsl(142 76% 36%);
   --medical-warning:    hsl(38 92% 50%);
 
-  /* --- Status color language (§2.4) — meanings are FIXED everywhere ------ */
-  --status-pending:   #D97706;  /* amber  — awaiting response, expiring soon  */
-  --status-pending-bg:#FEF3C7;
-  --status-accepted:  #059669;  /* emerald — accepted / online / available    */
-  --status-accepted-bg:#D1FAE5;
-  --status-active:    #2563EB;  /* blue   — in-flight assignment, just sent   */
-  --status-active-bg: #DBEAFE;
-  --status-rejected:  #DC2626;  /* red    — declined / cancelled / error      */
-  --status-rejected-bg:#FEE2E2;
-  --status-neutral:   #64748B;  /* slate  — inactive / expired / disabled     */
-  --status-neutral-bg:#F1F5F9;
+  /* --- Status color language (§2.4) — meanings are FIXED everywhere ------
+     Contrast contract (WCAG AA, A.CON-SHO-53): every `--status-X` is the colour
+     of text, icons and dots that sit on the matching `--status-X-bg` tint and
+     reads ≥4.5:1 there (and ≥4.5:1 on white / --secondary, so the same shade
+     is safe for solid marks). `--status-X-fg` is a deeper shade (≥6:1 on the
+     tint) for the small bold text in badges, avatar initials and consult chips.
+     scripts/contrast-check.mjs recomputes these pairs. */
+  --status-pending:     #B45309;  /* amber   — awaiting response, expiring soon  (4.51:1 on tint, 5.02:1 on white) */
+  --status-pending-fg:  #92400E;  /*            badge text on the amber tint (6.37:1) */
+  --status-pending-bg:  #FEF3C7;
+  --status-accepted:    #047857;  /* emerald — accepted / online / available     (4.84:1 on tint, 5.48:1 on white) */
+  --status-accepted-fg: #065F46;  /*            badge text on the emerald tint (6.78:1) */
+  --status-accepted-bg: #D1FAE5;
+  --status-active:      #1D4ED8;  /* blue    — in-flight assignment, just sent   (5.49:1 on tint; applyTheme re-derives it from the accent) */
+  --status-active-fg:   #1E40AF;  /*            badge text on the blue tint (7.15:1) */
+  --status-active-bg:   #DBEAFE;
+  --status-rejected:    #B91C1C;  /* red     — declined / cancelled / error      (5.30:1 on tint, 6.47:1 on white) */
+  --status-rejected-fg: #991B1B;  /*            badge text on the red tint (6.80:1) */
+  --status-rejected-bg: #FEE2E2;
+  --status-neutral:     #475569;  /* slate   — inactive / expired / disabled     (6.92:1 on tint) */
+  --status-neutral-fg:  #475569;
+  --status-neutral-bg:  #F1F5F9;
 
   /* ======================================================================
      TYPOGRAPHY

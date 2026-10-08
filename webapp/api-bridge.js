@@ -2055,9 +2055,9 @@
   // the user is from the server's session cookie and re-fetch everything.
   // Deliberately rawApi, NOT the self-healing api(): an expired/absent session
   // must land on the login screen, never silently sign in a demo account.
-  if (!DEMO_TOKEN) {
+  function restoreSession() {
     var savedSess = (DT.getState() && DT.getState().session) || null;
-    rawApi("GET", "/api/user").then(function (u) {
+    return rawApi("GET", "/api/user").then(function (u) {
       if (!u || u.id == null) throw new Error("no_session");
       var orgCode = orgForRole(u.role, savedSess && savedSess.org);
       lastAuth = { role: u.role, org: orgCode };
@@ -2094,6 +2094,12 @@
       if (savedSess) DT.set(function (s) { s.session = null; return s; });
     });
   }
+  if (!DEMO_TOKEN) restoreSession();
+  // Re-run the restore on demand: the shell calls this when the app lock is
+  // cleared in ANOTHER tab (index.html), whose re-authentication may have
+  // replaced the session cookie while this tab's socket and clinical slices
+  // went stale. Returns the restore promise.
+  DT.actions.rehydrate = function () { return restoreSession(); };
 
   // Load public client config (synthetic-data flag + app name) before/after login
   // so the test-only banner reflects the server. Defaults to synthetic ON.
@@ -2173,7 +2179,20 @@
     else DT.set(function (s) { s.modules = null; s.orgModules = {}; return s; });
   }
   if (DT.subscribe) DT.subscribe(syncModulesForSession);
-  setInterval(function () { if (DT.getState().session) hydrateModules(); }, 60000);
+  // The minute poll is the ONLY periodic request the shell makes on its own, and
+  // every request renews the server's 15-minute rolling session. It therefore
+  // pauses while the app is locked (window.__dtLock, index.html) or the tab is
+  // hidden, so an idle locked/backgrounded tab lets the server session expire
+  // on schedule instead of keeping it alive indefinitely (A.CON-SHO-7). A tab
+  // returning to the foreground refetches at once.
+  function pollingAllowed() {
+    try { if (window.__dtLock && window.__dtLock.isLocked()) return false; } catch (e) {}
+    try { if (typeof document !== "undefined" && document.visibilityState === "hidden") return false; } catch (e) {}
+    return true;
+  }
+  function pollModules() { if (DT.getState().session && pollingAllowed()) hydrateModules(); }
+  setInterval(pollModules, 60000);
+  try { document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") pollModules(); }); } catch (e) {}
   // ==== modules — END =======================================================
 
   // ==== oncall / ehr: who's-on-call board + EHR deep links — BEGIN ==========
