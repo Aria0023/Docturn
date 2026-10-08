@@ -69,6 +69,20 @@ done
 if grep -q '^RATE_LIMIT="off"$' "$TMP"; then
   die "RATE_LIMIT=off is set in SSM — refusing to deploy with auth rate limiting disabled"
 fi
+# Proxy topology: Caddy on this host → the app must bind loopback (HOST unset)
+# and trust only loopback (TRUST_PROXY unset). See docturn.env.example.
+TP=$(sed -n 's/^TRUST_PROXY="\(.*\)"$/\1/p' "$TMP" | tr 'A-Z' 'a-z')
+case "$TP" in
+  0|false|off|no)
+    die "TRUST_PROXY=$TP is set in SSM — behind Caddy every sign-in would be refused (insecure_transport). Delete the parameter (default: loopback)." ;;
+  ""|1|true|on|yes|loopback) ;;
+  *[!0-9]*) echo "WARNING: TRUST_PROXY=$TP — only needed for a proxy on ANOTHER host; Caddy here needs the default (unset)." >&2 ;;
+  *) echo "WARNING: TRUST_PROXY=$TP is a hop count — any direct client could forge X-Forwarded-For. Delete the parameter (default: loopback)." >&2 ;;
+esac
+HOSTV=$(sed -n 's/^HOST="\(.*\)"$/\1/p' "$TMP")
+if [[ -n "$HOSTV" && "$HOSTV" != "127.0.0.1" && "$HOSTV" != "::1" && "$HOSTV" != "localhost" ]]; then
+  echo "WARNING: HOST=$HOSTV — the Node port will accept network connections directly, bypassing Caddy/TLS if the security group ever allows it. Delete the parameter (default: 127.0.0.1)." >&2
+fi
 if grep -q '^SYNTHETIC_DATA="true"$' "$TMP"; then
   echo "WARNING: SYNTHETIC_DATA=true — this instance will seed DEMO accounts. Fine for a test box, never for real PHI." >&2
 fi

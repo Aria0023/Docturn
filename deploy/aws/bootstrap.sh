@@ -133,7 +133,7 @@ $ETC_DIR/docturn.env does not exist yet. Render it from SSM Parameter Store:
 
     REGION=<your-region> bash $APP_DIR/deploy/aws/fetch-env-from-ssm.sh
     systemctl start docturn
-    curl -s https://$DOMAIN/api/health      # expect {"ok":true,"db":"up","persistent":true}
+    curl -s https://$DOMAIN/api/health      # expect "ok":true, "persistent":true, "storage":"postgres", "secure":true
 
 EOF
 fi

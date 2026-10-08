@@ -10,7 +10,7 @@ code actually enforces.
 
 ```
   Internet ──HTTPS──▶ EC2 t4g.small ─── Caddy (Let's Encrypt TLS, :443)
-                        │                    └─▶ DocTurn (Node 20, :3000)
+                        │                    └─▶ DocTurn (Node 20, 127.0.0.1:3000 — loopback only)
                         │                              │
                         ├── encrypted EBS: /var/lib/docturn/attachments (AES-256-GCM files)
                         │
@@ -25,7 +25,7 @@ AWS Free Tier. No load balancer (TLS terminates on the instance), no Twilio
 codes and `/api/sms/send` answer `503 sms_unavailable`, assignment/STAT SMS escalation
 is skipped with a log line — nothing is faked as sent), no SOC 2 spend.
 
-**What is deliberately deferred** (see §14): Postgres row-level security,
+**What is deliberately deferred** (see §15): Postgres row-level security,
 S3 attachment storage, CloudWatch alarms, multi-instance scaling.
 
 ---
@@ -233,18 +233,19 @@ box.
 
 | Variable | Required | Effect |
 |---|---|---|
-| `NODE_ENV=production` | yes | marks the session cookie `Secure`; production logging |
-| `DATABASE_URL` | yes | switches from the in-process PGlite to RDS; the app becomes **persistent** |
+| `NODE_ENV=production` | yes | marks the session cookie `Secure`; serves the precompiled client bundle (built by `npm run build`); binds `127.0.0.1` unless `HOST` is set |
+| `DATABASE_URL` | yes | switches from the in-process PGlite to RDS; the app becomes **persistent**, and sessions are stored in Postgres (table `session`, created automatically) so a restart or deploy does not sign anyone out |
 | `SESSION_SECRET` | yes | signs session cookies (without it a random one is generated per boot → everyone logged out on restart) |
 | `SYNTHETIC_DATA=false` | yes (real PHI) | **real-PHI mode**: refuses to seed the shared demo org/accounts; stub AI only |
 | `PLATFORM_ADMIN_PASSWORD` | yes | provisions/rotates the `dev` operator account (≥ 12 chars); it is the only way that account exists |
 | `ATTACHMENT_STORE=fs-encrypted` + `ATTACHMENT_DIR` + `ATTACHMENT_KEY` | yes (real PHI) | attachments (incl. voice messages) stored as AES-256-GCM files, never plaintext, never inline in the DB |
-| `TRUST_PROXY` | leave unset | defaults **on**, which is correct behind Caddy (client IPs + secure cookies work) |
+| `HOST` | leave unset | production default `127.0.0.1`: the Node port answers only on loopback, so the only thing that can reach it is Caddy on this host (which also makes forwarded headers trustworthy). Set `HOST=0.0.0.0` only for a platform that connects to the process over the network (e.g. Render) — never here |
+| `TRUST_PROXY` | leave unset | default `loopback`: `X-Forwarded-For` / `-Proto` are believed only from a peer on this host (Caddy), one hop — that is what gives correct client IPs (rate limiting, audit rows) and lets the `Secure` cookie be set. Other accepted values: `0`/`false` (trust nothing — sign-in then fails with `insecure_transport` behind Caddy), or a comma list of IPs / CIDRs / `loopback`, `linklocal`, `uniquelocal` for a proxy on another host. A bare hop count ≥ 2 still works but is logged as spoofable |
 | `RATE_LIMIT` | leave unset | defaults **on**; never set `off` in production (the compliance monitor flags it) |
-| `VAPID_*` | recommended | enables web push; without them push is silently disabled |
+| `VAPID_*` | recommended | the web-push key pair. Without them the server generates a pair on first boot and stores it in the database (platform org settings), so push still works; setting them in SSM keeps the private key out of the database and under your control |
 | `TWILIO_*` | **leave unset** | no Twilio → SMS is unavailable in production: MFA SMS codes and `/api/sms/send` return `503 sms_unavailable`, SMS escalation is skipped (logged, content-free). Nothing is sent, nothing costs money, and nothing is reported as sent. Clinicians use TOTP / backup codes for MFA. The console stub that records messages exists only outside `NODE_ENV=production` and never logs numbers or bodies |
 | `OPENAI_API_KEY`, `AI_EXTERNAL_PHI_OK`, `USE_STUB_AI` | **leave unset** | AI intake stays on the deterministic local extractor; no PHI leaves the box |
-| `PORT` | leave unset | 3000 (Caddy proxies to it) |
+| `PORT` | leave unset | 3000 (Caddy proxies to `127.0.0.1:3000`) |
 | `AMION_*` / Epic vars | optional | only if you have those integrations; modules default appropriately |
 
 ---
@@ -312,9 +313,20 @@ curl -s https://app.yourdomain.com/api/health
 You want to see:
 
 - `docturn` **active (running)**, and in its log:
-  `DocTurn API + WebSocket listening on :3000 — db: Postgres` (not "PGlite").
-- Health → `{"ok":true,"db":"up","persistent":true}` — **`persistent:true` is
-  the proof you are on RDS**, not a throwaway in-process database.
+  `DocTurn API + WebSocket listening on 127.0.0.1:3000 — db: PostgreSQL (DATABASE_URL)`
+  (not "PGlite"), followed by
+  `↳ sessions: Postgres \`session\` table (survive restarts, shared across instances)`,
+  `↳ proxy trust: X-Forwarded-* honoured only from a loopback peer (reverse proxy on this host), one hop (default)`,
+  `↳ bound to loopback: reachable only through the reverse proxy on this host …`
+  and `[webapp] serving precompiled bundle <version>` (if it says it is falling
+  back to the dev kit, the build is missing or stale — re-run the update).
+- Health **through the domain** →
+  `{"ok":true,"db":"up","persistent":true,"storage":"postgres","durable":true,"secure":true}`.
+  **`persistent:true` is the proof you are on RDS**, not an in-process
+  database; **`secure:true` is the proof Caddy's `X-Forwarded-Proto` is
+  trusted** — if it says `false`, sign-in will be refused with
+  `insecure_transport` (check `TRUST_PROXY`). (A `curl` straight to
+  `http://127.0.0.1:3000/api/health` on the box rightly says `secure:false`.)
 - `https://app.yourdomain.com` loads with a valid padlock (Caddy fetched the
   certificate). If it does not, `journalctl -u caddy -n 50` — almost always DNS
   not yet pointing at the Elastic IP.
@@ -426,11 +438,12 @@ A backup you have never restored is a hope, not a backup.
 [ ] RDS: encrypted, NOT publicly accessible, backups 7d, deletion protection (§4)
 [ ] EC2: encrypted EBS, no port 22, SSM Session Manager works           (§5)
 [ ] HTTPS live with a valid certificate; HTTP redirects                  (§6/§9)
-[ ] /api/health returns persistent:true (RDS, not PGlite)               (§9)
+[ ] /api/health returns persistent:true (RDS, not PGlite) and,
+    through the domain, secure:true                                     (§9)
 [ ] NODE_ENV=production, SYNTHETIC_DATA=false                            (§7)
 [ ] PLATFORM_ADMIN_PASSWORD ≥ 12 chars; `dev` account has MFA enrolled   (§7/§10)
 [ ] ATTACHMENT_STORE=fs-encrypted with key in SSM + offline copy         (§7/§11)
-[ ] RATE_LIMIT not "off"; TRUST_PROXY not "0"                            (§7)
+[ ] RATE_LIMIT not "off"; TRUST_PROXY unset (loopback); HOST unset       (§7)
 [ ] TWILIO_* unset (no SMS spend); OPENAI/AI_EXTERNAL_PHI_OK unset       (§7)
 [ ] security.mfaRequired ON for the org                                  (§10)
 [ ] Developer → Compliance monitor: all automated controls green          (§10)
@@ -445,38 +458,59 @@ A backup you have never restored is a hope, not a backup.
 
 These are real, findable-in-the-code limitations — not polish:
 
-1. **Sessions are in-memory.** `server/app.ts` always uses `memorystore`;
-   `connect-pg-simple` is a dependency but is **not wired**, despite the comment
-   saying Postgres is used. Effect: **every `systemctl restart docturn` (every
-   deploy) logs all users out**, and you cannot run two instances. Fine for a
-   handful of users; must be fixed before scaling. Fix = wire
-   `connect-pg-simple` when `DATABASE_URL` is set (small, well-defined change).
-2. **No Postgres row-level security yet.** Tenant isolation is enforced in the
+1. **No Postgres row-level security yet.** Tenant isolation is enforced in the
    application (`organizationId` on every query, `assertSameOrg` → 404). RLS
    would add a database-level second wall. Planned; not required for a pilot.
+2. **One instance only.** Sessions are in Postgres (with `DATABASE_URL` the
+   store is `connect-pg-simple`, table `session`), so restarts no longer sign
+   anyone out — but rate-limit counters, WebSocket fan-out and the background
+   loops (expiry, STAT escalation, retention, Amion sync) live in the process.
+   A second instance would split the limits, miss realtime events from the
+   other instance and run every loop twice. Scaling out needs a shared
+   limiter store, a pub/sub for `/ws`, and a single loop runner.
 3. **Attachments are on the instance disk, not S3.** Real and encrypted, but
    tied to one instance and its snapshots. `attachment-store.ts` documents the
-   S3 implementation as the next step; the routes need no change.
+   S3 implementation as the next step; the routes need no change. No antivirus
+   scanning of uploads yet.
 4. **No CloudWatch alarms**; monitoring is the §13 minimum.
 5. **Epic write-back** (assigning admits into Epic) is designed but not built;
    the Epic connector is read-only today.
+6. **Realtime needs the socket.** While a device's WebSocket is down (no
+   network, or iOS has suspended the backgrounded app) nothing new appears on
+   it; push is the only wake-up. When the socket comes back the client runs one
+   catch-up (conversation list + the threads that changed + dashboard data +
+   broadcasts), so nothing is lost — but there is no delivery-latency
+   measurement on physical phones yet (docs/MOBILE.md).
+7. **Compression on this path.** Node serves the precompiled client
+   brotli/gzip-compressed (~270 KB for the shell) and deliberately does not
+   compress API responses; Caddy's `encode zstd gzip` (deploy/aws/Caddyfile)
+   passes the already-compressed static files through and compresses the JSON
+   API responses itself. Remove `encode` from the Caddyfile if your security
+   review rules out compressing authenticated responses (BREACH-style length
+   attacks; the session cookie is `SameSite=Lax`, which blocks the usual
+   cross-site request vector).
 
 ---
 
 ## 16. Updating the app (routine)
 
 One command, from Session Manager as root. It pulls the branch (root holds the
-deploy key), rebuilds as the unprivileged `docturn` user, restarts the service
-only if the build succeeded, and verifies `/api/health` reports
-`persistent:true`:
+deploy key), rebuilds as the unprivileged `docturn` user (`npm run build`:
+server, and the precompiled web client), restarts the service only if the
+build succeeded, and verifies `http://127.0.0.1:3000/api/health` answers
+`"ok":true` with `"persistent":true` and `"storage":"postgres"`:
 
 ```bash
 sudo bash /opt/docturn/deploy/aws/update.sh            # current branch
 sudo bash /opt/docturn/deploy/aws/update.sh main       # or a specific branch
 ```
 
-**NOTE:** a restart signs everyone out until §15.1 is fixed — update at a quiet
-hour. If the build fails the old version keeps running untouched.
+Sessions are stored in Postgres, so a restart does **not** sign anyone out.
+For the few seconds the service restarts, requests fail and open WebSockets
+drop; clients reconnect with backoff and run their catch-up (§15.6). Installed
+phones pick up the new client on their next launch (the service worker
+precaches the new version before switching). If the build fails the old
+version keeps running untouched.
 
 Schema changes are applied automatically on start (`SCHEMA_SQL` is idempotent
 and additive). If a release ever needs a destructive migration, this runbook

@@ -10,16 +10,27 @@ feature drift between "phone" and "web".
 - Source: `webapp/` (designer's kit + `api-bridge.js` live bridge) plus the
   PWA plumbing `webapp/manifest.webmanifest`, `webapp/sw.js`, `webapp/icons/`
   and the in-app `InstallPrompt.jsx` banner.
-- Server: `server/app.ts` serves `webapp/` at `/`. The retired slim phone URL
-  still redirects to `/`, and a self-destructing service worker is served at
-  its old scope so devices that installed the old kit heal themselves on their
-  next visit.
+- Server: `server/app.ts` serves `webapp/` at `/` through
+  `server/webapp-static.ts`. In production (`NODE_ENV=production` with a fresh
+  `npm run build`) that is the **precompiled bundle**: production React, every
+  `.jsx` already compiled, content-hashed and brotli/gzip-precompressed files —
+  about 1.5 MB raw / 270 KB brotli for the shell. Outside production it is the
+  no-build kit (in-browser Babel, development React): about 5.7 MB raw /
+  1.1 MB brotli. Hashed files are cached immutably; the shell, `sw.js` and the
+  manifest are always revalidated. The retired slim phone URL still redirects
+  to `/`, and a self-destructing service worker is served at its old scope so
+  devices that installed the old kit heal themselves on their next visit.
 - All JS is vendored locally (React, Babel, Lucide), so the app loads with no
   external CDN and behind hospital firewalls.
-- Verification: `npm run test:e2e` runs `scripts/interop-unified.mjs` — real
-  Chromium, an iPhone-viewport session against desktop sessions on one backend
-  (messaging both ways, STAT acknowledge, admission accept, broadcast delivery,
-  role targets, DND).
+- Verification (each exits non-zero on any failed check):
+  `npm run test:e2e` runs `scripts/interop-unified.mjs` — real Chromium, an
+  iPhone-viewport session against desktop sessions on one backend (messaging
+  both ways, STAT acknowledge, admission accept, broadcast delivery, role
+  targets, DND, typed credentials). `npm run test:offline` proves the offline
+  shell (below) in both serving modes; `scripts/realtime-e2e.mjs` the realtime,
+  reconnect, push-permission and sign-out behaviour described here;
+  `scripts/phone-shell-check.mjs`, `phone-layout-check.mjs` and
+  `messaging-phone-check.mjs` the phone layouts at 375 / 390 / 430 px.
 
 ## Install on a phone
 
@@ -74,7 +85,9 @@ not optimised for it.
 ## Push notifications — status
 
 - **Web Push is live.** The server signs with VAPID keys (`VAPID_PUBLIC_KEY` /
-  `VAPID_PRIVATE_KEY`, or a pair generated and persisted on first boot).
+  `VAPID_PRIVATE_KEY`; without them a pair is generated on first boot and
+  stored in the database's platform settings, so subscriptions survive
+  restarts).
 - **Permission is asked only from a tap** — Settings → Notifications → Push
   notifications → **Turn on**. Sign-in and reloads never prompt (WebKit ignores
   a prompt without a user gesture, and an unprompted dialog is easily
@@ -98,11 +111,22 @@ not optimised for it.
 - Dead subscriptions (404/410 from the push service) are pruned automatically.
 - Realtime updates while the app is open arrive over the WebSocket and are
   applied as they come (no re-fetch per event); push is the wake-up for a
-  backgrounded or closed app. A dropped socket reconnects with backoff (up to
-  30 s, immediately when the network or the app comes back) and then re-syncs
-  whatever changed while it was down. A socket the server closes because the
-  session is over (password changed/reset elsewhere, or expired) returns the
-  app to sign-in instead of retrying.
+  backgrounded or closed app.
+- **A dropped socket reconnects and then re-syncs.** Reconnects use
+  exponential backoff with jitter capped at 30 s, and retry at once when the
+  browser reports it is back `online` or the app returns to the foreground.
+  When the server greets the new socket (`CONNECTION_ESTABLISHED`), the client
+  makes ONE conversation-list request and re-reads only the threads that can
+  have changed (a newer last message, an unread-count mismatch, group threads,
+  threads with my unread/unacknowledged messages), plus the role's dashboard
+  data and broadcasts. So a message, assignment or broadcast that arrived
+  while the socket was down appears after the reconnect, without a manual
+  reload (measured by `scripts/realtime-e2e.mjs` scenario B). Until the
+  socket is back, nothing new appears on its own. iOS suspends a backgrounded
+  web app's socket entirely; the catch-up runs when it comes to the front.
+- A socket the server closes because the session is over (password
+  changed/reset elsewhere, or expired) returns the app to sign-in instead of
+  retrying.
 
 ## Limits (honest list)
 
@@ -111,14 +135,32 @@ not optimised for it.
   throttle delivery to apps the user rarely opens.
 - **Session lifetime is the 15-minute rolling cookie.** Reopening the installed
   app after idle asks you to sign in again — deliberate for the current
-  security posture. Biometric unlock / refresh tokens would need a native
-  wrapper.
+  security posture. The app lock (Lock button, or 15 minutes without input)
+  survives a reload, is shared by every tab, pauses background polling, and is
+  cleared only by re-entering the password (checked by the server).
+  Biometric unlock / refresh tokens would need a native wrapper.
 - **No delivery latency SLA yet.** Push delivery on physical iOS/Android
   devices has not been measured end-to-end; that is the next verification
   step.
-- **Offline is read-only shell.** The service worker caches only the static
-  app shell so the app opens offline; `/api` and `/ws` are never cached (no
-  PHI in browser caches), so live data needs a connection.
+- **Offline: the app opens, but nothing clinical works without a
+  connection.** On its first online visit the service worker installs and
+  precaches the COMPLETE shell (every script, the stylesheet, manifest, icons)
+  all-or-nothing; from the next launch on, the app opens without a network.
+  A deploy that changes the shell installs a new worker that precaches the new
+  shell before it takes over (if that precache fails, the previous complete
+  version stays in charge). `/api` and `/ws` are never cached — no PHI or
+  identity in browser caches — so an offline launch shows the **sign-in
+  screen**, a reload while signed in returns to sign-in, and signing in
+  offline answers **"Can't reach the server. Check your connection and try
+  again."** The kit's local demo ("Offline — demo mode", fabricated patients
+  under the synthetic-data banner) is offered only when the server has
+  confirmed it is a synthetic-data instance during that same page load —
+  never on a cold offline launch and never on a real-PHI instance. If the
+  connection drops during a session, what is on screen stays (from memory);
+  a message sent offline shows **Not sent** with Retry / Edit, an admission or
+  a broadcast sent offline is taken back with "No connection — … NOT sent /
+  nobody was alerted", and the socket reconnects and re-syncs as described
+  above. Proven by `npm run test:offline` and `tests/offline-signin.test.ts`.
 - **Per-message receipts** (web app / PWA) come only from the server's
   delivery rows: "Sending…" until the server stores the message, then
   "Delivered", then "Read" — live, via the `MESSAGE_READ` WebSocket frame that

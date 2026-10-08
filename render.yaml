@@ -5,10 +5,18 @@
 # The app applies its own schema on first boot and self-seeds the demo org, so
 # there is nothing to run by hand.
 #
-# Demo logins (org code ISPN, password "docturn"): chen / er.doc / director /
-# er.director ; developer is user "dev" on org code DOCTURN (the app picks the
-# right org automatically when you choose a role on the sign-in screen).
-# Real testers can also self-register their own accounts from the sign-in screen.
+# Demo logins (org code ISPN, password "docturn"): chen / patel / lopez / liu /
+# wu (hospitalists), er.doc, director, er.director. The developer console user
+# "dev" (org code DOCTURN) exists here ONLY if PLATFORM_ADMIN_PASSWORD is set in
+# the Render dashboard (see below). Real testers can also self-register from
+# the sign-in screen; a director approves them.
+#
+# Network: NODE_ENV=production makes the app bind 127.0.0.1 and trust only a
+# loopback proxy by default (the AWS/Caddy topology). Render connects over its
+# private network, hence HOST=0.0.0.0 and TRUST_PROXY=uniquelocal below. Check
+# after a deploy: https://<service>.onrender.com/api/health → "secure":true
+# (false means X-Forwarded-Proto is not trusted and every sign-in is refused
+# with insecure_transport).
 databases:
   - name: docturn-db
     plan: free
