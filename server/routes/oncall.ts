@@ -54,6 +54,14 @@ import { storage, type DatabaseStorage } from "../storage.js";
  * ORG (never invented, never cross-tenant). DND → covering redirection reuses
  * the same helpers the messaging on-call picker uses (services/escalation.ts,
  * services/rotation.ts) so the two views can never disagree.
+ *
+ * Module switches: the central gate (server/modules.ts) answers 404 for the
+ * whole /api/oncall surface when oncall.board is off; schedule.amion /
+ * schedule.epic are honoured by the source layer itself
+ * (services/schedule-sources/index.ts): a switched-off source is never
+ * selected by default, never served even when explicitly stored, and reports
+ * configured:false — so the board cannot keep showing Amion/Epic holders
+ * after the module is switched off.
  */
 
 // ── source registry (per storage instance; tests may inject Epic deps) ───────
@@ -357,6 +365,8 @@ export function registerOnCallRoutes(app: Express) {
     res.json({
       selected: sel.id,
       explicit: sel.explicit,
+      // The director's stored choice when its module is off (board falls back to manual).
+      overridden: sel.overridden ?? null,
       sources: statuses,
       modules: { amion: amionOn, epic: epicOn, manual: true },
     });

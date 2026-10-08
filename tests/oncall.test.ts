@@ -254,6 +254,72 @@ describe("schedule source selection", () => {
   });
 });
 
+// ── schedule.amion switch (A.CON-SHO-31) ─────────────────────────────────────
+describe("schedule.amion module switch", () => {
+  const scheduleRows = (body: any) => (body.rows as any[]).filter((r) => r.kind === "schedule");
+
+  it("off → the board stops serving Amion holders and falls back to manual, even for an explicit Amion choice; on → restored", async () => {
+    await withAmion();
+    const orgId = ctx.seedResult.orgId;
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    expect((await director.patch("/api/oncall/source").send({ source: "amion" })).status).toBe(200);
+    let board = await director.get("/api/oncall/board");
+    expect(board.body.source).toMatchObject({ id: "amion", explicit: true });
+    expect(scheduleRows(board.body)).toHaveLength(13);
+
+    await setModule(orgId, "schedule.amion", false);
+    board = await director.get("/api/oncall/board");
+    expect(board.status).toBe(200);
+    expect(board.body.source).toMatchObject({ id: "manual", explicit: false });
+    expect(scheduleRows(board.body)).toHaveLength(0);
+    expect((board.body.rows as any[]).some((r) => r.source === "amion")).toBe(false);
+
+    const src = await director.get("/api/oncall/sources");
+    expect(src.status).toBe(200);
+    expect(src.body.selected).toBe("manual");
+    expect(src.body.modules.amion).toBe(false);
+    expect(src.body.overridden).toEqual({ source: "amion", module: "schedule.amion" });
+    expect(src.body.sources.amion.configured).toBe(false);
+    expect(src.body.sources.amion.message).toMatch(/switched off/i);
+    // The stored snapshot is untouched (nothing was deleted, just not served).
+    expect(src.body.sources.amion.rowCount).toBe(13);
+    // The feed's own surface is gated by the central table as well.
+    expect((await director.get("/api/amion/status")).status).toBe(404);
+    expect((await director.patch("/api/oncall/source").send({ source: "amion" })).status).toBe(404);
+
+    // Back on: the director's stored choice comes back without re-selecting.
+    await setModule(orgId, "schedule.amion", true);
+    board = await director.get("/api/oncall/board");
+    expect(board.body.source).toMatchObject({ id: "amion", explicit: true });
+    expect(scheduleRows(board.body)).toHaveLength(13);
+    const src2 = await director.get("/api/oncall/sources");
+    expect(src2.body.overridden).toBeNull();
+    expect(src2.body.sources.amion).toMatchObject({ configured: true, rowCount: 13 });
+  });
+
+  it("the implicit Amion default also yields to the switch", async () => {
+    await withAmion();
+    await setModule(ctx.seedResult.orgId, "schedule.amion", false);
+    const { agent: chen } = await login(ctx.app, { username: "chen" });
+    const board = await chen.get("/api/oncall/board");
+    expect(board.status).toBe(200);
+    expect(board.body.source).toMatchObject({ id: "manual", explicit: false });
+    expect(scheduleRows(board.body)).toHaveLength(0);
+    expect(await getSelectedSource(ctx.storage, ctx.seedResult.orgId)).toEqual({ id: "manual", explicit: false });
+  });
+
+  it("a registry source whose module is off serves no slots even when asked for directly", async () => {
+    await withAmion();
+    const reg = (await import("../server/services/schedule-sources/index.js")).createSourceRegistry(ctx.storage);
+    expect(await reg.get("amion").fetch(ctx.seedResult.orgId)).toHaveLength(13);
+    await setModule(ctx.seedResult.orgId, "schedule.amion", false);
+    expect(await reg.get("amion").fetch(ctx.seedResult.orgId)).toEqual([]);
+    expect((await reg.get("amion").status(ctx.seedResult.orgId)).configured).toBe(false);
+    // Manual needs no module and is unaffected.
+    expect((await reg.get("manual").status(ctx.seedResult.orgId)).configured).toBe(true);
+  });
+});
+
 // ── manual slots ─────────────────────────────────────────────────────────────
 describe("manual on-call slots", () => {
   it("CRUD by directors only; readable by everyone in the org", async () => {

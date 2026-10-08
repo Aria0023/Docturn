@@ -4,11 +4,14 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import { createTestApp, login, type TestContext } from "./helpers.js";
+import { invalidateModules, setModule } from "../server/modules.js";
 import {
+  SYNC_SETTING_KEY,
   fetchAmionGrid,
   getAmionStatus,
   mapHoursToShift,
   parseAmionBody,
+  runScheduledAmionSync,
   syncAmion,
   toDisplayName,
 } from "../server/services/amion.js";
@@ -238,6 +241,33 @@ describe("amion sync", () => {
     // The imported providers are live in the org's roster.
     const hosps = await director.get("/api/hospitalists");
     expect(hosps.body.length).toBeGreaterThanOrEqual(16); // 12 seeded + 4 created
+  });
+
+  it("the scheduled pull is skipped while schedule.amion is off and resumes when it is on (A.CON-SHO-31)", async () => {
+    const orgId = ctx.seedResult.orgId;
+    invalidateModules();
+    try {
+      await setModule(orgId, "schedule.amion", false);
+      expect(await runScheduledAmionSync(ctx.storage)).toBe("skipped_module_off");
+      // Nothing pulled, nothing stored, nothing audited.
+      expect(await ctx.storage.getOrgSetting(orgId, SYNC_SETTING_KEY)).toBeFalsy();
+      expect((await ctx.storage.listAuditLogs(orgId)).some((r) => r.action === "amion.sync")).toBe(false);
+
+      await setModule(orgId, "schedule.amion", true);
+      expect(await runScheduledAmionSync(ctx.storage)).toBe("synced");
+      const state = (await ctx.storage.getOrgSetting(orgId, SYNC_SETTING_KEY)) as { rowCount: number };
+      expect(state.rowCount).toBe(13);
+      expect((await ctx.storage.listAuditLogs(orgId)).filter((r) => r.action === "amion.sync")).toHaveLength(1);
+
+      // Feed not configured at all → skipped before any module lookup.
+      delete process.env.AMION_OCS_URL;
+      expect(await runScheduledAmionSync(ctx.storage)).toBe("skipped_not_configured");
+      process.env.AMION_OCS_URL = fixture.url;
+      process.env.AMION_ORG_CODE = "NOPE";
+      expect(await runScheduledAmionSync(ctx.storage)).toBe("skipped_org_missing");
+    } finally {
+      invalidateModules();
+    }
   });
 
   it("reports configured:false when the env var is absent or for other tenants", async () => {
