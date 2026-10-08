@@ -55,9 +55,25 @@ function LoginScreen({ onLogin, appName }) {
   // server/auth.ts); the demo/default-password refusal is the server's to make.
   const REG_MIN_PASSWORD = 8;
 
+  // Every answer POST /api/register can give (docs/consult-registration.md),
+  // in words the requester can act on — matched on the exact status + code.
+  function registerErrorText(e) {
+    var code = String((e && e.message) || "");
+    var status = e && e.status;
+    if (!status && /Failed to fetch|NetworkError|Load failed|fetch failed|ERR_NETWORK/i.test(code)) return "Can't reach the server. Check your connection and try again.";
+    if (status === 400 && code === "weak_password") return "Choose a stronger password: at least " + REG_MIN_PASSWORD + " characters, and not a demo or default password.";
+    if (status === 400 && code === "role_not_self_registrable") return "Director, ER director and developer accounts are set up by an administrator. Request a Hospitalist or ER physician account.";
+    if (status === 400 && code === "validation_error") return "Check the form: an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).";
+    if (status === 404 || code === "organization_not_found") return "We couldn't find that organization code. Check it with your hospital — it is your hospital's code, not your username.";
+    if (status === 409 && code === "request_pending") return "A request for that username is already waiting for a director's approval. You'll be able to sign in once it's approved.";
+    if (status === 429 || code === "rate_limited") return "Too many requests from this device. Wait a few minutes and try again.";
+    return "Couldn't send the request — please try again.";
+  }
+
   function submitRegister() {
     if (regBusy) return;
     setRegErr(null); setRegMsg(null);
+    if (!regRoles.some((r) => r.id === reg.role)) { setRegErr(registerErrorText({ status: 400, message: "role_not_self_registrable" })); return; }
     if (!reg.org.trim() || !reg.name.trim() || reg.user.trim().length < 3 || reg.pass.length < REG_MIN_PASSWORD) {
       setRegErr("Enter an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).");
       return;
@@ -65,17 +81,7 @@ function LoginScreen({ onLogin, appName }) {
     setRegBusy(true);
     Promise.resolve(window.DT.actions.register({ orgCode: reg.org.trim(), displayName: reg.name.trim(), username: reg.user.trim(), password: reg.pass, role: reg.role }))
       .then(function () { setRegMsg("Request sent — a director will review and approve your account. You can sign in once approved."); setReg(Object.assign({}, reg, { name: "", user: "", pass: "" })); })
-      .catch(function (e) {
-        var m = String((e && e.message) || "");
-        setRegErr(
-          /weak_password/.test(m) ? "Choose a stronger password: at least " + REG_MIN_PASSWORD + " characters, and not a demo or default password."
-          : /role_not_self_registrable/.test(m) ? "Director accounts are set up by an administrator. Request a Hospitalist or ER physician account."
-          : (e && e.status === 429) || /rate_limited/.test(m) ? "Too many requests from this device. Wait a few minutes and try again."
-          : /organization/i.test(m) ? "That organization code wasn't found."
-          : /pending/i.test(m) ? "A request for that username is already awaiting approval."
-          : /validation_error/.test(m) ? "Check the form: an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters)."
-          : "Couldn't send the request — please try again.");
-      })
+      .catch(function (e) { setRegErr(registerErrorText(e)); })
       .finally(function () { setRegBusy(false); });
   }
   const onSubmitRegister = (e) => { e.preventDefault(); submitRegister(); };
