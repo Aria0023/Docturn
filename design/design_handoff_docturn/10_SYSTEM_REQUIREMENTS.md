@@ -26,7 +26,7 @@ priority (MoSCoW), a verification method, and a trace to the use case (`UC-NN`) 
 | FR-INT-01 | return deterministic structured intake fields (initials, room, issue, specialty) from a free-text note. | Must | Test | UC-06 · F4.1 |
 | FR-INT-02 | use OpenAI for extraction in production and fall back to the mock extractor when AI is unavailable or stubbed. | Should | Demo | UC-06 · F4.2 |
 | FR-ASG-01 | select the lowest-census eligible provider, breaking ties by rotation order, strictly within the org. | Must | Test | UC-07 · F5.1 |
-| FR-ASG-02 | apply cap relief (raise every working provider's cap) when no provider is eligible, then re-select. | Must | Test | UC-07 · F5.2 |
+| FR-ASG-02 | apply cap relief (raise the cap of every working provider in the round-robin shift set) only when no provider is eligible even without the reroute exclusion, then re-select. | Must | Test | UC-07 · F5.2 |
 | FR-ASG-03 | support both round-robin and manual assignment modes, creating one pending row with a computed `expires_at`. | Must | Test | UC-07 · F5.4 |
 | FR-ASG-04 | increase a provider's census only on accept and decrease it only on cancel of an accepted assignment. | Must | Test | UC-08 · F5.5 |
 | FR-ASG-05 | on reject, resolve the assignment and immediately create exactly one new pending row when a provider is eligible. | Must | Test | UC-08 · F5.6 |
