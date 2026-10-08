@@ -34,15 +34,19 @@ the top of the screen — one tap on Android/desktop Chrome, guided steps on iOS
    → **Add**.
 3. Launch "DocTurn" from the home screen — it opens full-screen (standalone,
    no browser chrome) with the blue "D" icon.
-4. For push notifications: open the installed app, allow notifications when
-   asked. (iOS delivers Web Push only to apps added to the home screen, iOS
-   16.4 or later.)
+4. For push notifications: open the installed app, go to **Settings →
+   Notifications → Push notifications → Turn on** and allow when iOS asks.
+   The app never asks on its own — iOS only shows the prompt for a tap.
+   (iOS delivers Web Push only to apps added to the home screen, iOS 16.4 or
+   later; in a Safari tab that row explains the Add to Home Screen step
+   instead.)
 
 **Android (Chrome)**
 1. Open `https://<your-host>/` in Chrome and sign in.
 2. Tap **Install** on the in-app banner, or the Chrome menu ⋮ → **Install app**
    / **Add to Home screen**.
-3. Launch from the home screen or app drawer; allow notifications when asked.
+3. Launch from the home screen or app drawer; turn alerts on in **Settings →
+   Notifications** (allow when Chrome asks).
 
 **Desktop (Chrome / Edge)** — the same **Install** banner (or the install icon
 in the address bar) installs DocTurn as a windowed app.
@@ -70,17 +74,35 @@ not optimised for it.
 ## Push notifications — status
 
 - **Web Push is live.** The server signs with VAPID keys (`VAPID_PUBLIC_KEY` /
-  `VAPID_PRIVATE_KEY`, or a pair generated and persisted on first boot). After
-  sign-in the app asks for notification permission, subscribes through the
-  service worker and registers the subscription with
-  `POST /api/mobile/device-tokens` (platform `webpush`).
+  `VAPID_PRIVATE_KEY`, or a pair generated and persisted on first boot).
+- **Permission is asked only from a tap** — Settings → Notifications → Push
+  notifications → **Turn on**. Sign-in and reloads never prompt (WebKit ignores
+  a prompt without a user gesture, and an unprompted dialog is easily
+  dismissed into a permanent block). Once allowed, the app subscribes through
+  the service worker and registers the subscription with
+  `POST /api/mobile/device-tokens` (platform `webpush`); every later sign-in on
+  that device re-registers it silently for whoever signed in.
+- **Sign-out unregisters the device.** It deletes this device's subscription
+  on the server (`DELETE /api/mobile/device-tokens/:token`, while the session
+  still exists), unsubscribes it in the browser, and only then ends the server
+  session — the signed-out clinician's wake-ups stop reaching the device. A
+  session that merely expires keeps the subscription (STAT wake-ups to a phone
+  in a pocket are the point); the next sign-in re-assigns it.
 - **Payloads are content-free by design.** A push carries a generic title only
   — never message text, names or patient data — because Apple, Google and the
-  push relays do not sign BAAs for push content. Tapping the notification opens
-  the app, which fetches the real content over TLS.
+  push relays do not sign BAAs for push content. Tapping a message
+  notification opens the app on Messages, which fetches the real content over
+  TLS. While the app is in the background a push also sets the app-icon badge
+  (a plain flag — the payload carries no count); in front, the badge and the
+  window title show the real unread count.
 - Dead subscriptions (404/410 from the push service) are pruned automatically.
-- Realtime updates while the app is open arrive over the WebSocket; push is the
-  wake-up for a backgrounded or closed app.
+- Realtime updates while the app is open arrive over the WebSocket and are
+  applied as they come (no re-fetch per event); push is the wake-up for a
+  backgrounded or closed app. A dropped socket reconnects with backoff (up to
+  30 s, immediately when the network or the app comes back) and then re-syncs
+  whatever changed while it was down. A socket the server closes because the
+  session is over (password changed/reset elsewhere, or expired) returns the
+  app to sign-in instead of retrying.
 
 ## Limits (honest list)
 

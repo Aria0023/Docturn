@@ -416,9 +416,10 @@ function ModulesPanel({ organizations }) {
   );
 }
 
+// Same locale-aware clock as the rest of the app (A.CON-MIN-18).
 function devClock(at) {
-  const d = new Date(at);
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+  if (window.dtFmt && window.dtFmt.hhmmss) return window.dtFmt.hhmmss(at);
+  return new Date(at).toLocaleTimeString();
 }
 
 // Auto-detect the hospital's location from the browser environment.

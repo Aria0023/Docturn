@@ -67,30 +67,54 @@ self.addEventListener("fetch", (event) => {
  * Content-free by design — a generic title only (push services have no BAA, so
  * no PHI ever transits them). Tapping focuses/opens the app, which fetches the
  * real content over TLS. */
+// Message wake-ups ("New secure message", "STAT secure message", "Escalated
+// STAT message needs attention", …) open the Messages screen when tapped.
+const isMessagePush = (title) => /message/i.test(title || "");
+
 self.addEventListener("push", (event) => {
   let title = "DocTurn";
   try {
     const data = event.data ? event.data.json() : null;
     if (data && data.title) title = data.title;
   } catch (e) { /* keep generic title */ }
-  event.waitUntil(
+  const nav = isMessagePush(title) ? "messages" : null;
+  event.waitUntil(Promise.all([
     self.registration.showNotification(title, {
       body: "Open DocTurn to view.",
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
       tag: "docturn-msg",
+      data: { nav },
     }),
-  );
+    // App-icon badge (A.CON-MIN-17) while the app is not in front: the payload
+    // is content-free and carries no count, so this is a plain "something new"
+    // flag; the app replaces it with the real unread count (or clears it) as
+    // soon as it is visible again.
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      const inFront = list.some((c) => c.visibilityState === "visible");
+      if (!inFront && nav && self.navigator && typeof self.navigator.setAppBadge === "function") {
+        return self.navigator.setAppBadge().catch(() => {});
+      }
+      return undefined;
+    }).catch(() => {}),
+  ]));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const nav = (event.notification.data && event.notification.data.nav) || null;
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-      for (const client of list) {
-        if ("focus" in client) return client.focus();
+      // Prefer a window of this app that is already open: bring it forward and
+      // ask it to show Messages (api-bridge listens for "docturn:open").
+      const client = list.find((c) => "focus" in c);
+      if (client) {
+        if (nav) { try { client.postMessage({ type: "docturn:open", nav }); } catch (e) { /* focus anyway */ } }
+        return client.focus();
       }
-      return self.clients.openWindow("/");
+      // Nothing open: start the app straight on Messages (api-bridge reads and
+      // strips ?open=messages after sign-in / session restore).
+      return self.clients.openWindow(nav ? "/?open=" + nav : "/");
     }),
   );
 });

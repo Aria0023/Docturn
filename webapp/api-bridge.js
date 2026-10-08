@@ -75,6 +75,8 @@
   function newAuthEpoch() { authEpoch++; }
   // Analytics (/api/metrics/comms, /api/reports/ops) are director-level.
   var PRIVILEGED = { director: 1, er_director: 1, developer: 1 };
+  // GET /api/patient-board: requireRole(hospitalist, er_doctor, er_director, director).
+  var BOARD_ROLES = { hospitalist: 1, er_doctor: 1, er_director: 1, director: 1 };
 
   function rawApi(method, path, body) {
     var headers = body ? { "Content-Type": "application/json" } : {};
@@ -102,21 +104,28 @@
   // Server-side session loss → sign-in screen, with the same PHI hygiene as an
   // explicit logout (clinical slices + persisted snapshot cleared). De-duped so
   // a burst of failing hydrate calls produces one transition and one message.
+  // `why` = "revoked" when the server ended this session because the password
+  // was changed or reset elsewhere (WebSocket close 1008 "session_revoked").
   var sessionExpiring = false;
-  function expireSession() {
+  function expireSession(why) {
     if (sessionExpiring) return;
     sessionExpiring = true;
     newAuthEpoch();
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
     meId = null; lastAuth = null;
     dashHydrated = false; lastDashSnap = null;
     mfaFlagged = false; pendingMfaFinish = null;
-    if (origLogout) origLogout();
+    // UI flags first, then the store's logout (which purges the persisted
+    // snapshot last), so nothing re-persists after the purge (A.CON-SHO-63).
     DT.set(function (s) {
       s.mfaEnrollmentRequired = false; s.mfaChallenge = null;
-      s.loginError = "Your session expired — please sign in again.";
+      s.loginError = why === "revoked"
+        ? "You were signed out because your password was changed or reset. Sign in again."
+        : "Your session expired — please sign in again.";
       return s;
     });
+    if (origLogout) origLogout();
     setTimeout(function () { sessionExpiring = false; }, 2000);
   }
 
@@ -216,13 +225,13 @@
     var now = new Date();
     return (rows || []).map(function (a) {
       var d = a.createdAt ? new Date(a.createdAt) : now;
-      var sameDay = d.toDateString() === now.toDateString();
-      var day = sameDay ? "Today" : (d.toDateString() === new Date(now.getTime() - 86400000).toDateString() ? "Yesterday" : d.toLocaleDateString());
+      // The app's one locale-aware day/clock format (dtFmt, A.CON-MIN-18).
+      var day = fmt.dayLabel ? fmt.dayLabel(d.getTime()) : "Today";
       return {
         id: "as" + a.id, backendId: a.id, patientId: a.patientId,
         initials: a.initials, provider: a.provider, complaint: a.complaint,
         consultants: [], acuity: a.acuity || null,
-        time: day + " · " + fmt.hhmm(d.getTime()), day: day,
+        time: fmt.stamp ? fmt.stamp(d.getTime()) : day + " · " + fmt.hhmm(d.getTime()), day: day,
         status: SMAP[a.status] || "sent",
       };
     });
@@ -331,7 +340,10 @@
         extra.push(Promise.resolve([]));
         extra.push(Promise.resolve([]));
       }
-      extra.push(get("/api/patient-board").catch(function () { return null; }));
+      // Role-gated on the server (board.ts requireRole: the four clinical
+      // roles, not developer) — never ask for what this role can't read
+      // (A.CON-MIN-14: a developer's hydrate logged a 403).
+      extra.push(BOARD_ROLES[role] ? get("/api/patient-board").catch(function () { return null; }) : Promise.resolve(null));
       // ER roles: their live "sent" board (declines / re-routes / accepts).
       var wantsSent = (role === "er_doctor" || role === "er_director");
       extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
@@ -462,59 +474,302 @@
     if (rows.every(function (d) { return !!d.deliveredAt; })) return "delivered";
     return "sent";
   }
+  function countWhere(list, pred) { var n = 0; (list || []).forEach(function (x) { if (pred(x)) n++; }); return n; }
+  // Server message (a thread-view row or a live MESSAGE_RECEIVED frame, which
+  // the server decorates the same way) -> kit message. A frame from an older
+  // server / a covering copy may lack attachments + delivery rows; callers
+  // re-sync that one thread in that case (see applyIncoming).
   function mapMessage(m) {
     var mine = m.senderId === meId;
-    var receipt = mine ? receiptFor(m.deliveries) : null;
+    var hasRows = Array.isArray(m.deliveries);
+    var dl = hasRows ? m.deliveries : [];
+    var own = null;
+    if (!mine) dl.forEach(function (d) { if (d.userId === meId) own = d; });
+    var receipt = mine ? receiptFor(dl) : null;
     return {
-      id: m.id, me: mine, text: m.content,
+      id: m.id, me: mine, senderId: m.senderId, text: m.content,
       at: new Date(m.createdAt || Date.now()).getTime(),
       receipt: receipt, read: receipt === "read",
       priority: m.priority || "routine",
-      ackCount: m.ackCount || 0,
-      readCount: m.readCount || 0,
-      ackedByMe: !!m.acknowledgedByMe,
+      ackCount: typeof m.ackCount === "number" ? m.ackCount : countWhere(dl, function (d) { return !!d.acknowledgedAt; }),
+      readCount: typeof m.readCount === "number" ? m.readCount : countWhere(dl, function (d) { return !!d.readAt; }),
+      ackedByMe: !!m.acknowledgedByMe || !!(own && own.acknowledgedAt),
+      // My own delivery row decides "unread" — the server's rule for unreadCount.
+      // A message that arrived without rows has, by definition, just arrived.
+      unreadByMe: !mine && (hasRows ? !!own && !own.readAt : true),
       attachments: m.attachments || [],
       // Provenance of a forwarded message ({messageId, senderName, sentAt, ...}).
       forwardedFrom: m.forwardedFrom || null,
       // Per-recipient delivery state (group threads: "Seen by N · Acked by M").
-      deliveries: m.deliveries || [],
+      deliveries: dl,
     };
   }
-  // Pull the user's conversations + their messages from the backend into the
-  // kit's conversation shape. Shared server state → both devices see the same.
+  // Unread = messages from others that my delivery row says I have not read
+  // and that this session has not just marked read (readPosted).
+  function unreadOf(msgs) {
+    return countWhere(msgs, function (m) { return !m.me && !m.local && m.id != null && m.unreadByMe && !readPosted[m.id]; });
+  }
+  function byTime(x, y) { return (x.at - y.at) || ((x.id || 0) - (y.id || 0)); }
+  function serverMsgs(c) { return ((c && c.messages) || []).filter(function (m) { return !m.local; }); }
+  // Kit conversation from a server conversation row and its (server) messages.
+  function convoView(c, msgs, prev, unreadOverride) {
+    var others = (c.participantIds || []).filter(function (id) { return id !== meId; });
+    var dirOther = others.length ? dirByUserId(others[0]) : null;
+    var nm = c.name || (others.length === 1 ? (nameForUserId(others[0]) || "Conversation") : "Group conversation");
+    var list = (msgs || []).slice().sort(byTime);
+    return {
+      id: c.id,
+      name: nm,
+      role: c.type === "emergency" ? "Code · all providers" : (c.type === "group" ? ("Group · " + (c.participantIds || []).length + " members") : ((dirOther && dirOther.specialty) || "Provider")),
+      initials: initials(nm),
+      presence: (dirOther && dirOther.working) ? "online" : "offline",
+      tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
+      unread: typeof unreadOverride === "number" ? unreadOverride : unreadOf(list),
+      group: c.type === "group",
+      broadcast: c.type === "emergency",
+      patientId: c.patientId != null ? c.patientId : null,
+      typing: prev ? !!prev.typing : false,
+      participantIds: c.participantIds || [],
+      messages: mergeOutbox(c.id, list),
+    };
+  }
+
+  // ---- live message state (A.CON-SHO-65) ----------------------------------
+  // Realtime frames are applied to the store as they arrive; nothing re-fetches
+  // every conversation per event (each thread fetch is also a PHI-access audit
+  // row). Fetches that remain: the full sync at sign-in, the resync after the
+  // socket was down, and a debounced single-thread fetch when a frame is
+  // incomplete or refers to something this device has not loaded.
+  //   liveSeq   stamps messages applied from a frame (or a send response), so a
+  //             fetch that started before they arrived cannot drop them;
+  //   recalled  ids recalled this session, so a stale snapshot cannot revive one.
+  var liveSeq = 0;
+  var recalled = {};
+  var convosLiveEpoch = -1; // authEpoch whose conversations came from the server
+  function keepLive(prevMsgs, fetched, sinceSeq) {
+    var have = {};
+    fetched.forEach(function (m) { have[m.id] = true; });
+    var extra = (prevMsgs || []).filter(function (m) { return !m.local && m.id != null && (m.liveSeq || 0) > sinceSeq && !have[m.id] && !recalled[m.id]; });
+    return fetched.filter(function (m) { return !recalled[m.id]; }).concat(extra).sort(byTime);
+  }
+  function threadPath(id) { return "/api/messaging/conversations/" + id + "/messages"; }
+
+  // Full sync: every conversation and its thread. Runs at sign-in / restore and
+  // as the fallback resync; a newer full sync supersedes an older one.
+  var fullSyncGen = 0;
   function hydrateConversations() {
+    var gen = ++fullSyncGen, since = liveSeq, epoch = authEpoch;
     return get("/api/messaging/conversations").then(function (convos) {
       return Promise.all((convos || []).map(function (c) {
-        return get("/api/messaging/conversations/" + c.id + "/messages")
-          .then(function (msgs) { return { c: c, msgs: msgs || [] }; })
-          .catch(function () { return { c: c, msgs: [] }; });
+        return get(threadPath(c.id))
+          .then(function (msgs) { return { c: c, msgs: (msgs || []).map(mapMessage) }; })
+          .catch(function () { return { c: c, msgs: null }; });
       })).then(function (rows) {
+        if (gen !== fullSyncGen || epoch !== authEpoch) return; // superseded / signed out
+        convosLiveEpoch = epoch; // before the set, so its listeners see live data
         DT.set(function (s) {
+          var prevById = {};
+          (s.conversations || []).forEach(function (c) { prevById[c.id] = c; });
           s.conversations = rows.map(function (row) {
-            var c = row.c;
-            var others = (c.participantIds || []).filter(function (id) { return id !== meId; });
-            var dirOther = others.length ? dirByUserId(others[0]) : null;
-            var nm = c.name || (others.length === 1 ? (nameForUserId(others[0]) || "Conversation") : "Group conversation");
-            return {
-              id: c.id,
-              name: nm,
-              role: c.type === "emergency" ? "Code · all providers" : (c.type === "group" ? ("Group · " + (c.participantIds || []).length + " members") : ((dirOther && dirOther.specialty) || "Provider")),
-              initials: initials(nm),
-              presence: (dirOther && dirOther.working) ? "online" : "offline",
-              tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
-              unread: c.unreadCount || 0,
-              group: c.type === "group",
-              broadcast: c.type === "emergency",
-              patientId: c.patientId != null ? c.patientId : null,
-              typing: false,
-              participantIds: c.participantIds || [],
-              messages: mergeOutbox(c.id, (row.msgs || []).map(mapMessage)),
-            };
+            var prev = prevById[row.c.id];
+            if (!row.msgs) return convoView(row.c, serverMsgs(prev), prev, prev ? undefined : (row.c.unreadCount || 0));
+            return convoView(row.c, keepLive(prev && prev.messages, row.msgs, since), prev);
           });
           return s;
         });
       });
     }).catch(function () { /* keep whatever's there on failure */ });
+  }
+
+  // Resync after the socket was down (A.CON-SHO-65 / A.CON-MIN-19): ONE list
+  // request, then a thread fetch only where something can have changed while
+  // this device was not listening — an unknown thread, a different last
+  // message, a different unread count, a group (seen-by counts), or one of my
+  // messages still awaiting reads/acks (receipts, recall). Unchanged threads
+  // are not re-read.
+  function needsRefetch(c, prev) {
+    if (!prev) return true;
+    var msgs = serverMsgs(prev);
+    var last = msgs.length ? msgs[msgs.length - 1] : null;
+    var srvLast = c.lastMessage || null;
+    if ((last && last.id) !== (srvLast && srvLast.id)) return true;
+    if ((c.unreadCount || 0) !== unreadOf(msgs)) return true;
+    if (c.type === "group") return true;
+    return msgs.some(function (m) {
+      if (!m.me) return false;
+      if (m.receipt !== "read") return true;
+      return m.priority !== "routine" && (m.deliveries || []).some(function (d) { return !d.acknowledgedAt; });
+    });
+  }
+  function resyncConversations() {
+    var since = liveSeq, epoch = authEpoch;
+    if (convosLiveEpoch !== epoch) return hydrateConversations(); // never synced: full
+    return get("/api/messaging/conversations").then(function (convos) {
+      var have = {};
+      (DT.getState().conversations || []).forEach(function (c) { have[c.id] = c; });
+      var todo = (convos || []).filter(function (c) { return needsRefetch(c, have[c.id]); });
+      return Promise.all(todo.map(function (c) {
+        return get(threadPath(c.id))
+          .then(function (msgs) { return { id: c.id, msgs: (msgs || []).map(mapMessage) }; })
+          .catch(function () { return { id: c.id, msgs: null }; });
+      })).then(function (rows) {
+        if (epoch !== authEpoch) return;
+        var fetched = {};
+        rows.forEach(function (r) { if (r.msgs) fetched[r.id] = r.msgs; });
+        DT.set(function (s) {
+          var prevById = {};
+          (s.conversations || []).forEach(function (c) { prevById[c.id] = c; });
+          s.conversations = (convos || []).map(function (c) {
+            var prev = prevById[c.id];
+            if (fetched[c.id]) return convoView(c, keepLive(prev && prev.messages, fetched[c.id], since), prev);
+            return convoView(c, serverMsgs(prev), prev, prev ? undefined : (c.unreadCount || 0));
+          });
+          return s;
+        });
+      });
+    }).catch(function () {});
+  }
+  // A conversation this device does not know yet (a new thread, or I was added
+  // to one): one list request + that thread. Debounced so a burst is one call.
+  var listSyncTimer = null;
+  function syncConversationList() {
+    if (listSyncTimer) return;
+    listSyncTimer = setTimeout(function () { listSyncTimer = null; resyncConversations(); }, 250);
+  }
+  // Re-read ONE thread (incomplete frame, an ack/read this device cannot place,
+  // a send while the socket is down). Debounced per conversation (~250 ms).
+  var threadTimers = {};
+  function refreshThread(convoId) {
+    if (convoId == null) return;
+    clearTimeout(threadTimers[convoId]);
+    threadTimers[convoId] = setTimeout(function () { delete threadTimers[convoId]; fetchThread(convoId); }, 250);
+  }
+  function fetchThread(convoId) {
+    var known = (DT.getState().conversations || []).some(function (c) { return c.id === convoId; });
+    if (!known) { syncConversationList(); return Promise.resolve(); }
+    var since = liveSeq, epoch = authEpoch;
+    return get(threadPath(convoId)).then(function (msgs) {
+      if (epoch !== authEpoch) return;
+      var fetched = (msgs || []).map(mapMessage);
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (c) {
+          if (c.id !== convoId) return c;
+          var list = keepLive(c.messages, fetched, since);
+          return Object.assign({}, c, { messages: mergeOutbox(c.id, list), unread: unreadOf(list) });
+        });
+        return s;
+      });
+    }).catch(function (e) { if (e && (e.status === 403 || e.status === 404)) syncConversationList(); });
+  }
+  // Make sure a conversation is in state (after creating / forwarding into
+  // one); resolves once it is.
+  function ensureConversation(convoId) {
+    if ((DT.getState().conversations || []).some(function (c) { return c.id === convoId; })) return Promise.resolve();
+    return resyncConversations();
+  }
+  function wsLive() { return !!(ws && ws.readyState === 1); }
+
+  // MESSAGE_RECEIVED: the frame carries the message decorated like the thread
+  // view — apply it directly. Unknown thread → list sync; a frame without
+  // attachments/delivery rows → re-read just that thread.
+  function applyIncoming(raw) {
+    if (!raw || raw.id == null || raw.conversationId == null || recalled[raw.id]) return;
+    var convoId = raw.conversationId;
+    if (!(DT.getState().conversations || []).some(function (c) { return c.id === convoId; })) { syncConversationList(); return; }
+    var complete = Array.isArray(raw.attachments) && Array.isArray(raw.deliveries);
+    var m = mapMessage(raw);
+    m.liveSeq = ++liveSeq;
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (c.id !== convoId) return c;
+        var list = serverMsgs(c);
+        var idx = -1;
+        list.forEach(function (x, i) { if (x.id === m.id) idx = i; });
+        if (idx >= 0) {
+          var cur = list[idx];
+          // Never trade a richer copy (e.g. the send response's attachments)
+          // for a thinner frame.
+          var merged = complete ? Object.assign({}, cur, m) : Object.assign({}, m, { attachments: cur.attachments && cur.attachments.length ? cur.attachments : m.attachments, deliveries: cur.deliveries, receipt: cur.receipt, read: cur.read, unreadByMe: cur.unreadByMe, ackCount: cur.ackCount, readCount: cur.readCount });
+          list = list.slice(); list[idx] = merged;
+        } else {
+          list = list.concat([m]);
+        }
+        list.sort(byTime);
+        return Object.assign({}, c, { messages: mergeOutbox(c.id, list), unread: unreadOf(list) });
+      });
+      return s;
+    });
+    if (!complete) refreshThread(convoId);
+  }
+  // Patch one recipient's delivery row; returns false when no row matched (the
+  // caller then re-reads that thread).
+  function patchDelivery(convoId, messageIds, userId, patchRow) {
+    var found = false;
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (convoId != null && c.id !== convoId) return c;
+        var touched = false;
+        var msgs = (c.messages || []).map(function (m) {
+          if (m.id == null || messageIds.indexOf(m.id) < 0) return m;
+          var hit = false;
+          var dl = (m.deliveries || []).map(function (d) {
+            if (d.userId !== userId) return d;
+            hit = true;
+            return patchRow(d);
+          });
+          if (!hit) return m;
+          touched = true; found = true;
+          var receipt = m.me ? receiptFor(dl) : null;
+          var mineRow = null;
+          dl.forEach(function (d) { if (d.userId === meId) mineRow = d; });
+          return Object.assign({}, m, {
+            deliveries: dl,
+            readCount: countWhere(dl, function (d) { return !!d.readAt; }),
+            ackCount: countWhere(dl, function (d) { return !!d.acknowledgedAt; }),
+            receipt: receipt, read: receipt === "read",
+            ackedByMe: m.ackedByMe || !!(mineRow && mineRow.acknowledgedAt),
+            unreadByMe: !m.me && !!mineRow && !mineRow.readAt,
+          });
+        });
+        if (!touched) return c;
+        return Object.assign({}, c, { messages: msgs, unread: unreadOf(msgs) });
+      });
+      return s;
+    });
+    return found;
+  }
+  // MESSAGE_ACK {messageId, conversationId, userId}: that recipient acknowledged
+  // (which also marks it read). The STAT sweep reuses this frame with the
+  // covering provider's id — no row here, so that thread is re-read once.
+  function applyAck(ev) {
+    var at = new Date().toISOString();
+    var ok = patchDelivery(ev.conversationId, [ev.messageId], ev.userId, function (d) {
+      return d.acknowledgedAt ? d : Object.assign({}, d, { acknowledgedAt: at, readAt: d.readAt || at, status: "acknowledged" });
+    });
+    if (!ok) refreshThread(ev.conversationId);
+  }
+  // MESSAGE_READ {conversationId, messageIds, userId, readAt}: their receipt
+  // rows flip so my receipt turns "Read" and a group's "Seen by" moves live.
+  function applyRead(ev) {
+    var readAt = ev.readAt || new Date().toISOString();
+    var ok = patchDelivery(ev.conversationId, ev.messageIds, ev.userId, function (d) {
+      return d.readAt ? d : Object.assign({}, d, { readAt: readAt, status: d.acknowledgedAt ? "acknowledged" : "read" });
+    });
+    if (!ok) refreshThread(ev.conversationId);
+  }
+  // MESSAGE_RECALLED (A.CON-SHO-25): drop it from the thread at once — even
+  // while it is open on screen — and recount unread from what remains.
+  function applyRecall(ev) {
+    recalled[ev.messageId] = true;
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (ev.conversationId != null && c.id !== ev.conversationId) return c;
+        var msgs = (c.messages || []).filter(function (m) { return m.id !== ev.messageId; });
+        if (msgs.length === (c.messages || []).length) return c;
+        return Object.assign({}, c, { messages: msgs, unread: unreadOf(msgs) });
+      });
+      return s;
+    });
   }
 
   // ---- outbox: messages this device is sending or failed to send ----------
@@ -580,18 +835,25 @@
     if (ids.length) body.attachmentIds = ids;
     return api("POST", "/api/messaging/send", body).then(function (res) {
       outbox = outbox.filter(function (x) { return x !== o; });
-      // Swap the local bubble for the stored message right away ("sent"), then
-      // re-sync for the server's delivery rows ("delivered").
+      // Swap the local bubble for the stored message right away ("sent"). The
+      // server's delivery rows ("delivered") arrive in my own MESSAGE_RECEIVED
+      // frame — which may already have landed, in which case that richer copy
+      // stays. Without a live socket, re-read just this thread.
       DT.set(function (s) {
         s.conversations = (s.conversations || []).map(function (c) {
           if (c.id !== o.convoId) return c;
-          var server = (c.messages || []).filter(function (m) { return !m.local && !(res && m.id === res.id); });
-          if (res && res.id != null) server = server.concat([Object.assign(mapMessage(res), { attachments: o.attachments })]);
+          var server = serverMsgs(c);
+          var have = res && res.id != null && server.some(function (m) { return m.id === res.id; });
+          if (res && res.id != null && !have && !recalled[res.id]) {
+            var mine = Object.assign(mapMessage(res), { attachments: o.attachments });
+            mine.liveSeq = ++liveSeq;
+            server = server.concat([mine]).sort(byTime);
+          }
           return Object.assign({}, c, { messages: mergeOutbox(c.id, server) });
         });
         return s;
       });
-      hydrateConversations();
+      if (!wsLive()) refreshThread(o.convoId);
       return { ok: true, message: res };
     }).catch(function (e) {
       if (outbox.indexOf(o) < 0) return { ok: false };
@@ -619,77 +881,110 @@
     refreshOutbox(o.convoId);
     return { text: o.text, priority: o.priority, attachments: o.attachments.slice() };
   };
-  // Nothing unsent outlives the session that wrote it.
+  // Nothing unsent (and no per-session message bookkeeping) outlives the
+  // session that wrote it.
   var outboxSession = null;
   if (DT.subscribe) DT.subscribe(function () {
     var sess = DT.getState().session || null;
     if (sess === outboxSession) return;
     outboxSession = sess;
-    outbox = []; readPosted = {};
+    outbox = []; readPosted = {}; recalled = {};
+    Object.keys(threadTimers).forEach(function (k) { clearTimeout(threadTimers[k]); delete threadTimers[k]; });
+    if (listSyncTimer) { clearTimeout(listSyncTimer); listSyncTimer = null; }
   });
 
   // ---- live WebSocket ------------------------------------------------------
-  // Cookie-authenticated socket at /ws. Refreshes messaging on MESSAGE_RECEIVED
-  // and the role's data on assignment/board/broadcast events, so a second device
-  // updates live without a manual refresh.
+  // Cookie-authenticated socket at /ws. Message frames are applied directly
+  // (applyIncoming / applyAck / applyRead / applyRecall); assignment, board and
+  // broadcast events refresh the role's data, so a second device updates live.
+  //
+  // Connection lifecycle (A.CON-SHO-67):
+  //   - "connected" means the server's CONNECTION_ESTABLISHED, not onopen: the
+  //     server accepts the upgrade and only then closes an unauthenticated
+  //     socket with 1008.
+  //   - 1008 "session_revoked" (password changed / reset elsewhere) → the
+  //     session is dead: sign-in, via expireSession.
+  //   - any other 1008 → ask the server (GET /api/user): 401 → sign-in;
+  //     still signed in (the realtime channel, not the session, is refusing —
+  //     e.g. a proxy dropping the cookie on upgrade) → back off, never sign a
+  //     working session out, and after three refusals stop retrying until the
+  //     network/app comes back.
+  //   - other closes → exponential backoff with jitter, capped at 30 s, and an
+  //     immediate retry on `online` / the app returning to the foreground.
+  //   - a re-established socket resyncs what was missed while it was down.
   var typingExpiry = {}; // convoId -> timeout clearing a lost typing_stop
+  var WS_BACKOFF_CAP_MS = 30000;
+  var WS_REFUSALS_BEFORE_PAUSE = 3;
+  var wsEpoch = -1;            // authEpoch the counters below belong to
+  var wsAttempt = 0;           // consecutive closes without an established socket
+  var wsRefusals = 0;          // consecutive 1008 closes
+  var wsPaused = false;        // refused repeatedly while HTTP says signed in
+  var wsEstablishedOnce = false;
+  var wsTimer = null;
+  function wsWanted() {
+    return !!DT.getState().session && !sessionExpiring && typeof WebSocket !== "undefined" && typeof location !== "undefined";
+  }
+  function scheduleReconnect() {
+    if (wsTimer || wsPaused || !wsWanted()) return;
+    var ceiling = Math.min(WS_BACKOFF_CAP_MS, 1000 * Math.pow(2, wsAttempt));
+    var delay = Math.round(ceiling / 2 + Math.random() * (ceiling / 2)); // jitter
+    wsAttempt++;
+    wsTimer = setTimeout(function () { wsTimer = null; if (!ws && wsWanted()) connectWs(); }, delay);
+  }
+  // The network or the app came back: retry now (and probe again if paused).
+  function reconnectNow() {
+    if (ws || !wsWanted()) return;
+    if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+    wsPaused = false; wsRefusals = 0; wsAttempt = 0;
+    connectWs();
+  }
+  try {
+    window.addEventListener("online", reconnectNow);
+    document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") reconnectNow(); });
+  } catch (e) {}
+  // The server refused the socket (1008).
+  function onWsRefused(reason, epoch) {
+    wsRefusals++;
+    if (DEMO_TOKEN) return scheduleReconnect(); // token panes have no sign-in to return to
+    if (reason === "session_revoked") return expireSession("revoked");
+    rawApi("GET", "/api/user").then(function () {
+      if (epoch !== authEpoch) return;
+      if (wsRefusals >= WS_REFUSALS_BEFORE_PAUSE) { wsPaused = true; return; }
+      scheduleReconnect();
+    }, function (e) {
+      if (epoch !== authEpoch) return;
+      if (e && e.status === 401 && DT.getState().session) return expireSession();
+      scheduleReconnect();
+    });
+  }
   function connectWs() {
     try { if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } } catch (e) {}
+    if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+    if (wsEpoch !== authEpoch) { wsEpoch = authEpoch; wsAttempt = 0; wsRefusals = 0; wsPaused = false; wsEstablishedOnce = false; }
     if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
+    var epoch = authEpoch;
     try {
       var proto = location.protocol === "https:" ? "wss:" : "ws:";
       var wsUrl = proto + "//" + location.host + "/ws" + (DEMO_TOKEN ? ("?token=" + encodeURIComponent(DEMO_TOKEN)) : "");
       var sock = new WebSocket(wsUrl);
       ws = sock;
       sock.onmessage = function (e) {
+        if (epoch !== authEpoch) return;
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
-        if (ev.type === "MESSAGE_RECEIVED") hydrateConversations();
-        // A STAT/urgent message was acknowledged — refresh so ack counts update.
-        else if (ev.type === "MESSAGE_ACK") hydrateConversations();
-        // The sender recalled a message (A.CON-SHO-25): drop it from the thread
-        // at once — even while it is open on screen — then re-sync previews and
-        // unread counts from the server.
-        else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) {
-          DT.set(function (s) {
-            s.conversations = (s.conversations || []).map(function (c) {
-              if (ev.conversationId != null && c.id !== ev.conversationId) return c;
-              var msgs = (c.messages || []).filter(function (m) { return m.id !== ev.messageId; });
-              return msgs.length === (c.messages || []).length ? c : Object.assign({}, c, { messages: msgs });
-            });
-            return s;
-          });
-          hydrateConversations();
+        if (ev.type === "CONNECTION_ESTABLISHED") {
+          wsAttempt = 0; wsRefusals = 0; wsPaused = false;
+          // Back after a gap: whatever was sent/read/recalled meanwhile is not
+          // replayed by the server — resync it once (A.CON-SHO-65).
+          if (wsEstablishedOnce) { resyncConversations(); rehydrate(); hydrateBroadcasts(); }
+          wsEstablishedOnce = true;
         }
-        // Someone read messages in a thread I'm in (A.CON-SHO-26): flip their
-        // delivery rows, so my receipt turns "Read" and a group's "Seen by"
-        // count moves live. Unknown messages fall back to a re-sync.
-        else if (ev.type === "MESSAGE_READ" && Array.isArray(ev.messageIds)) {
-          var readAt = ev.readAt || new Date().toISOString();
-          var found = 0;
-          DT.set(function (s) {
-            s.conversations = (s.conversations || []).map(function (c) {
-              if (ev.conversationId != null && c.id !== ev.conversationId) return c;
-              var touched = false;
-              var msgs = (c.messages || []).map(function (m) {
-                if (m.id == null || ev.messageIds.indexOf(m.id) < 0) return m;
-                var hit = false;
-                var dl = (m.deliveries || []).map(function (d) {
-                  if (d.userId !== ev.userId || d.readAt) return d;
-                  hit = true;
-                  return Object.assign({}, d, { readAt: readAt, status: d.acknowledgedAt ? "acknowledged" : "read" });
-                });
-                if (!hit) return m;
-                touched = true; found++;
-                var receipt = m.me ? receiptFor(dl) : null;
-                return Object.assign({}, m, { deliveries: dl, readCount: dl.filter(function (d) { return !!d.readAt; }).length, receipt: receipt, read: receipt === "read" });
-              });
-              return touched ? Object.assign({}, c, { messages: msgs }) : c;
-            });
-            return s;
-          });
-          if (!found) hydrateConversations();
-        }
+        else if (ev.type === "MESSAGE_RECEIVED") applyIncoming(ev.message);
+        // A STAT/urgent message was acknowledged — patch that recipient's row.
+        else if (ev.type === "MESSAGE_ACK" && ev.messageId != null) applyAck(ev);
+        else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) applyRecall(ev);
+        // Someone read messages in a thread I'm in (A.CON-SHO-26).
+        else if (ev.type === "MESSAGE_READ" && Array.isArray(ev.messageIds)) applyRead(ev);
         // Real typing indicator: a peer relayed typing_start/stop through the
         // server (see server/ws). Flip the convo's flag, with a 5s safety expiry
         // in case the stop event is lost.
@@ -744,9 +1039,14 @@
           });
         }
       };
-      sock.onclose = function () { if (ws === sock) ws = null; if (DT.getState().session) setTimeout(connectWs, 3000); };
+      sock.onclose = function (e) {
+        if (ws === sock) ws = null;
+        if (epoch !== authEpoch || !wsWanted()) return; // signed out / identity changed
+        if (e && e.code === 1008) return onWsRefused(String(e.reason || ""), epoch);
+        scheduleReconnect();
+      };
       sock.onerror = function () { try { sock.close(); } catch (e) {} };
-    } catch (e) { /* WS unavailable — messaging still works via fetch on actions */ }
+    } catch (e) { scheduleReconnect(); /* WS unavailable now — retry with backoff */ }
   }
 
   // Developer: hydrate real organizations into the kit's org shape.
@@ -841,7 +1141,7 @@
     connectWs();
     if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
     hydrateMyPrefs();
-    enableWebPush();
+    ensurePushSubscription(); // never prompts — see DT.actions.enablePush
     if (PRIVILEGED[u.role]) hydrateOpsReport();
     hydrateBroadcasts(); // catch up on broadcasts sent while this device was offline
     hydrateAwayMessage();
@@ -891,7 +1191,11 @@
     // Second-factor completion re-enters the same finish() as a plain login.
     pendingMfaFinish = function (u) { return finish(u); };
 
-    return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: password })
+    // A sign-out still finishing (push cleanup, then POST /api/logout) must land
+    // before this sign-in, or it would end the new session.
+    return Promise.resolve(logoutPending).then(function () {
+      return rawApi("POST", "/api/login", { orgCode: orgCode, username: username, password: password });
+    })
       .then(function (r) {
         if (r && r.twoFactorRequired) {
           // Enrolled account: the server holds the login until a second
@@ -994,15 +1298,30 @@
     });
   };
 
+  // Accept / decline: the row leaves Incoming at once, but "accepted" /
+  // "declined" is only announced once the server agrees. A refusal puts the
+  // row back and says why; a dead session goes to sign-in (api() → 401 →
+  // expireSession) instead of a success toast (A.CON-SHO-67).
+  function assignmentRefused(e, verb) {
+    if (e && e.status === 401) return; // expireSession already took the user to sign-in
+    var m = String((e && e.message) || "");
+    var why = isNetworkError(e) ? "No connection — nothing was changed."
+      : (e && (e.status === 403 || e.status === 404 || e.status === 409)) || /pending|already|expired/i.test(m) ? "It is no longer waiting for you (taken, expired or re-routed)."
+      : "The server refused it.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't " + verb + " the assignment", msg: why }; return s; });
+    rehydrate();
+  }
   DT.actions.accept = function (id) {
-    api("PATCH", "/api/assignments/" + id + "/accept").then(rehydrate).catch(function () {});
     DT.set(function (s) {
       var p = (s.pending || []).find(function (x) { return x.id === id; });
       if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), patientId: p.patientId, initials: p.initials, room: p.room, complaint: p.complaint, consultants: [] }].concat(s.myAdmissions || []);
       s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
-      s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." };
       return s;
     });
+    return api("PATCH", "/api/assignments/" + id + "/accept").then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." }; return s; });
+      return rehydrate();
+    }).catch(function (e) { assignmentRefused(e, "accept"); });
   };
   // Request a consult on a patient — available to hospitalists, directors and ER
   // (the backend allows all of them). Optimistically tags the patient everywhere
@@ -1119,9 +1438,16 @@
       lastDashSnap = dashSnapshot(DT.getState());
     }).catch(function () {});
   }
-  // Web Push: subscribe this browser/PWA so STAT + new-message wake-ups reach a
-  // closed phone (content-free payloads; the SW shows a generic title). Best-
-  // effort + permission-gated — the app works fully without it.
+  // ---- Web Push (A.CON-SHO-62, A.CON-NEE-1, A.CON-SHO-68) -------------------
+  // Subscribes this browser/PWA so STAT + new-message wake-ups reach a closed
+  // phone (content-free payloads; the SW shows a generic title).
+  //   - Permission is requested ONLY from an explicit tap (Settings → Turn on,
+  //     DT.actions.enablePush). WebKit ignores/denies a prompt outside a user
+  //     gesture, and an unprompted dialog after sign-in is easy to dismiss into
+  //     a permanent block. Sign-in / reload never prompt.
+  //   - When permission was already granted, sign-in silently (re)registers
+  //     this device's subscription with the account that is signed in now.
+  //   - Sign-out removes it from the server and unsubscribes the device.
   function urlB64ToUint8Array(b64) {
     var pad = "=".repeat((4 - (b64.length % 4)) % 4);
     var base = (b64 + pad).replace(/-/g, "+").replace(/_/g, "/");
@@ -1130,29 +1456,97 @@
     for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
     return out;
   }
-  // Exposed so the Settings screen can (re)request push permission on demand.
-  DT.actions.enablePush = function () { return enableWebPush(); };
-  function enableWebPush() {
+  function withTimeout(p, ms) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(new Error("timeout")); }, ms);
+      Promise.resolve(p).then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+  function isIosDevice() {
     try {
-      if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-      if (typeof window === "undefined" || !("PushManager" in window) || !("Notification" in window)) return;
-      if (Notification.permission === "denied") return;
-      Notification.requestPermission().then(function (perm) {
-        if (perm !== "granted") return;
-        Promise.all([navigator.serviceWorker.ready, rawApi("GET", "/api/push/vapid-key")])
-          .then(function (r) {
-            var reg = r[0], key = r[1] && r[1].key;
-            if (!reg || !key) return null;
-            return reg.pushManager.getSubscription().then(function (existing) {
-              return existing || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
-            });
-          })
-          .then(function (sub) {
-            if (sub) return api("POST", "/api/mobile/device-tokens", { token: JSON.stringify(sub), platform: "webpush" });
-          })
-          .catch(function () { /* push is optional */ });
-      }).catch(function () {});
+      var ua = navigator.userAgent || "";
+      return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    } catch (e) { return false; }
+  }
+  function isStandalone() {
+    try { return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true; } catch (e) { return false; }
+  }
+  function pushApisPresent() {
+    try { return typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window; } catch (e) { return false; }
+  }
+  // What the Settings row should say for THIS device:
+  //   "granted" | "default" | "denied" — the browser's permission;
+  //   "ios-home-screen" — iPhone/iPad Safari tab: Web Push exists only for an
+  //                       app added to the Home Screen (iOS 16.4+);
+  //   "ios-update"      — Home Screen app on an iOS older than 16.4;
+  //   "unsupported"     — no Web Push in this browser.
+  DT.pushStatus = function () {
+    if (!pushApisPresent()) return !isIosDevice() ? "unsupported" : isStandalone() ? "ios-update" : "ios-home-screen";
+    try { return Notification.permission || "default"; } catch (e) { return "unsupported"; }
+  };
+  // This page's service-worker registration. `waitForReady` also waits for a
+  // registration still being installed (subscribing needs one); sign-out does
+  // not — no registration means no subscription to remove.
+  function swRegistration(ms, waitForReady) {
+    var sw = navigator.serviceWorker;
+    return withTimeout(sw.getRegistration ? sw.getRegistration() : sw.ready, ms)
+      .then(function (reg) { return reg || (waitForReady ? withTimeout(sw.ready, ms) : null); });
+  }
+  // Create (or reuse) this device's subscription and register it with the
+  // signed-in account. Only ever called with permission already granted.
+  function subscribePush() {
+    return Promise.all([swRegistration(10000, true), api("GET", "/api/push/vapid-key")]).then(function (r) {
+      var reg = r[0], key = r[1] && r[1].key;
+      if (!reg || !reg.pushManager || !key) throw new Error("push_unavailable");
+      return reg.pushManager.getSubscription().then(function (existing) {
+        return existing || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(key) });
+      });
+    }).then(function (sub) {
+      if (!sub) throw new Error("push_unavailable");
+      return api("POST", "/api/mobile/device-tokens", { token: JSON.stringify(sub), platform: "webpush" });
+    });
+  }
+  // Automatic path (sign-in, reload): no prompt, ever.
+  function ensurePushSubscription() {
+    try {
+      if (!pushApisPresent() || Notification.permission !== "granted") return;
+      subscribePush().catch(function () { /* push is optional */ });
     } catch (e) { /* older browsers */ }
+  }
+  // Gesture path: call straight from the click handler — requestPermission must
+  // be the first thing that happens (no await before it) for WebKit to accept
+  // it. Resolves to the resulting DT.pushStatus() (or "error").
+  DT.actions.enablePush = function () {
+    if (!pushApisPresent()) return Promise.resolve(DT.pushStatus());
+    if (Notification.permission === "denied") return Promise.resolve("denied");
+    var asked;
+    try {
+      asked = new Promise(function (resolve) {
+        // Older Safari takes a callback and returns undefined; newer engines
+        // return a promise (and may also call the callback).
+        var r = Notification.requestPermission(function (p) { resolve(p); });
+        if (r && typeof r.then === "function") r.then(resolve, function () { resolve(Notification.permission); });
+      });
+    } catch (e) { return Promise.resolve("error"); }
+    return asked.then(function (perm) {
+      if ((perm || Notification.permission) !== "granted") return DT.pushStatus();
+      return subscribePush().then(function () { return "granted"; }, function () { return "error"; });
+    });
+  };
+  // Sign-out: remove this device's subscription from the server (while the
+  // session still exists) and unsubscribe it, so the signed-out clinician's
+  // wake-ups stop reaching this device (A.CON-SHO-68). Resolves either way.
+  function unsubscribePushForLogout() {
+    if (!pushApisPresent()) return Promise.resolve();
+    return swRegistration(2000, false).then(function (reg) {
+      return reg && reg.pushManager ? reg.pushManager.getSubscription() : null;
+    }).then(function (sub) {
+      if (!sub) return;
+      var token = JSON.stringify(sub);
+      return withTimeout(rawApi("DELETE", "/api/mobile/device-tokens/" + encodeURIComponent(token)), 3000)
+        .catch(function () { /* offline: the unsubscribe below still kills the endpoint (push service answers 410, the server prunes it) */ })
+        .then(function () { return sub.unsubscribe(); });
+    }).catch(function () {});
   }
   // Director ops report (assignments latency, consult response, message volume).
   function hydrateOpsReport() {
@@ -1196,12 +1590,14 @@
       });
   };
   DT.actions.decline = function (id) {
-    api("PATCH", "/api/assignments/" + id + "/reject").then(rehydrate).catch(function () {});
     DT.set(function (s) {
       s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
-      s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." };
       return s;
     });
+    return api("PATCH", "/api/assignments/" + id + "/reject").then(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Declined — re-routing", msg: "Sent to the next provider." }; return s; });
+      return rehydrate();
+    }).catch(function (e) { assignmentRefused(e, "decline"); });
   };
 
   // ER re-routes a patient they sent to a different hospitalist. Hits the real
@@ -1456,17 +1852,51 @@
     DT.set(function (s) { s.mfaChallenge = null; return s; });
   };
 
-  // Logout: tear down the live socket + clear the server session too.
+  // Logout: tear down the live socket, clear this device's state at once, then
+  // end the server session — after this device's Web Push subscription has been
+  // removed under that session (A.CON-SHO-68). The server sign-out is never
+  // lost: it goes out as soon as the push cleanup settles, after 4 s at the
+  // latest, or (keepalive) if the page is closed first. A new sign-in waits for
+  // it, so a late logout can never end the NEXT session.
   var origLogout = DT.actions.logout;
+  var logoutPending = null;
+  function endServerSession() {
+    var sent = false, finish = null;
+    var done = new Promise(function (resolve) { finish = resolve; });
+    function onHide() { send(true); }
+    function send(keepalive) {
+      if (sent) return;
+      sent = true;
+      try { window.removeEventListener("pagehide", onHide); } catch (e) {}
+      var headers = { "Content-Type": "application/json" };
+      if (DEMO_TOKEN) headers["Authorization"] = "Bearer " + DEMO_TOKEN;
+      var req;
+      try { req = fetch("/api/logout", { method: "POST", credentials: "include", keepalive: !!keepalive, headers: headers, body: "{}" }); }
+      catch (e) { req = Promise.resolve(); }
+      Promise.resolve(req).catch(function () {}).then(function () { finish(); });
+    }
+    try { window.addEventListener("pagehide", onHide); } catch (e) {}
+    var timer = setTimeout(function () { send(true); }, 4000);
+    unsubscribePushForLogout().then(function () { clearTimeout(timer); send(false); });
+    return done;
+  }
   DT.actions.logout = function () {
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
     newAuthEpoch();
-    meId = null;
+    meId = null; lastAuth = null;
     dashHydrated = false; lastDashSnap = null; // stop cross-device layout saves for the signed-out user
-    mfaFlagged = false; pendingMfaFinish = null;
-    rawApi("POST", "/api/logout", {}).catch(function () {});
+    mfaFlagged = false; pwChangeFlagged = false; pendingMfaFinish = null;
+    // UI flags BEFORE the store's logout: it purges the persisted snapshot,
+    // and any set() after it would write the allowlist back (A.CON-SHO-63).
+    DT.set(function (s) { s.mfaEnrollmentRequired = false; s.mfaChallenge = null; s.passwordChangeRequired = false; return s; });
     if (origLogout) origLogout();
-    DT.set(function (s) { s.mfaEnrollmentRequired = false; s.mfaChallenge = null; return s; });
+    // A sign-out never leaves the lock's re-auth identity behind either.
+    try { if (window.__dtLock) window.__dtLock.clear(); } catch (e) {}
+    var p = endServerSession();
+    logoutPending = p;
+    p.then(function () { if (logoutPending === p) logoutPending = null; });
+    return p;
   };
 
   // ---- messaging overrides (backend-backed, cross-device) ------------------
@@ -1475,18 +1905,34 @@
   // foreground tab) — including when new messages land in it — so the sender's
   // receipt means "seen". Each message id is posted once per session.
   var readPosted = {};
+  function recountUnread(id) {
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) {
+        if (c.id !== id) return c;
+        var n = unreadOf(c.messages);
+        return n === c.unread ? c : Object.assign({}, c, { unread: n });
+      });
+      return s;
+    });
+  }
   DT.actions.openConversation = function (id) {
-    var convo = (DT.getState().conversations || []).find(function (c) { return c.id === id; });
     var st0 = DT.getState();
-    if (st0.__activeConvo !== id || (convo && convo.unread)) {
-      DT.set(function (s) { s.conversations = (s.conversations || []).map(function (c) { return c.id === id && c.unread ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; });
+    var convo = (st0.conversations || []).find(function (c) { return c.id === id; });
+    // Only what my delivery rows say is unread, each id once per session.
+    var ids = convo ? (convo.messages || []).filter(function (m) { return !m.me && m.id != null && m.unreadByMe && !readPosted[m.id]; }).map(function (m) { return m.id; }) : [];
+    ids.forEach(function (mid) { readPosted[mid] = true; });
+    if (st0.__activeConvo !== id || (convo && convo.unread) || ids.length) {
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (c) { return c.id === id ? Object.assign({}, c, { unread: unreadOf(c.messages) }) : c; });
+        s.__activeConvo = id;
+        return s;
+      });
     }
-    if (convo) {
-      var ids = (convo.messages || []).filter(function (m) { return !m.me && m.id != null && !readPosted[m.id]; }).map(function (m) { return m.id; });
-      if (ids.length) {
-        ids.forEach(function (mid) { readPosted[mid] = true; });
-        api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () { ids.forEach(function (mid) { delete readPosted[mid]; }); });
-      }
+    if (ids.length) {
+      api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {
+        ids.forEach(function (mid) { delete readPosted[mid]; });
+        recountUnread(id);
+      });
     }
   };
   // Upload a File as a base64 attachment; resolves to {id, fileName, mimeType,
@@ -1549,12 +1995,12 @@
         s.__toast = { tone: "accepted", title: "Message recalled", msg: "Removed for everyone in this conversation." };
         return s;
       });
-      hydrateConversations();
+      recalled[messageId] = true;
       return true;
     }).catch(function (e) {
       var why = String((e && e.message) || "");
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't recall", msg: /already_read/.test(why) ? "It has already been read, so it can't be recalled." : /module_disabled/.test(why) ? "Message recall is switched off for your organization." : /forbidden/.test(why) ? "You can only recall your own messages." : "Try again." }; return s; });
-      hydrateConversations();
+      refreshThread(convoId); // our copy is stale (e.g. it was read meanwhile): re-read this thread only
       return false;
     });
   };
@@ -1593,8 +2039,10 @@
       });
       return s;
     });
+    // The MESSAGE_ACK frame patches the delivery rows; without a live socket,
+    // re-read just this thread.
     api("POST", "/api/messaging/messages/ack", { messageIds: [messageId] })
-      .then(function () { hydrateConversations(); })
+      .then(function () { if (!wsLive()) refreshThread(convoId); })
       .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't acknowledge", msg: "Try again." }; return s; }); });
   };
   // Real typing indicator (outbound). Sends typing_start once, then refreshes a
@@ -1617,7 +2065,7 @@
     if (patientId == null) return;
     return api("POST", "/api/messaging/patient-thread", { patientId: Number(patientId) })
       .then(function (convo) {
-        return hydrateConversations().then(function () {
+        return ensureConversation(convo.id).then(function () {
           DT.set(function (s) { s.__activeConvo = convo.id; s.ui.nav = "messages"; return s; });
         });
       })
@@ -1631,10 +2079,10 @@
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(other.id) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
       if (existing) {
-        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.conversations = (s.conversations || []).map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }); });
+        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; return s; }); });
       }
       return api("POST", "/api/messaging/conversations", { type: "direct", participantIds: [other.id] }).then(function (convo) {
-        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
       });
     }).catch(function () { if (origStartConversation) origStartConversation(participant); });
   };
@@ -1665,10 +2113,10 @@
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(target.userId) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
       if (existing) {
-        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.conversations = (s.conversations || []).map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }); });
+        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; return s; }); });
       }
       return api("POST", "/api/messaging/conversations", { type: "direct", name: target.label, participantIds: [target.userId] }).then(function (convo) {
-        return hydrateConversations().then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
       });
     }).catch(function () {});
   };
@@ -1683,7 +2131,10 @@
     if (opts && opts.note) body.note = String(opts.note);
     return api("POST", "/api/messaging/messages/" + messageId + "/forward", body)
       .then(function (m) {
-        return hydrateConversations().then(function () {
+        // The copy reaches this device in its MESSAGE_RECEIVED frame; a new
+        // target thread is fetched, and without a live socket that one thread.
+        return (m && m.conversationId != null ? ensureConversation(m.conversationId) : Promise.resolve()).then(function () {
+          if (m && m.conversationId != null && !wsLive()) refreshThread(m.conversationId);
           DT.set(function (s) { if (m && m.conversationId != null) s.__activeConvo = m.conversationId; s.__toast = { tone: "sent", title: "Message forwarded", msg: "Sent with its original sender and time attached." }; return s; });
           return m;
         });
@@ -1838,6 +2289,71 @@
     } catch (e) { /* never let the banner break the app */ }
   }
   if (DT.subscribe) DT.subscribe(renderBroadcastBanner);
+
+  // ---- unread indicators outside the Messages screen (A.CON-MIN-17) --------
+  // The window title and, where supported (Chromium; iOS 16.4+ Home Screen
+  // apps), the app-icon badge carry the unread count. Counts only — never a
+  // name or text. Nothing until this session's conversations come from the
+  // server (the store's offline demo seed must not raise a badge), and both are
+  // cleared on sign-out. The Messages nav item reads DT.unreadMessages() too.
+  var lastIndicator = null;
+  function liveUnread() {
+    var st = DT.getState();
+    if (!st.session || convosLiveEpoch !== authEpoch) return 0;
+    return DT.unreadMessages ? DT.unreadMessages() : 0;
+  }
+  function syncUnreadIndicators(force) {
+    try {
+      var st = DT.getState();
+      var n = liveUnread();
+      var app = (st.theme && st.theme.appName) || "DocTurn";
+      var key = n + "|" + app;
+      if (key === lastIndicator && !force) return;
+      lastIndicator = key;
+      if (typeof document !== "undefined") document.title = n > 0 ? "(" + (n > 99 ? "99+" : n) + ") " + app : app;
+      if (typeof navigator !== "undefined") {
+        var r = null;
+        if (n > 0 && navigator.setAppBadge) r = navigator.setAppBadge(n);
+        else if (n === 0 && navigator.clearAppBadge) r = navigator.clearAppBadge();
+        if (r && r.catch) r.catch(function () {});
+      }
+    } catch (e) { /* indicators are best-effort */ }
+  }
+  if (DT.subscribe) DT.subscribe(function () { syncUnreadIndicators(false); });
+  syncUnreadIndicators(true);
+  // The service worker may have raised a flag badge for a push while the app was
+  // in the background; put the real count back when the app is in front again.
+  try { document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") syncUnreadIndicators(true); }); } catch (e) {}
+
+  // A tapped notification (webapp/sw.js) asks the open app to show Messages;
+  // a freshly opened app arrives with ?open=messages.
+  function openFromNotification(nav) {
+    if (nav !== "messages") return;
+    if (DT.getState().session) DT.actions.setNav("messages");
+    else pendingOpenNav = "messages";
+  }
+  var pendingOpenNav = null;
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+      navigator.serviceWorker.addEventListener("message", function (e) {
+        var d = e && e.data;
+        if (d && d.type === "docturn:open") openFromNotification(d.nav);
+      });
+    }
+    var qs = new URLSearchParams(window.location.search);
+    if (qs.get("open") === "messages") {
+      pendingOpenNav = "messages";
+      qs.delete("open");
+      var rest = qs.toString();
+      window.history.replaceState(null, "", window.location.pathname + (rest ? "?" + rest : "") + window.location.hash);
+    }
+  } catch (e) {}
+  if (DT.subscribe) DT.subscribe(function () {
+    if (pendingOpenNav && DT.getState().session && convosLiveEpoch === authEpoch) {
+      var nav = pendingOpenNav; pendingOpenNav = null;
+      DT.actions.setNav(nav);
+    }
+  });
 
   DT.actions.sendAssignment = function (provider, fields, consults) {
     var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
@@ -2320,7 +2836,7 @@
       if (u.role === "developer") hydrateOrgs();
       if (u.role === "developer" || u.role === "director" || u.role === "er_director") hydrateDevUsers(); // people they may manage
       hydrateMyPrefs();
-      enableWebPush();
+      ensurePushSubscription(); // never prompts on a reload (no user gesture) — A.CON-NEE-1
       if (u.role === "director" || u.role === "er_director" || u.role === "developer") hydrateOpsReport();
       hydrateBroadcasts();
       hydrateAwayMessage();

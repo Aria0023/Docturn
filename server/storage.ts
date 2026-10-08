@@ -2196,7 +2196,10 @@ export class DatabaseStorage implements IStorage {
       .values(row)
       .onConflictDoUpdate({
         target: deviceTokens.token,
-        set: { userId: row.userId, platform: row.platform },
+        // The device now belongs to this account — and to ITS organization: a
+        // subscription re-registered by a user of another tenant must not keep
+        // the previous tenant's organizationId (A.CON-SHO-68).
+        set: { userId: row.userId, organizationId: row.organizationId, platform: row.platform },
       });
   }
   async deleteDeviceToken(userId: number, token: string) {
