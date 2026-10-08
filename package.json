@@ -25,6 +25,7 @@
     "test:e2e": "node scripts/interop-unified.mjs",
     "test:login": "node scripts/login-e2e.mjs",
     "test:offline": "tsx scripts/pwa-offline-check.mjs",
+    "test:client-load": "node scripts/client-load-check.mjs",
     "perf:load": "node scripts/load-perf.mjs",
     "test:interop": "node scripts/interop-unified.mjs"
   },

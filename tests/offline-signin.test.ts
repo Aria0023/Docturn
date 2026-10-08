@@ -57,6 +57,7 @@ async function boot(config?: { syntheticData: boolean }) {
     if (path === "/api/config") body = config;
     else if (path === "/api/login" && method === "POST") { net.signedIn = true; body = { ok: true }; }
     else if (path === "/api/user") { if (net.signedIn) body = ER_DOC; else { status = 401; body = null; } }
+    else if (path === "/api/session") body = net.signedIn ? { authenticated: true, user: ER_DOC } : { authenticated: false };
     else if (path === "/api/modules") body = { modules: {}, registry: [] };
     else if (path === "/api/settings") body = { me: { dnd: false }, org: {} };
     else if (method !== "GET") { status = 204; body = null; }

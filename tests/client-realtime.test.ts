@@ -108,6 +108,8 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
     for (const r of Object.values(h.routes)) { const out = r(req); if (out) return out; }
     const p = req.path.split("?")[0]!;
     if (p === "/api/user") return { status: 200, body: user };
+    // The boot-time restore probe (GET /api/session answers 200 either way).
+    if (p === "/api/session") return { status: 200, body: { authenticated: true, user } };
     if (p === "/api/config") return { status: 200, body: { syntheticData: true } };
     if (p === "/api/modules") return { status: 200, body: { modules: {}, registry: [] } };
     if (p === "/api/settings") return { status: 200, body: { me: { dnd: false }, org: {} } };

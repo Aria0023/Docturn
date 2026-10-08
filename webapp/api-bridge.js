@@ -2833,9 +2833,14 @@
   // the user is from the server's session cookie and re-fetch everything.
   // Deliberately rawApi, NOT the self-healing api(): an expired/absent session
   // must land on the login screen, never silently sign in a demo account.
+  // Asks GET /api/session, which answers 200 { authenticated:false } when
+  // signed out: that is the normal state of an app being opened, so a cold
+  // start logs nothing (GET /api/user's 401 shows up in every browser console
+  // as "Failed to load resource"). Same session semantics and user body.
   function restoreSession() {
     var savedSess = (DT.getState() && DT.getState().session) || null;
-    return rawApi("GET", "/api/user").then(function (u) {
+    return rawApi("GET", "/api/session").then(function (probe) {
+      var u = probe && probe.authenticated ? probe.user : null;
       if (!u || u.id == null) throw new Error("no_session");
       var orgCode = orgForRole(u.role, savedSess && savedSess.org);
       localDemoSession = false;

@@ -40,6 +40,7 @@ export const MFA_REQUIRED_MODULE = "security.mfaRequired";
 /** Paths (relative to the /api mount) a flagged session may still use. */
 const MFA_GATE_EXEMPT: readonly RegExp[] = [
   /^\/user\/?$/,
+  /^\/session\/?$/,
   /^\/logout\/?$/,
   /^\/mfa(\/|$)/,
   /^\/modules\/?$/,
@@ -88,6 +89,7 @@ export function mfaEnrollmentGate(): RequestHandler {
 /** Paths (relative to /api) usable while a forced password change is pending. */
 const PASSWORD_GATE_EXEMPT: readonly RegExp[] = [
   /^\/user\/?$/,
+  /^\/session\/?$/,
   /^\/logout\/?$/,
   /^\/account\/password\/?$/,
   /^\/modules\/?$/,
@@ -831,22 +833,45 @@ export function registerAuthRoutes(app: Express) {
     });
   });
 
+  // The signed-in user's own record (the same body for GET /api/user and the
+  // GET /api/session probe below).
+  async function currentUserBody(req: Request) {
+    const me = req.user as unknown as User;
+    // Re-checked from the DB + module map on every call (not the session):
+    // the UI polls this to learn the block has lifted after enrolment.
+    const required = await mfaEnrollmentRequired(me);
+    if (req.session) {
+      if (required) req.session.mfaEnrollmentRequired = true;
+      else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
+    }
+    return required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me);
+  }
+
   app.get("/api/user", async (req, res, next) => {
     if (!req.isAuthenticated || !req.isAuthenticated()) {
       return res.status(401).json({ error: "unauthorized" });
     }
-    const me = req.user as unknown as User;
     try {
-      // Re-checked from the DB + module map on every call (not the session):
-      // the UI polls this to learn the block has lifted after enrolment.
-      const required = await mfaEnrollmentRequired(me);
-      if (req.session) {
-        if (required) req.session.mfaEnrollmentRequired = true;
-        else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
-      }
-      return res.json(
-        required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me),
-      );
+      return res.json(await currentUserBody(req));
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  // Session probe for an app that is just opening: "is there a session to
+  // restore?". Signed out is the normal answer on a fresh device, not an
+  // error, so this is 200 either way — GET /api/user's 401 is logged by every
+  // browser as "Failed to load resource" on each cold start. Same notion of
+  // authenticated as /api/user (a revoked or logged-out session is signed
+  // out) and the same user body; /api/user keeps its 401 for the client's
+  // dead-session checks. Never cached: it describes who holds this cookie.
+  app.get("/api/session", async (req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (!req.isAuthenticated || !req.isAuthenticated()) {
+      return res.json({ authenticated: false });
+    }
+    try {
+      return res.json({ authenticated: true, user: await currentUserBody(req) });
     } catch (err) {
       return next(err);
     }

@@ -114,7 +114,11 @@ controls for tidiness, never for security.
 **Consequences.** Every one of the ~22 route modules was later enumerated in
 an audit and found to require authentication, with only three deliberate
 public endpoints (`/api/health`, `/api/config`, org lookup). The pattern held
-because it is boring and mechanical.
+because it is boring and mechanical. Since then one more answers without a
+session: `GET /api/session`, the client's launch-time "anything to restore?"
+probe, which tells a signed-out caller only `{ "authenticated": false }` (200,
+`no-store`, so a cold start logs no 401 in the browser console) and a
+signed-in one the same body as `GET /api/user`, which keeps its 401.
 
 ### ADR-005: Care-team membership gates patient threads; oversight is break-glass
 
