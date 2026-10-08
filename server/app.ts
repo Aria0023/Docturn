@@ -24,6 +24,7 @@ import {
   setRateLimitState,
 } from "./config.js";
 import { getHandle } from "./db.js";
+import { loggableError, pgErrorCode } from "./log-safe.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
@@ -84,6 +85,19 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       return next();
     }
     return globalJson(req, res, next);
+  });
+  // A NUL character can never be stored (Postgres `text`/`jsonb` reject it) and
+  // has no legitimate use in this API, so a request carrying one — anywhere in
+  // the JSON body (values or keys, any depth), the path or the query string —
+  // is a 400 validation_error BEFORE any handler runs, instead of a half-done
+  // write that dies in the database as a 500. (The attachment upload parses its
+  // own body later; a NUL there is caught by the SQLSTATE mapping in
+  // classifyError below.)
+  app.use((req, _res, next) => {
+    if (/%00/.test(req.originalUrl) || hasNul(req.query) || hasNul(req.body)) {
+      return next(Object.assign(new Error("NUL character in request input"), { status: 400, type: "input.nul_byte" }));
+    }
+    next();
   });
 
   // Session store: real Postgres (DATABASE_URL) → connect-pg-simple on the
@@ -314,18 +328,22 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Consistent error shape. Honours the 4xx status body-parser / http-errors
   // already set (malformed JSON → 400, oversized body → 413, …) instead of
-  // flattening everything to 500, and NEVER logs a request body: body-parser
-  // attaches the raw body to a parse error (`err.body`) and Node's JSON.parse
-  // message quotes the offending text, either of which could carry PHI.
+  // flattening everything to 500.
+  //
+  // What reaches the log:
+  //  - 4xx: the classification only ({status, type}) — no message, no body
+  //    (body-parser's `err.body` and JSON.parse's message both quote input).
+  //  - 5xx: loggableError() (server/log-safe.ts) — a rebuild from an allow-list:
+  //    name, scrubbed message, stack frames, SQLSTATE/condition, table/
+  //    constraint names, the parameterised SQL and the param COUNT. Never the
+  //    bound params, a Postgres `detail`/`where`/`hint`, a quoted value, or a
+  //    request body — a failed insert of a patient must not put the patient
+  //    in the log.
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const { status, type, name } = classifyError(err);
     if (status >= 500) {
-      // A genuine server fault: full error (message + stack) so it can be
-      // debugged. Body-parser errors are 4xx and never reach this branch; any
-      // other error carrying a `body` property is scrubbed before logging.
       console.error("[error]", req.method, req.path, loggableError(err));
     } else {
-      // Client error: classification only — no message, no body.
       console.warn("[warn]", req.method, req.path, { status, type: type ?? name });
     }
     if (res.headersSent) return;
@@ -363,7 +381,20 @@ interface ErrorClass {
   name: string;
 }
 
+/**
+ * SQLSTATEs Postgres raises for a character it cannot store: 22021 (a NUL /
+ * invalid byte in a text parameter) and 22P05 (`\u0000` in jsonb). The only
+ * source is client input that slipped past the up-front NUL guard (e.g. a
+ * route with its own body parser, like the attachment upload), so it is the
+ * client's 400, not a server fault.
+ */
+const PG_INPUT_ENCODING_CODES = new Set(["22021", "22P05"]);
+
 function classifyError(err: unknown): ErrorClass {
+  const pgCode = pgErrorCode(err);
+  if (pgCode && PG_INPUT_ENCODING_CODES.has(pgCode)) {
+    return { status: 400, type: "input.untranslatable_character", name: "DatabaseError" };
+  }
   const e = (err && typeof err === "object" ? err : {}) as {
     status?: unknown;
     statusCode?: unknown;
@@ -386,6 +417,9 @@ function classifyError(err: unknown): ErrorClass {
 
 function errorCode(status: number, type?: string): string {
   switch (type) {
+    case "input.nul_byte":
+    case "input.untranslatable_character":
+      return "validation_error";
     case "entity.parse.failed":
       return "invalid_json";
     case "entity.too.large":
@@ -416,12 +450,30 @@ function errorCode(status: number, type?: string): string {
   }
 }
 
-/** The error as it may be logged: never with a request `body` attached. */
-function loggableError(err: unknown): unknown {
-  if (err && typeof err === "object" && "body" in err) {
-    const { body: _omit, ...rest } = err as Record<string, unknown>;
-    const e = err as Partial<Error>;
-    return { name: e.name, message: e.message, stack: e.stack, ...rest };
+/**
+ * True when a parsed body / query object holds a NUL character in any string
+ * value or key, at any depth. Iterative (no recursion limit to trip) and
+ * bounded by the node count a 1 MB body can produce.
+ */
+function hasNul(root: unknown): boolean {
+  const pending: unknown[] = [root];
+  let objects = 0;
+  while (pending.length) {
+    const v = pending.pop();
+    if (typeof v === "string") {
+      if (v.includes("\u0000")) return true;
+      continue;
+    }
+    if (!v || typeof v !== "object") continue;
+    if (++objects > 200_000) return false;
+    if (Array.isArray(v)) {
+      for (const x of v) pending.push(x);
+      continue;
+    }
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (k.includes("\u0000")) return true;
+      pending.push(x);
+    }
   }
-  return err;
+  return false;
 }

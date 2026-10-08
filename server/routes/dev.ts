@@ -477,7 +477,11 @@ export function registerDevRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       const parsed = devCreateUserSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // The schema only says "positive integer"; an id past Postgres `integer`
+      // range would fail in the database as a 500, so it is refused here.
+      if (!parsed.success || parseId(parsed.data.organizationId) === null) {
+        return res.status(400).json({ error: "validation_error" });
+      }
       const d = parsed.data;
       try {
         const org = await storage().getOrganization(d.organizationId);
@@ -543,7 +547,10 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res, next) => {
       const me = currentUser(req);
-      const targetId = Number(req.body?.userId);
+      // A body id never reaches the database unvalidated: NaN / 1.5 / an
+      // out-of-range integer is the caller's 400, not a DrizzleQueryError 500.
+      const targetId = parseId(req.body?.userId);
+      if (targetId === null) return res.status(400).json({ error: "validation_error" });
       const target = await storage().getUserById(targetId);
       if (!target) return res.status(404).json({ error: "not_found" });
       // A deactivated account cannot be entered either: its sessions never
@@ -606,7 +613,8 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res, next) => {
       const me = currentUser(req);
-      const orgId = Number(req.body?.orgId);
+      const orgId = parseId(req.body?.orgId);
+      if (orgId === null) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(orgId);
       if (!org) return res.status(404).json({ error: "not_found" });
       // Only ACTIVE accounts can be entered — a deactivated one never

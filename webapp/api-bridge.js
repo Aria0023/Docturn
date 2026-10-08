@@ -1238,6 +1238,21 @@
     } catch (e) { return false; }
   }
 
+  // POST /api/login (and /api/2fa/complete-login) answer 400 insecure_transport
+  // when the session cookie is Secure but the server cannot see the request as
+  // HTTPS — the browser would drop the cookie, so no sign-in can work over this
+  // connection. That is a transport problem, never a wrong password: say so,
+  // and say what to do. Over plain http the fix is the https:// address; over
+  // https the TLS proxy is not telling the app (X-Forwarded-Proto/TRUST_PROXY).
+  function insecureTransportMessage() {
+    var plain = false;
+    try { plain = window.location.protocol === "http:"; } catch (e) {}
+    return plain
+      ? "This server only accepts sign-ins over a secure (HTTPS) connection. Open the https:// address of this site and sign in there, or contact your administrator."
+      : "The server could not confirm this connection is secure (HTTPS), so it refused to sign you in. Contact your administrator — the HTTPS proxy setup needs attention.";
+  }
+  DT.insecureTransportMessage = insecureTransportMessage;
+
   function isNetworkError(e) {
     // A real fetch transport failure (server down/unreachable). Match by message
     // because `instanceof TypeError` is unreliable across realms.
@@ -1275,9 +1290,10 @@
       // org/user/password — the server deliberately doesn't say which.
       var why = String((e && e.message) || "");
       var msg = why === "validation_error" ? "Enter your organization code, username and password."
+        : why === "insecure_transport" ? insecureTransportMessage()
         : e && e.status === 429 ? "Too many sign-in attempts. Wait a few minutes and try again."
         : "Wrong organization code, username or password.";
-      if (role === "developer" && synthetic) msg += " " + devAccountHint();
+      if (role === "developer" && synthetic && why !== "insecure_transport") msg += " " + devAccountHint();
       DT.set(function (s) {
         s.loginError = "Sign-in failed: " + msg;
         s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };

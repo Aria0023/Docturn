@@ -170,6 +170,7 @@ function MfaChallengeScreen({ appName, challenge, onCancel }) {
         const m = String((e && e.message) || "");
         setErr(m === "invalid_code" ? "That code didn't match. Try the newest code from your authenticator, or a backup code."
           : m === "no_pending_login" ? "This sign-in expired — go back and sign in again."
+          : m === "insecure_transport" && window.DT && window.DT.insecureTransportMessage ? window.DT.insecureTransportMessage()
           : /429|Too many/i.test(m) ? "Too many attempts — wait a minute and try again."
           : "Couldn't verify the code — try again.");
       })

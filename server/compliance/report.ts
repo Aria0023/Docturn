@@ -288,6 +288,23 @@ function buildPolicyPackSection(
  * numbers, no message content, and no raw audit rows (which can carry
  * free-text details). Only counts, dates, control results and attestations.
  */
+/** The evidence pack's description of the store — same wording as encryption-at-rest. */
+function databaseEvidence(persistent: boolean): Record<string, unknown> {
+  const h = getHandle();
+  return {
+    persistent,
+    storage: h.storage,
+    durable: h.durable,
+    encryptedByApplication: false,
+    driver:
+      h.storage === "postgres"
+        ? "postgres (external)"
+        : h.storage === "pglite-disk"
+          ? "pglite (in-process, on-disk data directory: persists across restarts, unencrypted)"
+          : "pglite (in-process, in-memory: lost on restart)",
+  };
+}
+
 export async function buildEvidencePack(
   store: DatabaseStorage,
   org: Organization,
@@ -311,12 +328,10 @@ export async function buildEvidencePack(
         node: process.version,
         platform: process.platform,
       },
-      database: {
-        persistent: report.mode.persistentDatabase,
-        driver: report.mode.persistentDatabase
-          ? "postgres (external)"
-          : "pglite (in-process)",
-      },
+      // `persistent` keeps its meaning "an external Postgres"; `storage` says
+      // what a non-Postgres store actually is, because on-disk PGlite is NOT
+      // ephemeral — its data survives restarts, unencrypted by the app.
+      database: databaseEvidence(report.mode.persistentDatabase),
     },
     summary: report.summary,
     controls: report.controls.map((c) => ({

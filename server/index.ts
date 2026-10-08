@@ -17,6 +17,13 @@ import { startRetentionLoop } from "./services/retention.js";
 import { initWebPush, LivePushTransport } from "./services/push.js";
 import { configureNotifications } from "./services/notifications.js";
 import { attachWebSocket } from "./ws/index.js";
+import { installLogScrubber, loggableError } from "./log-safe.js";
+
+// PHI-safe logs for the whole process: every Error handed to console.* — by a
+// route's own catch block, a background sweep, a library — is rebuilt from an
+// allow-list first (no bound query params, no Postgres detail, no quoted
+// values, no request body). See server/log-safe.ts.
+installLogScrubber();
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -40,10 +47,10 @@ const HOST =
 // their rejections to the JSON error middleware — so anything logged here is a
 // background task, not a request.)
 process.on("unhandledRejection", (reason) => {
-  console.error("[unhandledRejection]", reason);
+  console.error("[unhandledRejection]", loggableError(reason));
 });
 process.on("uncaughtException", (err) => {
-  console.error("[uncaughtException]", err);
+  console.error("[uncaughtException]", loggableError(err));
 });
 
 async function main() {

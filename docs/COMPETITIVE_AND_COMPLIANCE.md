@@ -107,7 +107,7 @@ Tier 2/3 are deal-size and staffing decisions, not quick wins.
 | # | Requirement | Status |
 |---|---|---|
 | 1 | **Hosting under a BAA** (AWS/GCP/Azure, Aptible, or a HIPAA-eligible Render plan). The current free-tier demo has **no BAA — not permitted for PHI.** | ❌ blocking |
-| 2 | **Persistent, encrypted-at-rest database with backups.** Current demo DB is ephemeral (wipes on restart) — unacceptable for clinical messaging and for retention duties. | ❌ blocking |
+| 2 | **Persistent, encrypted-at-rest database with backups.** Without `DATABASE_URL` the app runs on the on-disk PGlite store (`PGLITE_DIR`, default `./.pglite`): its data persists across restarts, but it is a single-process dev/trial store whose files the application does NOT encrypt and nothing backs up — unacceptable for clinical messaging and for retention duties. Use a managed Postgres with encryption at rest and backups under a BAA. | ❌ blocking |
 | 3 | **BAA with Twilio** (HIPAA-eligible messaging) if SMS stays on | ❌ |
 | 4 | **Enforce MFA** for all users (currently optional) | ⚠️ code exists, not enforced |
 | 5 | **Remove demo credentials/seeding** in production; real user provisioning + password policy | ❌ |

@@ -149,7 +149,7 @@ export const CONTROLS: ControlDef[] = [
     id: "encryption-at-rest",
     title: "Encryption of ePHI at rest",
     description:
-      "Reports whether the database is a persistent Postgres or the ephemeral in-process store. Disk-level encryption and a signed BAA are properties of the hosting tier — code running inside the app CANNOT observe them, so this control is never automatically passed.",
+      "Reports which database holds the data: an external Postgres (DATABASE_URL), the on-disk PGlite store (PGLITE_DIR — its data persists across restarts and the application does NOT encrypt its files), or an in-memory PGlite used by tests (lost on restart). Disk-level encryption and a signed BAA are properties of the hosting tier — code running inside the app CANNOT observe them, so this control is never automatically passed.",
     category: "Data protection",
     hipaa: ["45 CFR §164.312(a)(2)(iv)"],
     soc2: ["CC6.1"],

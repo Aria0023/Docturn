@@ -3,7 +3,9 @@ import supertest from "supertest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatWithOptions } from "node:util";
 import type { Request } from "express";
+import { sql } from "drizzle-orm";
 import { createTestApp, login, type TestContext, DEV_PASSWORD } from "./helpers.js";
 import { createApp } from "../server/app.js";
 import { createDb } from "../server/db.js";
@@ -18,6 +20,8 @@ import {
 import { parseId } from "../server/params.js";
 import { createSessionStore } from "../server/session-store.js";
 import { probeSecurityHeaders } from "../server/compliance/checks.js";
+import { CONTROLS } from "../server/compliance/controls.js";
+import { installLogScrubber, loggableError } from "../server/log-safe.js";
 
 /**
  * HTTP platform behaviour (server/app.ts, config.ts, index.ts, health.ts):
@@ -47,21 +51,15 @@ afterEach(async () => {
   await ctx.handle.close();
 });
 
-/** Every argument console.* was called with, flattened to one string. */
+/**
+ * Every console.* call, rendered exactly the way Node's console renders it
+ * (util.format → util.inspect: message, stack, own properties AND the `cause`
+ * chain), only deeper and with no string truncation — so a value hiding
+ * anywhere in a logged error is found.
+ */
 function loggedText(spy: ReturnType<typeof vi.spyOn>): string {
   return spy.mock.calls
-    .map((args) =>
-      args
-        .map((a) => {
-          if (a instanceof Error) return `${a.message}\n${a.stack ?? ""}\n${JSON.stringify({ ...a })}`;
-          try {
-            return typeof a === "string" ? a : JSON.stringify(a);
-          } catch {
-            return String(a);
-          }
-        })
-        .join(" "),
-    )
+    .map((args) => formatWithOptions({ depth: 20, maxStringLength: Infinity, maxArrayLength: Infinity }, ...args))
     .join("\n");
 }
 
@@ -164,6 +162,186 @@ describe("SHO-24 / SHO-35 body-parser errors are 4xx and never logged with the b
   });
 });
 
+describe("SHO-35 a 5xx log line carries no request value", () => {
+  const MRN = "MRN-PHIMARKER7";
+
+  it("a database failure on a PHI-bearing write → 500, and neither the bound params nor the Postgres detail reach the log", async () => {
+    const { agent } = await login(ctx.app, { username: "er.doc" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Force a REAL foreign-key violation on the patient insert. Drizzle's
+    // DrizzleQueryError message is "Failed query: …\nparams: <every bound
+    // value>", and the Postgres error's `detail` quotes the offending key.
+    const original = ctx.storage.createPatient.bind(ctx.storage);
+    ctx.storage.createPatient = (p) => original({ ...p, organizationId: 2_000_000_000 });
+    try {
+      const res = await agent
+        .post("/api/patients")
+        .send({ initials: "JS", issueSummary: `${PHI_MARKER} John Smith chest pain`, ehrId: MRN })
+        .timeout(RESPOND);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "internal_error" });
+    } finally {
+      ctx.storage.createPatient = original;
+    }
+    const text = loggedText(errorSpy) + loggedText(warnSpy);
+    expect(text).not.toContain(PHI_MARKER);
+    expect(text).not.toContain("John Smith");
+    expect(text).not.toContain(MRN);
+    expect(text).not.toContain("2000000000");
+    expect(text).not.toMatch(/params:\s*\S/);
+    // …but what is needed to debug it survives: the kind of failure, the
+    // SQLSTATE, the table/constraint, the parameterised SQL and the frames.
+    expect(text).toContain("DrizzleQueryError");
+    expect(text).toContain("23503");
+    expect(text).toContain("foreign_key_violation");
+    expect(text).toContain("patients_organization_id");
+    expect(text).toMatch(/insert into "patients"/);
+    expect(text).toMatch(/\n\s+at .+/);
+  });
+
+  it("a Postgres message that quotes the offending value is logged with the value redacted", async () => {
+    const { agent } = await login(ctx.app, { username: "chen" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const original = ctx.storage.listHospitalists.bind(ctx.storage);
+    // `invalid input syntax for type integer: "<value>"` (SQLSTATE 22P02).
+    ctx.storage.listHospitalists = async () => {
+      await ctx.handle.db.execute(sql`select ${PHI_MARKER}::integer`);
+      return [];
+    };
+    try {
+      const res = await agent.get("/api/hospitalists").timeout(RESPOND);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "internal_error" });
+    } finally {
+      ctx.storage.listHospitalists = original;
+    }
+    const text = loggedText(errorSpy);
+    expect(text).not.toContain(PHI_MARKER);
+    expect(text).toContain("22P02");
+    expect(text).toContain("invalid input syntax for type integer");
+  });
+
+  it("loggableError keeps the debugging facts and drops every value-bearing field", () => {
+    const pg = Object.assign(new Error(`duplicate key value violates unique constraint "patients_ehr_id_key"`), {
+      name: "error",
+      severity: "ERROR",
+      code: "23505",
+      detail: `Key (ehr_id)=(${MRN}) already exists.`,
+      where: `unnamed portal parameter $1 = '${MRN}'`,
+      hint: MRN,
+      internalQuery: `select '${MRN}'`,
+      table: "patients",
+      constraint: "patients_ehr_id_key",
+      routine: "_bt_check_unique",
+    });
+    const drizzle = Object.assign(
+      new Error(`Failed query: insert into "patients" ("ehr_id") values ($1)\nparams: ${MRN},${PHI_MARKER}`),
+      { query: `insert into "patients" ("ehr_id", "note") values ($1, '${PHI_MARKER}')`, params: [MRN, PHI_MARKER], cause: pg },
+    );
+    const body = Object.assign(new Error("Unexpected token"), { body: `{"note":"${PHI_MARKER}"}`, status: 500 });
+    // A quoted value that itself contains quotes and a fake stack frame line.
+    const tricky = Object.assign(
+      new Error(`invalid input syntax for type integer: "a"b\n    at ${PHI_MARKER} (x.ts:1:1)\n"c"`),
+      { code: "22P02", severity: "ERROR" },
+    );
+    for (const err of [drizzle, pg, body, tricky, new Error("wrapped", { cause: drizzle }), `${PHI_MARKER} as a bare string`]) {
+      const text = formatWithOptions({ depth: 20, maxStringLength: Infinity }, loggableError(err));
+      expect(text).not.toContain(PHI_MARKER);
+      expect(text).not.toContain(MRN);
+    }
+    const text = formatWithOptions({ depth: 20 }, loggableError(drizzle));
+    expect(text).toContain("23505");
+    expect(text).toContain("unique_violation");
+    expect(text).toContain("patients_ehr_id_key");
+    expect(text).toContain(`insert into "patients" ("ehr_id", "note") values ($1, '…')`);
+    expect(text).toContain("paramCount: 2");
+    // An ordinary programming error keeps its message and frames.
+    const plain = formatWithOptions({}, loggableError(new TypeError("Cannot read properties of undefined (reading 'id')")));
+    expect(plain).toContain("TypeError: Cannot read properties of undefined (reading 'id')");
+    expect(plain).toMatch(/\n\s+at .+/);
+  });
+
+  it("the process-wide scrubber sanitises errors logged by ANY module (background sweeps, route catches)", () => {
+    const sink: unknown[][] = [];
+    const fake = {
+      error: (...a: unknown[]) => sink.push(a),
+      warn: (...a: unknown[]) => sink.push(a),
+      log: (...a: unknown[]) => sink.push(a),
+      info: (...a: unknown[]) => sink.push(a),
+      debug: (...a: unknown[]) => sink.push(a),
+    } as unknown as Console;
+    const uninstall = installLogScrubber(fake);
+    try {
+      installLogScrubber(fake); // idempotent
+      const err = Object.assign(new Error(`Failed query: insert into "messages" ("body") values ($1)\nparams: ${PHI_MARKER}`), {
+        query: `insert into "messages" ("body") values ($1)`,
+        params: [PHI_MARKER],
+      });
+      fake.error("[escalation] sweep failed", err);
+      fake.warn("[x]", { status: 400 });
+      const text = sink.map((a) => formatWithOptions({ depth: 20 }, ...a)).join("\n");
+      expect(text).toContain("[escalation] sweep failed");
+      expect(text).toContain(`insert into "messages"`);
+      expect(text).not.toContain(PHI_MARKER);
+      // Non-error arguments pass through untouched.
+      expect(sink[1]).toEqual(["[x]", { status: 400 }]);
+      expect(sink).toHaveLength(2);
+    } finally {
+      uninstall();
+    }
+  });
+});
+
+describe("SHO-35 a NUL byte in input is a 400, never a 500", () => {
+  it("anywhere in a JSON body or the query string → 400 validation_error before any handler runs", async () => {
+    const { agent } = await login(ctx.app, { username: "er.doc" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = (await agent.get("/api/patients").timeout(RESPOND)).body.length;
+    for (const body of [
+      { initials: "JS", issueSummary: `${PHI_MARKER} John Smith chest pain\u0000`, ehrId: "MRN-PHIMARKER7" },
+      { initials: "JS", nested: { tags: ["ok", `x\u0000${PHI_MARKER}`] } },
+      { initials: "JS", [`k\u0000${PHI_MARKER}`]: 1 },
+    ]) {
+      const res = await agent.post("/api/patients").send(body).timeout(RESPOND);
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "validation_error" });
+    }
+    const q = await agent.get(`/api/patients?search=${encodeURIComponent(`${PHI_MARKER}\u0000`)}`).timeout(RESPOND);
+    expect(q.status).toBe(400);
+    expect(q.body).toEqual({ error: "validation_error" });
+    // Nothing was written, nothing logged at error level, no value in the log.
+    expect((await agent.get("/api/patients").timeout(RESPOND)).body.length).toBe(before);
+    expect(errorSpy).not.toHaveBeenCalled();
+    const text = loggedText(warnSpy);
+    expect(text).toContain("input.nul_byte");
+    expect(text).not.toContain(PHI_MARKER);
+  });
+
+  it("a NUL that reaches Postgres by another path (route-level parser, path param) is a 400 too", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // NUL in the path: refused up front, before the router decodes it into a lookup.
+    const org = await supertest(ctx.app).get("/api/mobile/org/IS%00PN").timeout(RESPOND);
+    expect(org.status).toBe(400);
+    expect(org.body).toEqual({ error: "validation_error" });
+    // The attachment upload mounts its own 12 MB parser, after the global guard.
+    const { agent } = await login(ctx.app, { username: "chen" });
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64",
+    ).toString("base64");
+    const up = await agent
+      .post("/api/messaging/attachments")
+      .send({ fileName: `scan\u0000${PHI_MARKER}.png`, mimeType: "image/png", dataBase64: png })
+      .timeout(RESPOND);
+    expect(up.status).toBe(400);
+    expect(up.body).toEqual({ error: "validation_error" });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("SHO-34 numeric :id params are validated once, before any route", () => {
   const BAD = ["abc", "1.5", "-1", "0", "1e3", "99999999999", "%20", "1abc"];
   const ROUTES: Array<[method: "get" | "post" | "patch" | "delete", path: (id: string) => string]> = [
@@ -224,6 +402,43 @@ describe("SHO-34 numeric :id params are validated once, before any route", () =>
     const slot = await chen.patch("/api/oncall/manual/nope").send({ hours: "7a-7p" }).timeout(RESPOND);
     expect(slot.status).toBe(403);
     expect(slot.body).toEqual({ error: "forbidden" });
+  });
+
+  it("ids taken from a request BODY (dev impersonate / manage-org) are validated too: malformed → 400, unknown → 404", async () => {
+    const { agent, res: signedIn } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    expect(signedIn.status).toBe(200);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const BAD_BODY_IDS: unknown[] = ["abc", "", 1.5, -1, 0, 99999999999, "1e3", " 7", null, true, [], {}, "2147483648"];
+    for (const [path, field] of [
+      ["/api/dev/impersonate", "userId"],
+      ["/api/dev/manage-org", "orgId"],
+    ] as const) {
+      for (const bad of BAD_BODY_IDS) {
+        const res = await agent.post(path).send({ [field]: bad }).timeout(RESPOND);
+        expect(res.status, `${path} ${field}=${JSON.stringify(bad)}`).toBe(400);
+        expect(res.body).toEqual({ error: "validation_error" });
+      }
+      const missing = await agent.post(path).send({}).timeout(RESPOND);
+      expect(missing.status, `${path} {}`).toBe(400);
+      expect(missing.body).toEqual({ error: "validation_error" });
+      // Well-formed but nonexistent: the route's own 404.
+      const unknown = await agent.post(path).send({ [field]: 2147483647 }).timeout(RESPOND);
+      expect(unknown.status, `${path} unknown`).toBe(404);
+      expect(unknown.body).toEqual({ error: "not_found" });
+    }
+    // The developer's create-user body names its org by id too.
+    for (const organizationId of [99999999999, 2147483648]) {
+      const res = await agent
+        .post("/api/dev/users")
+        .send({ organizationId, role: "hospitalist", displayName: "Dr. Range", username: "range.check" })
+        .timeout(RESPOND);
+      expect(res.status, `create-user organizationId=${organizationId}`).toBe(400);
+      expect(res.body).toEqual({ error: "validation_error" });
+    }
+    // No request reached the database with NaN / an out-of-range integer.
+    expect(errorSpy).not.toHaveBeenCalled();
+    // The session is still the developer's (nothing was swapped).
+    expect((await agent.get("/api/user").timeout(RESPOND)).body.username).toBe("dev");
   });
 
   it("a well-formed id still flows through to the route", async () => {
@@ -571,5 +786,33 @@ describe("SHO-6 the store is described truthfully", () => {
     });
     expect(ctl?.detail).toMatch(/in-memory PGlite/);
     expect(ctl?.detail).not.toMatch(/encrypted at rest/i);
+  });
+
+  it("the control's static description (status + auditor export) agrees with its detail: on-disk PGlite persists, unencrypted", async () => {
+    const def = CONTROLS.find((c) => c.id === "encryption-at-rest");
+    expect(def).toBeDefined();
+    const d = def!.description;
+    // Never calls the PGlite store as a whole "ephemeral" — only the in-memory variant resets.
+    expect(d).not.toMatch(/ephemeral/i);
+    expect(d).toMatch(/on-disk PGlite/);
+    expect(d).toMatch(/persists across restarts/);
+    expect(d).toMatch(/not encrypt/i);
+    expect(d).toMatch(/in-memory/);
+
+    const { agent } = await login(ctx.app, { username: "director" });
+    const status = await agent.get("/api/compliance/status");
+    const ctl = (status.body.controls as Array<{ id: string; description: string }>).find((c) => c.id === "encryption-at-rest");
+    expect(ctl?.description).toBe(d);
+    const exp = await agent.get("/api/compliance/evidence");
+    expect(exp.status).toBe(200);
+    const pack = exp.body as { system: { database: Record<string, unknown> }; controls: Array<{ id: string; description: string }> };
+    expect(pack.controls.find((c) => c.id === "encryption-at-rest")?.description).toBe(d);
+    // The export's system block names the store kind instead of a bare "pglite (in-process)".
+    expect(pack.system.database).toMatchObject({
+      persistent: false,
+      storage: "pglite-memory",
+      durable: false,
+      encryptedByApplication: false,
+    });
   });
 });
