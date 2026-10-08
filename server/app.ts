@@ -1,3 +1,7 @@
+// MUST be the first import: patches Express so a rejected promise from any
+// async handler reaches the JSON error middleware instead of hanging the
+// request. See server/async-errors.ts.
+import "./async-errors.js";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -6,19 +10,24 @@ import express, { type Express, type NextFunction, type Request, type RequestHan
 import session from "express-session";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
-import createMemoryStore from "memorystore";
 import { configurePassport, verifyPassword } from "./auth.js";
 import {
+  ACCOUNT_RATE_LIMIT,
   AUTH_RATE_LIMIT,
   GENERAL_RATE_LIMIT,
+  RATE_LIMIT_RESPONSE,
   SESSION_POLICY,
+  clientIpKey,
   securityHeaders,
   sessionCookieOptions,
   setRateLimitState,
 } from "./config.js";
+import { getHandle } from "./db.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
+import { registerNumericParams } from "./params.js";
+import { createSessionStore } from "./session-store.js";
 import { storage } from "./storage.js";
 import { toSafeUser } from "@shared/schema";
 
@@ -26,7 +35,12 @@ export interface CreateAppOptions {
   sessionSecret?: string;
   /** When false (tests), disable rate limiting for determinism. */
   rateLimiting?: boolean;
-  trustProxy?: boolean;
+  /**
+   * Express `trust proxy` value. `true` means "loopback" (a reverse proxy on
+   * this host); a string is an address list / keyword list; a number is the
+   * legacy (spoofable) hop count. See resolveTrustProxy() in server/config.ts.
+   */
+  trustProxy?: boolean | string | number;
 }
 
 /**
@@ -40,10 +54,17 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
   const isProd = process.env.NODE_ENV === "production";
 
-  if (opts.trustProxy) app.set("trust proxy", 1);
+  // Forwarded headers (client IP for rate limiting + audit rows, X-Forwarded-
+  // Proto for the Secure-cookie decision) are believed only from the trusted
+  // proxy peer(s) — never from a hop count, which any direct client satisfies.
+  if (opts.trustProxy === true) app.set("trust proxy", "loopback");
+  else if (typeof opts.trustProxy === "string" || typeof opts.trustProxy === "number") {
+    app.set("trust proxy", opts.trustProxy);
+  }
 
-  // Security response headers. The instance lives in server/config.ts so the
-  // compliance monitor can probe the SAME middleware for the headers it emits.
+  // Security response headers (helmet CSP/HSTS/… + Permissions-Policy). The
+  // instance lives in server/config.ts so the compliance monitor can probe the
+  // SAME middleware for the headers it emits.
   app.use(securityHeaders);
   // Global JSON body parser (1 MB). The attachment-upload route needs a larger
   // limit for base64 file bodies, so it is excluded here and mounts its OWN
@@ -57,9 +78,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     return globalJson(req, res, next);
   });
 
-  // Session store: real Postgres uses connect-pg-simple; otherwise in-memory.
-  const MemoryStore = createMemoryStore(session);
-  const store = new MemoryStore({ checkPeriod: 86_400_000 });
+  // Session store: real Postgres (DATABASE_URL) → connect-pg-simple on the
+  // app's own pg.Pool, so sessions survive restarts and are shared between
+  // instances; PGlite → in-memory. The choice is recorded for the compliance
+  // monitor (getSessionStoreState) so it can report the real posture.
+  const { store } = createSessionStore({
+    databaseUrl: process.env.DATABASE_URL,
+    pool: process.env.DATABASE_URL ? getHandle().pool : undefined,
+  });
 
   const secret =
     opts.sessionSecret ??
@@ -68,6 +94,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Cookie/session posture comes from SESSION_POLICY (server/config.ts) — the
   // same values the `session-timeout` / `session-cookie-flags` controls read.
+  const cookie = sessionCookieOptions();
   const sessionMiddleware: RequestHandler = session({
     name: SESSION_POLICY.name,
     secret,
@@ -75,7 +102,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     saveUninitialized: false,
     store,
     rolling: SESSION_POLICY.rolling, // maxAge behaves as INACTIVITY expiry.
-    cookie: sessionCookieOptions(),
+    cookie,
   });
   app.locals.sessionMiddleware = sessionMiddleware;
 
@@ -136,15 +163,21 @@ export function createApp(opts: CreateAppOptions = {}): Express {
         : "disabled_by_app_option",
   });
   if (rateLimitEnabled) {
-    // Tiered limits: stricter on auth, looser on general traffic.
-    // Disable the X-Forwarded-For validation: behind a dev tunnel the proxy hop
-    // count can differ from `trust proxy`, and a failed validation otherwise
-    // throws and 500s the request (breaking login from a phone). We still get
-    // correct client IPs via `trust proxy`; this just stops the hard failure.
+    // Tiered limits: stricter on auth, looser on general traffic. Every limiter
+    // keys on clientIpKey(): the address Express resolved under the `trust
+    // proxy` ADDRESS LIST above, so an X-Forwarded-For sent by anything other
+    // than the trusted proxy peer is ignored and cannot pick its own bucket.
+    // (The library's own X-Forwarded-For validation is bypassed by supplying a
+    // keyGenerator, so there is nothing left to throw and 500 a login.)
+    const common = {
+      standardHeaders: true as const,
+      legacyHeaders: false,
+      message: RATE_LIMIT_RESPONSE,
+      keyGenerator: clientIpKey,
+    };
     const authLimiter = rateLimit({
       ...AUTH_RATE_LIMIT,
-      standardHeaders: true,
-      legacyHeaders: false,
+      ...common,
       // Count only FAILED auth attempts (status >= 400). The control we need is
       // brute-force / credential-stuffing protection (§164.308(a)(5)(ii)(C)),
       // and that is entirely about wrong guesses — a successful sign-in is not
@@ -153,21 +186,62 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       // org), and a whole demo room behind one hospital NAT shares a single IP,
       // so a legitimate session could lock everyone out mid-demo.
       skipSuccessfulRequests: true,
-      validate: { xForwardedForHeader: false },
+    });
+    // Per-ACCOUNT failure budget: the per-IP limiter alone is defeated by a
+    // guesser that spreads attempts over many addresses, so the same failed
+    // password attempts are ALSO counted against the targeted org+username.
+    // Keyed on what the client SENT (lower-cased), so it reveals nothing about
+    // whether that account exists, and failures only — a correct password is
+    // never counted, so ordinary use is unaffected.
+    const accountLimiter = rateLimit({
+      ...ACCOUNT_RATE_LIMIT,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: RATE_LIMIT_RESPONSE,
+      skipSuccessfulRequests: true,
+      // A body without both fields is a validation error, not a guess.
+      skip: (req) => !loginAccountKey(req),
+      keyGenerator: (req) => loginAccountKey(req) ?? "acct:none",
     });
     const generalLimiter = rateLimit({
       ...GENERAL_RATE_LIMIT,
-      standardHeaders: true,
-      legacyHeaders: false,
-      validate: { xForwardedForHeader: false },
+      ...common,
     });
     app.use("/api/login", authLimiter);
+    app.post("/api/login", accountLimiter);
     app.use("/api/register", authLimiter);
     app.use("/api/2fa", authLimiter);
     app.use("/api", generalLimiter);
   }
 
+  // A session can only be established over a transport that will carry the
+  // cookie back. When the cookie is configured Secure (production) and this
+  // request is NOT seen as HTTPS — no TLS on the socket and no X-Forwarded-Proto
+  // from a trusted proxy — the browser would silently drop the Set-Cookie and
+  // the user would see a 200 followed by an unexplained "logged out". Refuse
+  // clearly instead, so the operator fixes TLS termination / TRUST_PROXY.
+  // Gated on the CONFIGURED flag, not on NODE_ENV, so dev over http still works.
+  const requireSecureTransport: RequestHandler = (req, res, next) => {
+    if (cookie.secure && !req.secure) {
+      warnInsecureLoginOnce();
+      return res.status(400).json({ error: "insecure_transport" });
+    }
+    next();
+  };
+  app.post(["/api/login", "/api/2fa/complete-login"], requireSecureTransport);
+
+  // Every numeric `:id`-style parameter is validated here, once, before any
+  // route runs: malformed → 404 JSON instead of NaN reaching the database.
+  registerNumericParams(app);
+
   registerRoutes(app);
+
+  // Unknown API / WS paths answer with the SAME JSON shape every real route
+  // uses, instead of Express's default HTML 404 page. (/ws upgrades never reach
+  // Express — the WebSocket server owns them — so this only sees plain HTTP.)
+  app.all(/^\/(api|ws)(\/|$)/, (_req, res) => {
+    res.status(404).json({ error: "not_found" });
+  });
 
   // Unified mobile: the installable PWA IS the full, responsive web app served
   // at "/" (manifest + service worker live in webapp/). The old slim /m kit is
@@ -235,12 +309,116 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     });
   }
 
-  // Consistent error shape.
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("[error]", err);
+  // Consistent error shape. Honours the 4xx status body-parser / http-errors
+  // already set (malformed JSON → 400, oversized body → 413, …) instead of
+  // flattening everything to 500, and NEVER logs a request body: body-parser
+  // attaches the raw body to a parse error (`err.body`) and Node's JSON.parse
+  // message quotes the offending text, either of which could carry PHI.
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const { status, type, name } = classifyError(err);
+    if (status >= 500) {
+      // A genuine server fault: full error (message + stack) so it can be
+      // debugged. Body-parser errors are 4xx and never reach this branch; any
+      // other error carrying a `body` property is scrubbed before logging.
+      console.error("[error]", req.method, req.path, loggableError(err));
+    } else {
+      // Client error: classification only — no message, no body.
+      console.warn("[warn]", req.method, req.path, { status, type: type ?? name });
+    }
     if (res.headersSent) return;
-    res.status(500).json({ error: "internal_error" });
+    res.status(status).json({ error: errorCode(status, type) });
   });
 
   return app;
+}
+
+/* ── helpers ──────────────────────────────────────────────────────────────── */
+
+let warnedInsecureLogin = false;
+function warnInsecureLoginOnce() {
+  if (warnedInsecureLogin) return;
+  warnedInsecureLogin = true;
+  console.warn(
+    "[auth] login refused over a non-HTTPS request while the session cookie is Secure " +
+      "(insecure_transport). Check TLS termination, TRUST_PROXY and the proxy's X-Forwarded-Proto header.",
+  );
+}
+
+/** org+username the client sent on POST /api/login, lower-cased; null if absent. */
+function loginAccountKey(req: Request): string | null {
+  const body = (req.body ?? {}) as { orgCode?: unknown; username?: unknown };
+  const org = typeof body.orgCode === "string" ? body.orgCode.trim().toLowerCase() : "";
+  const user = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
+  if (!org || !user) return null;
+  return `acct:${org.slice(0, 64)}:${user.slice(0, 128)}`;
+}
+
+interface ErrorClass {
+  status: number;
+  /** body-parser / http-errors `type` (e.g. "entity.parse.failed"), if any. */
+  type?: string;
+  name: string;
+}
+
+function classifyError(err: unknown): ErrorClass {
+  const e = (err && typeof err === "object" ? err : {}) as {
+    status?: unknown;
+    statusCode?: unknown;
+    type?: unknown;
+    name?: unknown;
+  };
+  const raw =
+    typeof e.status === "number"
+      ? e.status
+      : typeof e.statusCode === "number"
+        ? e.statusCode
+        : 500;
+  const status = raw >= 400 && raw < 500 ? raw : 500;
+  return {
+    status,
+    ...(typeof e.type === "string" ? { type: e.type } : {}),
+    name: typeof e.name === "string" ? e.name : "Error",
+  };
+}
+
+function errorCode(status: number, type?: string): string {
+  switch (type) {
+    case "entity.parse.failed":
+      return "invalid_json";
+    case "entity.too.large":
+      return "payload_too_large";
+    case "encoding.unsupported":
+    case "charset.unsupported":
+      return "unsupported_media_type";
+    case "request.aborted":
+      return "request_aborted";
+  }
+  switch (status) {
+    case 400:
+      return "bad_request";
+    case 401:
+      return "unauthorized";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 413:
+      return "payload_too_large";
+    case 415:
+      return "unsupported_media_type";
+    case 429:
+      return "rate_limited";
+    default:
+      return status >= 500 ? "internal_error" : "request_error";
+  }
+}
+
+/** The error as it may be logged: never with a request `body` attached. */
+function loggableError(err: unknown): unknown {
+  if (err && typeof err === "object" && "body" in err) {
+    const { body: _omit, ...rest } = err as Record<string, unknown>;
+    const e = err as Partial<Error>;
+    return { name: e.name, message: e.message, stack: e.stack, ...rest };
+  }
+  return err;
 }
