@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
 import { resolveDemoUserId } from "../demoAuth.js";
+import { onSessionsRevoked, resolveSessionUser } from "../auth.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -11,11 +12,20 @@ import { resolveDemoUserId } from "../demoAuth.js";
  * organizationId, then stores the socket in a `clients` map keyed by userId.
  * Connections that fail session resolution close with code 1008. All fan-out is
  * tenant-scoped.
+ *
+ * Session validity is decided by the same rule as HTTP (server/auth.ts
+ * resolveSessionUser): a deactivated account or a session issued before the
+ * user's last password change never connects, and when a password is changed
+ * or reset the hub closes that user's live sockets (code 1008
+ * "session_revoked") except the one belonging to the session that made the
+ * change.
  */
 
 interface ClientMeta {
   userId: number;
   organizationId: number;
+  /** express-session id the socket authenticated with; null for demo tokens. */
+  sessionId: string | null;
   isAlive: boolean;
 }
 
@@ -27,6 +37,7 @@ export class WsHub implements WsFanout {
   private clients = new Map<number, Set<WebSocket>>();
   private meta = new WeakMap<WebSocket, ClientMeta>();
   private heartbeat: NodeJS.Timeout | null = null;
+  private unsubscribeRevoker: () => void;
 
   constructor(
     server: HttpServer,
@@ -34,6 +45,9 @@ export class WsHub implements WsFanout {
   ) {
     this.wss = new WebSocketServer({ server, path: "/ws" });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
+    this.unsubscribeRevoker = onSessionsRevoked((r) =>
+      this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId }),
+    );
     this.startHeartbeat();
   }
 
@@ -43,8 +57,8 @@ export class WsHub implements WsFanout {
       ws.close(1008, "unauthorized");
       return;
     }
-    const { userId, organizationId } = session;
-    this.meta.set(ws, { userId, organizationId, isAlive: true });
+    const { userId, organizationId, sessionId } = session;
+    this.meta.set(ws, { userId, organizationId, sessionId, isAlive: true });
     if (!this.clients.has(userId)) this.clients.set(userId, new Set());
     this.clients.get(userId)!.add(ws);
 
@@ -123,7 +137,7 @@ export class WsHub implements WsFanout {
   /** Resolve the session by replaying the session middleware on the upgrade req. */
   private async resolveSession(
     req: IncomingMessage,
-  ): Promise<{ userId: number; organizationId: number } | null> {
+  ): Promise<{ userId: number; organizationId: number; sessionId: string | null } | null> {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
     try {
@@ -133,7 +147,9 @@ export class WsHub implements WsFanout {
         const uid = resolveDemoUserId(token);
         if (uid != null) {
           const user = await storage().getUserById(uid);
-          if (user) return { userId: user.id, organizationId: user.organizationId };
+          if (user && !user.disabledAt) {
+            return { userId: user.id, organizationId: user.organizationId, sessionId: null };
+          }
         }
       }
     } catch {
@@ -145,18 +161,44 @@ export class WsHub implements WsFanout {
       const res = new ServerResponse(req);
       this.sessionMiddleware(req as never, res as never, async () => {
         try {
-          const sess = (req as { session?: { passport?: { user?: number } } })
-            .session;
-          const userId = sess?.passport?.user;
-          if (!userId) return resolve(null);
-          const user = await storage().getUserById(userId);
+          const r = req as { session?: { passport?: { user?: unknown } }; sessionID?: string };
+          // ONE rule for "is this session still signed in" — shared with
+          // Passport's deserializeUser, so the realtime feed can never outlive
+          // the HTTP session (deactivation, password change/reset).
+          const user = await resolveSessionUser(r.session?.passport?.user);
           if (!user) return resolve(null);
-          resolve({ userId: user.id, organizationId: user.organizationId });
+          resolve({
+            userId: user.id,
+            organizationId: user.organizationId,
+            sessionId: r.sessionID ?? null,
+          });
         } catch {
           resolve(null);
         }
       });
     });
+  }
+
+  /**
+   * Close every live socket of a user (1008 "session_revoked"), optionally
+   * sparing the sockets of one session — the one that changed the password.
+   * Returns how many sockets were closed.
+   */
+  closeUserSockets(userId: number, opts: { exceptSessionId?: string } = {}): number {
+    const set = this.clients.get(userId);
+    if (!set) return 0;
+    let closed = 0;
+    for (const ws of [...set]) {
+      const m = this.meta.get(ws);
+      if (opts.exceptSessionId && m?.sessionId === opts.exceptSessionId) continue;
+      try {
+        ws.close(1008, "session_revoked");
+      } catch {
+        ws.terminate();
+      }
+      closed++;
+    }
+    return closed;
   }
 
   private startHeartbeat() {
@@ -207,6 +249,7 @@ export class WsHub implements WsFanout {
 
   close() {
     if (this.heartbeat) clearInterval(this.heartbeat);
+    this.unsubscribeRevoker();
     this.wss.close();
   }
 }

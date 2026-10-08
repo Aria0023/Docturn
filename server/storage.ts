@@ -165,7 +165,7 @@ export interface IStorage {
   getUserById(id: number): Promise<User | undefined>;
   getUserByUsername(orgId: number, username: string): Promise<User | undefined>;
   listUsers(orgId: number): Promise<User[]>;
-  createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt">>): Promise<User>;
+  createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt">>): Promise<User>;
 
   // hospitalists
   getHospitalist(orgId: number, id: number): Promise<Hospitalist | undefined>;
@@ -423,7 +423,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.organizationId, orgId))
       .orderBy(asc(users.id));
   }
-  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt">>) {
+  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt">>) {
     const [row] = await this.db.insert(users).values(user).returning();
     return row!;
   }

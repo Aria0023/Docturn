@@ -18,7 +18,11 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-import { isValidPasswordHashFormat, PASSWORD_HASH_FORMAT } from "../auth.js";
+import {
+  classifyPasswordHash,
+  LEGACY_PASSWORD_HASH_FORMAT,
+  PASSWORD_HASH_FORMAT,
+} from "../auth.js";
 import {
   AUTH_RATE_LIMIT,
   SESSION_POLICY,
@@ -116,18 +120,27 @@ const checks: Record<string, CheckFn> = {
         evidence: { users: 0 },
       };
     }
-    const bad = users.filter((u) => !isValidPasswordHashFormat(u.passwordHash));
+    // Three classes: the current OWASP-strength format, a still-verifiable
+    // pre-upgrade scrypt hash (weaker work factor; upgraded transparently the
+    // next time that user signs in), and anything else (plaintext / unknown).
+    const bad = users.filter((u) => classifyPasswordHash(u.passwordHash) === "invalid");
+    const legacy = users.filter((u) => classifyPasswordHash(u.passwordHash) === "legacy");
+    const status = bad.length > 0 ? "fail" : legacy.length > 0 ? "warn" : "pass";
     return {
-      status: bad.length === 0 ? "pass" : "fail",
+      status,
       detail:
-        bad.length === 0
+        status === "pass"
           ? `All ${users.length} credentials are stored in the expected format (${PASSWORD_HASH_FORMAT}).`
-          : `${bad.length} of ${users.length} credentials are NOT in the expected hash format and may be plaintext or legacy values.`,
+          : status === "warn"
+            ? `${legacy.length} of ${users.length} credentials still use the pre-upgrade work factor (${LEGACY_PASSWORD_HASH_FORMAT}); each is re-hashed to the current parameters at that user's next sign-in.`
+            : `${bad.length} of ${users.length} credentials are NOT in a recognised hash format and may be plaintext or foreign values.`,
       evidence: {
         users: users.length,
-        conforming: users.length - bad.length,
+        conforming: users.length - bad.length - legacy.length,
+        legacyWorkFactor: legacy.length,
         nonConforming: bad.length,
         // User ids only — never usernames, never any part of the credential.
+        legacyUserIds: legacy.map((u) => u.id),
         nonConformingUserIds: bad.map((u) => u.id),
         expectedFormat: PASSWORD_HASH_FORMAT,
       },

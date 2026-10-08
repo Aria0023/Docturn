@@ -225,11 +225,13 @@ CREATE TABLE IF NOT EXISTS users (
   two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   disabled_at TIMESTAMP,
+  password_changed_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_uniq ON users(organization_id, username);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS hospitalists (
   id SERIAL PRIMARY KEY,
@@ -498,6 +500,23 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- At most ONE pending request per (org, username): /api/register answers 409
+-- request_pending on a re-submission and this index closes the race between
+-- concurrent submissions. Databases written before the index existed may hold
+-- duplicates; keep the newest pending row (it carries the credential the
+-- requester typed most recently) and retire the older ones first, so the
+-- CREATE UNIQUE INDEX below can never fail the boot.
+UPDATE pending_registrations p SET status = 'rejected'
+  WHERE p.status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM pending_registrations q
+       WHERE q.organization_id = p.organization_id
+         AND q.username = p.username
+         AND q.status = 'pending'
+         AND q.id > p.id
+    );
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_pending_uniq
+  ON pending_registrations(organization_id, username) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS landing_page_settings (
   id SERIAL PRIMARY KEY,

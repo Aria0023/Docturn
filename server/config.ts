@@ -241,6 +241,14 @@ export const GENERAL_RATE_LIMIT = { windowMs: 60 * 1000, max: 300 };
  * target account. Failed attempts only; a correct password never counts.
  */
 export const ACCOUNT_RATE_LIMIT = { windowMs: 15 * 60 * 1000, max: 10 };
+/**
+ * Public self-registration (POST /api/register). Unlike AUTH_RATE_LIMIT, which
+ * counts only FAILED attempts (brute force is about wrong guesses), this one
+ * counts every request including 201s: each accepted request becomes a row in
+ * the director's approval queue, so successes are exactly what must be capped.
+ * Mounted by server/auth.ts registerAuthRoutes when rate limiting is enabled.
+ */
+export const REGISTER_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 10 };
 
 /** The JSON body every limiter answers with (same shape as the API's errors). */
 export const RATE_LIMIT_RESPONSE = { error: "rate_limited" } as const;

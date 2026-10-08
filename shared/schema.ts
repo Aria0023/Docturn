@@ -49,6 +49,22 @@ export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
 export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
+
+/**
+ * Roles a stranger may REQUEST through the public self-registration form.
+ * Privileged roles (director, er_director, developer) are never
+ * self-requested: an existing director/ER director provisions them through
+ * POST /api/director/hospitalists, or the platform operator through
+ * /api/dev/users — both authenticated, audited, and with a one-time password.
+ */
+export const SELF_REGISTRABLE_ROLES = ["hospitalist", "er_doctor"] as const;
+export type SelfRegistrableRole = (typeof SELF_REGISTRABLE_ROLES)[number];
+
+/**
+ * Org code of the platform/operator tenant (seeded by server/seed.ts). It holds
+ * the cross-tenant root account and never accepts public self-registration.
+ */
+export const PLATFORM_ORG_CODE = "DOCTURN";
 /** Where an org stands on a MANUAL compliance control it must attest to. */
 export const ATTESTATION_STATUS = [
   "met",
@@ -101,6 +117,11 @@ export const users = pgTable(
     // Workforce termination (HIPAA §164.308(a)(3)(ii)(C)): a disabled account
     // cannot sign in and its live sessions stop deserialising immediately.
     disabledAt: timestamp("disabled_at"),
+    // Session generation marker. Every login stamps this value into the session
+    // (server/auth.ts serializeUser); a self-service change or an administrative
+    // reset moves it, so every OTHER session of the user stops deserialising and
+    // its WebSocket is closed. NULL = never changed since provisioning.
+    passwordChangedAt: timestamp("password_changed_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => ({
@@ -802,14 +823,21 @@ export const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+/** Minimum password length, shared by self-registration and password change. */
+export const MIN_PASSWORD_LENGTH = 8;
+
 export const registerSchema = z.object({
   orgCode: z.string().min(1),
   username: z.string().min(3),
-  password: z.string().min(6),
+  // Same floor as PATCH /api/account/password (server/auth.ts
+  // isForbiddenPassword additionally refuses the demo password there and here).
+  password: z.string().min(MIN_PASSWORD_LENGTH),
   displayName: z.string().min(1),
-  // Self-selected role; a director / ER director approves. Never self-register
-  // as a developer (root). Defaults to hospitalist.
-  requestedRole: z.enum(["hospitalist", "er_doctor", "er_director", "director"]).optional(),
+  // Self-selected role; a director / ER director approves. Only clinical,
+  // non-privileged roles can be requested (SELF_REGISTRABLE_ROLES) — a
+  // director / ER director / developer account is provisioned by an existing
+  // administrator, never by a stranger with an org code. Defaults to hospitalist.
+  requestedRole: z.enum(SELF_REGISTRABLE_ROLES).optional(),
 });
 
 export const extractNoteSchema = z.object({

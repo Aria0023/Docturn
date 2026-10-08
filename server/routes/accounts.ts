@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { User } from "@shared/schema";
-import { hashPassword, issueTemporaryPassword } from "../auth.js";
+import { issueTemporaryPassword, rotatePassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
@@ -128,15 +128,17 @@ export function registerAccountRoutes(app: Express) {
 
   // Administrative password reset: mints a one-time credential, forces a
   // change on first use, and hands it back ONCE in this response. Nothing is
-  // emailed or logged; the administrator relays it out-of-band.
+  // emailed or logged; the administrator relays it out-of-band. Every live
+  // session and socket of the target ends (rotatePassword → session generation
+  // + WebSocket revocation): whoever held the old credential is out now.
   app.post("/api/accounts/:id/reset-password", requireAuth, requireRole(...MANAGE_ROLES), async (req, res) => {
     const me = currentUser(req);
     const target = await reachableTarget(req, res);
     if (!target) return;
     const temporaryPassword = issueTemporaryPassword();
-    await storage().updateUser(target.id, {
-      passwordHash: await hashPassword(temporaryPassword),
+    await rotatePassword(target.id, temporaryPassword, {
       mustChangePassword: true,
+      reason: "password_reset",
     });
     await appendAudit({
       organizationId: target.organizationId,
