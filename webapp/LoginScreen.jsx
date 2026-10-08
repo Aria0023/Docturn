@@ -55,6 +55,12 @@ function LoginScreen({ onLogin, appName }) {
   // server/auth.ts); the demo/default-password refusal is the server's to make.
   const REG_MIN_PASSWORD = 8;
 
+  // The server answers an unknown org code exactly like a real one (201, then
+  // 409 on a re-send) so the form cannot be used to discover which codes
+  // exist (A.CON-SHO-11). The success text therefore only promises a review
+  // IF the code is right, and says what to do when nothing happens.
+  const REG_SENT = "Request sent. If the organization code is right, a director there will review it — you can sign in once it's approved. No answer after a day or two? Check the code with your hospital.";
+
   // Every answer POST /api/register can give (docs/consult-registration.md),
   // in words the requester can act on — matched on the exact status + code.
   function registerErrorText(e) {
@@ -64,7 +70,6 @@ function LoginScreen({ onLogin, appName }) {
     if (status === 400 && code === "weak_password") return "Choose a stronger password: at least " + REG_MIN_PASSWORD + " characters, and not a demo or default password.";
     if (status === 400 && code === "role_not_self_registrable") return "Director, ER director and developer accounts are set up by an administrator. Request a Hospitalist or ER physician account.";
     if (status === 400 && code === "validation_error") return "Check the form: an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).";
-    if (status === 404 || code === "organization_not_found") return "We couldn't find that organization code. Check it with your hospital — it is your hospital's code, not your username.";
     if (status === 409 && code === "request_pending") return "A request for that username is already waiting for a director's approval. You'll be able to sign in once it's approved.";
     if (status === 429 || code === "rate_limited") return "Too many requests from this device. Wait a few minutes and try again.";
     return "Couldn't send the request — please try again.";
@@ -80,7 +85,7 @@ function LoginScreen({ onLogin, appName }) {
     }
     setRegBusy(true);
     Promise.resolve(window.DT.actions.register({ orgCode: reg.org.trim(), displayName: reg.name.trim(), username: reg.user.trim(), password: reg.pass, role: reg.role }))
-      .then(function () { setRegMsg("Request sent — a director will review and approve your account. You can sign in once approved."); setReg(Object.assign({}, reg, { name: "", user: "", pass: "" })); })
+      .then(function () { setRegMsg(REG_SENT); setReg(Object.assign({}, reg, { name: "", user: "", pass: "" })); })
       .catch(function (e) { setRegErr(registerErrorText(e)); })
       .finally(function () { setRegBusy(false); });
   }

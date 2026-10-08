@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { completeLoginSchema, mfaVerifySchema, toSafeUser } from "@shared/schema";
 import type { User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
-import { verifyPassword } from "../auth.js";
+import { clearPendingMfa, resolvePendingMfa, verifyPassword, type PendingMfa } from "../auth.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import {
   beginEnrollment,
@@ -41,6 +41,26 @@ async function stepUp(req: Request, res: Response, me: User): Promise<boolean> {
     return false;
   }
   return true;
+}
+
+/**
+ * A half-finished MFA sign-in was presented after the password it was begun
+ * with stopped being valid (changed / reset) or the account was deactivated:
+ * on the record at high risk under the user's own org — someone held a
+ * now-superseded password. Nothing is written for an account that no longer
+ * exists (there is no org to file it under).
+ */
+async function auditRevokedPending(pending: Extract<PendingMfa, { state: "revoked" }>): Promise<void> {
+  if (!pending.user) return;
+  await appendAudit({
+    organizationId: pending.user.organizationId,
+    userId: pending.user.id,
+    action: "auth.mfa_pending_revoked",
+    resourceType: "user",
+    resourceId: pending.user.id,
+    details: { reason: pending.user.disabledAt ? "account_disabled" : "password_changed" },
+    riskLevel: "high",
+  });
 }
 
 export function registerMfaRoutes(app: Express) {
@@ -119,9 +139,10 @@ export function registerMfaRoutes(app: Express) {
   // never appears in the response — only whether a text went out. Without a
   // carrier able to deliver (production, no credentials) this fails closed.
   app.post("/api/2fa/request-sms", async (req, res) => {
-    const pendingId = req.session.pendingMfaUserId;
-    if (!pendingId) return res.status(401).json({ error: "no_pending_login" });
-    const result = await sendSmsOtp(pendingId);
+    const pending = await resolvePendingMfa(req.session);
+    if (pending.state === "revoked") await auditRevokedPending(pending);
+    if (pending.state !== "ok") return res.status(401).json({ error: "no_pending_login" });
+    const result = await sendSmsOtp(pending.user.id);
     if (!result.sent && result.reason === "sms_unavailable") {
       return res.status(503).json({ sent: false, error: "sms_unavailable" });
     }
@@ -130,32 +151,39 @@ export function registerMfaRoutes(app: Express) {
 
   // Complete a pending login with TOTP / SMS OTP / backup code.
   app.post("/api/2fa/complete-login", async (req, res, next) => {
-    const pendingId = req.session.pendingMfaUserId;
-    if (!pendingId) return res.status(401).json({ error: "no_pending_login" });
+    // The pending login is bound to the password generation its password
+    // step was checked against (A.CON-SHO-16): if the password was changed or
+    // reset since — or the account deactivated — it is void BEFORE any factor
+    // is checked, so no TOTP/SMS/backup code is spent on it and a login begun
+    // with the old password can never become a session.
+    const pending = await resolvePendingMfa(req.session);
+    if (pending.state === "revoked") await auditRevokedPending(pending);
+    if (pending.state !== "ok") return res.status(401).json({ error: "no_pending_login" });
     const parsed = completeLoginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
 
-    // Resolve the pending account FIRST so a failed factor is filed under the
-    // user's own organization: a NULL-org row is invisible to every tenant
+    // The pending account is resolved FIRST so a failed factor is filed under
+    // the user's own organization: a NULL-org row is invisible to every tenant
     // audit view and to the six-year archive, and (being user-keyed) used to
     // FK-block that tenant's force-delete.
-    const user = await storage().getUserById(pendingId);
-    const ok = await completeSecondFactor(pendingId, parsed.data.code);
+    const user = pending.user;
+    const ok = await completeSecondFactor(user.id, parsed.data.code);
     if (!ok) {
       await appendAudit({
-        organizationId: user?.organizationId ?? null,
-        userId: user ? pendingId : null,
+        organizationId: user.organizationId,
+        userId: user.id,
         action: "mfa.failed",
         resourceType: "user",
-        resourceId: pendingId,
+        resourceId: user.id,
         details: {},
         riskLevel: "high",
       });
       return res.status(401).json({ error: "invalid_code" });
     }
 
-    if (!user) return res.status(401).json({ error: "invalid_code" });
-    delete req.session.pendingMfaUserId;
+    clearPendingMfa(req.session);
+    // `user` carries the generation the pending login was bound to, so the
+    // session is stamped with exactly that one (serializeUser).
     req.login(user as unknown as Express.User, (err) => {
       if (err) return next(err);
       void appendAudit({

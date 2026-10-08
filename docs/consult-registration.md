@@ -31,11 +31,11 @@ the login screen should map these codes rather than show a generic failure:
 
 | Case | Answer | Why |
 | --- | --- | --- |
-| Unknown org code, **or the platform org `DOCTURN`** (any casing) | `404 organization_not_found` | The operator tenant never takes public requests; it answers as if it did not exist (A.CON-SHO-15). |
+| Unknown org code, **or the platform org `DOCTURN`** (any casing) | `201 { pending: true }` — exactly what a real org answers, after the same work (one password hash); a re-send of the same code + username → `409 request_pending`, also exactly like a real org | Not an org-code oracle (A.CON-SHO-11). The request is **dropped**: nothing reaches any director's or the operator's queue (the operator tenant never takes public requests — A.CON-SHO-15) and no credential is kept; only an opaque SHA-256 key of (org code, username) is stored in `unrouted_registrations` so the re-send answers 409. The drop is audit-logged on the platform org (`auth.register_unrouted`, low risk, `reason: unknown_org \| platform_org`). The form therefore only promises a review "if the organization code is right". |
 | `requestedRole` is `director` / `er_director` / `developer` | `400 role_not_self_registrable` | Privileged roles are provisioned by an existing director (People → add) or the operator, never self-requested (A.CON-SHO-15). Only `hospitalist` and `er_doctor` can be requested. |
 | Password shorter than 8, the demo password, or "password" | `400 weak_password` | Same floor as PATCH /api/account/password (A.CON-SHO-16). |
 | Username already has an account | `201 { pending: true }` — same as a fresh request | Never a username oracle (A.CON-SHO-11). The row reaches the queue with `usernameTaken: true`; approving it answers `409 username_taken`, denying clears it. |
-| A request for that username is already pending | `409 request_pending` | One pending row per (org, username), enforced by a partial unique index (A.CON-SHO-8). A denied request frees the name. |
+| A request for that username is already pending | `409 request_pending` | One pending row per (org, username), enforced by a partial unique index (A.CON-SHO-8). A denied request frees the name. Answered the same for an unknown org (see above). |
 | More than 10 requests per client per hour (when rate limiting is on) | `429 rate_limited` | Counts successes too; the auth limiter counts only failures (A.CON-SHO-15). Same body and same client key as every other limiter (`clientIpKey`: trusted-proxy address, IPv6 per /64). |
 
 Queue actions are idempotent: approving an approved request → `200 { userId,

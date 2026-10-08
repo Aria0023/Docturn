@@ -30,6 +30,7 @@ import {
   patientConsults,
   patients,
   pendingRegistrations,
+  unroutedRegistrations,
   phiAccessLogs,
   retainedComplianceRecords,
   securityIncidents,
@@ -2058,6 +2059,20 @@ export class DatabaseStorage implements IStorage {
       .values(row)
       .returning();
     return created!;
+  }
+  /**
+   * Remember an unrouted registration (unknown org / platform org) by its
+   * opaque key. True when this is the first time the key is seen; false when
+   * it was already claimed (the caller answers 409 request_pending, like a
+   * duplicate pending request at a real org). Atomic under concurrency.
+   */
+  async claimUnroutedRegistration(requestKey: string): Promise<boolean> {
+    const rows = await this.db
+      .insert(unroutedRegistrations)
+      .values({ requestKey })
+      .onConflictDoNothing({ target: unroutedRegistrations.requestKey })
+      .returning({ id: unroutedRegistrations.id });
+    return rows.length > 0;
   }
   async listPendingRegistrations(orgId: number) {
     return this.db

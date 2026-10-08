@@ -540,6 +540,19 @@ export const pendingRegistrations = pgTable("pending_registrations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/**
+ * Self-registration requests that name an unknown org code or the platform org
+ * (server/auth.ts POST /api/register). They are dropped — never queued — but
+ * answered exactly like a real org's, so the endpoint is not an org-code
+ * oracle. Only an opaque SHA-256 key of (upper-cased org code, username) is
+ * kept, so a re-submission answers 409 request_pending like a real org's would.
+ */
+export const unroutedRegistrations = pgTable("unrouted_registrations", {
+  id: serial("id").primaryKey(),
+  requestKey: text("request_key").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const landingPageSettings = pgTable("landing_page_settings", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").references(() => organizations.id),

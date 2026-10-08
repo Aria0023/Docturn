@@ -11,7 +11,7 @@ import session from "express-session";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import { actorContextMiddleware } from "./audit.js";
-import { configurePassport, verifyPassword } from "./auth.js";
+import { authenticateCredentials, configurePassport } from "./auth.js";
 import {
   ACCOUNT_RATE_LIMIT,
   AUTH_RATE_LIMIT,
@@ -30,7 +30,6 @@ import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
 import { registerNumericParams } from "./params.js";
 import { createSessionStore } from "./session-store.js";
-import { storage } from "./storage.js";
 import { mountWebapp, type WebappOptions } from "./webapp-static.js";
 import { toSafeUser } from "@shared/schema";
 
@@ -163,13 +162,17 @@ export function createApp(opts: CreateAppOptions = {}): Express {
         orgCode?: string; username?: string; password?: string;
       };
       try {
-        const org = await storage().getOrganizationByCode(String(orgCode ?? ""));
-        if (!org) return res.status(401).json({ error: "invalid_org" });
-        const user = await storage().getUserByUsername(org.id, String(username ?? ""));
-        if (!user || !(await verifyPassword(String(password ?? ""), user.passwordHash))) {
-          return res.status(401).json({ error: "invalid_credentials" });
-        }
-        res.json({ token: issueDemoToken(user.id), user: toSafeUser(user) });
+        // The same constant-cost check as POST /api/login: one generic 401 for
+        // an unknown org, an unknown user, a wrong password or a deactivated
+        // account. The token is bound to the password generation just
+        // verified, so a later password change or reset ends it.
+        const user = await authenticateCredentials(
+          String(orgCode ?? ""),
+          String(username ?? ""),
+          String(password ?? ""),
+        );
+        if (!user) return res.status(401).json({ error: "invalid_credentials" });
+        res.json({ token: issueDemoToken(user), user: toSafeUser(user) });
       } catch {
         res.status(500).json({ error: "demo_login_failed" });
       }

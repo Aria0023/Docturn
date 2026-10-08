@@ -380,12 +380,15 @@ describe("SHO-34 numeric :id params are validated once, before any route", () =>
   }, 60_000);
 
   it("string params are untouched by the guard", async () => {
-    const org = await supertest(ctx.app).get("/api/mobile/org/ISPN").timeout(RESPOND);
+    const { agent: member } = await login(ctx.app, { username: "chen" });
+    const org = await member.get("/api/mobile/org/ISPN").timeout(RESPOND);
     expect(org.status).toBe(200);
     expect(org.body.code).toBe("ISPN");
     // The guard runs BEFORE requireAuth, so if it intercepted a string param
     // an anonymous request would get its 404; an untouched route answers 401.
     for (const [m, p] of [
+      // The org lookup is members-only (A.CON-SHO-11), and its :code is a string.
+      ["get", "/api/mobile/org/ISPN"],
       ["get", "/api/compliance/policies/no-such-policy"],
       ["delete", "/api/mobile/device-tokens/not-a-number"],
       ["get", "/api/cms/landing"],

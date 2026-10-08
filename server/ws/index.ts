@@ -3,7 +3,7 @@ import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
-import { resolveDemoUserId } from "../demoAuth.js";
+import { demoConnectionId, resolveDemoUser } from "../demoAuth.js";
 import { onSessionsRevoked, resolveSessionUser } from "../auth.js";
 
 /**
@@ -14,17 +14,17 @@ import { onSessionsRevoked, resolveSessionUser } from "../auth.js";
  * tenant-scoped.
  *
  * Session validity is decided by the same rule as HTTP (server/auth.ts
- * resolveSessionUser): a deactivated account or a session issued before the
- * user's last password change never connects, and when a password is changed
- * or reset the hub closes that user's live sockets (code 1008
- * "session_revoked") except the one belonging to the session that made the
- * change.
+ * resolveSessionUser) for cookie sessions and demo bearer tokens alike: a
+ * deactivated account or a session/token issued before the user's last
+ * password change never connects, and when a password is changed or reset the
+ * hub closes that user's live sockets (code 1008 "session_revoked") except the
+ * ones belonging to the session (or token) that made the change.
  */
 
 interface ClientMeta {
   userId: number;
   organizationId: number;
-  /** express-session id the socket authenticated with; null for demo tokens. */
+  /** express-session id the socket authenticated with, or a demo token's demoConnectionId(). */
   sessionId: string | null;
   isAlive: boolean;
   /** When this socket last had a typing event relayed (throttle clock). */
@@ -179,16 +179,20 @@ export class WsHub implements WsFanout {
   ): Promise<{ userId: number; organizationId: number; sessionId: string | null } | null> {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
+    // Same rule as a cookie session (resolveDemoUser → resolveSessionUser): a
+    // token issued before the user's last password change, or of a
+    // deactivated account, does not connect.
     try {
       const url = new URL(req.url ?? "", "http://localhost");
       const token = url.searchParams.get("token");
       if (token) {
-        const uid = resolveDemoUserId(token);
-        if (uid != null) {
-          const user = await storage().getUserById(uid);
-          if (user && !user.disabledAt) {
-            return { userId: user.id, organizationId: user.organizationId, sessionId: null };
-          }
+        const user = await resolveDemoUser(token);
+        if (user) {
+          return {
+            userId: user.id,
+            organizationId: user.organizationId,
+            sessionId: demoConnectionId(token),
+          };
         }
       }
     } catch {

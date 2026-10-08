@@ -124,10 +124,15 @@ async function fillAndSubmit(page, org, user, pass) {
     await check("7-char password refused by the form, no request sent", /8\+ characters/, { posts: 0 });
     await fill("ISPN", "Dr. Test " + width, uname, "password");
     await check("'password' → 400 weak_password explained", /stronger password: at least 8 characters, and not a demo or default password/i, { posts: 1 });
+    // An unknown org and the platform org are answered exactly like a real
+    // org (201, then 409 on a re-send) so the form is no org-code oracle
+    // (A.CON-SHO-11); the text only promises a review "if the code is right".
     await fill("NOPE" + width, "Dr. Test " + width, uname, "Valid-pass-" + RUN);
-    await check("unknown org → 404 organization_not_found explained", /couldn't find that organization code/i, { posts: 1 });
+    await check("unknown org → 201 like a real org, honest 'if the code is right' text", /Request sent\. If the organization code is right/i, { posts: 1 });
+    await fill("NOPE" + width, "Dr. Test " + width, uname, "Valid-pass-" + RUN);
+    await check("unknown org re-sent → 409 request_pending, like a real org", /already waiting for a director's approval/i, { posts: 1 });
     await fill("DOCTURN", "Dr. Test " + width, uname, "Valid-pass-" + RUN);
-    await check("platform org DOCTURN → 404, same answer as an unknown org", /couldn't find that organization code/i, { posts: 1 });
+    await check("platform org DOCTURN → same answer as an unknown (or real) org", /Request sent\. If the organization code is right/i, { posts: 1 });
     // A request that names a privileged role (e.g. a stale client): the REAL
     // server refuses it; the form explains who provisions those accounts.
     await page.route("**/api/register", (route) => {
@@ -139,7 +144,7 @@ async function fillAndSubmit(page, org, user, pass) {
     await page.unroute("**/api/register");
     await page.click('button[aria-pressed]:has-text("ER physician")');
     await fill("ISPN", "Dr. Test " + width, uname, "Valid-pass-" + RUN);
-    await check("valid ER-physician request → 201, pending approval", /Request sent — a director will review/i, { posts: 1 });
+    await check("valid ER-physician request → 201, pending approval", /Request sent\. If the organization code is right, a director there will review it/i, { posts: 1 });
     rec(w + "register: the request carried exactly the chosen role", regPosts.at(-1)?.requestedRole === "er_doctor" && regPosts.at(-1)?.username === uname, regPosts.at(-1)?.requestedRole);
     await fill("ISPN", "Dr. Test " + width, uname, "Valid-pass-" + RUN);
     await check("duplicate → 409 request_pending explained", /already waiting for a director's approval/i, { posts: 1 });

@@ -11,8 +11,9 @@ typed `ApiClient`.
 - **`src/realtime.ts`** — native WebSocket to `/ws` with the session cookie and
   exponential-backoff reconnect.
 - **`App.tsx`** — bottom-tab navigation; gates on `GET /api/user`.
-- **Screens** — Login (org code + credentials; QR org onboarding resolves the
-  code via the public `/api/mobile/org/:code`), Assignments (realtime pending
+- **Screens** — Login (org code + credentials; a QR code only pre-fills the
+  org code — `/api/mobile/org/:code` is members-only and answers for the
+  caller's own org, so it is no org-code oracle), Assignments (realtime pending
   queue with accept/decline), Profile (registers an FCM/APNs device token, sign
   out).
 

@@ -30,14 +30,90 @@ describe("self-registration", () => {
     ctx = await createTestApp();
   });
 
-  it("refuses the platform org under any casing, exactly like a nonexistent org", async () => {
+  it("never queues a request for the platform org (any casing) — it is handled exactly like a nonexistent org", async () => {
     for (const orgCode of ["DOCTURN", "docturn", "DocTurn", "NOPE"]) {
-      const res = await register(ctx, { orgCode, username: "wannabe.root" });
-      expect(res.status, orgCode).toBe(404);
-      expect(res.body).toEqual({ error: "organization_not_found" });
+      const res = await register(ctx, { orgCode, username: `wannabe.root.${orgCode}` });
+      // The same answer a real org gives (see the org-oracle test below).
+      expect(res.status, orgCode).toBe(201);
+      expect(res.body).toEqual({ pending: true });
     }
+    // Refused for real: nothing reached the operator tenant's queue (or any queue).
     const platformRows = await ctx.storage.listPendingRegistrations(ctx.seedResult.platformOrgId);
     expect(platformRows).toEqual([]);
+    expect(await ctx.storage.listPendingRegistrations(ctx.seedResult.orgId)).toEqual([]);
+    const { agent: dev, res: devLogin } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    expect(devLogin.status).toBe(200);
+    const devQueue = await dev.get("/api/registrations").expect(200);
+    expect(devQueue.body).toEqual([]);
+    // The operator can still see that someone tried (platform-org audit, low risk).
+    const audit = await ctx.storage.listAuditLogs(ctx.seedResult.platformOrgId, 50);
+    const unrouted = audit.filter((a) => a.action === "auth.register_unrouted");
+    expect(unrouted).toHaveLength(4);
+    expect(unrouted.map((a) => (a.details as { reason?: string }).reason).sort()).toEqual([
+      "platform_org",
+      "platform_org",
+      "platform_org",
+      "unknown_org",
+    ]);
+  });
+
+  it("is not an org oracle: an unknown org, the platform org and a real org answer alike — 201, then 409 — at the same cost", async () => {
+    // First submission: identical 201 whether or not the org exists.
+    const real = await register(ctx, { orgCode: "ISPN", username: "probe.user" });
+    const unknown = await register(ctx, { orgCode: "NOPE", username: "probe.user" });
+    const platform = await register(ctx, { orgCode: "DOCTURN", username: "probe.user" });
+    for (const r of [real, unknown, platform]) {
+      expect(r.status).toBe(201);
+      expect(r.body).toEqual({ pending: true });
+    }
+    // Re-submission: identical 409 request_pending in every case (and the
+    // org code is matched case-insensitively in every case, like the lookup).
+    for (const orgCode of ["ISPN", "ispn", "NOPE", "nope", "DOCTURN", "docturn"]) {
+      const again = await register(ctx, { orgCode, username: "probe.user" });
+      expect(again.status, orgCode).toBe(409);
+      expect(again.body, orgCode).toEqual({ error: "request_pending" });
+    }
+    // A different name at the unknown org is a fresh request, exactly like at a real one.
+    expect((await register(ctx, { orgCode: "NOPE", username: "probe.other" })).status).toBe(201);
+    expect((await register(ctx, { orgCode: "ISPN", username: "probe.other" })).status).toBe(201);
+    // Only the real org's queue holds anything.
+    const rows = await ctx.storage.listPendingRegistrations(ctx.seedResult.orgId);
+    expect(rows.map((r) => r.username).sort()).toEqual(["probe.other", "probe.user"]);
+    expect(await ctx.storage.listPendingRegistrations(ctx.seedResult.platformOrgId)).toEqual([]);
+
+    // Timing: every first submission pays one password hash, so an unknown
+    // org is not answered in ~5 ms against ~250+ ms for a real one.
+    async function medianMs(orgCode: string, prefix: string): Promise<number> {
+      const samples: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const t = process.hrtime.bigint();
+        const res = await register(ctx, { orgCode, username: `${prefix}.${i}` });
+        samples.push(Number(process.hrtime.bigint() - t) / 1e6);
+        expect(res.status).toBe(201);
+      }
+      samples.sort((a, b) => a - b);
+      return samples[Math.floor(samples.length / 2)]!;
+    }
+    await register(ctx, { orgCode: "ISPN", username: "warm.up" }); // first scrypt's cold start
+    const realMs = await medianMs("ISPN", "t.real");
+    const unknownMs = await medianMs("NOPE", "t.unknown");
+    const platformMs = await medianMs("DOCTURN", "t.platform");
+    expect(unknownMs).toBeGreaterThan(realMs * 0.5);
+    expect(platformMs).toBeGreaterThan(realMs * 0.5);
+    expect(realMs).toBeGreaterThan(unknownMs * 0.5);
+    expect(realMs).toBeGreaterThan(platformMs * 0.5);
+  });
+
+  it("an unrouted request keeps no credential: only an opaque key of (org code, username) is stored", async () => {
+    expect((await register(ctx, { orgCode: "NOPE", username: "secret.name", password: "Unique-Marker-Pass-9" })).status).toBe(201);
+    const rows = (await ctx.handle.db.execute(sql`SELECT * FROM unrouted_registrations`)).rows as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    const text = JSON.stringify(rows);
+    expect(text).not.toContain("secret.name");
+    expect(text).not.toContain("NOPE");
+    expect(text).not.toContain("Unique-Marker-Pass-9");
+    expect(text).not.toMatch(/\$scrypt\$/);
+    expect(String(rows[0]!.request_key)).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("refuses privileged roles (director / er_director / developer) with a precise error", async () => {

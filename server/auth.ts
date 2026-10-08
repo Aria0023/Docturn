@@ -1,6 +1,6 @@
-import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import type { Express, Request, RequestHandler } from "express";
+import type { Express, Request, RequestHandler, Response } from "express";
 import rateLimit from "express-rate-limit";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -286,6 +286,12 @@ const DUMMY_HASH = formatHash(
   randomBytes(SCRYPT_SALT_BYTES).toString("hex"),
   randomBytes(SCRYPT_KEYLEN).toString("hex"),
 );
+const DUMMY_PARSED = parseStoredHash(DUMMY_HASH)!;
+
+/** Relative scrypt work (N·r·p): what one derivation costs in time. */
+function scryptWork(params: ScryptParams): number {
+  return 2 ** params.ln * params.r * params.p;
+}
 
 export async function verifyPassword(
   password: string,
@@ -293,11 +299,69 @@ export async function verifyPassword(
 ): Promise<boolean> {
   // An unparsable stored value still costs one scrypt (against the dummy) so a
   // malformed row cannot be told apart from a wrong password by timing.
-  const parsed = parseStoredHash(stored) ?? parseStoredHash(DUMMY_HASH)!;
-  const derived = await deriveKey(password, parsed.saltHex, parsed.params);
+  const parsed = parseStoredHash(stored) ?? DUMMY_PARSED;
+  const derivation = deriveKey(password, parsed.saltHex, parsed.params);
+  // A credential stored under CHEAPER parameters than today's (a legacy row not
+  // yet upgraded: N=2^14 p=1 is ~1/6 of the work) would be rejected sooner
+  // than the dummy comparison an unknown account gets, singling out existing
+  // accounts by timing. Run one current-cost derivation alongside it on the
+  // libuv pool; the answer waits for both, so its latency is the larger of
+  // the two — the same as every other path. Its result is never used.
+  const pad =
+    scryptWork(parsed.params) < scryptWork(SCRYPT_PARAMS)
+      ? deriveKey(password, DUMMY_PARSED.saltHex, SCRYPT_PARAMS)
+      : null;
+  const [derived] = await Promise.all([derivation, pad]);
   const known = Buffer.from(parsed.keyHex, "hex");
   if (known.length !== derived.length) return false;
   return timingSafeEqual(known, derived);
+}
+
+/**
+ * The one credential check behind every password sign-in (POST /api/login via
+ * Passport, and the demo console's token mint). Constant-cost by construction:
+ * an unknown org still performs the user lookup (against an impossible org id)
+ * and an unknown user still performs one current-cost scrypt (against
+ * DUMMY_HASH), so neither "does this org exist" nor "does this user exist" is
+ * readable from the response time. Every miss is the same `null`; callers
+ * answer one generic invalid_credentials.
+ */
+export async function authenticateCredentials(
+  orgCode: string,
+  username: string,
+  password: string,
+): Promise<User | null> {
+  const org = await storage().getOrganizationByCode(orgCode);
+  const user = await storage().getUserByUsername(org?.id ?? -1, username);
+  const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
+  if (!user || !ok) return null;
+  // Deactivated workforce member: a correct password still fails, with the
+  // same generic answer (never confirm the account exists) — but the attempt
+  // is audited at high risk so the org can see a leaver trying.
+  if (user.disabledAt) {
+    void appendAudit({
+      organizationId: user.organizationId,
+      userId: user.id,
+      action: "auth.login_denied_disabled",
+      resourceType: "user",
+      resourceId: user.id,
+      details: {},
+      riskLevel: "high",
+    });
+    return null;
+  }
+  // Transparent work-factor upgrade: a credential stored under the legacy
+  // parameters is re-hashed now that we hold the plaintext. Not a password
+  // CHANGE — passwordChangedAt is untouched, so no session is invalidated. A
+  // failure here never fails the sign-in.
+  if (needsRehash(user.passwordHash)) {
+    try {
+      await storage().updateUser(user.id, { passwordHash: await hashPassword(password) });
+    } catch (err) {
+      console.error("[auth] password re-hash failed", err);
+    }
+  }
+  return user;
 }
 
 declare global {
@@ -426,19 +490,83 @@ export async function rotatePassword(
   return updated;
 }
 
+/* ── Bearer credentials ──────────────────────────────────────────────────────
+ * A request can be authenticated by something other than the cookie session:
+ * today the demo console's bearer token (server/demoAuth.ts), which overrides
+ * the cookie for that request. Such a credential obeys the SAME generation
+ * rule (it is bound to { id, pg } at issue and resolved through
+ * resolveSessionUser), and its middleware describes it on
+ * res.locals.bearerCredential so the password-change route can treat it as
+ * "the session making the change": keep its live connections and re-bind it
+ * to the new generation — instead of re-stamping the cookie session, which on
+ * that request may belong to a different user altogether.
+ */
+export interface BearerCredential {
+  /** What its live sockets carry as their session id (WS ClientMeta.sessionId). */
+  connectionId: string;
+  /** Re-bind this credential to the user's new password generation. */
+  restamp(user: User): void;
+}
+
+export function bearerCredentialOf(res: Response): BearerCredential | undefined {
+  const c = (res.locals as { bearerCredential?: BearerCredential }).bearerCredential;
+  return c && typeof c.connectionId === "string" && typeof c.restamp === "function" ? c : undefined;
+}
+
 /**
  * After a self-service password change the CURRENT session must carry the new
  * generation or it would be rejected on its next request like the others.
- * Only a cookie session that is actually signed in is re-stamped (a demo-token
- * request has no passport entry and must not acquire one).
+ * Only a cookie session that is signed in AS THIS USER is re-stamped: a
+ * bearer-token request has no passport entry of its own, and the cookie that
+ * happens to ride along with it may be someone else's.
  */
 function restampSession(req: Request, user: User): Promise<void> {
   return new Promise((resolve, reject) => {
     const sess = req.session as (typeof req.session & { passport?: { user?: unknown } }) | undefined;
     if (!sess?.passport || sess.passport.user === undefined) return resolve();
+    if (parseSessionPrincipal(sess.passport.user)?.id !== user.id) return resolve();
     sess.passport = { ...sess.passport, user: sessionPrincipalFor(user) };
     sess.save((err) => (err ? reject(err) : resolve()));
   });
+}
+
+/* ── Pending MFA sign-in ─────────────────────────────────────────────────────
+ * Between the password step (202 twoFactorRequired) and the second factor the
+ * session holds a half-finished login. It is bound to the password generation
+ * the password step was checked against, so a password change or reset in
+ * between voids it: a second factor can then no longer turn a login begun
+ * with the OLD password into a full session (req.login would otherwise stamp
+ * the NEW generation and the session would look perfectly valid).
+ */
+export function beginPendingMfa(
+  session: Request["session"],
+  user: { id: number; passwordChangedAt?: Date | string | null },
+): void {
+  session.pendingMfaUserId = user.id;
+  session.pendingMfaPg = passwordGeneration(user);
+}
+
+export function clearPendingMfa(session: Request["session"]): void {
+  delete session.pendingMfaUserId;
+  delete session.pendingMfaPg;
+}
+
+export type PendingMfa =
+  | { state: "none" }
+  /** There was a pending login, but its password generation (or the account) is no longer valid. Already cleared. */
+  | { state: "revoked"; userId: number; user: User | undefined }
+  | { state: "ok"; user: User };
+
+export async function resolvePendingMfa(session: Request["session"] | undefined): Promise<PendingMfa> {
+  const id = session?.pendingMfaUserId;
+  if (!session || typeof id !== "number") return { state: "none" };
+  const pg = session.pendingMfaPg;
+  // A pending login written before the generation was recorded cannot be
+  // checked, so it is not honoured: the user simply signs in again.
+  const user = typeof pg === "number" ? await resolveSessionUser({ id, pg }) : null;
+  if (user) return { state: "ok", user };
+  clearPendingMfa(session);
+  return { state: "revoked", userId: id, user: await storage().getUserById(id) };
 }
 
 /**
@@ -451,42 +579,8 @@ export function configurePassport() {
       { usernameField: "username", passwordField: "password", passReqToCallback: true },
       async (req, username, password, done) => {
         try {
-          const orgCode = String(req.body.orgCode ?? "");
-          const org = await storage().getOrganizationByCode(orgCode);
-          // Constant-cost path: an unknown org still performs the user lookup
-          // (against an impossible org id) and an unknown user still performs
-          // one scrypt (against DUMMY_HASH), so "does this org/user exist" is
-          // not readable from the response time. The answer is one generic
-          // invalid_credentials for every miss.
-          const user = await storage().getUserByUsername(org?.id ?? -1, username);
-          const ok = await verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
-          if (!user || !ok) return done(null, false, { message: "invalid_credentials" });
-          // Deactivated workforce member: a correct password still fails, with
-          // the same generic answer (never confirm the account exists) — but the
-          // attempt is audited at high risk so the org can see a leaver trying.
-          if (user.disabledAt) {
-            void appendAudit({
-              organizationId: user.organizationId,
-              userId: user.id,
-              action: "auth.login_denied_disabled",
-              resourceType: "user",
-              resourceId: user.id,
-              details: {},
-              riskLevel: "high",
-            });
-            return done(null, false, { message: "invalid_credentials" });
-          }
-          // Transparent work-factor upgrade: a credential stored under the
-          // legacy parameters is re-hashed now that we hold the plaintext. Not
-          // a password CHANGE — passwordChangedAt is untouched, so no session
-          // is invalidated. A failure here never fails the sign-in.
-          if (needsRehash(user.passwordHash)) {
-            try {
-              await storage().updateUser(user.id, { passwordHash: await hashPassword(password) });
-            } catch (err) {
-              console.error("[auth] password re-hash failed", err);
-            }
-          }
+          const user = await authenticateCredentials(String(req.body.orgCode ?? ""), username, password);
+          if (!user) return done(null, false, { message: "invalid_credentials" });
           return done(null, user as unknown as Express.User);
         } catch (err) {
           return done(err as Error);
@@ -523,6 +617,18 @@ export function configurePassport() {
 /** Is this the platform/operator tenant? Compared on the RESOLVED org (lookups are case-insensitive). */
 export function isPlatformOrg(org: { code: string }): boolean {
   return org.code.toUpperCase() === PLATFORM_ORG_CODE;
+}
+
+/**
+ * Opaque key of an unrouted registration (unknown org or the platform org):
+ * SHA-256 of the org code — upper-cased exactly like the org lookup — and the
+ * username. Only this is stored, never the code, the name or a credential; it
+ * exists so a re-submission answers 409 like a real org's would.
+ */
+export function unroutedRegistrationKey(orgCode: string, username: string): string {
+  return createHash("sha256")
+    .update(`docturn.unrouted-registration\u0000${orgCode.toUpperCase()}\u0000${username}`)
+    .digest("hex");
 }
 
 /** Postgres unique-violation (23505), however the driver wraps it. */
@@ -578,18 +684,27 @@ export function registerAuthRoutes(app: Express) {
   // Self-registration → pending (a director approves). We model the pending
   // gate minimally here: a registration creates no active user yet.
   //
-  // Disclosure policy (mirrors /api/login, which answers one generic 401):
-  //   • the org code is an onboarding identifier the director hands out, so a
-  //     mistyped one gets a usable 404 — but the platform/operator org answers
-  //     that same 404, as if it did not exist;
-  //   • whether a USERNAME already exists is never disclosed: a request for a
-  //     taken name is accepted (201) exactly like a fresh one and lands in the
-  //     director's queue flagged `usernameTaken`, where approving it is refused
-  //     (409) and denying it clears it. Timing is uniform too: no user lookup
-  //     happens on this path;
+  // Disclosure policy (mirrors /api/login, which answers one generic 401 at
+  // one cost): an anonymous caller learns NOTHING about which org codes or
+  // usernames exist.
+  //   • ORG: an unknown org code and the platform/operator org DOCTURN (any
+  //     casing) are "unrouted": the request is dropped — nothing reaches any
+  //     director's or the operator's queue, and no credential is kept — but the
+  //     answer is the same 201 { pending: true } a real org gives, after the
+  //     same work (one password hash). A re-submission of the same
+  //     (org code, username) answers 409 request_pending exactly like a real
+  //     org's, because an opaque SHA-256 key of the pair is remembered in
+  //     unrouted_registrations. The drop is audit-logged on the platform org
+  //     (auth.register_unrouted, low risk) so the operator can see probing.
+  //     The cost of this: a mistyped org code is not pointed out — the form
+  //     says the request goes to a director only "if the code is right".
+  //   • USERNAME: a request for a taken name is accepted (201) exactly like a
+  //     fresh one and lands in the director's queue flagged `usernameTaken`,
+  //     where approving it is refused (409) and denying it clears it. No user
+  //     lookup happens on this path, so timing is uniform too;
   //   • a re-submission for a name that is already PENDING answers 409
-  //     request_pending whether or not the account exists, so the pair
-  //     (first → 201, again → 409) reveals nothing about accounts either.
+  //     request_pending whether or not the account (or the org) exists, so the
+  //     pair (first → 201, again → 409) reveals nothing either.
   app.post(
     "/api/register",
     registerLimiter,
@@ -617,10 +732,33 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "validation_error" });
       }
       const org = await storage().getOrganizationByCode(parsed.data.orgCode);
-      if (!org || isPlatformOrg(org)) {
-        return res.status(404).json({ error: "organization_not_found" });
-      }
       const username = parsed.data.username;
+      if (!org || isPlatformOrg(org)) {
+        // Unrouted (see the policy above): same answers, same cost, nothing queued.
+        const claimed = await storage().claimUnroutedRegistration(
+          unroutedRegistrationKey(parsed.data.orgCode, username),
+        );
+        if (!claimed) return res.status(409).json({ error: "request_pending" });
+        await hashPassword(parsed.data.password); // cost parity with a routed request; discarded
+        const platform = org ?? (await storage().getOrganizationByCode(PLATFORM_ORG_CODE));
+        if (platform) {
+          await appendAudit({
+            organizationId: platform.id,
+            userId: null,
+            action: "auth.register_unrouted",
+            resourceType: "user",
+            resourceId: null,
+            details: {
+              reason: org ? "platform_org" : "unknown_org",
+              orgCode: parsed.data.orgCode.slice(0, 64),
+              username: username.slice(0, 64),
+              requestedRole: parsed.data.requestedRole ?? "hospitalist",
+            },
+            riskLevel: "low",
+          });
+        }
+        return res.status(201).json({ pending: true });
+      }
       const pending = (await storage().listPendingRegistrations(org.id)).find(
         (r) => r.username === username,
       );
@@ -790,9 +928,10 @@ export function registerAuthRoutes(app: Express) {
         if (!user) {
           return res.status(401).json({ error: "invalid_credentials" });
         }
-        // MFA gate: if enabled, hold the session pending a second factor.
+        // MFA gate: if enabled, hold the session pending a second factor —
+        // bound to the password generation just verified.
         if (user.twoFactorEnabled) {
-          req.session.pendingMfaUserId = user.id;
+          beginPendingMfa(req.session, user);
           return res.status(202).json({ twoFactorRequired: true });
         }
         req.login(user as unknown as Express.User, async (loginErr) => {
@@ -902,12 +1041,16 @@ export function registerAuthRoutes(app: Express) {
       const ok = await verifyPassword(current, fresh.passwordHash);
       if (!ok) return res.status(403).json({ error: "wrong_password" });
       const wasForced = !!fresh.mustChangePassword;
+      // "This session" is the bearer credential when one authenticated the
+      // request (it overrides the cookie), otherwise the cookie session.
+      const bearerCred = bearerCredentialOf(res);
       const updated = await rotatePassword(me.id, next, {
         mustChangePassword: false,
-        keepSessionId: req.sessionID,
+        keepSessionId: bearerCred ? bearerCred.connectionId : req.sessionID,
         reason: "password_changed",
       });
-      await restampSession(req, updated ?? fresh);
+      if (bearerCred) bearerCred.restamp(updated ?? fresh);
+      else await restampSession(req, updated ?? fresh);
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,
@@ -928,6 +1071,8 @@ import { isPrivilegedRole, requireAuth, requireRole } from "./rbac.js";
 declare module "express-session" {
   interface SessionData {
     pendingMfaUserId?: number;
+    /** Password generation the pending MFA login's password step was checked against. */
+    pendingMfaPg?: number;
     /** Privileged user signed in without MFA while the org requires it. */
     mfaEnrollmentRequired?: boolean;
     /** Developer who entered an impersonated / managed-org portal (dev.ts). */

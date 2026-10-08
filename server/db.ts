@@ -522,6 +522,16 @@ UPDATE pending_registrations p SET status = 'rejected'
 CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_pending_uniq
   ON pending_registrations(organization_id, username) WHERE status = 'pending';
 
+-- Requests naming an unknown org code or the platform org: dropped, but
+-- answered like a real org's (201, then 409 on a re-submission) so POST
+-- /api/register is not an org-code oracle. Only an opaque SHA-256 key of
+-- (upper(org code), username) is stored — no code, name or credential.
+CREATE TABLE IF NOT EXISTS unrouted_registrations (
+  id SERIAL PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS landing_page_settings (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER REFERENCES organizations(id),
