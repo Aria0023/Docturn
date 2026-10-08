@@ -174,6 +174,7 @@ function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
 // extract, route, send). Self-contained (no PageWrap) so it can be a draggable
 // dashboard widget.
 function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, services, hiddenServices, onToggleService, onAddService }) {
+  const mobile = useIsMobile();
   const [mgmt, setMgmt] = React.useState(false);
   const [newSvc, setNewSvc] = React.useState("");
   const hidden = hiddenServices || [];
@@ -285,21 +286,31 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                 <Icon name="activity" size={14} color="var(--muted-foreground)" />Triage level (ESI)
                 {extracted && <span style={{ fontSize: 11, color: "var(--status-accepted)", fontWeight: 600 }}>· AI-suggested</span>}
               </label>
+              {/* Phones: the shell's 12px legibility floor (A.CON-MIN-11) makes
+                  "Resuscitation" ~92px — wider than a fifth of a phone card —
+                  so the names would force the card past the viewport. Phones
+                  get a numbered 5-up segmented row (44px) and the selected
+                  level's full name underneath; desktop keeps names in-button. */}
               <div style={{ display: "flex", gap: 6 }}>
                 {[1, 2, 3, 4, 5].map((n) => {
                   const on = fields.acuity === n;
                   const e = window.ESI[n];
                   return (
                     <button key={n} type="button" onClick={() => setFields({ ...fields, acuity: n })}
-                      title={"ESI " + n + " · " + e.name}
-                      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "7px 4px", borderRadius: "var(--radius-md)", cursor: "pointer", fontFamily: "var(--font-sans)",
+                      title={"ESI " + n + " · " + e.name} aria-label={"ESI " + n + " · " + e.name} aria-pressed={on}
+                      style={{ flex: 1, minWidth: mobile ? 0 : undefined, minHeight: mobile ? 44 : undefined, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: mobile ? "center" : undefined, gap: 2, padding: "7px 4px", borderRadius: "var(--radius-md)", cursor: "pointer", fontFamily: "var(--font-sans)",
                         border: `1px solid ${on ? e.dot : "var(--border)"}`, background: on ? e.bg : "#fff", color: on ? e.fg : "var(--muted-foreground)" }}>
-                      <span style={{ fontSize: 14, fontWeight: 800 }}>{n}</span>
-                      <span style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.1, textAlign: "center" }}>{e.name}</span>
+                      <span style={{ fontSize: mobile ? 16 : 14, fontWeight: 800 }}>{n}</span>
+                      {!mobile && <span style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.1, textAlign: "center" }}>{e.name}</span>}
                     </button>
                   );
                 })}
               </div>
+              {mobile && window.ESI[fields.acuity] && (
+                <div aria-live="polite" style={{ marginTop: 8 }}>
+                  <AcuityChip level={fields.acuity} showName />
+                </div>
+              )}
             </div>
           </div>
         </Card>

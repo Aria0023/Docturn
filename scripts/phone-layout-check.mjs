@@ -10,7 +10,9 @@
  *   • text columns keep a readable width (no 0–13px "word per line" collapse),
  *   • KPI tiles render ≥ 2-up on phones, the custom-stat popover is on-screen,
  *   • the presence dot sits on the avatar rim, status pills stay single-line,
- *   • tap targets of the controls these screens own are ≥ 44px tall.
+ *   • tap targets of the controls these screens own are ≥ 44px tall,
+ *   • the ER intake triage (ESI) row fits its card under the shell's 12px
+ *     text floor and names the selected level.
  *
  * Covers findings A.CON-SHO-48/49/50/54/55/56 and A.CON-MIN-13.
  *
@@ -285,9 +287,49 @@ async function checkStatPopover(page, label) {
   await sleep(200);
 }
 
+// Intake panel (shared by the ER physician and ER director homes). With the
+// shell's 12px phone text floor, in-button ESI names ("Resuscitation" ≈ 92px)
+// cannot fit a fifth of a phone card; they used to widen the single grid track
+// and push both intake cards ~31-46px past the viewport. Phones show a numbered
+// segmented row plus the selected level's name, which must update on tap.
+async function checkIntakeTriage(page, label) {
+  const m = await page.evaluate(() => {
+    const M = window.__m;
+    const h = M.h2(/^New patient intake$/);
+    if (!h) return null;
+    const card = h.closest("div[style*='box-shadow']");
+    const btns = [...card.querySelectorAll("button[title^='ESI ']")];
+    const caption = M.byText("span", /^ESI \d · /).find((s) => card.contains(s)) || null;
+    return {
+      card: { r: M.rect(card), vis: M.fullyVisible(card), parentW: M.rect(card.parentElement).width },
+      btns: btns.map((b) => ({ vis: M.fullyVisible(b), h: M.rect(b).height, spill: b.scrollWidth > b.clientWidth + 1 })),
+      caption: caption ? caption.textContent.trim() : null,
+    };
+  });
+  if (!m) { rec(`${label} intake: panel present`, false); return; }
+  rec(`${label} intake: card inside the viewport and its grid track`, m.card.vis && m.card.r.width <= m.card.parentW + 0.5, `card=${rectStr(m.card.r)} track=${fmt(m.card.parentW)}`);
+  rec(`${label} intake: 5 ESI buttons fully visible`, m.btns.length === 5 && m.btns.every((b) => b.vis), `${m.btns.length} buttons`);
+  rec(`${label} intake: ESI button tap height ≥ 44`, m.btns.length === 5 && m.btns.every((b) => b.h >= TAP), `h=${m.btns.map((b) => fmt(b.h)).join(",")}`);
+  rec(`${label} intake: no ESI label spills out of its button`, m.btns.every((b) => !b.spill));
+  rec(`${label} intake: selected ESI level named on phone`, m.caption === "ESI 3 · Urgent", `caption=${m.caption}`);
+  await page.evaluate(() => { const b = document.querySelector("button[title='ESI 1 · Resuscitation']"); if (b) b.click(); });
+  await sleep(150);
+  const after = await page.evaluate(() => {
+    const M = window.__m;
+    const card = M.h2(/^New patient intake$/).closest("div[style*='box-shadow']");
+    const s = M.byText("span", /^ESI \d · /).find((x) => card.contains(x));
+    const b = card.querySelector("button[title='ESI 1 · Resuscitation']");
+    return { caption: s ? s.textContent.trim() : null, pressed: b && b.getAttribute("aria-pressed") };
+  });
+  rec(`${label} intake: tapping ESI 1 selects it and names it`, after.caption === "ESI 1 · Resuscitation" && after.pressed === "true", `caption=${after.caption} aria-pressed=${after.pressed}`);
+  await page.evaluate(() => { const b = document.querySelector("button[title='ESI 3 · Urgent']"); if (b) b.click(); });
+  await sleep(100);
+}
+
 async function checkErDoctorHome(page) {
   await nav(page, "dashboard");
   await noOverflow(page, "ER doctor home");
+  await checkIntakeTriage(page, "ER doctor");
   await checkRoutedBoard(page, "ER doctor");
   await checkStatPopover(page, "ER doctor my-metrics");
 }
@@ -348,6 +390,7 @@ async function checkBoardControls(page, label) {
 async function checkErDirectorHome(page) {
   await nav(page, "dashboard");
   await noOverflow(page, "ER director home");
+  await checkIntakeTriage(page, "ER director");
   const m = await page.evaluate(() => {
     const M = window.__m;
     const tog = [...document.querySelectorAll("button[title='End shift'],button[title='Start shift']")];
