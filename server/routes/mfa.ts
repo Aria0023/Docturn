@@ -115,12 +115,17 @@ export function registerMfaRoutes(app: Express) {
     res.json({ backupCodes: codes });
   });
 
-  // Request an SMS OTP for the pending login (alternative to TOTP).
+  // Request an SMS OTP for the pending login (alternative to TOTP). The code
+  // never appears in the response — only whether a text went out. Without a
+  // carrier able to deliver (production, no credentials) this fails closed.
   app.post("/api/2fa/request-sms", async (req, res) => {
     const pendingId = req.session.pendingMfaUserId;
     if (!pendingId) return res.status(401).json({ error: "no_pending_login" });
-    const code = await sendSmsOtp(pendingId);
-    res.json({ sent: code != null });
+    const result = await sendSmsOtp(pendingId);
+    if (!result.sent && result.reason === "sms_unavailable") {
+      return res.status(503).json({ sent: false, error: "sms_unavailable" });
+    }
+    res.json({ sent: result.sent });
   });
 
   // Complete a pending login with TOTP / SMS OTP / backup code.

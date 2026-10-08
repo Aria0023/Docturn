@@ -21,7 +21,9 @@ code actually enforces.
 
 **What it costs:** ≈ $35–45/month steady state; ≈ $5–20/month in year one on the
 AWS Free Tier. No load balancer (TLS terminates on the instance), no Twilio
-(the SMS adapter is a no-op stub without credentials), no SOC 2 spend.
+(without credentials SMS is **unavailable** under `NODE_ENV=production`: SMS one-time
+codes and `/api/sms/send` answer `503 sms_unavailable`, assignment/STAT SMS escalation
+is skipped with a log line — nothing is faked as sent), no SOC 2 spend.
 
 **What is deliberately deferred** (see §14): Postgres row-level security,
 S3 attachment storage, CloudWatch alarms, multi-instance scaling.
@@ -240,7 +242,7 @@ box.
 | `TRUST_PROXY` | leave unset | defaults **on**, which is correct behind Caddy (client IPs + secure cookies work) |
 | `RATE_LIMIT` | leave unset | defaults **on**; never set `off` in production (the compliance monitor flags it) |
 | `VAPID_*` | recommended | enables web push; without them push is silently disabled |
-| `TWILIO_*` | **leave unset** | no Twilio → SMS adapter is a no-op stub; nothing is sent, nothing costs money |
+| `TWILIO_*` | **leave unset** | no Twilio → SMS is unavailable in production: MFA SMS codes and `/api/sms/send` return `503 sms_unavailable`, SMS escalation is skipped (logged, content-free). Nothing is sent, nothing costs money, and nothing is reported as sent. Clinicians use TOTP / backup codes for MFA. The console stub that records messages exists only outside `NODE_ENV=production` and never logs numbers or bodies |
 | `OPENAI_API_KEY`, `AI_EXTERNAL_PHI_OK`, `USE_STUB_AI` | **leave unset** | AI intake stays on the deterministic local extractor; no PHI leaves the box |
 | `PORT` | leave unset | 3000 (Caddy proxies to it) |
 | `AMION_*` / Epic vars | optional | only if you have those integrations; modules default appropriately |
