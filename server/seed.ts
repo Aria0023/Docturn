@@ -1,3 +1,4 @@
+import { PLATFORM_ORG_CODE } from "@shared/schema";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { getHandle } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
@@ -59,7 +60,10 @@ function rootAccountIsGated(): boolean {
 
 // The platform/developer tenant. Kept separate from clinical tenants so the
 // developer can delete any hospital org without destroying their own account.
-const PLATFORM_ORG = { name: "DocTurn Platform", code: "DOCTURN" };
+// Its code lives in shared/schema.ts (PLATFORM_ORG_CODE) because the auth layer
+// must recognise it too: public self-registration against this org is refused
+// (server/auth.ts /api/register answers as if the org did not exist).
+export const PLATFORM_ORG = { name: "DocTurn Platform", code: PLATFORM_ORG_CODE };
 
 /** Thrown (and caught by callers) when demo seeding is refused in real-PHI mode. */
 const REAL_PHI_REFUSAL =
@@ -399,8 +403,12 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
     if (strongEnvPassword) {
       const alreadyCurrent = await verifyPassword(envPassword, dev.passwordHash);
       if (!alreadyCurrent) {
+        // A credential rotation: stamp passwordChangedAt so any session that
+        // survived the restart (a shared store) is invalidated like any other
+        // password change (server/auth.ts resolveSessionUser).
         await storage.updateUser(dev.id, {
           passwordHash: await hashPassword(envPassword),
+          passwordChangedAt: new Date(),
         });
         changed = true;
         console.log(

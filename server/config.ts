@@ -66,6 +66,14 @@ export const securityHeaders = helmet(HELMET_OPTIONS);
 /** Tiered request limits — stricter on auth, looser on general traffic. */
 export const AUTH_RATE_LIMIT = { windowMs: 15 * 60 * 1000, max: 50 };
 export const GENERAL_RATE_LIMIT = { windowMs: 60 * 1000, max: 300 };
+/**
+ * Public self-registration (POST /api/register). Unlike AUTH_RATE_LIMIT, which
+ * counts only FAILED attempts (brute force is about wrong guesses), this one
+ * counts every request including 201s: each accepted request becomes a row in
+ * the director's approval queue, so successes are exactly what must be capped.
+ * Mounted by server/auth.ts registerAuthRoutes when rate limiting is enabled.
+ */
+export const REGISTER_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 10 };
 
 export interface RateLimitState {
   /** Whether the running app actually mounted the limiters. */

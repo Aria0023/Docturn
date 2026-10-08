@@ -25,6 +25,24 @@ Self-registration via an organization code:
 This is an onboarding/auth feature (DocTurn is currently admin-provisioned), so
 it's parked until launch.
 
+### What the server already enforces (server/auth.ts, launch remediation)
+`POST /api/register` (public) and the director queue follow this contract —
+the login screen should map these codes rather than show a generic failure:
+
+| Case | Answer | Why |
+| --- | --- | --- |
+| Unknown org code, **or the platform org `DOCTURN`** (any casing) | `404 organization_not_found` | The operator tenant never takes public requests; it answers as if it did not exist (A.CON-SHO-15). |
+| `requestedRole` is `director` / `er_director` / `developer` | `400 role_not_self_registrable` | Privileged roles are provisioned by an existing director (People → add) or the operator, never self-requested (A.CON-SHO-15). Only `hospitalist` and `er_doctor` can be requested. |
+| Password shorter than 8, the demo password, or "password" | `400 weak_password` | Same floor as PATCH /api/account/password (A.CON-SHO-16). |
+| Username already has an account | `201 { pending: true }` — same as a fresh request | Never a username oracle (A.CON-SHO-11). The row reaches the queue with `usernameTaken: true`; approving it answers `409 username_taken`, denying clears it. |
+| A request for that username is already pending | `409 request_pending` | One pending row per (org, username), enforced by a partial unique index (A.CON-SHO-8). A denied request frees the name. |
+| More than 10 requests per IP per hour (when rate limiting is on) | `429 too_many_requests` | Counts successes too; the auth limiter counts only failures (A.CON-SHO-15). |
+
+Queue actions are idempotent: approving an approved request → `200 { userId,
+alreadyApproved: true }`; denying a denied one → `200 { ok, alreadyDenied }`;
+approve after deny → `409 already_denied`; deny after approve → `409
+already_approved`. No path can hang on the users unique index any more.
+
 ---
 
 # Parked: Amion scoping (remember for later)
