@@ -323,13 +323,31 @@ const TOP = {
   users:      ["Users by organization", "Support directory — every user grouped by tenant"],
 };
 
+// Toasts are informational only (no buttons), so the fixed wrapper takes NO
+// pointer events: a tap anywhere under it reaches the app. While the
+// broadcast banner (api-bridge.js, #dt-broadcast-banner) is up, the toast is
+// placed below it so it never covers the banner's Acknowledge button either
+// (A.CON-SHO-2). Re-measured after every render, so a banner that appears
+// while a toast is showing pushes it down too.
+function bannerBottom() {
+  const b = document.getElementById("dt-broadcast-banner");
+  if (!b || b.style.display === "none") return null;
+  const r = b.getBoundingClientRect();
+  return r.height > 0 ? Math.ceil(r.bottom) : null;
+}
 function Toast({ toast }) {
+  const [below, setBelow] = React.useState(null);
+  React.useLayoutEffect(() => {
+    if (!toast) return;
+    const next = bannerBottom();
+    if (next !== below) setBelow(next);
+  });
   if (!toast) return null;
   const tone = toast.tone || "accepted";
   const ic = { accepted: "check-circle-2", sent: "send", rejected: "alert-triangle" }[tone] || "check-circle-2";
   const fg = { accepted: "var(--status-accepted)", sent: "var(--status-active)", rejected: "var(--destructive)" }[tone];
   return (
-    <div role="status" style={{ position: "fixed", top: "calc(18px + var(--sai-top))", right: "calc(18px + var(--sai-right))", zIndex: 50, animation: "dt-toast-in .25s ease", maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))" }}>
+    <div role="status" data-toast style={{ position: "fixed", top: below != null ? below + 8 : "calc(18px + var(--sai-top))", right: "calc(18px + var(--sai-right))", zIndex: 50, pointerEvents: "none", animation: "dt-toast-in .25s ease", maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))" }}>
       <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
         <Icon name={ic} size={18} color={fg} style={{ marginTop: 1 }} />
         <div>

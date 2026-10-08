@@ -97,8 +97,12 @@ not optimised for it.
 - **Offline is read-only shell.** The service worker caches only the static
   app shell so the app opens offline; `/api` and `/ws` are never cached (no
   PHI in browser caches), so live data needs a connection.
-- **Per-message read receipts** show "Delivered"; the other party's read time
-  is not yet exposed per message.
+- **Per-message receipts** (web app / PWA) come only from the server's
+  delivery rows: "Sending…" until the server stores the message, then
+  "Delivered", then "Read" — live, via the `MESSAGE_READ` WebSocket frame that
+  `POST /api/messaging/messages/mark-read` emits (ids only). A thread counts as
+  read only while it is on screen in a foreground tab. A send the server
+  refuses or that never leaves the device shows "Not sent" with Retry / Edit.
 
 ## The Expo native app (`mobile-app/`)
 
