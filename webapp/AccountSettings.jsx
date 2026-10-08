@@ -5,17 +5,19 @@
    two-factor), lock, sign out. Directors additionally get shortcuts to the
    organization-level settings. Live-wired through DT.actions. */
 
-function SettingsRow({ icon, title, sub, right, onClick }) {
+function SettingsRow({ icon, title, sub, right, onClick, wrapSub, rowProps }) {
   const clickable = typeof onClick === "function";
   return (
-    <div onClick={onClick} role={clickable ? "button" : undefined}
+    <div onClick={onClick} role={clickable ? "button" : undefined} {...(rowProps || {})}
       style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)", cursor: clickable ? "pointer" : "default", background: "#fff" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
         <Icon name={icon} size={16} color="var(--muted-foreground)" />
       </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-        {sub && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>}
+        {sub && <div data-settings-sub style={wrapSub
+          ? { fontSize: 12, color: "var(--muted-foreground)", marginTop: 1, lineHeight: 1.4, overflowWrap: "anywhere" }
+          : { fontSize: 12, color: "var(--muted-foreground)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>}
       </div>
       {right !== undefined ? <div style={{ flex: "none" }}>{right}</div> : clickable ? <Icon name="chevron-right" size={16} color="var(--muted-foreground)" /> : null}
     </div>
@@ -140,7 +142,12 @@ function AccountSettings({ onLock }) {
   const me = st.me || {};
   const [user, setUser] = React.useState(null);      // fresh /api/user (2FA state, org)
   const [mfaOpen, setMfaOpen] = React.useState(false);
-  const [pushState, setPushState] = React.useState(() => { try { return (typeof Notification !== "undefined" && Notification.permission) || "unsupported"; } catch (e) { return "unsupported"; } });
+  // This device's Web Push state (DT.pushStatus): granted / default / denied /
+  // ios-home-screen (iPhone Safari tab — push needs the Home Screen app) /
+  // unsupported; "error" after a failed attempt.
+  const readPush = () => { try { return window.DT && DT.pushStatus ? DT.pushStatus() : ((typeof Notification !== "undefined" && Notification.permission) || "unsupported"); } catch (e) { return "unsupported"; } };
+  const [pushState, setPushState] = React.useState(readPush);
+  const [pushBusy, setPushBusy] = React.useState(false);
   const [standalone] = React.useState(() => { try { return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true; } catch (e) { return false; } });
   const on = (id) => (window.DT && DT.moduleOn ? DT.moduleOn(id) : true);
 
@@ -158,10 +165,27 @@ function AccountSettings({ onLock }) {
   const isDirector = role === "director" || role === "er_director";
   const isClinical = role === "hospitalist" || role === "er_doctor";
 
+  // The ONLY place the app asks for notification permission (A.CON-SHO-62 /
+  // A.CON-NEE-1): a.enablePush() runs synchronously inside this tap, which is
+  // what WebKit requires for the prompt to appear.
   const enablePush = () => {
-    if (a.enablePush) a.enablePush();
-    setTimeout(() => { try { setPushState(Notification.permission); } catch (e) {} }, 1500);
+    if (!a.enablePush || pushBusy) return;
+    const pending = a.enablePush();
+    setPushBusy(true);
+    Promise.resolve(pending).then((st) => setPushState(st || readPush()), () => setPushState("error")).finally(() => setPushBusy(false));
   };
+  const PUSH_SUB = {
+    granted: "On for this device — STAT and new-message alerts arrive even when the app is closed",
+    default: "Get alerted when the app is closed",
+    denied: "Blocked for this site — allow notifications for DocTurn in your browser or device settings, then come back",
+    "ios-home-screen": "On iPhone and iPad, alerts work only in the Home Screen app (iOS 16.4+): tap Share → Add to Home Screen, open DocTurn from your Home Screen, then turn alerts on here",
+    "ios-update": "Alerts for Home Screen apps need iOS 16.4 or later — update iOS in Settings → General → Software Update",
+    unsupported: "Not supported by this browser",
+    error: "Couldn't turn alerts on — check your connection and try again",
+  };
+  const pushRight = pushState === "granted" ? <Badge status="accepted">On</Badge>
+    : pushState === "default" || pushState === "error" ? <Button size="sm" onClick={enablePush} style={{ opacity: pushBusy ? 0.6 : 1 }}>{pushBusy ? "Turning on…" : "Turn on"}</Button>
+    : null;
 
   return (
     <div style={{ maxWidth: 640 }}>
@@ -196,9 +220,9 @@ function AccountSettings({ onLock }) {
       )}
 
       <SettingsGroup title="Notifications">
-        <SettingsRow icon="bell" title="Push notifications"
-          sub={pushState === "granted" ? "On for this device" : pushState === "denied" ? "Blocked in your browser settings" : pushState === "unsupported" ? "Not supported by this browser" : "Get alerted when the app is closed"}
-          right={pushState === "granted" ? <Badge status="accepted">On</Badge> : pushState === "denied" || pushState === "unsupported" ? null : <Button size="sm" onClick={enablePush}>Turn on</Button>} />
+        <SettingsRow icon="bell" title="Push notifications" wrapSub rowProps={{ "data-push-row": pushState }}
+          sub={PUSH_SUB[pushState] || PUSH_SUB.default}
+          right={pushRight} />
         <SettingsRow icon="smartphone" title={standalone ? "Installed on this device" : "Install as an app"}
           sub={standalone ? "Running as a home-screen app" : "iPhone: Share → Add to Home Screen · Android: Install app"} />
       </SettingsGroup>

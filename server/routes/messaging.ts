@@ -69,6 +69,92 @@ const PATIENT_THREAD_OVERSIGHT_ROLES = new Set<string>([
   "developer",
 ]);
 
+/** Attachment metadata as the listing queries select it (never the bytes). */
+interface AttachmentMeta {
+  id: number;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  durationMs: number | null;
+}
+
+/**
+ * Client-facing attachment metadata — ONE shape for the thread view and the
+ * live MESSAGE_RECEIVED frame, so a message rendered from either is identical.
+ * `forwarded` marks a by-reference attachment of a forwarded message (served
+ * through the forwarded-message fetch route).
+ */
+function attachmentView(a: AttachmentMeta, url: string, forwarded = false) {
+  return {
+    id: a.id,
+    fileName: a.fileName,
+    mimeType: a.mimeType,
+    byteSize: a.byteSize,
+    isImage: a.mimeType.startsWith("image/"),
+    isAudio: a.mimeType.startsWith("audio/"),
+    durationMs: a.durationMs ?? null,
+    ...(forwarded ? { forwarded: true } : {}),
+    url,
+  };
+}
+
+/** A recipient's delivery row as the thread view and the live frame serve it. */
+function deliveryView(
+  d: { userId: number; deliveredAt: Date | null; readAt: Date | null; acknowledgedAt: Date | null },
+  nameById: Map<number, string>,
+) {
+  return {
+    userId: d.userId,
+    displayName: nameById.get(d.userId) ?? "",
+    deliveredAt: d.deliveredAt,
+    readAt: d.readAt,
+    acknowledgedAt: d.acknowledgedAt,
+    status: d.acknowledgedAt
+      ? "acknowledged"
+      : d.readAt
+        ? "read"
+        : d.deliveredAt
+          ? "delivered"
+          : "sent",
+  };
+}
+
+/**
+ * The just-created message decorated like one row of GET
+ * /conversations/:id/messages (minus the viewer-specific acknowledgedByMe),
+ * for the live MESSAGE_RECEIVED frame (A.CON-SHO-65). With the attachments and
+ * delivery rows in the frame a client can apply the message directly instead
+ * of re-fetching every conversation — and writing a PHI-access row per thread
+ * — on each event. Metadata and ids only; never attachment bytes.
+ */
+async function liveMessageView(orgId: number, message: Message) {
+  const [own, delivery, users] = await Promise.all([
+    storage().listAttachmentsForMessages(orgId, [message.id]),
+    storage().listDeliveryForMessages([message.id]),
+    storage().listUsers(orgId),
+  ]);
+  const refs = await storage().listAttachmentMetaByIds(orgId, forwardedAttachmentIds(message));
+  const refById = new Map(refs.map((a) => [a.id, a]));
+  const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+  const recipients = delivery.filter((d) => d.userId !== message.senderId);
+  return {
+    ...message,
+    ackCount: recipients.filter((d) => d.acknowledgedAt).length,
+    readCount: recipients.filter((d) => d.readAt).length,
+    deliveries: recipients.map((d) => deliveryView(d, nameById)),
+    attachments: own
+      .map((a) => attachmentView(a, "/api/messaging/attachments/" + a.id))
+      .concat(
+        forwardedAttachmentIds(message)
+          .map((aid) => refById.get(aid))
+          .filter((a): a is NonNullable<typeof a> => !!a)
+          .map((a) =>
+            attachmentView(a, "/api/messaging/messages/" + message.id + "/attachments/" + a.id, true),
+          ),
+      ),
+  };
+}
+
 /** Decoded byte length of a base64 string without allocating the buffer. */
 function base64ByteSize(b64: string): number {
   const clean = b64.replace(/=+$/, "");
@@ -402,9 +488,11 @@ async function fanOutMessage(
     });
   }
 
+  // The frame carries the message decorated like the thread view (attachment
+  // metadata + recipient delivery rows) so clients apply it as-is (A.CON-SHO-65).
   notificationDeps().ws.sendToUsers(notifyIds, {
     type: "MESSAGE_RECEIVED",
-    message,
+    message: await liveMessageView(me.organizationId, message),
   });
   // Content-free push wake-up so the message reaches a closed phone. Never
   // includes message text or patient data (push services have no BAA). The
@@ -860,30 +948,15 @@ export function registerMessagingRoutes(app: Express) {
       const out = msgs.map((m) => {
         const rows = delivery.filter((d) => d.messageId === m.id);
         const recipients = rows.filter((d) => d.userId !== m.senderId);
-        const own = (byMsg[m.id] || []).map((a) => ({
-          id: a.id,
-          fileName: a.fileName,
-          mimeType: a.mimeType,
-          byteSize: a.byteSize,
-          isImage: a.mimeType.startsWith("image/"),
-          isAudio: a.mimeType.startsWith("audio/"),
-          durationMs: a.durationMs ?? null,
-          url: "/api/messaging/attachments/" + a.id,
-        }));
+        const own = (byMsg[m.id] || []).map((a) =>
+          attachmentView(a, "/api/messaging/attachments/" + a.id),
+        );
         const forwarded = forwardedAttachmentIds(m)
           .map((aid) => refById.get(aid))
           .filter((a): a is NonNullable<typeof a> => !!a)
-          .map((a) => ({
-            id: a.id,
-            fileName: a.fileName,
-            mimeType: a.mimeType,
-            byteSize: a.byteSize,
-            isImage: a.mimeType.startsWith("image/"),
-            isAudio: a.mimeType.startsWith("audio/"),
-            durationMs: a.durationMs ?? null,
-            forwarded: true,
-            url: "/api/messaging/messages/" + m.id + "/attachments/" + a.id,
-          }));
+          .map((a) =>
+            attachmentView(a, "/api/messaging/messages/" + m.id + "/attachments/" + a.id, true),
+          );
         return {
           ...m,
           ackCount: recipients.filter((d) => d.acknowledgedAt).length,
@@ -893,20 +966,7 @@ export function registerMessagingRoutes(app: Express) {
           ),
           // Per-recipient delivery state (sent → delivered → read → acknowledged)
           // for the "Seen by N · Acked by M" disclosure in group threads.
-          deliveries: recipients.map((d) => ({
-            userId: d.userId,
-            displayName: nameById.get(d.userId) ?? "",
-            deliveredAt: d.deliveredAt,
-            readAt: d.readAt,
-            acknowledgedAt: d.acknowledgedAt,
-            status: d.acknowledgedAt
-              ? "acknowledged"
-              : d.readAt
-                ? "read"
-                : d.deliveredAt
-                  ? "delivered"
-                  : "sent",
-          })),
+          deliveries: recipients.map((d) => deliveryView(d, nameById)),
           attachments: own.concat(forwarded),
         };
       });

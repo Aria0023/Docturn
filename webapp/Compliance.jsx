@@ -36,9 +36,10 @@ function RiskPill({ level }) {
   const r = RISK[level] || RISK.low;
   return <span style={{ padding: "2px 9px", borderRadius: "var(--radius-full)", background: r.bg, color: r.fg, fontSize: 11.5, fontWeight: 700 }}>{r.label}</span>;
 }
+// Audit time with seconds, in the app's one locale-aware clock (A.CON-MIN-18).
 function clockSec(at) {
-  const d = new Date(at);
-  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+  if (window.dtFmt && window.dtFmt.hhmmss) return window.dtFmt.hhmmss(at);
+  return new Date(at).toLocaleTimeString();
 }
 function csvDownload(name, rows) {
   const csv = rows.map((r) => r.map((c) => '"' + String(c == null ? "" : c).replace(/"/g, '""') + '"').join(",")).join("\n");

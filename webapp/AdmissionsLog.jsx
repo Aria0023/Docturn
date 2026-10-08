@@ -3,14 +3,10 @@
    dashboard shows a rolling count since the director's last reset; this screen
    always shows the complete history (newest first). */
 
+// The app's one locale-aware day + clock format (window.dtFmt, A.CON-MIN-18).
 function alWhen(at) {
-  const d = new Date(at);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const y = new Date(today.getTime() - 86400000);
-  const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-  if (d.getTime() >= today.getTime()) return "Today · " + hm;
-  if (d.getTime() >= y.getTime()) return "Yesterday · " + hm;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + hm;
+  if (window.dtFmt && window.dtFmt.stamp) return window.dtFmt.stamp(at);
+  return new Date(at).toLocaleString();
 }
 
 function AdmissionsLog({ admissions, resetAt, bare, onPurge }) {

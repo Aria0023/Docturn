@@ -21,11 +21,45 @@
   var now = function () { return Date.now(); };
   var uid = (function () { var n = 1000; return function (p) { return (p || "id") + "_" + (++n) + "_" + Math.floor(Math.random() * 1e4); }; })();
 
-  /* ---- time helpers ------------------------------------------------------ */
+  /* ---- time helpers ------------------------------------------------------
+     ONE clock format for every label in the app (A.CON-MIN-18): the device
+     locale's own hour cycle via Intl.DateTimeFormat — "3:04 PM" on a 12-hour
+     device, "15:04" on a 24-hour one — instead of a hard-coded 24-hour HH:MM
+     next to locale 12-hour labels. Formatters are built once (they are costly)
+     and the fallback is only for an engine without Intl. */
+  var FMT = {};
+  function intlFmt(key, opts) {
+    if (FMT[key] === undefined) {
+      try { FMT[key] = new Intl.DateTimeFormat(undefined, opts); } catch (e) { FMT[key] = null; }
+    }
+    return FMT[key];
+  }
+  function pad2(n) { return String(n).padStart(2, "0"); }
   function hhmm(ts) {
     var d = (ts == null) ? new Date() : new Date(ts);
-    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    var f = intlFmt("hm", { hour: "numeric", minute: "2-digit" });
+    return f ? f.format(d) : pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
+  /** Same clock with seconds (audit trails). */
+  function hhmmss(ts) {
+    var d = (ts == null) ? new Date() : new Date(ts);
+    var f = intlFmt("hms", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    return f ? f.format(d) : pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+  }
+  /** "Today" / "Yesterday" / a locale short date ("Oct 6", "6 Oct"; + year when not this year). */
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function dayLabel(ts) {
+    var d = (ts == null) ? new Date() : new Date(ts);
+    var today = new Date();
+    var yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1); // calendar day, DST-safe
+    if (sameDay(d, today)) return "Today";
+    if (sameDay(d, yesterday)) return "Yesterday";
+    var sameYear = d.getFullYear() === today.getFullYear();
+    var f = sameYear ? intlFmt("md", { month: "short", day: "numeric" }) : intlFmt("ymd", { year: "numeric", month: "short", day: "numeric" });
+    return f ? f.format(d) : d.toDateString();
+  }
+  /** Day + clock ("Today · 3:04 PM", "Oct 6 · 3:04 PM"). */
+  function stamp(ts) { return dayLabel(ts) + " · " + hhmm(ts); }
   function clockLabel() { return hhmm(); }
 
   /* ---- shift-time helpers ------------------------------------------------
@@ -492,18 +526,30 @@
        notifications (bodies quote patient initials + rooms) ·
        audit / phiLog / incidents (compliance trail — server is authoritative)
      Also not persisted (server-owned rosters, cheap to refetch): providers,
-     directory, orgPeople, candidates, team, devUsers, orgs, registrations. */
+     directory, orgPeople, candidates, team, devUsers, orgs, registrations.
+     Nor personal settings: `myPrefs` (DND, covering provider, away message)
+     is re-read from the server on every sign-in / restore.
+     `session` and `me` are kept only WHILE signed in (a reload shows the lock
+     screen / restores with the right name): sign-out resets both to their
+     signed-out values before the snapshot is purged, so nothing written after
+     a sign-out carries the previous clinician's identity (A.CON-SHO-63). */
   var PERSIST_KEYS = [
-    "v", "syntheticData", "session", "me", "impersonating", "myPrefs",
+    "v", "syntheticData", "session", "me", "impersonating",
     "theme", "roleColors", "navHidden", "navOrder", "boardModules",
     "dashLayout", "statLayout", "customStats",
     "scheduleSources", "consultServices", "consultHidden",
     "selectedOrg", "settings", "roles", "enterprise", "orgConfigs",
     "orgRetentionDays", "autoCleanHours", "ui",
   ];
+  // Identity is written only while someone is signed in.
+  var SIGNED_IN_ONLY = { me: 1, impersonating: 1 };
   function persistable(s) {
     var out = {};
-    PERSIST_KEYS.forEach(function (k) { if (s[k] !== undefined) out[k] = s[k]; });
+    PERSIST_KEYS.forEach(function (k) {
+      if (s[k] === undefined) return;
+      if (SIGNED_IN_ONLY[k] && !s.session) return;
+      out[k] = s[k];
+    });
     return out;
   }
   function load() {
@@ -651,6 +697,9 @@
     "sent", "admissions", "broadcasts", "notifications",
     "audit", "phiLog", "incidents",
   ];
+  // The signed-in person's identity and per-user settings — reset on sign-out
+  // so nothing of the previous user survives in memory either.
+  var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -746,14 +795,22 @@
         return s;
       });
     },
-    // Logout clears the in-memory clinical slices AND the persisted snapshot, so
-    // a shared workstation keeps nothing readable after the user walks away.
+    // Logout clears the in-memory clinical slices, the signed-out person's
+    // identity and personal settings, AND the persisted snapshot, so a shared
+    // workstation keeps nothing readable — or attributable — after the user
+    // walks away (A.CON-SHO-63). The next sign-in re-reads all of it from the
+    // server (and the next user never inherits — or saves over their own
+    // server copy — the previous user's dashboard layout).
     logout: function () {
       set(function (s) {
         pushAudit(s, { action: "logout", resource: "session", risk: "low" });
+        var fresh = seed();
         s.session = null; s.impersonating = null; s.ui.notifOpen = false;
+        PERSONAL_SLICES.forEach(function (k) { s[k] = fresh[k]; });
         return clearPhiSlices(s);
       });
+      // Last word: whatever the set above scheduled is cancelled and the key
+      // removed. (Anything set() later writes only the non-identity allowlist.)
       purgePersisted();
     },
     /** Screen lock: same PHI hygiene as logout, but keeps the session. */
@@ -1484,7 +1541,7 @@
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
-  window.dtFmt = { mmss: mmss, ago: ago, hhmm: hhmm, clockLabel: clockLabel, initialsOf: initialsOf };
+  window.dtFmt = { mmss: mmss, ago: ago, hhmm: hhmm, hhmmss: hhmmss, dayLabel: dayLabel, stamp: stamp, clockLabel: clockLabel, initialsOf: initialsOf };
   window.extractIntake = extractIntake;
   window.shiftActiveNow = shiftActiveNow;
   window.SHIFT_WINDOWS = SHIFT_WINDOWS;
