@@ -26,6 +26,18 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Render reaches the process over its private network, not via a proxy on
+      # the same host, so bind all interfaces (production defaults to 127.0.0.1
+      # for the Caddy-on-the-same-host AWS topology).
+      - key: HOST
+        value: 0.0.0.0
+      # Render's load balancer connects from private (RFC 1918) addresses and
+      # sets X-Forwarded-For / X-Forwarded-Proto. Trusting that range lets the
+      # app see the real client IP (rate limiting) and that the request was
+      # HTTPS (the Secure session cookie; without it sign-in is refused with
+      # insecure_transport).
+      - key: TRUST_PROXY
+        value: uniquelocal
       # Auth rate limiting stays ON (50 login attempts / 15 min / IP) — it is the
       # brute-force / credential-stuffing control (§164.308(a)(5)(ii)(C)). It was
       # previously disabled for demo role-switching; with real accounts in a
