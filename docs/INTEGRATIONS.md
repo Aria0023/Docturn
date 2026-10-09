@@ -14,7 +14,17 @@ the server reports right now, the on/off switch is enforced by the server, and
 
 Platform keys are **never** typed into the DocTurn screens: the Set up sheet for
 those cards only lists which variables to add and where, and ticks each one off
-once the server has it.
+once the server has it **and accepts it**. A variable that is present but
+rejected (for example `AI_EXTERNAL_PHI_OK` set to anything but `true`, or a
+`TWILIO_FROM_NUMBER` without the leading `+`) shows a warning — "set but not
+accepted" — instead of a tick.
+
+**Who can change them:** a **director** (and you, as developer). An **ER
+director** sees every card and its status but cannot switch, test or set up an
+integration — the same rule as every other organization-wide setting (STAT SMS
+fallback, assignment timeout, on-call source). The server refuses those
+requests (403); the screen shows the controls greyed out with "A director
+manages this."
 
 Each organization has an **on/off switch** per integration. It only does
 something once the integration is set up — the server refuses to switch on
@@ -74,11 +84,13 @@ Twilio phone number (Twilio console → Account Info / Phone Numbers).
 
 **On AWS:**
 ```bash
-aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/TWILIO_ACCOUNT_SID --value "AC…"
-aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/TWILIO_AUTH_TOKEN  --value "<token>"
-aws ssm put-parameter --region <region> --type String       --name /docturn/prod/TWILIO_FROM_NUMBER --value "+15551234567"
+aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/TWILIO_ACCOUNT_SID --value "AC…" --overwrite
+aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/TWILIO_AUTH_TOKEN  --value "<token>" --overwrite
+aws ssm put-parameter --region <region> --type String       --name /docturn/prod/TWILIO_FROM_NUMBER --value "+15551234567" --overwrite
 REGION=<region> bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn   # on the server
 ```
+(`--overwrite` lets you run the same line again later to replace a key; AWS
+refuses to update an existing parameter without it.)
 
 **Test:** Settings → Integrations → Twilio SMS → **Test connection**. DocTurn
 reads your Twilio account (it does **not** send a text) and reports whether the
@@ -108,9 +120,9 @@ npx web-push generate-vapid-keys      # prints a public and a private key
 
 **On AWS:**
 ```bash
-aws ssm put-parameter --region <region> --type String       --name /docturn/prod/VAPID_PUBLIC_KEY  --value "<public>"
-aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/VAPID_PRIVATE_KEY --value "<private>"
-aws ssm put-parameter --region <region> --type String       --name /docturn/prod/VAPID_SUBJECT     --value "mailto:you@yourhospital.org"
+aws ssm put-parameter --region <region> --type String       --name /docturn/prod/VAPID_PUBLIC_KEY  --value "<public>" --overwrite
+aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/VAPID_PRIVATE_KEY --value "<private>" --overwrite
+aws ssm put-parameter --region <region> --type String       --name /docturn/prod/VAPID_SUBJECT     --value "mailto:you@yourhospital.org" --overwrite
 REGION=<region> bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn
 ```
 Changing keys invalidates the browser subscriptions made with the old ones, so
@@ -139,8 +151,8 @@ synthetic data only — keep it that way.)
 
 **On AWS** (only after the BAA):
 ```bash
-aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/OPENAI_API_KEY     --value "sk-…"
-aws ssm put-parameter --region <region> --type String       --name /docturn/prod/AI_EXTERNAL_PHI_OK --value "true"
+aws ssm put-parameter --region <region> --type SecureString --name /docturn/prod/OPENAI_API_KEY     --value "sk-…" --overwrite
+aws ssm put-parameter --region <region> --type String       --name /docturn/prod/AI_EXTERNAL_PHI_OK --value "true" --overwrite
 REGION=<region> bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn
 ```
 Leave `USE_STUB_AI` unset (`true` forces the local extractor everywhere).
@@ -174,7 +186,18 @@ support. Treat it like a password.
    same parser the sync uses ("13 on-call rows, 12 people"). The roster is not
    changed by a test.
 4. Turn the switch **on** (it is on by default). The next scheduled pull (or
-   **Sync now** in the schedule panel) imports the grid.
+   **Sync now** in the schedule panel) imports the grid: everyone on it is
+   marked working with their shift, and anyone new gets a hospitalist account
+   (locked until a director issues a one-time password).
+5. The **On-call schedule sync** panel above the cards then shows the last
+   pulled grid. The on-call **board** shows Amion when Amion is its source
+   (the default once a feed is connected); if a director picked another
+   source, the Amion card says which one the board reads.
+
+The schedule panel only offers real connectors: Amion, Epic and the Manual
+list. QGenda, Tangier, ShiftAdmin, documents and web pages can be picked to see
+that DocTurn has **no connector** for them yet — nothing is imported from them,
+and there is no "connect" button.
 
 Older setups that use `AMION_OCS_URL` + `AMION_ORG_CODE` on the server keep
 working for that one organization; a hospital's own saved link always wins.
@@ -199,18 +222,37 @@ hospital's **FHIR R4 base URL** (token URL optional — derived when blank).
 2. Enter base URL, client ID, private key (and token URL if different) →
    **Save encrypted**.
 3. **Test connection** — DocTurn signs a JWT and asks Epic for an access token.
-4. Switch it **on** (Epic is off by default), then pick Epic as the schedule
-   source in the On-call schedule panel.
+4. Switch it **on** (Epic is off by default). DocTurn then pulls Epic every
+   60 minutes (`EPIC_SYNC_INTERVAL_MIN`).
+5. Pick **Epic** as the source in the On-call schedule panel (or on the
+   On-call board) — only then does the board show Epic's holders. Until you
+   do, the Epic card says "Epic is pulled … but the on-call board reads the
+   manual list", never that on-call comes from Epic.
 
-Hospital URLs must be public `https://` hosts; DocTurn refuses private/internal
-addresses.
+Hospital URLs must be public `https://` hosts. DocTurn refuses private,
+loopback, link-local, cloud-metadata and internal addresses in every spelling
+(including IPv6 forms such as `[::ffff:127.0.0.1]` or NAT64 `[64:ff9b::…]`) —
+when the URL is saved, when its host name is resolved, on every redirect, and
+again at the moment it connects.
+
+### Time limits
+
+Every outbound call — tests, Amion pulls, each Epic request, Twilio, OpenAI —
+has **one 10-second limit that covers the whole answer** (headers and body),
+and answers larger than 5 MB are refused. One Epic sync (token plus every
+page) must finish within 60 seconds. Hospitals are synced side by side, so a
+slow or broken system at one hospital never delays another hospital's pull,
+and a scheduled run is skipped while the previous one is still going.
 
 ---
 
 ## For you as developer
 
 - **Enterprise defaults → Integrations** shows every organization × integration
-  status, plus which platform variables are missing.
+  status, plus which platform variables are missing. The header badge of a
+  platform integration says **Set on server** (keys present and no failed
+  test), **Error** (the last test of those keys failed), **Not set up** or
+  **Needs BAA** — whether it is *Active* is per organization, in its row.
 - **Organization config → Integrations** shows one organization's real cards —
   you can switch, test and set up on its behalf (audited in its trail).
 - The **Modules** console applies the same rule: an integration's module cannot

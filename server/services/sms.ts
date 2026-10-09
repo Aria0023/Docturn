@@ -85,8 +85,10 @@ export class TwilioSms implements SmsService {
     const auth = Buffer.from(
       `${sid}:${process.env.TWILIO_AUTH_TOKEN}`,
     ).toString("base64");
-    // Bounded (10 s) and injectable like every integration call; a carrier
-    // rejection or an unreachable carrier is a typed failure, never a "sent".
+    // Bounded and injectable like every integration call (one ≤ 10 s deadline
+    // over headers AND body, body ≤ 5 MB and already buffered, so res.json()
+    // below cannot block); a carrier rejection or an unreachable / stalled
+    // carrier is a typed failure, never a "sent".
     let res: Response;
     try {
       res = await integrationFetch(

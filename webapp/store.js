@@ -1330,12 +1330,13 @@
       });
     },
 
-    /* per-organization on-call schedule source (Amion / QGenda / custom / …) */
+    /* The schedule-source PICKER's position for an org (a view preference).
+       What the on-call board really reads is the server's choice
+       (PATCH /api/oncall/source, which toasts and audits); this never claims
+       a sync or writes an audit row of its own. */
     setScheduleSource: function (code, source) {
       set(function (s) {
         s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
-        pushAudit(s, { action: "set_schedule_source", resource: code + " → " + source, risk: "low" });
-        s.__toast = { tone: "accepted", title: "Schedule source updated", msg: code + " now syncs via " + source + "." };
         return s;
       });
     },

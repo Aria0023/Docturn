@@ -27,18 +27,26 @@ import {
  *   DELETE /api/integrations/:integrationId/credentials
  *   GET    /api/dev/integrations                               developer: every org × integration
  *
- * Roles: director, er_director, developer (hospitalists 403). Org-scoped: a
- * director acts on their own org only — any other ?orgId is a 404 (no
- * existence oracle); a developer may name any org. The switch a director can
- * flip here is ONLY one of the five integrations' gating modules (an
- * allowlist by construction: the id must be in the registry); every other
+ * Roles: READ (GET) — director, er_director, developer; WRITE (switch, test,
+ * credentials) — director, developer only, the same roles every other
+ * org-wide configuration route allows (PATCH /api/settings/org,
+ * /api/org/config, /api/oncall/source, /api/ehr/config, POST
+ * /api/amion/sync-now). An ER director sees the cards (canManage: false) but
+ * cannot switch off the hospitalist group's SMS / sign-in codes or re-point
+ * its Amion / Epic feed (which drives the rotation roster). "Test" counts as a
+ * write: it makes the outbound call and stores the result. Hospitalists 403.
+ * Org-scoped: a director acts on their own org only — any other ?orgId is a
+ * 404 (no existence oracle); a developer may name any org. The switch a
+ * director can flip here is ONLY one of the five integrations' gating modules
+ * (an allowlist by construction: the id must be in the registry); every other
  * module stays developer-only (PATCH /api/dev/modules). Audit rows carry ids
  * and outcomes only — never a credential, URL or token.
  *
  * The param is :integrationId (a string) because :id is reserved for numeric
  * keys by the app-wide guard (server/params.ts).
  */
-const ROLES = ["director", "er_director", "developer"] as const;
+const READ_ROLES = ["director", "er_director", "developer"] as const;
+const WRITE_ROLES = ["director", "developer"] as const;
 
 async function targetOrg(req: Request, res: Response): Promise<Organization | null> {
   const me = currentUser(req);
@@ -79,7 +87,7 @@ export function notReadyBody(card: IntegrationCard) {
 }
 
 export function registerIntegrationRoutes(app: Express) {
-  app.get("/api/integrations", requireAuth, requireRole(...ROLES), async (req, res) => {
+  app.get("/api/integrations", requireAuth, requireRole(...READ_ROLES), async (req, res) => {
     const me = currentUser(req);
     const org = await targetOrg(req, res);
     if (!org) return;
@@ -101,12 +109,14 @@ export function registerIntegrationRoutes(app: Express) {
       orgId: org.id,
       orgCode: org.code,
       orgName: org.name,
+      // Whether THIS caller may switch, test or set up (the WRITE routes' rule).
+      canManage: (WRITE_ROLES as readonly string[]).includes(me.role),
       credentialStorage: { available: key.ok, message: key.ok ? null : key.message },
       integrations: await buildCards(storage(), org),
     });
   });
 
-  app.patch("/api/integrations/:integrationId", requireAuth, requireRole(...ROLES), async (req, res) => {
+  app.patch("/api/integrations/:integrationId", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
     const me = currentUser(req);
     const def = defOr404(req, res);
     if (!def) return;
@@ -131,7 +141,7 @@ export function registerIntegrationRoutes(app: Express) {
     res.json({ integration: await buildCard(storage(), def, org) });
   });
 
-  app.post("/api/integrations/:integrationId/test", requireAuth, requireRole(...ROLES), async (req, res) => {
+  app.post("/api/integrations/:integrationId/test", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
     const me = currentUser(req);
     const def = defOr404(req, res);
     if (!def) return;
@@ -161,7 +171,7 @@ export function registerIntegrationRoutes(app: Express) {
     });
   });
 
-  app.put("/api/integrations/:integrationId/credentials", requireAuth, requireRole(...ROLES), async (req, res) => {
+  app.put("/api/integrations/:integrationId/credentials", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
     const me = currentUser(req);
     const def = defOr404(req, res);
     if (!def) return;
@@ -189,7 +199,7 @@ export function registerIntegrationRoutes(app: Express) {
     res.json({ integration: await buildCard(storage(), def, org) });
   });
 
-  app.delete("/api/integrations/:integrationId/credentials", requireAuth, requireRole(...ROLES), async (req, res) => {
+  app.delete("/api/integrations/:integrationId/credentials", requireAuth, requireRole(...WRITE_ROLES), async (req, res) => {
     const me = currentUser(req);
     const def = defOr404(req, res);
     if (!def) return;
@@ -237,8 +247,23 @@ export function registerIntegrationRoutes(app: Express) {
         module: def.module,
         phi: def.phi,
         baaRequired: def.baaRequired,
-        // Platform-scope: the operator's own configuration (same for every org).
-        platform: def.scope === "platform" && c ? { configured: c.canEnable, needsBaa: c.status === "needs_baa", missing: c.missing, invalid: c.invalid, note: c.note } : null,
+        // Platform-scope: the operator's own configuration (same for every
+        // org). status is the server's word for it — "configured" (set, last
+        // test not failed), "error" (the last test against THIS configuration
+        // failed), or the card's not_configured / needs_baa — never "active",
+        // which only an org with the switch on can be.
+        platform:
+          def.scope === "platform" && c
+            ? {
+                status: !c.canEnable ? c.status : c.lastCheck && !c.lastCheck.ok ? "error" : "configured",
+                configured: c.canEnable,
+                needsBaa: c.status === "needs_baa",
+                missing: c.missing,
+                invalid: c.invalid,
+                note: c.note,
+                lastCheck: c.lastCheck,
+              }
+            : null,
         setup: def.scope === "platform" && c ? c.setup : null,
       });
     }

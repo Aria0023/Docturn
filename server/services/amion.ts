@@ -6,6 +6,7 @@ import { isModuleEnabled } from "../modules.js";
 import { storage, type DatabaseStorage } from "../storage.js";
 import { amionUrlFromCredentials, readOrgCredentials } from "../integrations/credentials.js";
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../integrations/http.js";
+import { skipWhileRunning } from "../integrations/single-flight.js";
 
 /**
  * Amion on-call schedule sync — per hospital.
@@ -208,8 +209,10 @@ export function parseAmionBody(body: string, contentType = ""): AmionRow[] {
 
 /**
  * GET the Amion OCS URL and parse the on-call grid out of the response.
- * Bounded (10 s) and injectable (server/integrations/http.ts). A URL a
- * hospital typed in (`guarded`) may only reach a public https host.
+ * Bounded end to end — one ≤ 10 s deadline over headers AND body, body
+ * ≤ 5 MB, already read into memory when it returns — and injectable
+ * (server/integrations/http.ts). A URL a hospital typed in (`guarded`) may
+ * only reach a public https host.
  */
 export async function fetchAmionGrid(url: string, opts: { guarded?: boolean } = {}): Promise<AmionRow[]> {
   let res: Response;
@@ -469,27 +472,27 @@ export type ScheduledAmionSyncOutcome =
  * switching it off (Settings → Integrations, or the developer console) stops
  * that org's pulls (and the board stops serving Amion slots, see
  * schedule-sources/index.ts) without touching the stored snapshot, so
- * switching it back on resumes seamlessly. One org's failure never stops the
- * others.
+ * switching it back on resumes seamlessly. The orgs sync CONCURRENTLY, each
+ * under its own fetch deadline, so one hospital's slow feed never delays
+ * another's; one org's failure never stops the others.
  */
 export async function runScheduledAmionSyncAll(
   db: DatabaseStorage = storage(),
 ): Promise<Array<{ orgId: number; outcome: ScheduledAmionSyncOutcome }>> {
-  const out: Array<{ orgId: number; outcome: ScheduledAmionSyncOutcome }> = [];
-  for (const feed of await amionFeeds(db)) {
-    if (!(await isModuleEnabled(feed.orgId, "schedule.amion"))) {
-      out.push({ orgId: feed.orgId, outcome: "skipped_module_off" });
-      continue;
-    }
-    try {
+  const feeds = await amionFeeds(db);
+  const settled = await Promise.allSettled(
+    feeds.map(async (feed): Promise<ScheduledAmionSyncOutcome> => {
+      if (!(await isModuleEnabled(feed.orgId, "schedule.amion"))) return "skipped_module_off";
       await syncAmion(db, { orgId: feed.orgId });
-      out.push({ orgId: feed.orgId, outcome: "synced" });
-    } catch (err) {
-      console.error(`[amion] sync failed for org ${feed.orgId}:`, sanitizeError(err, feed.url));
-      out.push({ orgId: feed.orgId, outcome: "failed" });
-    }
-  }
-  return out;
+      return "synced";
+    }),
+  );
+  return settled.map((r, i) => {
+    const feed = feeds[i]!;
+    if (r.status === "fulfilled") return { orgId: feed.orgId, outcome: r.value };
+    console.error(`[amion] sync failed for org ${feed.orgId}:`, sanitizeError(r.reason, feed.url));
+    return { orgId: feed.orgId, outcome: "failed" as const };
+  });
 }
 
 /**
@@ -521,7 +524,9 @@ export function startAmionSyncLoop() {
   const intervalMin = amionConfig().intervalMin;
   // Log each org's module-off skip once per off-period, not on every tick.
   const announcedOff = new Set<number>();
-  const run = () => {
+  // A tick is skipped while the previous one is still running (never two
+  // overlapping runs against the same hospitals).
+  const run = skipWhileRunning(() =>
     runScheduledAmionSyncAll()
       .then((results) => {
         for (const r of results) {
@@ -535,8 +540,8 @@ export function startAmionSyncLoop() {
           }
         }
       })
-      .catch((err) => console.error("[amion] scheduled sync tick failed:", err instanceof Error ? err.name : "error"));
-  };
+      .catch((err) => console.error("[amion] scheduled sync tick failed:", err instanceof Error ? err.name : "error")),
+  );
   bootTimer = setTimeout(run, 5_000);
   bootTimer.unref?.();
   loopTimer = setInterval(run, intervalMin * 60_000);

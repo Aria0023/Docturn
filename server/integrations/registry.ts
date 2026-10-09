@@ -22,6 +22,8 @@ import {
   getAccessToken,
   type EpicSyncState,
 } from "../services/schedule-sources/epic-fhir.js";
+import { getSelectedSource } from "../services/schedule-sources/index.js";
+import type { ScheduleSourceId } from "../services/schedule-sources/types.js";
 import { credentialKeyState } from "./crypto.js";
 import { CREDENTIAL_FIELDS, readOrgCredentials, type CredentialField, type StoredCredentials } from "./credentials.js";
 import { INTEGRATION_MODULES } from "./gates.js";
@@ -62,10 +64,21 @@ export interface EnvVarSpec {
   secret: boolean;
   /** What it is, in plain language. */
   description: string;
-  /** Placeholder for the value in the AWS command. */
+  /** Placeholder for the value in the AWS command (shown as <placeholder>). */
   placeholder: string;
+  /** The placeholder IS the value to type (e.g. "true"): shown without <>. */
+  literal?: boolean;
   /** Shown as a warning beside the variable. */
   caution?: string;
+}
+
+/** Where the org's on-call board really reads from (Amion / Epic cards). */
+export interface BoardSourceView {
+  selected: ScheduleSourceId;
+  /** A director chose it (vs. the default resolution). */
+  explicit: boolean;
+  /** The org's oncall.board module is on (the board is shown at all). */
+  boardEnabled: boolean;
 }
 
 interface ConfigEval {
@@ -109,6 +122,8 @@ interface IntegrationDef {
   /** What switching it off does for the org. */
   offEffect: string;
   activeText: string;
+  /** Replaces activeText when what "active" means depends on the org (e.g. which source the on-call board reads). */
+  activeTextFor?(ctx: { board: BoardSourceView | null; env: NodeJS.ProcessEnv }): string;
   needsBaaText?: string;
   envVars: EnvVarSpec[];
   evaluate(db: DatabaseStorage, org: Organization, env: NodeJS.ProcessEnv): Promise<ConfigEval>;
@@ -194,6 +209,23 @@ async function syncCheck(db: DatabaseStorage, orgId: number, key: string): Promi
   return { kind: "sync", ok: s.lastStatus !== "error", at: s.lastSyncAt, reason: s.lastStatus === "error" ? s.lastError ?? "sync failed" : null };
 }
 
+function everyMinutes(min: number): string {
+  return min >= 120 && min % 60 === 0 ? `every ${min / 60} h` : `every ${min} min`;
+}
+function boardLabel(id: ScheduleSourceId): string {
+  return id === "manual" ? "the manual list" : id === "amion" ? "Amion" : "Epic";
+}
+const PICK_SOURCE_HINT = (name: string) =>
+  `a director picks ${name} as the on-call source (Settings → On-call schedule sync → Source, or the On-call board) to show it there.`;
+
+const SCHEDULE_SOURCE_OF: Partial<Record<IntegrationId, ScheduleSourceId>> = { amion: "amion", "epic-fhir": "epic" };
+
+async function boardSourceFor(db: DatabaseStorage, def: IntegrationDef, org: Organization): Promise<BoardSourceView | null> {
+  if (!SCHEDULE_SOURCE_OF[def.id]) return null;
+  const sel = await getSelectedSource(db, org.id);
+  return { selected: sel.id, explicit: sel.explicit, boardEnabled: await isModuleEnabled(org.id, "oncall.board") };
+}
+
 // ── the five integrations ───────────────────────────────────────────────────
 const TWILIO_VARS: EnvVarSpec[] = [
   { name: "TWILIO_ACCOUNT_SID", required: true, secret: true, placeholder: "AC… from the Twilio console", description: "Twilio Account SID (Twilio console → Account Info; starts with AC)." },
@@ -264,7 +296,8 @@ const twilio: IntegrationDef = {
 };
 
 const PUSH_VARS: EnvVarSpec[] = [
-  { name: "VAPID_PUBLIC_KEY", required: true, secret: false, placeholder: "public key from `npx web-push generate-vapid-keys`", description: "Web Push public key (generate the pair once with `npx web-push generate-vapid-keys`)." },
+  // Placeholders go inside "…" in a shell command: no backticks or $ (they would run on paste).
+  { name: "VAPID_PUBLIC_KEY", required: true, secret: false, placeholder: "public key printed by npx web-push generate-vapid-keys", description: "Web Push public key (generate the pair once with `npx web-push generate-vapid-keys`)." },
   { name: "VAPID_PRIVATE_KEY", required: true, secret: true, placeholder: "private key from the same command", description: "Web Push private key from the same pair. Secret." },
   { name: "VAPID_SUBJECT", required: false, secret: false, placeholder: "mailto:you@yourhospital.org", description: "A contact address for the push services (mailto:… or https://…). Recommended — Apple may refuse pushes without a real one." },
 ];
@@ -344,6 +377,7 @@ const OPENAI_VARS: EnvVarSpec[] = [
     required: true,
     secret: false,
     placeholder: "true",
+    literal: true,
     description: "Set to true to allow intake notes (PHI) to be sent to OpenAI.",
     caution: "Only after OpenAI has signed a Business Associate Agreement with you. Without a BAA, sending intake notes is a HIPAA violation.",
   },
@@ -425,6 +459,14 @@ const amion: IntegrationDef = {
     "DocTurn only READS your clinicians' schedule from Amion (names, shifts) — workforce data, not patient data. Nothing is sent to Amion.",
   offEffect: "Scheduled pulls stop and the on-call board stops showing Amion's holders (it falls back to the manual list); the last snapshot is kept.",
   activeText: "Connected — your Amion on-call grid is pulled automatically.",
+  // syncAmion runs for every connected org with schedule.amion on, whatever
+  // the board shows; the BOARD only shows Amion when it is the selected source.
+  activeTextFor({ board }) {
+    const base = `Connected — your Amion on-call grid is pulled ${everyMinutes(amionConfig().intervalMin)} and keeps the rotation roster's shifts current`;
+    if (!board || board.selected === "amion") return `${base}.`;
+    if (!board.boardEnabled) return `${base}; the on-call board is switched off for this organization.`;
+    return `${base}, but the on-call board reads ${boardLabel(board.selected)}; ${PICK_SOURCE_HINT("Amion")}`;
+  },
   envVars: AMION_ENV,
   async evaluate(db, org) {
     const creds = await readOrgCredentials(db, org.id, "amion");
@@ -491,6 +533,15 @@ const epic: IntegrationDef = {
     "DocTurn requests only clinician scheduling resources (PractitionerRole, Practitioner, Schedule, Slot) — no patient records. Your Epic team approves exactly those read scopes.",
   offEffect: "Epic is not offered as the on-call source and is not pulled; the board reads the manual list. The last snapshot is kept.",
   activeText: "Connected — on-call is read from your Epic system.",
+  // The scheduled pull (runScheduledEpicSyncAll) runs for every connected org
+  // with schedule.epic on; the BOARD reads Epic only once it is the selected
+  // source (getSelectedSource never defaults to Epic). Say which is true.
+  activeTextFor({ board, env }) {
+    const every = everyMinutes(epicConfig(env).intervalMin);
+    if (board && board.selected === "epic" && board.boardEnabled) return `Connected — on-call is read from your Epic system (pulled ${every}).`;
+    if (board && !board.boardEnabled) return `Connected — Epic is pulled ${every}; the on-call board is switched off for this organization.`;
+    return `Connected — Epic is pulled ${every}, but the on-call board reads ${boardLabel(board?.selected ?? "manual")}; ${PICK_SOURCE_HINT("Epic")}`;
+  },
   envVars: EPIC_ENV,
   async evaluate(db, org, env) {
     const creds = await readOrgCredentials(db, org.id, "epic-fhir");
@@ -619,17 +670,25 @@ export interface IntegrationCard {
   canEnable: boolean;
   configSource: "env" | "organization" | "generated" | null;
   lastCheck: LastCheck | null;
+  /** Amion / Epic only: where the on-call board really reads from. */
+  boardSource: BoardSourceView | null;
   setup:
     | {
         kind: "env";
-        variables: Array<Pick<EnvVarSpec, "name" | "required" | "secret" | "description" | "caution"> & { set: boolean }>;
+        /**
+         * state: "set" = present AND accepted by the server; "invalid" =
+         * present but rejected (the card names it); "missing" = not set.
+         * `set` is state === "set" (never mere presence).
+         */
+        variables: Array<Pick<EnvVarSpec, "name" | "required" | "secret" | "description" | "caution"> & { state: "set" | "invalid" | "missing"; set: boolean }>;
         steps: { render: string[]; aws: string[] };
       }
     | {
         kind: "credentials";
         fields: CredentialFieldView[];
         storage: { available: boolean; message: string | null };
-        current: { set: boolean; readable: boolean; updatedAt: string | null; updatedByName: string | null; summary: Record<string, string> } | null;
+        /** fieldsSet: the NAMES of the saved fields (never a value); empty when they can't be decrypted. */
+        current: { set: boolean; readable: boolean; updatedAt: string | null; updatedByName: string | null; summary: Record<string, string>; fieldsSet: string[] } | null;
         operatorFallback: Array<Pick<EnvVarSpec, "name" | "description">>;
       };
 }
@@ -646,10 +705,10 @@ function envSteps(def: IntegrationDef): { render: string[]; aws: string[] } {
       "Come back to Settings → Integrations and press Test connection.",
     ],
     aws: [
-      "On your own computer, with the AWS CLI signed in as your admin user, store each value in SSM Parameter Store (secrets as SecureString):",
+      "On your own computer, with the AWS CLI signed in as your admin user, store each value in SSM Parameter Store (secrets as SecureString; --overwrite lets the same command replace a value later):",
       ...vars.map(
         (v) =>
-          `aws ssm put-parameter --region <your-region> --type ${v.secret ? "SecureString" : "String"} --name /docturn/prod/${v.name} --value "<${v.placeholder}>"${v.caution ? "   # " + v.caution : ""}`,
+          `aws ssm put-parameter --region <your-region> --type ${v.secret ? "SecureString" : "String"} --name /docturn/prod/${v.name} --value "${v.literal ? v.placeholder : `<${v.placeholder}>`}" --overwrite${v.caution ? "   # " + v.caution : ""}`,
       ),
       "Then on the server (AWS console → Systems Manager → Session Manager → Start session, then sudo -i) run:",
       "REGION=<your-region> bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn",
@@ -662,10 +721,17 @@ function list(names: string[]): string {
   return names.length <= 1 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
 }
 
-function statusTextFor(def: IntegrationDef, org: Organization, ev: ConfigEval, status: IntegrationStatus, last: LastCheck | null): string {
+function statusTextFor(
+  def: IntegrationDef,
+  org: Organization,
+  ev: ConfigEval,
+  status: IntegrationStatus,
+  last: LastCheck | null,
+  ctx: { board: BoardSourceView | null; env: NodeJS.ProcessEnv },
+): string {
   switch (status) {
     case "active":
-      return def.activeText;
+      return def.activeTextFor ? def.activeTextFor(ctx) : def.activeText;
     case "off":
       return `Configured, but switched off for ${org.name}. ${def.offEffect}`;
     case "needs_baa":
@@ -702,12 +768,20 @@ export async function buildCard(
   else if (!enabled) status = "off";
   else if (lastCheck && !lastCheck.ok) status = "error";
   else status = "active";
+  const board = await boardSourceFor(db, def, org);
 
   let setup: IntegrationCard["setup"];
   if (def.scope === "platform") {
     setup = {
       kind: "env",
-      variables: def.envVars.map((v) => ({ name: v.name, required: v.required, secret: v.secret, description: v.description, caution: v.caution, set: !!(env[v.name] ?? "").trim() })),
+      variables: def.envVars.map((v) => {
+        // Presence is not acceptance: a value the evaluation rejected (e.g.
+        // AI_EXTERNAL_PHI_OK="<true>", a FROM number without +) is "invalid".
+        const present = !!(env[v.name] ?? "").trim();
+        const rejected = ev.missing.includes(v.name) || ev.invalid.includes(v.name);
+        const state = !present ? ("missing" as const) : rejected ? ("invalid" as const) : ("set" as const);
+        return { name: v.name, required: v.required, secret: v.secret, description: v.description, caution: v.caution, state, set: state === "set" };
+      }),
       steps: envSteps(def),
     };
   } else {
@@ -716,12 +790,15 @@ export async function buildCard(
     let current: Extract<IntegrationCard["setup"], { kind: "credentials" }>["current"] = null;
     if (row) {
       const by = row.updatedBy != null ? await db.getUserById(row.updatedBy) : undefined;
+      const stored = ev.source === "organization" ? await readOrgCredentials(db, org.id, def.id) : null;
       current = {
         set: true,
         readable: ev.source === "organization" && ev.configured,
         updatedAt: row.updatedAt.toISOString(),
         updatedByName: by ? by.displayName : row.updatedBy != null ? "a former user" : null,
         summary: (row.summary ?? {}) as Record<string, string>,
+        // Field NAMES only, so the sheet marks exactly the saved fields.
+        fieldsSet: stored && stored.state === "ok" ? Object.keys(stored.values).filter((k) => !!stored.values[k]) : [],
       };
     }
     const fields: CredentialField[] = CREDENTIAL_FIELDS[def.id as "amion" | "epic-fhir"];
@@ -748,7 +825,7 @@ export async function buildCard(
     phiNote: def.phiNote,
     offEffect: def.offEffect,
     status,
-    statusText: statusTextFor(def, org, ev, status, lastCheck),
+    statusText: statusTextFor(def, org, ev, status, lastCheck, { board, env }),
     missing: ev.missing,
     invalid: ev.invalid,
     note: ev.note,
@@ -756,6 +833,7 @@ export async function buildCard(
     canEnable: ev.configured,
     configSource: ev.source,
     lastCheck,
+    boardSource: board,
     setup,
   };
 }

@@ -18,6 +18,8 @@ import type { OrgIntegrationCredential } from "@shared/schema";
  */
 
 export const CREDENTIAL_KEY_VERSION = 1;
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
 const HKDF_SALT = "docturn/integration-credentials";
 const HKDF_INFO = "aes-256-gcm/v1";
 
@@ -67,8 +69,8 @@ export function sealCredentials(
 ): SealedCredentials {
   const k = credentialKeyState(env);
   if (!k.ok) throw new Error("credential_storage_disabled");
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", k.key, iv);
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv("aes-256-gcm", k.key, iv, { authTagLength: TAG_BYTES });
   cipher.setAAD(aad(orgId, integrationId, CREDENTIAL_KEY_VERSION));
   const ct = Buffer.concat([cipher.update(JSON.stringify(values), "utf8"), cipher.final()]);
   return {
@@ -90,9 +92,15 @@ export function decryptCredentialRow(
   const k = credentialKeyState(env);
   if (!k.ok) throw new Error("credential_storage_disabled");
   if (row.keyVersion !== CREDENTIAL_KEY_VERSION) throw new Error("credential_key_version");
-  const decipher = createDecipheriv("aes-256-gcm", k.key, Buffer.from(row.iv, "base64"));
+  // GCM accepts a tag as short as 4 bytes unless told otherwise: require the
+  // full 128-bit tag (and the 96-bit IV it was sealed with), so a row edited
+  // in the database faces a 2^-128 forgery bound, not 2^-32.
+  const iv = Buffer.from(row.iv, "base64");
+  const tag = Buffer.from(row.authTag, "base64");
+  if (iv.length !== IV_BYTES || tag.length !== TAG_BYTES) throw new Error("credential_corrupt");
+  const decipher = createDecipheriv("aes-256-gcm", k.key, iv, { authTagLength: TAG_BYTES });
   decipher.setAAD(aad(row.organizationId, row.integrationId, row.keyVersion));
-  decipher.setAuthTag(Buffer.from(row.authTag, "base64"));
+  decipher.setAuthTag(tag);
   const pt = Buffer.concat([decipher.update(Buffer.from(row.ciphertext, "base64")), decipher.final()]);
   const parsed = JSON.parse(pt.toString("utf8")) as unknown;
   if (!parsed || typeof parsed !== "object") throw new Error("credential_corrupt");

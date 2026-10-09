@@ -61,8 +61,16 @@ automatically uses encrypted Postgres instead of the local file database.
   `docs/INTEGRATIONS.md`): status comes from live configuration, each org's
   switch is enforced server-side, OpenAI cannot be switched on without the BAA
   attestation, and each hospital's own Amion/Epic credentials are write-only,
-  AES-256-GCM encrypted with `INTEGRATION_KEY` (bound to the org), never
-  returned or logged, and can only reach public `https://` hosts.
+  AES-256-GCM encrypted with `INTEGRATION_KEY` (bound to the org; the full
+  128-bit tag is required on read), never returned or logged, and can only
+  reach public `https://` hosts: private, loopback, link-local, metadata,
+  IPv4-mapped / NAT64 / any non-global IPv6 address is refused when saved,
+  when resolved, on every redirect hop, and again by the connection's own DNS
+  lookup (no DNS-rebinding window). Every outbound integration call has one
+  ≤ 10 s deadline over headers **and** body, and bodies are capped at 5 MB, so
+  a slow or hostile vendor cannot hold a request or another hospital's sync.
+  Only a director (or the operator) can switch, test or set up integrations;
+  an ER director sees them read-only.
 
 ---
 

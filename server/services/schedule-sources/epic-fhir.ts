@@ -3,7 +3,8 @@ import { appendAudit } from "../../audit.js";
 import { isModuleEnabled } from "../../modules.js";
 import { storage, type DatabaseStorage } from "../../storage.js";
 import { deriveEpicTokenUrl, readOrgCredentials } from "../../integrations/credentials.js";
-import { guardedFetch, IntegrationCallError } from "../../integrations/http.js";
+import { guardedFetch, integrationFetch, IntegrationCallError } from "../../integrations/http.js";
+import { skipWhileRunning } from "../../integrations/single-flight.js";
 import { mapHoursToShift, normalizeName } from "../amion.js";
 import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus, ShiftType } from "./types.js";
 
@@ -41,7 +42,13 @@ import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus, ShiftType } from
 
 export const EPIC_SETTING_KEY = "epicSync";
 const ASSERTION_TTL_S = 4 * 60; // Epic caps JWT exp at 5 minutes from now
-const FETCH_TIMEOUT_MS = 10_000;
+/**
+ * One sync (token + every PractitionerRole and Slot page) must finish within
+ * this, on top of each request's own ≤ 10 s deadline (headers AND body,
+ * server/integrations/http.ts). A slow or hostile Epic host can therefore hold
+ * one hospital's sync for at most this long, and never another hospital's.
+ */
+export const EPIC_SYNC_DEADLINE_MS = 60_000;
 
 export interface EpicConfig {
   baseUrl: string;
@@ -109,11 +116,20 @@ export async function epicConfigFor(
   return org && org.code === base.orgCode ? { ...base, source: "env" } : null;
 }
 
-/** Hospital-supplied URLs may only reach a public https host (SSRF guard). */
-function fetchFor(cfg: EpicSourcedConfig, fetchImpl: typeof fetch): typeof fetch {
-  if (cfg.source !== "organization") return fetchImpl;
-  return ((input: string | URL | Request, init?: RequestInit) =>
-    guardedFetch(String(input instanceof Request ? input.url : input), init ?? {}, fetchImpl)) as typeof fetch;
+/**
+ * Every Epic request goes through the integrations seam: bounded end to end
+ * (≤ 10 s per request, body included, ≤ 5 MB) and, when `outer` is given,
+ * cut off when that overall deadline fires. Hospital-supplied URLs may only
+ * reach a public https host (SSRF guard); the operator's env URLs are trusted.
+ * `fetchImpl` (tests) replaces only the transport underneath.
+ */
+function fetchFor(cfg: EpicSourcedConfig, fetchImpl?: typeof fetch, outer?: AbortSignal): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    return cfg.source === "organization"
+      ? guardedFetch(url, init ?? {}, fetchImpl, outer)
+      : integrationFetch(url, init ?? {}, fetchImpl, outer);
+  }) as typeof fetch;
 }
 
 // ── SMART Backend Services JWT assertion ─────────────────────────────────────
@@ -142,30 +158,28 @@ export function buildClientAssertion(cfg: Pick<EpicConfig, "clientId" | "private
 }
 
 export interface EpicClientDeps {
+  /**
+   * The transport. syncEpic wraps it in the bounded, SSRF-guarded seam;
+   * getAccessToken calls it as given (callers pass a bounded one — without
+   * one it uses integrationFetch).
+   */
   fetchImpl?: typeof fetch;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
 }
 
-async function fetchWithTimeout(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetchImpl(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
-}
+const boundedFetch = ((input: string | URL | Request, init?: RequestInit) =>
+  integrationFetch(String(input instanceof Request ? input.url : input), init ?? {})) as typeof fetch;
 
 /** Exchange the signed assertion for a bearer token. */
 export async function getAccessToken(cfg: EpicConfig, deps: EpicClientDeps = {}): Promise<string> {
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  const fetchImpl = deps.fetchImpl ?? boundedFetch;
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
     client_assertion: buildClientAssertion(cfg, deps.now?.() ?? new Date()),
   });
-  const res = await fetchWithTimeout(fetchImpl, cfg.tokenUrl, {
+  const res = await fetchImpl(cfg.tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
     body: body.toString(),
@@ -362,12 +376,16 @@ export interface EpicSyncState {
   slots: ParsedEpicSlot[];
 }
 
-/** Fetch every page of a FHIR search (follows Bundle.link[relation=next]). */
+/**
+ * Fetch every page of a FHIR search (follows Bundle.link[relation=next], at
+ * most 20 pages). `fetchImpl` is the bounded seam from fetchFor, so each page
+ * is ≤ 10 s / ≤ 5 MB and all pages share the sync's overall deadline.
+ */
 async function fetchAllPages(url: string, token: string, fetchImpl: typeof fetch): Promise<FhirBundle> {
   const out: FhirBundle = { resourceType: "Bundle", entry: [] };
   let next: string | null = url;
   for (let page = 0; next && page < 20; page++) {
-    const res: Response = await fetchWithTimeout(fetchImpl, next, {
+    const res: Response = await fetchImpl(next, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" },
     });
     if (!res.ok) throw new Error(`epic_fhir_http_${res.status}`);
@@ -407,7 +425,8 @@ export async function syncEpic(
   // The org's OWN saved Epic app first, the env app as the fallback.
   const cfg = await epicConfigFor(db, org.id, opts.env);
   if (!cfg) throw new Error("epic_not_configured");
-  const fetchImpl = fetchFor(cfg, opts.fetchImpl ?? fetch);
+  // One overall deadline for the whole sync (token + every page).
+  const fetchImpl = fetchFor(cfg, opts.fetchImpl, AbortSignal.timeout(EPIC_SYNC_DEADLINE_MS));
   const now = opts.now?.() ?? new Date();
   const updatedBy = (opts.actorUserId ?? null) as unknown as number;
 
@@ -547,7 +566,9 @@ export function createEpicSource(db: DatabaseStorage, deps: EpicClientDeps = {})
 // ── background loop ──────────────────────────────────────────────────────────
 /**
  * One scheduled tick over EVERY org with an Epic connection (its own saved
- * app, or the env EPIC_ORG_CODE org) whose schedule.epic module is on. One
+ * app, or the env EPIC_ORG_CODE org) whose schedule.epic module is on. The
+ * orgs sync CONCURRENTLY, each under its own deadlines, so one hospital's
+ * slow or stalled Epic host can never delay another hospital's pull; one
  * org's failure never stops the others (syncEpic records errors in the org's
  * epicSync state).
  */
@@ -555,25 +576,26 @@ export async function runScheduledEpicSyncAll(
   db: DatabaseStorage = storage(),
   deps: EpicClientDeps = {},
 ): Promise<Array<{ orgId: number; outcome: "synced" | "skipped_module_off" | "failed" }>> {
+  type Outcome = { orgId: number; outcome: "synced" | "skipped_module_off" | "failed" };
   const ids = new Set<number>((await db.listIntegrationCredentials("epic-fhir")).map((r) => r.organizationId));
   if (epicConfigured(deps.env)) {
     const envOrg = await db.getOrganizationByCode(epicConfig(deps.env).orgCode);
     if (envOrg) ids.add(envOrg.id);
   }
-  const out: Array<{ orgId: number; outcome: "synced" | "skipped_module_off" | "failed" }> = [];
-  for (const orgId of [...ids].sort((a, b) => a - b)) {
-    if (!(await epicConfigFor(db, orgId, deps.env))) continue;
-    if (!(await isModuleEnabled(orgId, "schedule.epic"))) {
-      out.push({ orgId, outcome: "skipped_module_off" });
-      continue;
-    }
-    try {
+  const ordered = [...ids].sort((a, b) => a - b);
+  const settled = await Promise.allSettled(
+    ordered.map(async (orgId): Promise<Outcome | null> => {
+      if (!(await epicConfigFor(db, orgId, deps.env))) return null;
+      if (!(await isModuleEnabled(orgId, "schedule.epic"))) return { orgId, outcome: "skipped_module_off" };
       await syncEpic(db, { ...deps, orgId });
-      out.push({ orgId, outcome: "synced" });
-    } catch {
-      out.push({ orgId, outcome: "failed" });
-    }
-  }
+      return { orgId, outcome: "synced" };
+    }),
+  );
+  const out: Outcome[] = [];
+  settled.forEach((r, i) => {
+    if (r.status === "rejected") out.push({ orgId: ordered[i]!, outcome: "failed" });
+    else if (r.value) out.push(r.value);
+  });
   return out;
 }
 
@@ -584,9 +606,11 @@ let epicLoopTimer: NodeJS.Timeout | null = null;
 export function startEpicSyncLoop() {
   if (epicLoopTimer) return;
   const intervalMin = epicConfig().intervalMin;
-  const run = () => {
-    runScheduledEpicSyncAll().catch((err) => console.error("[epic] scheduled sync tick failed:", err instanceof Error ? err.name : "error"));
-  };
+  // A tick is skipped while the previous one is still running (never two
+  // overlapping runs against the same hospitals).
+  const run = skipWhileRunning(() =>
+    runScheduledEpicSyncAll().catch((err) => console.error("[epic] scheduled sync tick failed:", err instanceof Error ? err.name : "error")),
+  );
   epicBootTimer = setTimeout(run, 8_000);
   epicBootTimer.unref?.();
   epicLoopTimer = setInterval(run, intervalMin * 60_000);

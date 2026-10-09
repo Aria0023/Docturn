@@ -72,7 +72,10 @@ run it to see the current total.
     modes, starts its own server), `scripts/realtime-e2e.mjs`, `scripts/csp-check.mjs` and the
     `scripts/phone-*-check.mjs` layout checks (real Chromium, iPhone profiles), and
     `scripts/integrations-panel-check.mjs` (Settings → Integrations against the server: statuses,
-    switch round-trip, test result, write-only credentials, phone layout, CSP; needs `INTEGRATION_KEY`).
+    switch round-trip, test result, write-only credentials, phone layout, CSP; needs `INTEGRATION_KEY`),
+    and `scripts/settings-truth-check.mjs` (the Settings screen never shows what the server is not
+    doing: ER director read-only, server org identity, no fake schedule "Connect", Set up sheet
+    states, developer overview; see the script header for the env it needs).
 - CI (`.github/workflows/ci.yml`) runs typecheck + `npm test`, the `test:ui` / `test:rt` smokes, the
   build, and a production-dependency audit that fails on any high/critical advisory.
 

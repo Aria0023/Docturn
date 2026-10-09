@@ -88,8 +88,9 @@ export class OpenAIExtractor implements AIExtractor {
   private fallback = new MockAIExtractor();
   async extract(note: string): Promise<ExtractedPatient> {
     try {
-      // Bounded (10 s) like every integration call; a slow vendor falls back
-      // to the local extractor instead of hanging the ER intake form.
+      // Bounded like every integration call (one ≤ 10 s deadline over headers
+      // AND body, body ≤ 5 MB and already buffered); a slow or stalled vendor
+      // falls back to the local extractor instead of hanging the ER intake form.
       const res = await integrationFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {

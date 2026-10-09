@@ -268,22 +268,25 @@ and a **Set up** sheet. Full plain-language guide: `docs/INTEGRATIONS.md`.
 `REGION=$REGION bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn`:
 
 ```bash
+# --overwrite lets the same command replace a value later (key rotation);
+# without it SSM refuses to update an existing parameter.
 # Twilio SMS (content-free texts — no PHI, no BAA needed for this use)
-aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_ACCOUNT_SID --value "AC…"
-aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_AUTH_TOKEN  --value "<auth token>"
-aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/TWILIO_FROM_NUMBER --value "+15551234567"
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_ACCOUNT_SID --value "AC…" --overwrite
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_AUTH_TOKEN  --value "<auth token>" --overwrite
+aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/TWILIO_FROM_NUMBER --value "+15551234567" --overwrite
 
 # Push: the VAPID keys from §7 step 5 (the native app's Expo relay needs nothing)
 
 # OpenAI intake — ONLY after OpenAI has signed a BAA with you (notes are PHI)
-aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/OPENAI_API_KEY     --value "sk-…"
-aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/AI_EXTERNAL_PHI_OK --value "true"
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/OPENAI_API_KEY     --value "sk-…" --overwrite
+aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/AI_EXTERNAL_PHI_OK --value "true" --overwrite
 ```
 
 *Organization integrations* — each hospital's director opens **Settings →
 Integrations → Amion (or Epic) → Set up**, pastes the hospital's own
 credentials (write-only; encrypted with `INTEGRATION_KEY`), presses **Test
-connection**, and switches it on. Nothing to do in SSM for those.
+connection**, and switches it on. Nothing to do in SSM for those. Only the
+director role can do this; an ER director sees the cards read-only.
 
 ---
 

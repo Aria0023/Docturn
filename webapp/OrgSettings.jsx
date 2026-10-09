@@ -6,13 +6,19 @@
    config (PATCH /api/org/config), and Integrations (Integrations.jsx) are the
    org's gating modules + encrypted hospital credentials (/api/integrations).
    The old "Feature toggles" card and the "On-call only" / "Active only" rows
-   were browser-only booleans nothing enforced; they are gone. */
+   were browser-only booleans nothing enforced; they are gone.
+   Who may change what is the server's rule: org-wide settings are
+   director/developer (PATCH /api/settings/org, /api/org/config,
+   /api/integrations writes). An ER director sees the same values read-only,
+   and the header shows the signed-in organization as the SERVER knows it
+   (GET /api/org/config) — name, code and time zone are edited only by the
+   DocTurn operator (developer). */
 
-function Toggle({ on, onClick, label }) {
+function Toggle({ on, onClick, label, disabled }) {
   // 44×44 tap target around the 44×26 track.
   return (
-    <button type="button" role="switch" aria-checked={!!on} aria-label={label} onClick={onClick}
-      style={{ width: 52, height: 44, minWidth: 44, padding: 0, border: "none", background: "transparent", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+    <button type="button" role="switch" aria-checked={!!on} aria-label={label} onClick={() => { if (!disabled) onClick(); }} disabled={disabled}
+      style={{ width: 52, height: 44, minWidth: 44, padding: 0, border: "none", background: "transparent", cursor: disabled ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", opacity: disabled ? 0.5 : 1 }}>
       <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "#CBD5E1", transition: "background .2s" }}>
         <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
       </span>
@@ -20,7 +26,7 @@ function Toggle({ on, onClick, label }) {
   );
 }
 
-function FlagRow({ icon, title, desc, on, onToggle, last }) {
+function FlagRow({ icon, title, desc, on, onToggle, last, disabled, note }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "13px 0", borderBottom: last ? "none" : "1px solid var(--border)" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
@@ -29,29 +35,56 @@ function FlagRow({ icon, title, desc, on, onToggle, last }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</div>
         <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{desc}</div>
+        {note && <div data-readonly-note style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 3, fontWeight: 600 }}>{note}</div>}
       </div>
-      <Toggle on={on} onClick={onToggle} label={title} />
+      <Toggle on={on} onClick={onToggle} label={title} disabled={disabled} />
     </div>
   );
 }
+
+const DIRECTOR_ONLY_NOTE = "Only a director can change this.";
 
 function OrgSettings() {
   const st = useStore();
   const a = useActions();
   const s = st.settings;
-  const org = st.orgs.find((o) => o.code === st.selectedOrg) || st.orgs[0];
+  const role = st.session && st.session.role;
+  const isDev = role === "developer";
+  // The same roles the server's write routes allow.
+  const canEdit = role === "director" || role === "developer";
   const smsOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("integration.sms");
+  React.useEffect(() => { if (!isDev && a.loadOrgIdentity) a.loadOrgIdentity(); }, [isDev]);
+  // Developer: the org picked in the console (a real list from
+  // /api/dev/organizations, editable through PATCH /api/dev/organizations).
+  // Everyone else: their own org as the server reports it.
+  const devOrg = st.orgs.find((o) => o.code === st.selectedOrg) || st.orgs[0];
+  const sessionCode = (st.session && st.session.org) || "";
+  const ident = st.orgIdentity && st.orgIdentity.code === sessionCode ? st.orgIdentity : null;
+  const org = isDev ? devOrg : { code: sessionCode, name: ident ? ident.name : "", timezone: ident ? ident.timezone : "", active: true };
 
   return (
     <PageWrap>
       <SettingsTabs />
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
-        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{org.code.slice(0, 2)}</span>
+      <div data-org-header={org.code} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
+        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(org.code || "").slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 17, lineHeight: 1.3 }}><EditableText value={org.name} onSave={(v) => a.updateOrg(org.code, { name: v })} size={17} weight={700} /></div>
-          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.4, display: "flex", gap: 8, alignItems: "center" }}>
-            <EditableText value={org.code} onSave={(v) => a.updateOrg(org.code, { code: v.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) })} size={12.5} weight={600} mono color="var(--muted-foreground)" /><span>·</span><EditableText value={org.timezone} onSave={(v) => a.updateOrg(org.code, { timezone: v })} size={12.5} weight={400} color="var(--muted-foreground)" />
-          </div>
+          {isDev ? (
+            <React.Fragment>
+              <div style={{ fontSize: 17, lineHeight: 1.3 }}><EditableText value={org.name} onSave={(v) => a.updateOrg(org.code, { name: v })} size={17} weight={700} /></div>
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.4, display: "flex", gap: 8, alignItems: "center" }}>
+                <EditableText value={org.code} onSave={(v) => a.updateOrg(org.code, { code: v.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) })} size={12.5} weight={600} mono color="var(--muted-foreground)" /><span>·</span><EditableText value={org.timezone} onSave={(v) => a.updateOrg(org.code, { timezone: v })} size={12.5} weight={400} color="var(--muted-foreground)" />
+              </div>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <div data-org-name style={{ fontSize: 17, lineHeight: 1.3, fontWeight: 700, overflowWrap: "anywhere" }}>{org.name || org.code}</div>
+              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.4, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontFamily: "var(--font-mono, monospace)", fontWeight: 600 }}>{org.code}</span>
+                {org.timezone && <React.Fragment><span>·</span><span>{org.timezone}</span></React.Fragment>}
+                <span>· name, code and time zone are set by the DocTurn operator</span>
+              </div>
+            </React.Fragment>
+          )}
         </div>
         {!org.active && <Badge status="offline">Suspended</Badge>}
       </div>
@@ -65,16 +98,17 @@ function OrgSettings() {
             <Icon name="route" size={18} color="var(--primary)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Assignment &amp; rotation</h3>
           </div>
-          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation (1–120, default 15). Saved to the server." inputMode="numeric" />
+          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} disabled={!canEdit} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)}
+            help={canEdit ? "If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation (1–120, default 15). Saved to the server." : "If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation. " + DIRECTOR_ONLY_NOTE} inputMode="numeric" />
           <div style={{ marginTop: 14 }}>
-            <FlagRow icon="message-circle" title="STAT SMS fallback" desc={"If a STAT message stays unacknowledged after escalation, send a PHI-free text nudge as a last resort." + (smsOn ? " Needs Twilio SMS to be active under Integrations." : " Twilio SMS is switched off for this organization under Integrations, so no text is sent.")} on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} last />
+            <FlagRow icon="message-circle" title="STAT SMS fallback" desc={"If a STAT message stays unacknowledged after escalation, send a PHI-free text nudge as a last resort." + (smsOn ? " Needs Twilio SMS to be active under Integrations." : " Twilio SMS is switched off for this organization under Integrations, so no text is sent.")} on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} disabled={!canEdit} note={canEdit ? null : DIRECTOR_ONLY_NOTE} last />
           </div>
           <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "10px 0 0", lineHeight: 1.45 }}>
             Rotation includes hospitalists who are on shift with a routable shift type and under their patient cap — the same rule the server's router applies.
           </p>
           {/* Resetting the index only affects SEQUENTIAL rotation; in lowest-census
               mode next-up is census-driven, so the button would be a no-op. */}
-          {s.rotationMode === "sequential" && (
+          {s.rotationMode === "sequential" && canEdit && (
             <div style={{ marginTop: 14 }}>
               <Button variant="outline" size="sm" full icon="rotate-ccw" onClick={a.resetRotation}>Reset rotation index</Button>
             </div>
@@ -108,9 +142,9 @@ function OrgSettings() {
             <Icon name="clock" size={18} color="var(--primary)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Message retention</h3>
           </div>
-          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted by an hourly, audited purge. "Keep everything" disables it.</p>
-          <select value={st.orgRetentionDays || 0} onChange={(e) => a.setOrgRetention(Number(e.target.value))}
-            style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted by an hourly, audited purge. "Keep everything" disables it.{canEdit ? "" : " " + DIRECTOR_ONLY_NOTE}</p>
+          <select value={st.orgRetentionDays || 0} onChange={(e) => a.setOrgRetention(Number(e.target.value))} disabled={!canEdit}
+            style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: canEdit ? "pointer" : "not-allowed" }}>
             <option value={0}>Keep everything</option>
             <option value={30}>30 days</option>
             <option value={90}>90 days</option>
@@ -120,7 +154,7 @@ function OrgSettings() {
         </Card>
 
         {/* EHR deep links (Epic Haiku/Canto, Hyperspace, Cerner PowerChart) */}
-        <EhrDeepLinkCard />
+        <EhrDeepLinkCard canEdit={canEdit} />
       </div>
 
       {/* Integrations — real, server-backed cards (Integrations.jsx). Full width:
@@ -142,7 +176,7 @@ function OrgSettings() {
 // STARTING templates — the exact scheme/host/parameters come from the health
 // system's Epic or Cerner team, so a preset still carrying a YOUR-…-HOST
 // placeholder stays inactive until edited. Director surface; server validates.
-function EhrDeepLinkCard() {
+function EhrDeepLinkCard({ canEdit = true }) {
   const st = useStore();
   const a = useActions();
   const cfg = st.ehrConfig;
@@ -200,9 +234,10 @@ function EhrDeepLinkCard() {
           </div>
         );
       })()}
-      <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-        <Button size="sm" icon="save" onClick={save} disabled={saving || !dirty}>{saving ? "Saving…" : "Save"}</Button>
-        {template && <Button size="sm" variant="ghost" onClick={() => { setTemplate(""); setDirty(true); }}>Clear</Button>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+        {canEdit ? <Button size="sm" icon="save" onClick={save} disabled={saving || !dirty}>{saving ? "Saving…" : "Save"}</Button>
+          : <span data-readonly-note style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>{DIRECTOR_ONLY_NOTE}</span>}
+        {template && canEdit && <Button size="sm" variant="ghost" onClick={() => { setTemplate(""); setDirty(true); }}>Clear</Button>}
         {!moduleOn && <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Saved settings apply once a developer switches on the "Open in EHR" module.</span>}
       </div>
     </Card>

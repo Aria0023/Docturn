@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import webpush from "web-push";
@@ -15,10 +17,18 @@ import {
   runScheduledAmionSyncAll,
   syncAmion,
 } from "../server/services/amion.js";
-import { epicConfigFor, syncEpic } from "../server/services/schedule-sources/epic-fhir.js";
-import { configureIntegrations, resetIntegrationDeps } from "../server/integrations/http.js";
-import { credentialKeyState, decryptCredentialRow } from "../server/integrations/crypto.js";
+import { epicConfigFor, runScheduledEpicSyncAll, syncEpic } from "../server/services/schedule-sources/epic-fhir.js";
+import {
+  configureIntegrations,
+  guardedFetch,
+  IntegrationCallError,
+  isBlockedAddress,
+  publicHttpsUrlProblem,
+  resetIntegrationDeps,
+} from "../server/integrations/http.js";
+import { credentialKeyState, decryptCredentialRow, sealCredentials } from "../server/integrations/crypto.js";
 import { INTEGRATION_IDS } from "../server/integrations/registry.js";
+import { skipWhileRunning } from "../server/integrations/single-flight.js";
 
 /**
  * The director's Integrations panel used to be a mock: "Connect" flipped a
@@ -731,5 +741,416 @@ describe("GET /api/dev/integrations — the same truth across orgs", () => {
     expect((await audit(platformId)).length).toBe(before + 1);
     expect((await audit(platformId))[0]!.action).toBe("dev.integrations_overview");
     await (await director()).get("/api/dev/integrations").expect(403);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Verifier findings on the first cut of the real panel (integrations-fix).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** HTTP 200 headers + one body chunk, then nothing — the stream never closes. */
+function stalledResponse(first = "<", headers: Record<string, string> = { "Content-Type": "text/html" }) {
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new TextEncoder().encode(first));
+    },
+  });
+  return new Response(stream, { status: 200, headers });
+}
+
+/** A real local HTTP server that sends 200 headers + one byte, then stalls. */
+async function stallServer(): Promise<{ url: string; hits: string[]; close: () => Promise<void> }> {
+  const hits: string[] = [];
+  const server: Server = createServer((req, res) => {
+    hits.push(`${req.method} ${req.url}`);
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.write("<");
+    // never res.end()
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    hits,
+    close: () =>
+      new Promise<void>((r) => {
+        server.closeAllConnections();
+        server.close(() => r());
+      }),
+  };
+}
+
+// ── finding 1: SSRF guard — every IPv6 spelling of a private/local address ──
+describe("SSRF guard — IPv4-mapped / NAT64 / non-global IPv6 literals are refused", () => {
+  it("isBlockedAddress classifies every embedded-IPv4 and non-global IPv6 form", () => {
+    for (const ip of [
+      "::ffff:127.0.0.1", "::ffff:7f00:1", "::ffff:a9fe:a9fe", "::ffff:a00:5", "::ffff:c0a8:101",
+      "64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1", "64:ff9b:1::1",
+      "::7f00:1", "::127.0.0.1", "::", "::1", "::ffff:0:7f00:1",
+      "fec0::1", "fe80::1", "fc00::1", "fd12:3456::1", "ff02::1",
+      "2002:7f00:1::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001:db8::1", "3fff::1",
+      "[::ffff:7f00:1]", "fe80::1%eth0",
+      "127.0.0.1", "10.0.0.5", "169.254.169.254", "192.168.1.1", "100.64.0.1", "0.0.0.0", "198.18.0.1",
+      "not-an-ip",
+    ]) {
+      expect(isBlockedAddress(ip), ip).toBe(true);
+    }
+    for (const ip of ["93.184.216.34", "::ffff:93.184.216.34", "::ffff:5db8:d822", "2606:4700:4700::1111", "2a00:1450:4001:82a::200e", "8.8.8.8"]) {
+      expect(isBlockedAddress(ip), ip).toBe(false);
+    }
+  });
+
+  it("publicHttpsUrlProblem refuses the literals WHATWG URL re-serialises to hex", () => {
+    for (const url of [
+      "https://[::ffff:127.0.0.1]:7110/api/FHIR/R4",
+      "https://[::ffff:169.254.169.254]/latest/meta-data",
+      "https://[64:ff9b::a9fe:a9fe]/latest",
+      "https://[::ffff:10.0.0.5]:5432/x",
+      "https://[::ffff:192.168.1.1]/x",
+      "https://[::127.0.0.1]/x",
+      "https://[fec0::1]/x",
+      "https://localhost./x",
+    ]) {
+      expect(publicHttpsUrlProblem(url), url).not.toBeNull();
+    }
+    expect(publicHttpsUrlProblem("https://fhir.hospital-one.test/api/FHIR/R4")).toBeNull();
+  });
+
+  it("PUT credentials refuses every such base URL (400) and stores nothing", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const agent = await director();
+    for (const baseUrl of [
+      "https://[::ffff:127.0.0.1]:7110/api/FHIR/R4",
+      "https://[::ffff:169.254.169.254]/latest",
+      "https://[64:ff9b::a9fe:a9fe]/latest",
+      "https://[::ffff:10.0.0.5]:5432/x",
+      "https://[::ffff:192.168.1.1]/x",
+      "https://[::127.0.0.1]/x",
+      "https://[fec0::1]/x",
+    ]) {
+      const r = await agent.put("/api/integrations/epic-fhir/credentials").send({ ...EPIC_CREDS, baseUrl });
+      expect(r.status, baseUrl).toBe(400);
+      expect(r.body.field).toBe("baseUrl");
+      const t = await agent.put("/api/integrations/epic-fhir/credentials").send({ ...EPIC_CREDS, tokenUrl: baseUrl });
+      expect(t.status, "tokenUrl " + baseUrl).toBe(400);
+    }
+    expect(await ctx.handle.db.select().from(orgIntegrationCredentials)).toHaveLength(0);
+  });
+
+  it("guardedFetch never sends a request to them (literal, DNS answer, or a redirect hop)", async () => {
+    const calls: Call[] = [];
+    configureIntegrations({ fetch: scripted(() => json({ ok: true }), calls) });
+    for (const url of ["https://[::ffff:127.0.0.1]/", "https://[::ffff:169.254.169.254]/", "https://[64:ff9b::a9fe:a9fe]/"]) {
+      await expect(guardedFetch(url)).rejects.toMatchObject({ code: "blocked_address" });
+    }
+    // A host name whose AAAA answer is an IPv4-mapped loopback.
+    configureIntegrations({ lookup: async () => [{ address: "::ffff:7f00:1", family: 6 }] });
+    await expect(guardedFetch("https://mapped.example.org/")).rejects.toMatchObject({ code: "blocked_address" });
+    expect(calls).toHaveLength(0);
+    // A public host that redirects to a mapped metadata address.
+    configureIntegrations({
+      lookup: publicLookup,
+      fetch: scripted((url) => (url.startsWith("https://pub.example.org") ? new Response(null, { status: 302, headers: { Location: "https://[::ffff:a9fe:a9fe]/latest" } }) : json({})), calls),
+    });
+    await expect(guardedFetch("https://pub.example.org/x")).rejects.toMatchObject({ code: "blocked_address" });
+    expect(calls.map((c) => c.url)).toEqual(["https://pub.example.org/x"]);
+  });
+
+  it("the default transport re-checks the address it actually connects to (DNS rebinding)", async () => {
+    // First answer public (passes the pre-check), second private (the connection's own lookup).
+    let n = 0;
+    configureIntegrations({
+      lookup: async () => (n++ === 0 ? [{ address: "93.184.216.34", family: 4 }] : [{ address: "127.0.0.1", family: 4 }]),
+    });
+    const err = await guardedFetch("https://rebind.example.org/x").catch((e) => e);
+    expect(err).toBeInstanceOf(IntegrationCallError);
+    expect(err.code).toBe("blocked_address");
+    expect(n).toBe(2);
+  });
+
+  it("Epic test on a mapped-address URL that slipped into storage is blocked, not attempted", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const sealed = sealCredentials(ctx.seedResult.orgId, "epic-fhir", { ...EPIC_CREDS, baseUrl: "https://[::ffff:7f00:1]:7110/api/FHIR/R4", tokenUrl: "https://[::ffff:7f00:1]:7110/oauth2/token" });
+    await ctx.storage.upsertIntegrationCredential({ organizationId: ctx.seedResult.orgId, integrationId: "epic-fhir", ...sealed, summary: {}, updatedBy: null as unknown as number });
+    const calls: Call[] = [];
+    configureIntegrations({ fetch: scripted(() => json({ access_token: "t" }), calls) });
+    const res = await (await director()).post("/api/integrations/epic-fhir/test").expect(200);
+    expect(res.body).toMatchObject({ ok: false, code: "blocked_address" });
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// ── findings 2 + 4: the deadline covers the body, every call is bounded ────
+describe("outbound deadline covers the whole response body", () => {
+  it("Test connection answers 'timeout' when a vendor sends headers then stalls (Amion, Twilio, Epic, OpenAI)", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    Object.assign(process.env, TWILIO);
+    process.env.OPENAI_API_KEY = OPENAI_KEY;
+    const agent = await director();
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    await agent.put("/api/integrations/epic-fhir/credentials").send(EPIC_CREDS).expect(200);
+    configureIntegrations({ timeoutMs: 300, fetch: (async () => stalledResponse("{", { "Content-Type": "application/json" })) as typeof fetch });
+    for (const id of ["amion", "twilio-sms", "epic-fhir", "openai-intake"]) {
+      const started = Date.now();
+      const res = await agent.post(`/api/integrations/${id}/test`).expect(200);
+      expect(res.body, id).toMatchObject({ ok: false, code: "timeout" });
+      expect(Date.now() - started, id).toBeLessThan(3000);
+    }
+  });
+
+  it("a real socket that drips one byte then stalls is cut off at the deadline (env feed, undici)", async () => {
+    const srv = await stallServer();
+    try {
+      process.env.AMION_OCS_URL = `${srv.url}/cgi-bin/ocs?Lo=ENV-STALL`;
+      process.env.AMION_ORG_CODE = "ISPN";
+      configureIntegrations({ timeoutMs: 500 }); // the real fetch
+      const agent = await director();
+      let started = Date.now();
+      const res = await agent.post("/api/integrations/amion/test").expect(200);
+      expect(res.body).toMatchObject({ ok: false, code: "timeout" });
+      expect(Date.now() - started).toBeLessThan(4000);
+      expect(srv.hits.length).toBe(1);
+
+      started = Date.now();
+      const state = await syncAmion(ctx.storage, { orgId: ctx.seedResult.orgId });
+      expect(state).toMatchObject({ lastStatus: "error", lastError: "amion_timeout" });
+      expect(Date.now() - started).toBeLessThan(4000);
+
+      // The env Epic path (formerly its own clear-at-headers timer) too.
+      const envFor = {
+        EPIC_FHIR_BASE_URL: `${srv.url}/api/FHIR/R4`,
+        EPIC_CLIENT_ID: "env-client",
+        EPIC_PRIVATE_KEY_PEM: PRIVATE_PEM,
+        EPIC_TOKEN_URL: `${srv.url}/oauth2/token`,
+        EPIC_ORG_CODE: "ISPN",
+      } as NodeJS.ProcessEnv;
+      started = Date.now();
+      const epic = await syncEpic(ctx.storage, { orgId: ctx.seedResult.orgId, env: envFor });
+      expect(epic).toMatchObject({ lastStatus: "error", lastError: "epic_timeout" });
+      expect(Date.now() - started).toBeLessThan(4000);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it("an oversized body is refused (too_large), never buffered without limit", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const agent = await director();
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    configureIntegrations({ maxBodyBytes: 4096, fetch: scripted(() => new Response("x".repeat(20_000), { status: 200, headers: { "Content-Type": "text/html" } })) });
+    const res = await agent.post("/api/integrations/amion/test").expect(200);
+    expect(res.body).toMatchObject({ ok: false, code: "too_large" });
+    // A streamed body with no Content-Length is cut off at the cap as well.
+    configureIntegrations({
+      fetch: (async () => {
+        let i = 0;
+        const stream = new ReadableStream<Uint8Array>({ pull(c) { if (i++ < 100) c.enqueue(new Uint8Array(1024)); else c.close(); } });
+        return new Response(stream, { status: 200 });
+      }) as typeof fetch,
+    });
+    const streamed = await agent.post("/api/integrations/amion/test").expect(200);
+    expect(streamed.body).toMatchObject({ ok: false, code: "too_large" });
+  });
+
+  it("one hospital's stalled Epic host does not hold up another hospital's scheduled sync", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const stallCreds = { ...EPIC_CREDS, baseUrl: "https://fhir.stall-epic.example.org/interconnect-fhir-oauth/api/FHIR/R4", tokenUrl: "" };
+    const goodCreds = { ...EPIC_CREDS, baseUrl: "https://fhir.er-epic.example.org/interconnect-fhir-oauth/api/FHIR/R4", tokenUrl: "" };
+    await (await director()).put("/api/integrations/epic-fhir/credentials").send(stallCreds).expect(200);
+    const { org, agent } = await otherOrgWithDirector("ERX");
+    await agent.put("/api/integrations/epic-fhir/credentials").send(goodCreds).expect(200);
+    await setModule(ctx.seedResult.orgId, "schedule.epic", true);
+    await setModule(org.id, "schedule.epic", true);
+    expect(ctx.seedResult.orgId).toBeLessThan(org.id); // the stalled org comes first in id order
+
+    const started = Date.now();
+    const firstGoodCall: number[] = [];
+    configureIntegrations({
+      timeoutMs: 1500,
+      fetch: (async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.includes("stall-epic")) return stalledResponse("{", { "Content-Type": "application/json" });
+        if (!firstGoodCall.length) firstGoodCall.push(Date.now() - started);
+        if (url.endsWith("/oauth2/token")) return json({ access_token: "tok" });
+        if (url.includes("/PractitionerRole?")) return json(EPIC_BUNDLE);
+        return json({}, 404);
+      }) as typeof fetch,
+    });
+    const out = await runScheduledEpicSyncAll(ctx.storage);
+    expect(out).toEqual(expect.arrayContaining([
+      { orgId: ctx.seedResult.orgId, outcome: "synced" },
+      { orgId: org.id, outcome: "synced" },
+    ]));
+    // The second hospital was reached at once, not after the first one's deadline.
+    expect(firstGoodCall[0]!).toBeLessThan(700);
+    expect(await ctx.storage.getOrgSetting(org.id, "epicSync")).toMatchObject({ lastStatus: "ok" });
+    expect(await ctx.storage.getOrgSetting(ctx.seedResult.orgId, "epicSync")).toMatchObject({ lastStatus: "error", lastError: "epic_timeout" });
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("the scheduled loops skip a tick while the previous run is still going", async () => {
+    let runs = 0;
+    let release!: () => void;
+    const tick = skipWhileRunning(() => {
+      runs++;
+      return new Promise<void>((r) => { release = r; });
+    });
+    const first = tick();
+    expect(first).not.toBeNull();
+    expect(tick()).toBeNull();
+    expect(tick()).toBeNull();
+    expect(runs).toBe(1);
+    release();
+    await first;
+    const again = tick();
+    expect(again).not.toBeNull();
+    expect(runs).toBe(2);
+    release();
+    await again;
+    // A failing run still frees the slot.
+    const failing = skipWhileRunning(async () => { throw new Error("boom"); });
+    await failing();
+    expect(failing()).not.toBeNull();
+  });
+});
+
+// ── finding 3: AES-GCM requires the full 128-bit tag ────────────────────────
+describe("credential decryption requires a full 16-byte GCM tag and 12-byte IV", () => {
+  it("refuses a truncated tag (4 or 8 bytes) and a wrong-size IV", () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const sealed = sealCredentials(7, "amion", { login: AMION_LOGIN });
+    const row = { organizationId: 7, integrationId: "amion", ...sealed };
+    expect(decryptCredentialRow(row)).toEqual({ login: AMION_LOGIN });
+    const tag = Buffer.from(sealed.authTag, "base64");
+    expect(tag.length).toBe(16);
+    for (const n of [4, 8, 12, 15]) {
+      expect(() => decryptCredentialRow({ ...row, authTag: tag.subarray(0, n).toString("base64") }), `${n}-byte tag`).toThrow();
+    }
+    expect(() => decryptCredentialRow({ ...row, iv: Buffer.alloc(16).toString("base64") })).toThrow();
+  });
+});
+
+// ── finding 5: er_director reads, a director manages ────────────────────────
+describe("integrations — an ER director can read but not change them", () => {
+  it("er_director: GET 200 (canManage false); PATCH / test / PUT / DELETE 403 and nothing changes", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    Object.assign(process.env, TWILIO);
+    const calls: Call[] = [];
+    configureIntegrations({ fetch: scripted(() => json({ status: "active" }), calls) });
+    const orgId = ctx.seedResult.orgId;
+    await (await director()).put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    const { agent: er } = await login(ctx.app, { username: "er.director" });
+    const get = await er.get("/api/integrations").expect(200);
+    expect(get.body.canManage).toBe(false);
+    expect(card(get.body, "twilio-sms").status).toBe("active");
+    await er.patch("/api/integrations/twilio-sms").send({ enabled: false }).expect(403);
+    await er.post("/api/integrations/twilio-sms/test").expect(403);
+    await er.put("/api/integrations/amion/credentials").send({ ocsUrl: "https://www.amion.com/cgi-bin/ocs?Lo=ER-LOGIN" }).expect(403);
+    await er.delete("/api/integrations/amion/credentials").expect(403);
+    expect((await getModules(orgId))["integration.sms"]).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(await amionFeedFor(ctx.storage, orgId)).toMatchObject({ url: AMION_ORG_URL });
+    const d = await (await director()).get("/api/integrations").expect(200);
+    expect(d.body.canManage).toBe(true);
+  });
+});
+
+// ── finding 6: the Epic card says where the on-call board really reads ─────
+describe("Epic card text matches the on-call board's real source", () => {
+  it("connected but the board reads the manual list → says so; Epic selected → 'read from your Epic system'", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const agent = await director();
+    await agent.put("/api/integrations/epic-fhir/credentials").send(EPIC_CREDS).expect(200);
+    const on = await agent.patch("/api/integrations/epic-fhir").send({ enabled: true }).expect(200);
+    const c = on.body.integration;
+    expect(c.status).toBe("active");
+    expect(c.boardSource).toMatchObject({ selected: "manual" });
+    expect(c.statusText).not.toMatch(/on-call is read from your Epic system/);
+    expect(c.statusText).toMatch(/manual list/);
+    expect(c.statusText).toMatch(/every 60 min/);
+    expect((await agent.get("/api/oncall/sources").expect(200)).body.selected).toBe("manual");
+
+    await agent.patch("/api/oncall/source").send({ source: "epic" }).expect(200);
+    const after = card((await agent.get("/api/integrations").expect(200)).body, "epic-fhir");
+    expect(after.boardSource).toMatchObject({ selected: "epic" });
+    expect(after.statusText).toMatch(/^Connected — on-call is read from your Epic system/);
+  });
+
+  it("Amion connected while the board reads Epic → the Amion card says the board shows Epic", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const agent = await director();
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    let amion = card((await agent.get("/api/integrations")).body, "amion");
+    expect(amion.boardSource).toMatchObject({ selected: "amion" }); // the default once Amion is connected
+    expect(amion.statusText).toMatch(/^Connected/);
+    await agent.put("/api/integrations/epic-fhir/credentials").send(EPIC_CREDS).expect(200);
+    await agent.patch("/api/integrations/epic-fhir").send({ enabled: true }).expect(200);
+    await agent.patch("/api/oncall/source").send({ source: "epic" }).expect(200);
+    amion = card((await agent.get("/api/integrations")).body, "amion");
+    expect(amion.statusText).toMatch(/board reads Epic/);
+  });
+});
+
+// ── finding 10: the developer overview never turns "configured" into "active" ──
+describe("developer overview — platform status is the server's", () => {
+  it("platform.status: not_configured → configured → error after a failed test", async () => {
+    const dev = await devAgent();
+    let res = await dev.get("/api/dev/integrations").expect(200);
+    const tw = () => (res.body.integrations as any[]).find((i) => i.id === "twilio-sms").platform;
+    expect(tw().status).toBe("not_configured");
+    Object.assign(process.env, TWILIO);
+    res = await dev.get("/api/dev/integrations").expect(200);
+    expect(tw().status).toBe("configured");
+    configureIntegrations({ fetch: scripted(() => json({ code: 20003 }, 401)) });
+    await (await director()).post("/api/integrations/twilio-sms/test").expect(200);
+    res = await dev.get("/api/dev/integrations").expect(200);
+    expect(tw().status).toBe("error");
+    process.env.OPENAI_API_KEY = OPENAI_KEY;
+    res = await dev.get("/api/dev/integrations").expect(200);
+    expect((res.body.integrations as any[]).find((i) => i.id === "openai-intake").platform.status).toBe("needs_baa");
+  });
+});
+
+// ── finding 11: the Set up sheet ticks only what the server accepted ────────
+describe("Set up sheet — variable state and copy-paste-safe AWS commands", () => {
+  it("a present-but-rejected variable is 'invalid', never a green 'set'", async () => {
+    process.env.OPENAI_API_KEY = OPENAI_KEY;
+    process.env.AI_EXTERNAL_PHI_OK = "<true>";
+    Object.assign(process.env, TWILIO, { TWILIO_FROM_NUMBER: "5551234567" });
+    const body = (await (await director()).get("/api/integrations").expect(200)).body;
+    const vars = (id: string) => Object.fromEntries((card(body, id).setup.variables as any[]).map((v) => [v.name, v]));
+    expect(vars("openai-intake").OPENAI_API_KEY).toMatchObject({ state: "set", set: true });
+    expect(vars("openai-intake").AI_EXTERNAL_PHI_OK).toMatchObject({ state: "invalid", set: false });
+    expect(vars("twilio-sms").TWILIO_FROM_NUMBER).toMatchObject({ state: "invalid", set: false });
+    expect(vars("twilio-sms").TWILIO_AUTH_TOKEN).toMatchObject({ state: "set" });
+    expect(vars("push").VAPID_PUBLIC_KEY).toMatchObject({ state: "missing", set: false });
+  });
+
+  it("AWS steps: literal values are not wrapped in <>, and every put-parameter can overwrite", async () => {
+    const body = (await (await director()).get("/api/integrations").expect(200)).body;
+    const aws = card(body, "openai-intake").setup.steps.aws as string[];
+    const phi = aws.find((s) => s.includes("/docturn/prod/AI_EXTERNAL_PHI_OK"))!;
+    expect(phi).toContain('--value "true"');
+    expect(phi).not.toContain("<true>");
+    for (const id of ["twilio-sms", "push", "openai-intake"]) {
+      for (const s of (card(body, id).setup.steps.aws as string[]).filter((x) => x.startsWith("aws ssm put-parameter"))) {
+        expect(s, s).toContain("--overwrite");
+      }
+    }
+  });
+});
+
+// ── finding 13: "saved" placeholders only on fields that are saved ──────────
+describe("Set up sheet — which credential fields are saved (names only)", () => {
+  it("Amion saved with only the OCS URL → fieldsSet ['ocsUrl']; Epic → its saved field names", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const agent = await director();
+    let c = (await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200)).body.integration;
+    expect(c.setup.current.fieldsSet).toEqual(["ocsUrl"]);
+    c = (await agent.put("/api/integrations/amion/credentials").send({ login: AMION_LOGIN }).expect(200)).body.integration;
+    expect(c.setup.current.fieldsSet).toEqual(["login"]);
+    expect(JSON.stringify(c)).not.toContain(AMION_LOGIN);
+    const e = (await agent.put("/api/integrations/epic-fhir/credentials").send({ ...EPIC_CREDS, tokenUrl: "" }).expect(200)).body.integration;
+    expect([...e.setup.current.fieldsSet].sort()).toEqual(["baseUrl", "clientId", "privateKeyPem"]);
   });
 });

@@ -471,8 +471,10 @@
       // ER roles: their live "sent" board (declines / re-routes / accepts).
       var wantsSent = (role === "er_doctor" || role === "er_director");
       extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
-      // Director: org settings (auto-reassign-on-decline toggle).
-      extra.push(role === "director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
+      // Director / ER director: the org settings their Settings screen shows
+      // (auto-reassign, STAT SMS fallback, assignment timeout) — always the
+      // server's values, never the store's demo defaults.
+      extra.push(role === "director" || role === "er_director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
       // Director / ER director: pending self-registrations awaiting approval.
       var wantsRegs = (role === "director" || role === "er_director");
       extra.push(wantsRegs ? get("/api/registrations").catch(function () { return null; }) : Promise.resolve(null));
@@ -550,8 +552,11 @@
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
             return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
           });
-          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false },
-            typeof settings.org.assignmentTimeoutMin === "number" ? { timeout: settings.org.assignmentTimeoutMin } : {});
+          if (settings && settings.org) {
+            s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false },
+              typeof settings.org.assignmentTimeoutMin === "number" ? { timeout: settings.org.assignmentTimeoutMin } : {});
+            if (typeof settings.org.assignmentTimeoutMin === "number") lastServerTimeout = settings.org.assignmentTimeoutMin;
+          }
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
             var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
@@ -1911,10 +1916,14 @@
     }).catch(function () {});
   }
   DT.actions.setOrgRetention = function (days) {
+    var prev = DT.getState().orgRetentionDays;
     DT.set(function (s) { s.orgRetentionDays = days; return s; });
     return api("PATCH", "/api/settings/org", { key: "messageRetentionDays", value: Number(days) || 0 })
       .then(function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Retention updated", msg: Number(days) > 0 ? "Messages auto-delete after " + days + " days." : "Messages are kept indefinitely." }; return s; }); })
-      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: "Couldn't update retention." }; return s; }); });
+      .catch(function (e) {
+        // Refused: show the window the server is still applying.
+        DT.set(function (s) { s.orgRetentionDays = prev; s.__toast = { tone: "rejected", title: "Not saved", msg: e && e.status === 403 ? "Only a director can change this." : "Couldn't update retention." }; return s; });
+      });
   };
   DT.actions.setMyPref = function (key, value) {
     DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
@@ -1998,29 +2007,44 @@
   // org's config (each new assignment's expiry is computed from
   // organizations.assignment_timeout_min, services/assignments.ts).
   // Shift-type names stay a local display aid.
+  // The change shows at once, but a refusal (403 for an ER director, a
+  // failed save, an out-of-range timeout) puts back the value the SERVER
+  // holds and says why — the screen never shows a setting the server is not
+  // applying.
   var origSetSetting = DT.actions.setSetting;
   var timeoutTimer = null;
+  var lastServerTimeout = null; // the timeout the server last confirmed (hydrate / PATCH)
+  var ORG_SETTING_KEYS = { autoReassign: "autoReassignOnDecline", statSmsFallback: "statSmsFallback" };
   DT.actions.setSetting = function (key, value) {
-    if (key === "autoReassign") {
-      api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
-    }
-    if (key === "statSmsFallback") {
-      api("PATCH", "/api/settings/org", { key: "statSmsFallback", value: !!value }).catch(function () {});
+    if (ORG_SETTING_KEYS[key]) {
+      var prev = (DT.getState().settings || {})[key];
+      api("PATCH", "/api/settings/org", { key: ORG_SETTING_KEYS[key], value: !!value }).catch(function (e) {
+        if (origSetSetting) origSetSetting(key, prev);
+        DT.set(function (s) {
+          s.__toast = { tone: "rejected", title: "Not saved", msg: e && e.status === 403 ? "Only a director can change this." : "Try again." };
+          return s;
+        });
+      });
     }
     if (key === "timeout") {
       // Debounced: typing "15" must not save "1" first.
       if (timeoutTimer) clearTimeout(timeoutTimer);
       var minutes = Number(value);
+      var restore = function () { if (lastServerTimeout != null && origSetSetting) origSetSetting("timeout", lastServerTimeout); };
       timeoutTimer = setTimeout(function () {
         timeoutTimer = null;
         if (!(minutes >= 1 && minutes <= 120)) {
+          restore();
           DT.set(function (s) { s.__toast = { tone: "rejected", title: "Timeout not saved", msg: "Enter 1–120 minutes." }; return s; });
           return;
         }
-        api("PATCH", "/api/org/config", { assignmentTimeoutMin: Math.round(minutes) }).then(function () {
-          DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment timeout saved", msg: Math.round(minutes) + " minutes" }; return s; });
+        api("PATCH", "/api/org/config", { assignmentTimeoutMin: Math.round(minutes) }).then(function (r) {
+          lastServerTimeout = r && typeof r.assignmentTimeoutMin === "number" ? r.assignmentTimeoutMin : Math.round(minutes);
+          if (origSetSetting) origSetSetting("timeout", lastServerTimeout);
+          DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment timeout saved", msg: lastServerTimeout + " minutes" }; return s; });
         }).catch(function (e) {
-          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Timeout not saved", msg: String((e && e.message) || "Try again.") === "forbidden" ? "Only a director can change it." : "Try again." }; return s; });
+          restore();
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Timeout not saved", msg: (e && e.status === 403) || String((e && e.message) || "") === "forbidden" ? "Only a director can change it." : "Try again." }; return s; });
         });
       }, 700);
     }
@@ -2892,8 +2916,12 @@
     api("PATCH", "/api/hospitalists/0/working-status", { all: on }).then(rehydrate).catch(function () {});
   };
   DT.actions.resetRotation = function () {
-    api("POST", "/api/round-robin/reset").catch(function () {});
-    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
+    // The toast reports what the server did — never a reset that was refused.
+    return api("POST", "/api/round-robin/reset").then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Rotation not reset", msg: e && e.status === 403 ? "Only a director can reset it." : "Try again." }; return s; });
+    });
   };
   // Emergency broadcast: persist + fan out via the real backend (WS
   // BROADCAST_CREATED reaches every signed-in member of the org). The kit's
@@ -3644,6 +3672,15 @@
   }
   DT.actions.loadIntegrations = function (orgId) {
     return get("/api/integrations" + integrationsQuery(orgId));
+  };
+  // The signed-in user's OWN organization as the server knows it (Settings
+  // header for every non-developer role) — never the demo store's org list.
+  DT.actions.loadOrgIdentity = function () {
+    return get("/api/org/config").then(function (r) {
+      var id = r && r.code ? { name: r.name || r.code, code: r.code, timezone: r.timezone || "" } : null;
+      DT.set(function (s) { s.orgIdentity = id; return s; });
+      return id;
+    }).catch(function () { return null; });
   };
   DT.actions.loadIntegrationsOverview = function () {
     return get("/api/dev/integrations");

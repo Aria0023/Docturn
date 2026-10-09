@@ -15,7 +15,12 @@ const INT_STATUS = {
   not_configured: { label: "Not set up",     bg: "var(--status-pending-bg)",  fg: "var(--status-pending-fg)",  icon: "plug-zap" },
   needs_baa:      { label: "Needs BAA",      bg: "var(--status-rejected-bg)", fg: "var(--status-rejected-fg)", icon: "file-warning" },
   error:          { label: "Error",          bg: "var(--status-rejected-bg)", fg: "var(--status-rejected-fg)", icon: "triangle-alert" },
+  // Developer overview, platform header: the operator's keys are set and no
+  // test against them has failed — each org's own row says whether it is Active.
+  configured:     { label: "Set on server",  bg: "var(--status-neutral-bg)",  fg: "var(--status-neutral-fg)",  icon: "server" },
 };
+
+const INT_READONLY_NOTE = "A director manages this.";
 
 function IntStatusBadge({ status }) {
   const s = INT_STATUS[status] || INT_STATUS.not_configured;
@@ -68,8 +73,8 @@ function IntCode({ children }) {
   return <code style={{ fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 12, padding: "1px 6px", borderRadius: 4, background: "var(--secondary)", color: "var(--foreground)", overflowWrap: "anywhere", wordBreak: "break-word" }}>{children}</code>;
 }
 
-function IntegrationCard({ card, orgName, busy, result, onToggle, onTest, onSetup }) {
-  const canTest = card.canEnable || card.status === "needs_baa";
+function IntegrationCard({ card, orgName, busy, result, onToggle, onTest, onSetup, readOnly }) {
+  const canTest = !readOnly && (card.canEnable || card.status === "needs_baa");
   const switchBlocked = !card.enabled && !card.canEnable;
   const last = card.lastCheck;
   const lastText = last
@@ -113,7 +118,7 @@ function IntegrationCard({ card, orgName, busy, result, onToggle, onTest, onSetu
       {lastText && <div style={{ fontSize: 12, color: last && !last.ok ? "var(--status-rejected-fg)" : "var(--muted-foreground)", marginTop: 6 }}>{lastText}</div>}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
-        <IntSwitch on={card.enabled} disabled={switchBlocked} busy={busy === "toggle"} onChange={onToggle}
+        <IntSwitch on={card.enabled} disabled={switchBlocked || readOnly} busy={busy === "toggle"} onChange={onToggle}
           label={(card.enabled ? "Switch off " : "Switch on ") + card.name + " for " + orgName} />
         <span style={{ fontSize: 12.5, fontWeight: 600, marginRight: "auto", minWidth: 0 }}>
           {!card.enabled ? "Off for " + orgName
@@ -121,10 +126,12 @@ function IntegrationCard({ card, orgName, busy, result, onToggle, onTest, onSetu
             : "Allowed for " + orgName + " — does nothing until " + (card.status === "needs_baa" ? "the BAA is attested" : "it is set up")}
         </span>
         <IntButton icon="activity" onClick={onTest} disabled={!canTest || busy === "test"} dataAttr="data-int-test"
-          title={canTest ? "Test connection" : "Nothing to test until it is set up"}>{busy === "test" ? "Testing…" : "Test connection"}</IntButton>
-        <IntButton icon="settings-2" onClick={onSetup} dataAttr="data-int-setup" title={"Set up " + card.name}>Set up</IntButton>
+          title={readOnly ? INT_READONLY_NOTE : canTest ? "Test connection" : "Nothing to test until it is set up"}>{busy === "test" ? "Testing…" : "Test connection"}</IntButton>
+        <IntButton icon="settings-2" onClick={onSetup} disabled={readOnly} dataAttr="data-int-setup" title={readOnly ? INT_READONLY_NOTE : "Set up " + card.name}>Set up</IntButton>
       </div>
-      {switchBlocked && (
+      {readOnly ? (
+        <div data-int-readonly style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 6, fontWeight: 600 }}>{INT_READONLY_NOTE} You can see its status; switching, testing and setting it up are for a director.</div>
+      ) : switchBlocked && (
         <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 6 }}>The switch unlocks once this integration is set up{card.status === "needs_baa" ? " and the BAA is attested" : ""}.</div>
       )}
       {result && (
@@ -178,22 +185,30 @@ function IntegrationSetupSheet({ card, orgId, orgName, storage, onClose, onUpdat
         {!isOrg && (
           <React.Fragment>
             <p style={{ fontSize: 13, lineHeight: 1.5, margin: 0 }}>
-              {card.name} uses the DocTurn operator's {card.vendor} account, so its keys live in the <b>server's settings</b> (Render dashboard or AWS Parameter Store) — never in this screen and never in the browser. After the server restarts with them, this card turns <b>Active</b>; then press <b>Test connection</b>.
+              {card.name} uses the DocTurn operator's {card.vendor} account, so its keys live in the <b>server's settings</b> (Render dashboard or AWS Parameter Store) — never in this screen and never in the browser. Once the server restarts with valid values, every row below shows a tick and the card leaves "Not set up"; then press <b>Test connection</b>.
             </p>
             <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-              {setup.variables.map((v, i) => (
-                <div key={v.name} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 12px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-                  <Icon name={v.set ? "circle-check" : "circle-dashed"} size={16} color={v.set ? "var(--status-accepted)" : "var(--muted-foreground)"} style={{ flex: "none", marginTop: 2 }} />
+              {setup.variables.map((v, i) => {
+                // "set" only when the server ACCEPTED the value; present-but-rejected is "invalid".
+                const state = v.state || (v.set ? "set" : "missing");
+                const icon = state === "set" ? "circle-check" : state === "invalid" ? "triangle-alert" : "circle-dashed";
+                const color = state === "set" ? "var(--status-accepted)" : state === "invalid" ? "var(--status-rejected-fg)" : "var(--muted-foreground)";
+                return (
+                <div key={v.name} data-int-var={v.name} data-state={state} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "9px 12px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+                  <Icon name={icon} size={16} color={color} style={{ flex: "none", marginTop: 2 }} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                       <IntCode>{v.name}</IntCode>
-                      <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{v.set ? "set" : v.required ? "missing" : "optional, not set"}{v.secret ? " · secret" : ""}</span>
+                      <span style={{ fontSize: 11.5, color: state === "invalid" ? "var(--status-rejected-fg)" : "var(--muted-foreground)", fontWeight: state === "invalid" ? 600 : 400 }}>
+                        {state === "set" ? "set" : state === "invalid" ? "set but not accepted — see the card" : v.required ? "missing" : "optional, not set"}{v.secret ? " · secret" : ""}
+                      </span>
                     </div>
                     <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 3, lineHeight: 1.45 }}>{v.description}</div>
                     {v.caution && <div style={{ fontSize: 12.5, color: "var(--status-rejected-fg)", marginTop: 3, lineHeight: 1.45, fontWeight: 600 }}>{v.caution}</div>}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <div role="tablist" style={{ display: "flex", gap: 6 }}>
               {[["render", "On Render"], ["aws", "On AWS"]].map(([k, l]) => (
@@ -225,7 +240,7 @@ function IntegrationSetupSheet({ card, orgId, orgName, storage, onClose, onUpdat
                 {setup.fields.map((f) => (
                   <Field key={f.name} label={f.label + (f.required ? "" : "")} value={values[f.name] || ""}
                     onChange={(v) => setValues(Object.assign({}, values, { [f.name]: v }))}
-                    placeholder={f.secret && current && current.set ? "•••••• saved — type to replace" : f.placeholder}
+                    placeholder={current && Array.isArray(current.fieldsSet) && current.fieldsSet.indexOf(f.name) >= 0 ? "•••••• saved — type to replace" : f.placeholder}
                     type={f.secret && !f.multiline ? "password" : "text"} textarea={!!f.multiline} rows={f.multiline ? 5 : undefined}
                     autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
                     help={f.help} error={error && error.field === f.name ? error.message : null} />
@@ -285,6 +300,9 @@ function IntegrationsPanel({ orgId, embedded }) {
 
   const orgName = (data && data.orgName) || "this organization";
   const cards = (data && data.integrations) || [];
+  // The server says whether THIS user may switch / test / set up (an ER
+  // director reads the cards; the write routes refuse them).
+  const readOnly = !!(data && data.canManage === false);
   const open = sheet ? cards.find((c) => c.id === sheet) : null;
   const body = (
     <div data-integrations-panel={data ? data.orgId : ""}>
@@ -295,14 +313,15 @@ function IntegrationsPanel({ orgId, embedded }) {
       </div>
       <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "0 0 12px", lineHeight: 1.5 }}>
         Each card shows what the server reports right now. Switches change this organization only and are enforced by the server; a connection can only be switched on once it is set up.
+        {readOnly ? " " + INT_READONLY_NOTE + " You can see every status here." : ""}
       </p>
       {failed && !data && <div role="alert" style={{ fontSize: 13, color: "var(--destructive)", padding: "8px 0" }}>Couldn't load integrations ({failed}). <button type="button" onClick={load} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", minHeight: 44, fontFamily: "var(--font-sans)" }}>Retry</button></div>}
       {!data && !failed && <div style={{ fontSize: 13, color: "var(--muted-foreground)", padding: "8px 0" }}>Loading from the server…</div>}
       {data && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {cards.map((c) => (
-            <IntegrationCard key={c.id} card={c} orgName={orgName} busy={busy[c.id]} result={results[c.id]}
-              onToggle={(on) => toggle(c, on)} onTest={() => test(c)} onSetup={() => setSheet(c.id)} />
+            <IntegrationCard key={c.id} card={c} orgName={orgName} busy={busy[c.id]} result={results[c.id]} readOnly={readOnly}
+              onToggle={(on) => toggle(c, on)} onTest={() => test(c)} onSetup={() => { if (!readOnly) setSheet(c.id); }} />
           ))}
         </div>
       )}
@@ -311,7 +330,7 @@ function IntegrationsPanel({ orgId, embedded }) {
           <Icon name="lock" size={13} style={{ flex: "none", marginTop: 2 }} />{data.credentialStorage.message}
         </div>
       )}
-      {open && (
+      {open && !readOnly && (
         <IntegrationSetupSheet card={open} orgId={orgId} orgName={orgName} storage={data.credentialStorage}
           onClose={() => setSheet(null)} onUpdated={(c) => replace(c)} />
       )}
@@ -345,8 +364,10 @@ function IntegrationsOverview() {
             <span style={{ fontSize: 14, fontWeight: 700 }}>{it.name}</span>
             <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{it.vendor} · {it.scope === "platform" ? "platform (server settings)" : "per hospital"}{it.phi ? " · PHI → BAA required" : ""}</span>
             {it.platform && (
-              <span style={{ marginLeft: "auto" }}>
-                <IntStatusBadge status={it.platform.configured ? "active" : it.platform.needsBaa ? "needs_baa" : "not_configured"} />
+              <span style={{ marginLeft: "auto" }} data-overview-platform={it.id} data-status={it.platform.status}>
+                {/* The server's word for the operator's keys — never "Active":
+                    whether each org is active is its own row below. */}
+                <IntStatusBadge status={it.platform.status || (it.platform.needsBaa ? "needs_baa" : it.platform.configured ? "configured" : "not_configured")} />
               </span>
             )}
           </div>
