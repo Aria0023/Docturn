@@ -229,18 +229,51 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   // Providers may be empty on a cold load (before the rotation pool hydrates),
   // so derive defensively and never index into an empty array.
   const list = providers || [];
-  const nextUp = list[0];
-  const manualId = manual || (nextUp && nextUp.id);
-  const target = mode === "quick" ? nextUp : (list.find((p) => p.id === manualId) || nextUp);
+  // "Next up" is the routing planner's answer (GET /api/rotation/next via
+  // DT.nextUp), never this list's order: the list is sorted by census over
+  // EVERYONE, including at-cap and swing/off-shift providers who never get a
+  // round-robin patient (A.CON-SHO-29).
+  const DTx = (typeof window !== "undefined" && window.DT) || null;
+  const rrNext = DTx && DTx.nextUp ? DTx.nextUp() : null;
+  const rrStatus = (DTx && DTx.rotationStatus) ? DTx.rotationStatus() : { source: "local", capRelief: false, mode: "lowest_census" };
+  // The patient's specialty is a routing preference, so it can change who is
+  // next: ask the server for exactly that preview.
+  const specialty = fields.specialty || "";
+  const [specPreview, setSpecPreview] = React.useState(null);
+  const rosterKey = list.map((p) => p.id + ":" + p.census + "/" + p.cap + (p.working ? "w" : "")).join(",") + "|" + (rrNext ? rrNext.id : "-");
+  React.useEffect(() => {
+    if (!specialty || !DTx || !DTx.previewRotation) { setSpecPreview(null); return undefined; }
+    let live = true;
+    const t = setTimeout(() => {
+      DTx.previewRotation(specialty).then((r) => { if (live) setSpecPreview(r); }, () => { if (live) setSpecPreview(null); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [specialty, rosterKey]);
+  const specPending = !!specialty && !(specPreview && specPreview.specialty === specialty);
+  const preview = (specialty && specPreview && specPreview.specialty === specialty)
+    ? specPreview
+    : { source: rrStatus.source, next: rrNext, capRelief: rrStatus.capRelief };
+  const nextUp = preview.next;
+  const routingOff = preview.source === "disabled" || rrStatus.source === "disabled";
+  // Server unreachable for the preview → it still decides at send time.
+  const quickOk = !!nextUp || preview.source === "unavailable" || preview.source === "loading";
+  const manualId = manual || (nextUp && nextUp.id) || (list[0] && list[0].id);
+  const manualTarget = list.find((p) => p.id === manualId) || null;
 
-  const canSend = !!(fields.initials && fields.room && target);
+  const hasPatient = !!(fields.initials && fields.room);
+  const canSend = hasPatient && !routingOff && (mode === "quick" ? quickOk : !!manualTarget);
   const doSend = () => {
     if (!canSend) return;
-    onSend(target, fields, consults);
+    // The tab decides the mode — round-robin lets the SERVER pick.
+    onSend(mode === "quick" ? nextUp : manualTarget, fields, consults, mode);
     reset();
   };
+  const sendHint = !hasPatient ? "Add patient initials & room to send."
+    : routingOff ? "Admission routing is switched off for this organization."
+    : (mode === "quick" && !quickOk) ? "Nobody can take a round-robin patient right now — use Manual."
+    : "";
 
-  if (!nextUp) {
+  if (!list.length) {
     return (
       <Card style={{ padding: 24 }}>
         <SectionTitle>Route assignment</SectionTitle>
@@ -330,9 +363,16 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
           {mode === "quick" ? (
             <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: "var(--radius-md)", padding: 14, display: "flex", gap: 11, alignItems: "flex-start" }}>
               <Icon name="route" size={18} color="var(--primary)" />
-              <div style={{ fontSize: 13, color: "#1e3a8a", lineHeight: 1.5 }}>
-                Routes to the <b>lowest‑census</b> eligible hospitalist on shift. Next up:{" "}
-                <b>{nextUp.name}</b> ({nextUp.census}/{nextUp.cap}).
+              <div style={{ fontSize: 13, color: "#1e3a8a", lineHeight: 1.5 }} data-testid="rr-hint">
+                {rrStatus.mode === "sequential"
+                  ? <React.Fragment>Routes <b>in rotation order</b> to the next hospitalist on a round‑robin shift with room under their cap{specialty ? <React.Fragment> (preferring {specialty})</React.Fragment> : null}.</React.Fragment>
+                  : <React.Fragment>Routes to the <b>lowest‑census</b> hospitalist on a round‑robin shift with room under their cap{specialty ? <React.Fragment> (preferring {specialty})</React.Fragment> : null}.</React.Fragment>}{" "}
+                {routingOff ? <span>Admission routing is switched off for this organization.</span>
+                  : specPending ? <span>Checking who's next for {specialty}…</span>
+                  : preview.source === "loading" ? <span>Checking who's next…</span>
+                  : nextUp ? <React.Fragment>Next up: <b>{nextUp.name}</b> ({nextUp.census}/{nextUp.cap}).{preview.capRelief ? " Everyone eligible is at cap — sending raises each round‑robin provider's cap by 1." : ""}</React.Fragment>
+                  : preview.source === "unavailable" ? <span>Couldn't load who's next — the server picks the eligible hospitalist when you send.</span>
+                  : <b>Nobody on a round‑robin shift can take this patient right now — use Manual.</b>}
               </div>
             </div>
           ) : (
@@ -418,7 +458,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
             <Button full icon="send" onClick={doSend} style={{ opacity: canSend ? 1 : 0.5, pointerEvents: canSend ? "auto" : "none" }}>
               Send assignment{consults.length ? ` + ${consults.length} consult${consults.length > 1 ? "s" : ""}` : ""}
             </Button>
-            {!canSend && <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 8, textAlign: "center" }}>Add patient initials &amp; room to send.</div>}
+            {!canSend && sendHint && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, textAlign: "center" }}>{sendHint}</div>}
           </div>
         </Card>
       </div>

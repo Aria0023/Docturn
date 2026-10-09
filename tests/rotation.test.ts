@@ -211,3 +211,142 @@ describe("previewNext — same eligibility as selectNext (A.CON-SHO-29)", () => 
     expect(res.body.hospitalistId).toBe(hid("kohan"));
   });
 });
+
+/**
+ * GET /api/rotation/next — the single source every client "Next up" surface
+ * reads (Director "Next up" card, ER intake Quick hint, hospitalist position
+ * chip). It must name exactly who the next round-robin patient goes to, so it
+ * is built from the same planner as selectNext — never from a client-side
+ * "lowest census among everyone working" guess (A.CON-SHO-29, client half).
+ */
+describe("GET /api/rotation/next — the client's 'Next up' source (A.CON-SHO-29)", () => {
+  type Preview = {
+    mode: string;
+    shiftTypes: string[];
+    capRelief: boolean;
+    next: { hospitalistId: number; userId: number; displayName: string | null; shiftType: string; census: number; cap: number } | null;
+    order: number[];
+  };
+
+  it("skips the at-cap lowest-census provider and matches the board, the picker and the real pick", async () => {
+    // The finding's repro: Darouichi (liu) 2/2, everyone else 6/12.
+    for (const h of await ctx.storage.listHospitalists(orgId())) {
+      await setHosp(h.id, h.id === hid("liu") ? { currentPatientCount: 2, patientCap: 2 } : { currentPatientCount: 6, patientCap: 12 });
+    }
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const res = await er.get("/api/rotation/next");
+    expect(res.status).toBe(200);
+    const body = res.body as Preview;
+    expect(body.mode).toBe("lowest_census");
+    expect(body.shiftTypes.sort()).toEqual(["day", "night"]);
+    expect(body.capRelief).toBe(false);
+    expect(body.next?.hospitalistId).toBe(hid("chen"));
+    expect(body.next?.userId).toBe(ctx.seedResult.userIds.chen);
+    expect(body.next?.displayName).toBe("Dr. Nathan Alyesh");
+    expect(body.next).toMatchObject({ census: 6, cap: 12, shiftType: "day" });
+    // The ranking never contains the at-cap or the swing-shift provider.
+    expect(body.order[0]).toBe(hid("chen"));
+    expect(body.order).not.toContain(hid("liu"));
+    expect(body.order).not.toContain(hid("manukian"));
+
+    // Same answer as the director's board row and the messaging picker…
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    const fromDirector = (await director.get("/api/rotation/next").expect(200)).body as Preview;
+    expect(fromDirector.next?.hospitalistId).toBe(hid("chen"));
+    const board = await director.get("/api/oncall/board").expect(200);
+    const row = (board.body.rows as Array<{ kind: string; holderUserId: number }>).find((r) => r.kind === "next_hospitalist");
+    expect(row?.holderUserId).toBe(body.next!.userId);
+
+    // …and the patient really goes there.
+    const { patient } = await createPatient();
+    const created = await er.post("/api/assignments").send({ patientId: patient.id, mode: "round_robin" });
+    expect(created.status).toBe(201);
+    expect(created.body.hospitalistId).toBe(body.next!.hospitalistId);
+  });
+
+  it("applies the patient's specialty preference exactly like selectNext when ?specialty= is given", async () => {
+    await setHosp(hid("lopez"), { specialty: "Cardiology" }); // census 7 — never lowest
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const generic = (await er.get("/api/rotation/next").expect(200)).body as Preview;
+    expect(generic.next?.hospitalistId).toBe(hid("chen"));
+    const cardio = (await er.get("/api/rotation/next").query({ specialty: "Cardiology" }).expect(200)).body as Preview;
+    expect(cardio.next?.hospitalistId).toBe(hid("lopez"));
+    // An unmatched specialty is only a preference → falls back to the general pick.
+    const other = (await er.get("/api/rotation/next").query({ specialty: "Dermatology" }).expect(200)).body as Preview;
+    expect(other.next?.hospitalistId).toBe(hid("chen"));
+
+    const res = await er.post("/api/patients").send({ initials: "CS", roomNumber: "9", issueSummary: "chest pain", specialty: "Cardiology" });
+    expect(res.status).toBe(201);
+    const created = await er.post("/api/assignments").send({ patientId: res.body.id, mode: "round_robin" });
+    expect(created.status).toBe(201);
+    expect(created.body.hospitalistId).toBe(hid("lopez"));
+  });
+
+  it("reports capRelief (and the relief pick) when everyone routable is at cap — without writing anything", async () => {
+    await onlyWorking("chen", "liu", "manukian");
+    await setHosp(hid("chen"), { currentPatientCount: 12, patientCap: 12 });
+    await setHosp(hid("liu"), { currentPatientCount: 11, patientCap: 11 });
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    const body = (await director.get("/api/rotation/next").expect(200)).body as Preview;
+    expect(body.capRelief).toBe(true);
+    expect(body.next?.hospitalistId).toBe(hid("liu"));
+    expect(body.order).not.toContain(hid("manukian"));
+    // Preview is read-only: no caps moved, no relief audit.
+    expect((await hosp(hid("chen"))).patientCap).toBe(12);
+    expect((await hosp(hid("liu"))).patientCap).toBe(11);
+    expect(await capReliefAudits()).toHaveLength(0);
+    // The live pick agrees.
+    const live = await selectNext(ctx.storage, orgId(), {});
+    expect(live?.id).toBe(hid("liu"));
+  });
+
+  it("previews the post-relief pick with the same specialty preference selectNext applies after relief", async () => {
+    for (const h of await ctx.storage.listWorkingHospitalists(orgId())) await setHosp(h.id, { currentPatientCount: h.patientCap });
+    await setHosp(hid("lopez"), { specialty: "Cardiology" });
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const body = (await er.get("/api/rotation/next").query({ specialty: "Cardiology" }).expect(200)).body as Preview;
+    expect(body.capRelief).toBe(true);
+    expect(body.next?.hospitalistId).toBe(hid("lopez"));
+    const live = await selectNext(ctx.storage, orgId(), { specialty: "Cardiology" });
+    expect(live?.id).toBe(hid("lopez"));
+    expect(await capReliefAudits()).toHaveLength(1); // only the live pick wrote
+  });
+
+  it("answers next:null with an empty order when nobody works a round-robin shift", async () => {
+    await onlyWorking("manukian"); // swing only
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const body = (await er.get("/api/rotation/next").expect(200)).body as Preview;
+    expect(body.next).toBeNull();
+    expect(body.order).toEqual([]);
+    expect(body.capRelief).toBe(false);
+  });
+
+  it("tracks the persisted cursor in sequential mode (order[0] is always the live pick)", async () => {
+    await ctx.storage.updateOrganization(orgId(), { rotationMode: "sequential", rotationIndex: 0 });
+    await setHosp(hid("chen"), { currentPatientCount: 12, patientCap: 12 });
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    for (let i = 0; i < 5; i++) {
+      const body = (await er.get("/api/rotation/next").expect(200)).body as Preview;
+      expect(body.mode).toBe("sequential");
+      expect(body.order[0]).toBe(body.next?.hospitalistId);
+      const live = await selectNext(ctx.storage, orgId(), {});
+      expect(live?.id).toBe(body.next?.hospitalistId);
+      expect(live?.id).not.toBe(hid("chen"));
+    }
+  });
+
+  it("is switched off with routing.assignments (404 module_disabled)", async () => {
+    const { agent: dev } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    await dev.patch(`/api/dev/modules/${orgId()}`).send({ id: "routing.assignments", enabled: false }).expect(200);
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const res = await er.get("/api/rotation/next");
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "module_disabled", module: "routing.assignments" });
+  });
+
+  it("requires a session", async () => {
+    const { default: supertest } = await import("supertest");
+    const res = await supertest(ctx.app).get("/api/rotation/next");
+    expect(res.status).toBe(401);
+  });
+});

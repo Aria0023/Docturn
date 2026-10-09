@@ -5,7 +5,7 @@ import { appendAudit, logPhiAccess } from "../audit.js";
 import { isModuleEnabled, requireModule } from "../modules.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { isDnd, resolveCovering } from "../services/escalation.js";
-import { previewNext } from "../services/rotation.js";
+import { previewNext, previewRotation } from "../services/rotation.js";
 import {
   allSourceStatuses,
   createSourceRegistry,
@@ -347,7 +347,67 @@ const OVERSIGHT_ROLES = new Set<string>(["director", "er_director"]);
 // ── routes ────────────────────────────────────────────────────────────────────
 const sourcePatchSchema = z.object({ source: z.string() });
 
+/** The provider fields a "Next up" surface shows — no patient data. */
+export interface RotationNextProvider {
+  hospitalistId: number;
+  userId: number;
+  displayName: string | null;
+  specialty: string | null;
+  shiftType: string;
+  census: number;
+  cap: number;
+}
+export interface RotationNextResponse {
+  mode: string;
+  shiftTypes: string[];
+  capRelief: boolean;
+  next: RotationNextProvider | null;
+  /** Eligible hospitalist ids in pick order (next first). */
+  order: number[];
+}
+
+/**
+ * GET /api/rotation/next[?specialty=] — who the next round-robin admission
+ * goes to, straight from the routing planner (services/rotation.ts
+ * previewRotation): routable shift, census < cap, the patient's specialty
+ * preference when given, simulated cap relief, sequential cursor. Every web
+ * "Next up" surface (Director card, ER intake Quick hint, hospitalist position
+ * chip) reads this instead of guessing from "lowest census among everyone
+ * working", which named at-cap and swing-shift providers who never get the
+ * patient (A.CON-SHO-29). Read-only, org-scoped, provider data only (no PHI).
+ * Gated with routing.assignments (server/modules.ts GATE_TABLE).
+ */
+export async function buildRotationNext(
+  db: DatabaseStorage,
+  orgId: number,
+  specialty?: string,
+): Promise<RotationNextResponse> {
+  const p = await previewRotation(db, orgId, { specialty });
+  if (!p) return { mode: "lowest_census", shiftTypes: [], capRelief: false, next: null, order: [] };
+  let next: RotationNextProvider | null = null;
+  if (p.next) {
+    const u = await db.getUser(orgId, p.next.userId);
+    next = {
+      hospitalistId: p.next.id,
+      userId: p.next.userId,
+      displayName: u?.displayName ?? null,
+      specialty: p.next.specialty ?? null,
+      shiftType: p.next.shiftType,
+      census: p.next.currentPatientCount,
+      cap: p.next.patientCap,
+    };
+  }
+  return { mode: p.mode, shiftTypes: p.shiftTypes, capRelief: p.capRelief, next, order: p.order.map((h) => h.id) };
+}
+
 export function registerOnCallRoutes(app: Express) {
+  app.get("/api/rotation/next", requireAuth, requireModule("routing.assignments"), async (req, res) => {
+    const me = currentUser(req);
+    const raw = typeof req.query.specialty === "string" ? req.query.specialty.trim() : "";
+    if (raw.length > 100) return res.status(400).json({ error: "validation_error" });
+    res.json(await buildRotationNext(storage(), me.organizationId, raw || undefined));
+  });
+
   app.get("/api/oncall/board", requireAuth, requireModule("oncall.board"), async (req, res) => {
     const me = currentUser(req);
     res.json(await buildOnCallBoard(storage(), me, sources()));

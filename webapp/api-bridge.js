@@ -198,6 +198,28 @@
       };
     });
   }
+  // GET /api/rotation/next -> store.rotation (the ONLY "Next up" source in a
+  // live session; see store.js nextUp). Kit provider ids are "h" + id.
+  function mapRotation(r) {
+    return {
+      source: "server",
+      mode: r.mode || "lowest_census",
+      shiftTypes: Array.isArray(r.shiftTypes) ? r.shiftTypes : [],
+      capRelief: !!r.capRelief,
+      nextId: r.next ? "h" + r.next.hospitalistId : null,
+      next: r.next || null,
+      order: (r.order || []).map(function (id) { return "h" + id; }),
+    };
+  }
+  // A failed preview never falls back to a local guess in a live session: the
+  // UI says "decided when you send" instead of naming someone. (Only the
+  // offline demo, which has no server at all, keeps the store's local rules.)
+  function rotationFailure(e) {
+    if (localDemoSession && isNetworkError(e)) return null;
+    return { source: e && e.status === 404 && String(e.message) === "module_disabled" ? "disabled" : "unavailable" };
+  }
+  var ROTATION_ROLES = { er_doctor: 1, er_director: 1, director: 1, hospitalist: 1 };
+  var rotationSess = null; // the session whose preview state.rotation holds
   function mapPending(assignments, patientsById, usersById) {
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
@@ -320,6 +342,14 @@
 
   // ---- hydrate live data into the store (best-effort, role-aware) ----------
   function hydrate(role) {
+    // Until the server's preview lands, "Next up" is unknown — never the
+    // store's local guess, nor the previous identity's (another org's) answer
+    // (A.CON-SHO-29). The session object only changes on login / restore.
+    var sessNow = DT.getState().session || null;
+    if (ROTATION_ROLES[role] && !localDemoSession && (!DT.getState().rotation || sessNow !== rotationSess)) {
+      rotationSess = sessNow;
+      DT.set(function (s) { s.rotation = { source: "loading" }; return s; });
+    }
     return Promise.all([
       get("/api/hospitalists").catch(function () { return null; }),
       // directory is readable by every role and carries provider names; /api/users
@@ -374,11 +404,23 @@
       // appearance/theme are individualized per tenant. Load ONCE per context so a
       // later rehydrate can't clobber an in-progress local edit.
       extra.push(!prefsLoaded ? get("/api/org/config").catch(function () { return null; }) : Promise.resolve(null));
+      // Round-robin "Next up" from the routing planner itself (A.CON-SHO-29):
+      // the Director card, the ER Quick hint and the hospitalist chip all read
+      // it, so none of them can name an at-cap or off-shift provider.
+      extra.push(ROTATION_ROLES[role] ? get("/api/rotation/next").then(mapRotation, rotationFailure) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8];
         DT.set(function (s) {
           if (hosps && users) s.providers = mapProviders(hosps, usersById);
+          if (rotation) {
+            s.rotation = rotation;
+            // The org's real rotation mode (the card's "lowest census first" /
+            // "sequential" wording and the hospitalist chip follow it).
+            if (rotation.source === "server") s.settings = Object.assign({}, s.settings, { rotationMode: rotation.mode });
+          } else if (s.rotation && s.rotation.source === "loading") {
+            s.rotation = null; // no answer and no live server (offline demo): local rules
+          }
           // Full registered directory (all roles): drives the ER Consult-services
           // roster + midlevel pool from real people, not hardcoded lists.
           if (directory) s.directory = (directory || []).map(function (d) {
@@ -2390,16 +2432,61 @@
     }
   });
 
-  DT.actions.sendAssignment = function (provider, fields, consults) {
-    var mode = (DT.nextUp() && provider.id === DT.nextUp().id) ? "round_robin" : "manual";
+  // Specialty-aware preview for the ER intake Quick hint: the server applies
+  // the patient's specialty preference exactly as the real pick will.
+  DT.previewRotation = function (specialty) {
+    var q = specialty ? "?specialty=" + encodeURIComponent(String(specialty).slice(0, 100)) : "";
+    return api("GET", "/api/rotation/next" + q).then(function (r) {
+      var m = mapRotation(r);
+      var p = m.nextId ? (DT.getState().providers || []).find(function (x) { return x.id === m.nextId; }) : null;
+      // A provider the roster hasn't hydrated yet still gets a truthful label.
+      if (m.next && !p) p = { id: m.nextId, name: m.next.displayName || "Provider", census: m.next.census, cap: m.next.cap, specialty: m.next.specialty };
+      return { source: "server", next: p || null, capRelief: m.capRelief, specialty: specialty || "" };
+    }, function (e) {
+      if (localDemoSession && isNetworkError(e)) return { source: "local", next: DT.nextUp(), capRelief: DT.rotationStatus().capRelief, specialty: specialty || "" };
+      return { source: rotationFailure(e).source, next: null, capRelief: false, specialty: specialty || "" };
+    });
+  };
+
+  // routeMode is the ER intake tab: "quick" → round_robin (the SERVER picks;
+  // no hospitalistId is sent), "manual" → that provider. It is never inferred
+  // from whether the chosen provider happens to match a local guess, and the
+  // confirmation names whoever the server actually assigned (A.CON-SHO-29).
+  // A programmatic call without a tab that names a provider means "send to
+  // this provider" (manual); with no provider it is round-robin.
+  DT.actions.sendAssignment = function (provider, fields, consults, routeMode) {
+    var mode = routeMode === "quick" ? "round_robin"
+      : routeMode === "manual" ? "manual"
+      : (provider ? "manual" : "round_robin");
+    if (mode === "manual" && !provider) return;
     var sentId = "s" + Date.now();
     var admId = "ad-" + sentId;
+    var routingLabel = mode === "manual" ? provider.name : "Round-robin (routing…)";
+    function nameForHospitalist(hid) {
+      var p = (DT.getState().providers || []).find(function (x) { return x.id === "h" + hid; });
+      return p ? p.name : null;
+    }
+    function settle(name, toast) {
+      DT.set(function (s) {
+        s.sent = (s.sent || []).map(function (x) { return x.id === sentId ? Object.assign({}, x, { provider: name }) : x; });
+        s.admissions = (s.admissions || []).map(function (x) { return x.id === admId ? Object.assign({}, x, { provider: name }) : x; });
+        s.__toast = toast;
+        return s;
+      });
+    }
+    var body = { mode: mode };
+    if (mode === "manual") body.hospitalistId = bid(provider.id);
     api("POST", "/api/patients", {
       initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty,
       acuity: fields.acuity || undefined,
     }).then(function (p) {
-      return api("POST", "/api/assignments", { patientId: p.id, mode: mode, hospitalistId: bid(provider.id) });
-    }).then(rehydrate).catch(function (e) {
+      body.patientId = p.id;
+      return api("POST", "/api/assignments", body);
+    }).then(function (a) {
+      var who = (a && nameForHospitalist(a.hospitalistId)) || (mode === "manual" ? provider.name : "the next eligible hospitalist");
+      settle(who, { tone: "sent", title: "Assignment sent to " + who, msg: "Notified by push, SMS fallback." });
+      return rehydrate();
+    }).catch(function (e) {
       // Network failure in the LOCAL offline demo → keep the optimistic row. In
       // a real session a network failure means the admission never reached the
       // server and nobody was notified, and a server REJECTION (e.g. this tab is
@@ -2407,7 +2494,12 @@
       // cookie) must not look like success either: undo the optimistic row and
       // say what happened.
       var offline = isNetworkError(e);
-      if (offline && localDemoSession) return;
+      if (offline && localDemoSession) {
+        var local = mode === "manual" ? provider : DT.nextUp();
+        var nm = local ? local.name : "the next eligible hospitalist";
+        settle(nm, { tone: "sent", title: "Assignment sent to " + nm, msg: "Offline demo — nothing reached a server." });
+        return;
+      }
       var why = String((e && e.message) || "");
       DT.set(function (s) {
         s.sent = (s.sent || []).filter(function (x) { return x.id !== sentId; });
@@ -2420,11 +2512,14 @@
         return s;
       });
     });
+    // Optimistic row while the server decides. A round-robin row does not name
+    // anyone yet — the server's pick replaces "routing…" when it answers.
     DT.set(function (s) {
-      s.sent = [{ id: sentId, initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
+      s.sent = [{ id: sentId, initials: fields.initials, provider: routingLabel, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
       // append to the admissions log (every admission given to a team)
-      s.admissions = [{ id: admId, at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
-      s.__toast = { tone: "sent", title: "Assignment sent to " + provider.name, msg: "Notified by push, SMS fallback." };
+      s.admissions = [{ id: admId, at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: routingLabel, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
+      s.__toast = { tone: "sent", title: mode === "manual" ? "Sending assignment to " + provider.name + "…" : "Sending assignment…",
+        msg: mode === "manual" ? "Waiting for the server to confirm." : "Round-robin is choosing the next eligible hospitalist." };
       return s;
     });
   };

@@ -206,5 +206,8 @@ design/               # full design-system handoff + UI kits the client is built
 - `rotation.selectNext` never returns a provider from another org, never one at/over cap unless cap
   relief raised the cap of every working provider in the round-robin shift set (relief never touches
   off-shift providers, and a lone provider is re-offered a rerouted patient without any relief), and
-  prefers the lowest census. `previewNext` ("Next up") applies the same eligibility.
+  prefers the lowest census. `previewNext` ("Next up") applies the same eligibility, and the web
+  client's "Next up" surfaces (Director card, ER Quick hint, hospitalist position chip) read it from
+  `GET /api/rotation/next` instead of guessing locally; the ER Quick tab sends `round_robin` without a
+  `hospitalistId` and its confirmation names the provider the server actually assigned.
 - Messaging never delivers a message to a non-participant.

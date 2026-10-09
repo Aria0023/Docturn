@@ -27,7 +27,7 @@ export interface SelectOptions {
  *   if none and someone was excluded → re-offer them (a single-provider org
  *              must still route) — WITHOUT touching anybody's cap.
  *   if still none → cap relief: raise every provider's cap IN THE ROUTABLE POOL
- *              by 1 (audited), recompute.
+ *              by 1 (audited), recompute with the same three steps.
  *   sort by (census ASC, rotationOrder ASC); pick[0]; advance rotation_index.
  *
  * `sequential` mode cycles by rotation_index instead of census.
@@ -45,30 +45,14 @@ export async function selectNext(
   const org = await storage.getOrganization(orgId);
   if (!org) return null;
 
-  let pool = await routablePool(storage, org);
-  let eligible = eligibleFrom(pool, opts, true);
+  const pool = await routablePool(storage, org);
+  const plan = planSelection(pool, opts);
+  let eligible = plan.eligible;
 
-  // Specialty is a PREFERENCE, not a hard gate: hospitalists are generalists, so
-  // if no provider of the requested specialty is free, fall back to the full
-  // working pool rather than failing to route. (A dedicated-specialty group can
-  // still be honored when such providers exist and have capacity.)
-  const general = { ...opts, specialty: undefined };
-  if (eligible.length === 0 && opts.specialty) {
-    eligible = eligibleFrom(pool, general, true);
-  }
-
-  // Re-offer BEFORE relief: when the only reason nobody is eligible is that we
-  // excluded the previous provider, offer the patient to them again. Raising
-  // caps here would inflate a lone provider's cap on every decline and expiry.
-  if (eligible.length === 0 && opts.excludeHospitalistId) {
-    eligible = eligibleFrom(pool, general, false);
-  }
-
-  if (eligible.length === 0) {
+  if (plan.relief) {
     // Cap relief: nobody in the routable pool has capacity. Let the queue
     // drain by raising the cap of every ROUTABLE provider (never a swing /
     // off-shift / non-working one, who could not be picked by this same pass).
-    if (pool.length === 0) return null;
     for (const h of pool) {
       await storage.updateHospitalist(orgId, h.id, {
         patientCap: h.patientCap + 1,
@@ -87,17 +71,13 @@ export async function selectNext(
       },
       riskLevel: "medium",
     });
-    pool = await routablePool(storage, org);
-    // Prefer an alternative to the just-declined provider; fall back to them.
-    eligible = eligibleFrom(pool, general, true);
-    if (eligible.length === 0 && opts.excludeHospitalistId) {
-      eligible = eligibleFrom(pool, general, false);
-    }
+    // Recompute on the relieved pool with the SAME rule the preview simulated.
+    eligible = eligibleWithoutRelief(await routablePool(storage, org), opts);
   }
 
   if (eligible.length === 0) return null;
 
-  const pick = pickFrom(eligible, org);
+  const pick = rankEligible(eligible, org)[0]!;
 
   // Advance the cursor so rotation stays fair over time.
   await storage.updateOrganization(orgId, {
@@ -107,40 +87,63 @@ export async function selectNext(
   return pick;
 }
 
+/** What the next round-robin pick looks like, computed without side effects. */
+export interface RotationPreview {
+  mode: Organization["rotationMode"];
+  /** org.roundRobinShiftTypes — the only shifts rotation ever draws from. */
+  shiftTypes: string[];
+  /**
+   * True when nobody routable has capacity, so the next round-robin admission
+   * will first raise every routable cap by 1 (audited) and then pick `next`.
+   */
+  capRelief: boolean;
+  /** Who the next round-robin patient goes to; null → the create answers no_provider. */
+  next: Hospitalist | null;
+  /** The eligible set in pick order (next first). Never contains an off-shift or at-cap provider. */
+  order: Hospitalist[];
+}
+
 /**
- * Read-only preview of who is "up next" by rotation, WITHOUT any side effects
- * (no cursor advance, no cap relief, no writes). Used by non-mutating surfaces
- * like the on-call message-addressing picker and the on-call board's "Next up"
- * row, which only need to know who currently holds the rotation without
- * disturbing the live routing state.
- *
- * It applies the SAME eligibility as selectNext (routable shift AND census <
- * cap) so it never names a provider the next round-robin patient would not go
- * to. When everybody routable is at cap it previews what selectNext's cap
- * relief would yield (census < cap + 1); when nobody is routable it returns
- * null, exactly like selectNext (which answers no_provider — never an
- * off-shift provider). The only thing it cannot know is the patient's
- * specialty preference, which has no patient context here.
+ * Read-only preview of the next round-robin pick, WITHOUT any side effects
+ * (no cursor advance, no cap relief, no writes). Built from the very planner
+ * selectNext uses (`planSelection` + `rankEligible`), so the preview and the
+ * live pick cannot disagree: same routable pool (working AND shift ∈
+ * org.roundRobinShiftTypes), same census < cap test, same specialty
+ * preference when one is given, same simulated cap relief when everybody
+ * routable is at cap, same ordering (and the same modulus in sequential
+ * mode). Nobody routable → next: null, exactly like selectNext.
  *
  * Org-scoped through `storage`, so it can never surface a provider from another
  * tenant.
+ */
+export async function previewRotation(
+  storage: IStorage,
+  orgId: number,
+  opts: Pick<SelectOptions, "specialty"> = {},
+): Promise<RotationPreview | null> {
+  const org = await storage.getOrganization(orgId);
+  if (!org) return null;
+  const pool = await routablePool(storage, org);
+  const plan = planSelection(pool, { specialty: opts.specialty });
+  const order = rankEligible(plan.eligible, org);
+  return {
+    mode: org.rotationMode,
+    shiftTypes: routableShiftTypes(org),
+    capRelief: plan.relief,
+    next: order[0] ?? null,
+    order,
+  };
+}
+
+/**
+ * Who is "up next" with no patient context — the on-call board's "Next up"
+ * row and the messaging "Next hospitalist" target. See previewRotation.
  */
 export async function previewNext(
   storage: IStorage,
   orgId: number,
 ): Promise<Hospitalist | null> {
-  const org = await storage.getOrganization(orgId);
-  if (!org) return null;
-  const pool = await routablePool(storage, org);
-  if (pool.length === 0) return null;
-
-  let eligible = eligibleFrom(pool, {}, false);
-  if (eligible.length === 0) {
-    // What a cap-relief pass (+1 on every routable cap) would make eligible.
-    eligible = pool.filter((h) => h.currentPatientCount < h.patientCap + 1);
-  }
-  if (eligible.length === 0) return null;
-  return pickFrom(eligible, org);
+  return (await previewRotation(storage, orgId))?.next ?? null;
 }
 
 /** The shift types rotation draws from for this org. */
@@ -176,20 +179,62 @@ function eligibleFrom(
   });
 }
 
-/** The ordering rule, identical for the live pick and the preview. */
-function pickFrom(eligible: Hospitalist[], org: Organization): Hospitalist {
+/**
+ * Eligibility without cap relief, in selectNext's order of fallbacks:
+ *   1. census < cap, specialty preference, minus the excluded provider;
+ *   2. no candidate and a specialty was asked → drop the specialty preference;
+ *   3. still none and someone was excluded → re-offer them (a single-provider
+ *      org must still route) — BEFORE any cap relief.
+ */
+function eligibleWithoutRelief(pool: Hospitalist[], opts: SelectOptions): Hospitalist[] {
+  let eligible = eligibleFrom(pool, opts, true);
+  // Specialty is a PREFERENCE, not a hard gate: hospitalists are generalists, so
+  // if no provider of the requested specialty is free, fall back to the full
+  // routable pool rather than failing to route.
+  const general = { ...opts, specialty: undefined };
+  if (eligible.length === 0 && opts.specialty) {
+    eligible = eligibleFrom(pool, general, true);
+  }
+  // Re-offer BEFORE relief: when the only reason nobody is eligible is that we
+  // excluded the previous provider, offer the patient to them again. Raising
+  // caps here would inflate a lone provider's cap on every decline and expiry.
+  if (eligible.length === 0 && opts.excludeHospitalistId) {
+    eligible = eligibleFrom(pool, general, false);
+  }
+  return eligible;
+}
+
+/**
+ * The whole selection plan, pure: who is eligible, and whether getting there
+ * needs cap relief (+1 on every ROUTABLE cap). When relief is needed the
+ * eligible set is what the same rules yield on the relieved pool — which is
+ * exactly what selectNext recomputes after writing the caps.
+ */
+function planSelection(
+  pool: Hospitalist[],
+  opts: SelectOptions,
+): { eligible: Hospitalist[]; relief: boolean } {
+  const eligible = eligibleWithoutRelief(pool, opts);
+  if (eligible.length > 0 || pool.length === 0) return { eligible, relief: false };
+  const relieved = pool.map((h) => ({ ...h, patientCap: h.patientCap + 1 }));
+  return { eligible: eligibleWithoutRelief(relieved, opts), relief: true };
+}
+
+/** The ordering rule, identical for the live pick and the preview (pick = [0]). */
+function rankEligible(eligible: Hospitalist[], org: Organization): Hospitalist[] {
   if (org.rotationMode === "sequential") {
     // Cycle deterministically through the eligible set by the persisted cursor.
     const ordered = [...eligible].sort(
       (a, b) => a.rotationOrder - b.rotationOrder || a.id - b.id,
     );
-    return ordered[org.rotationIndex % ordered.length]!;
+    if (ordered.length === 0) return ordered;
+    const start = org.rotationIndex % ordered.length;
+    return [...ordered.slice(start), ...ordered.slice(0, start)];
   }
-  const ordered = [...eligible].sort(
+  return [...eligible].sort(
     (a, b) =>
       a.currentPatientCount - b.currentPatientCount ||
       a.rotationOrder - b.rotationOrder ||
       a.id - b.id,
   );
-  return ordered[0]!;
 }

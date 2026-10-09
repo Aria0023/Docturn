@@ -61,11 +61,14 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const allOn = providers.length > 0 && working.length === providers.length;
   const allOff = working.length === 0;
 
-  // Who's actually next: lowest census in rotation (or first in order if sequential).
-  const rotMode = (settings && settings.rotationMode) || "lowest_census";
-  const nextProvider = rotMode === "lowest_census"
-    ? rotation.reduce((b, p) => (!b || p.census < b.census ? p : b), null)
-    : (rotation[0] || null);
+  // Who's actually next: the routing planner's answer (GET /api/rotation/next
+  // via DT.nextUp) — round-robin shift, census below cap, cap relief and the
+  // sequential cursor applied — never "lowest census among everyone working",
+  // which named at-cap and swing-shift providers (A.CON-SHO-29).
+  const DTx = (typeof window !== "undefined" && window.DT) || null;
+  const rrStatus = (DTx && DTx.rotationStatus) ? DTx.rotationStatus() : { source: "local", capRelief: false, mode: (settings && settings.rotationMode) || "lowest_census" };
+  const rotMode = rrStatus.mode || (settings && settings.rotationMode) || "lowest_census";
+  const nextProvider = DTx && DTx.nextUp ? DTx.nextUp() : null;
   // Rotation position per provider (1-based), so each row shows its place in line.
   const rotIndex = {};
   rotation.forEach((p, i) => { rotIndex[p.id] = i + 1; });
@@ -173,16 +176,26 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     </Card>
   );
 
-  const nextUpNode = nextProvider && (
-    /* Next up — who receives the next admission (lowest census / first in order) */
+  // When the server says nobody can take a round-robin patient (or routing is
+  // off / the preview failed), the card says so instead of disappearing or
+  // guessing a name.
+  const noNextMsg = rrStatus.source === "disabled" ? "Admission routing is switched off for this organization."
+    : rrStatus.source === "unavailable" ? "Couldn't load who's next — the server picks when an admission is sent."
+    : rrStatus.source === "loading" ? "Checking who's next…"
+    : providers.length ? "Nobody on a round-robin shift has room under their cap — the next round-robin admission can't be routed."
+    : null;
+  const nextUpNode = (nextProvider || noNextMsg) && (
+    /* Next up — who receives the next round-robin admission (server's pick) */
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)" }}>
-      <Avatar initials={nextProvider.avatar} size={40} tint="emerald" />
+      {nextProvider ? <Avatar initials={nextProvider.avatar} size={40} tint="emerald" /> : <Icon name="user-x" size={22} color="var(--muted-foreground)" />}
       <div style={{ minWidth: 0, flex: "1 1 180px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           <Badge status="sent">Next up</Badge>
-          <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider.name}</span>
+          <span style={{ fontSize: 14.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nextProvider ? nextProvider.name : (rrStatus.source === "loading" ? "…" : "No eligible hospitalist")}</span>
         </div>
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap} · {rotMode === "lowest_census" ? "lowest census first" : "sequential"}</div>
+        {nextProvider
+          ? <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{nextProvider.specialty || "Hospital Medicine"} · census {nextProvider.census}/{nextProvider.cap} · {rotMode === "lowest_census" ? "lowest census first" : "sequential"}{rrStatus.capRelief ? " · everyone eligible is at cap: the next round-robin admission raises each round-robin cap by 1" : ""}</div>
+          : <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>{noNextMsg}</div>}
       </div>
       {/* "Reset rotation" only means something in SEQUENTIAL mode (it zeroes the
           rotation index). In lowest-census mode next-up is driven purely by

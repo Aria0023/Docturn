@@ -290,6 +290,7 @@
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
       ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
       me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
+      rotation: null, // server "Next up" (GET /api/rotation/next); see nextUp()
 
       providers: [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -629,10 +630,61 @@
   function rotationList() {
     return state.providers.filter(function (p) { return p.working && p.inRotation; });
   }
+  // ---- round-robin "Next up" (A.CON-SHO-29) ------------------------------
+  // In a live session the ONLY source is the server's routing planner
+  // (GET /api/rotation/next, written to state.rotation by api-bridge.js): it
+  // applies the routable shift set (org.roundRobinShiftTypes), census < cap,
+  // simulated cap relief and the sequential cursor — exactly what the next
+  // round-robin admission will do. The local rules below run only when no
+  // server has ever answered (the offline demo); they apply the same
+  // eligibility so even the demo never names an at-cap / off-shift provider.
+  // state.rotation:
+  //   null                                   no server answer (offline demo)
+  //   { source: "server", nextId, order, capRelief, mode, shiftTypes }
+  //   { source: "loading" }                  live session, preview not back yet
+  //   { source: "unavailable" | "disabled" } live session, server gave no answer
+  var DEFAULT_RR_SHIFTS = ["day", "night"];
+  function localRotationQueue() {
+    var shifts = DEFAULT_RR_SHIFTS;
+    var pool = rotationList().filter(function (p) { return shifts.indexOf(p.shift) >= 0; });
+    var elig = pool.filter(function (p) { return p.census < p.cap; });
+    // Cap relief: nobody routable has capacity → every routable cap goes +1.
+    if (!elig.length) elig = pool.filter(function (p) { return p.census < p.cap + 1; });
+    var mode = (state.settings && state.settings.rotationMode) || "lowest_census";
+    if (mode === "sequential") return elig.slice();
+    return elig.slice().sort(function (a, b) { return a.census - b.census; });
+  }
+  function byKitId(id) { return state.providers.find(function (p) { return p.id === id; }) || null; }
+  /** Eligible providers in pick order (next first). Empty when nobody can take the next patient. */
+  function rotationQueue() {
+    var r = state.rotation;
+    if (!r) return localRotationQueue();
+    if (r.source !== "server") return [];
+    return (r.order || []).map(byKitId).filter(Boolean);
+  }
+  /** The provider the next round-robin admission goes to, or null (nobody / unknown). */
   function nextUp() {
-    var r = rotationList();
-    if (!r.length) return null;
-    return r.slice().sort(function (a, b) { return a.census - b.census; })[0];
+    var r = state.rotation;
+    if (!r) return localRotationQueue()[0] || null;
+    if (r.source !== "server" || !r.nextId) return null;
+    return byKitId(r.nextId);
+  }
+  /** What the UI may say about rotation: whose word it is, cap relief, mode. */
+  function rotationStatus() {
+    var r = state.rotation;
+    if (!r) {
+      var q = localRotationQueue();
+      var anyFree = q.some(function (p) { return p.census < p.cap; });
+      return { source: "local", capRelief: q.length > 0 && !anyFree, mode: (state.settings && state.settings.rotationMode) || "lowest_census" };
+    }
+    return { source: r.source, capRelief: !!r.capRelief, mode: r.mode || (state.settings && state.settings.rotationMode) || "lowest_census", shiftTypes: r.shiftTypes || null };
+  }
+  // Specialty-aware preview for the ER intake: the server applies the
+  // patient's specialty preference exactly like the real pick. api-bridge.js
+  // replaces this in a live session; offline it is the local queue's head.
+  function previewRotation(specialty) {
+    var nx = nextUp();
+    return Promise.resolve({ source: state.rotation ? state.rotation.source : "local", next: nx, capRelief: rotationStatus().capRelief, specialty: specialty || "" });
   }
   function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (c.unread || 0); }, 0); }
   function unreadNotifs() { return state.notifications.filter(function (n) { return !n.read; }).length; }
@@ -807,6 +859,7 @@
         var fresh = seed();
         s.session = null; s.impersonating = null; s.ui.notifOpen = false;
         PERSONAL_SLICES.forEach(function (k) { s[k] = fresh[k]; });
+        s.rotation = null; // the next sign-in asks its own org's server
         return clearPhiSlices(s);
       });
       // Last word: whatever the set above scheduled is cancelled and the key
@@ -851,14 +904,22 @@
     },
 
     /* ER */
-    sendAssignment: function (provider, fields, consults) {
+    // routeMode: "quick" (round-robin) | "manual" — the ER intake tab, never
+    // inferred from who the provider happens to be (A.CON-SHO-29).
+    sendAssignment: function (provider, fields, consults, routeMode) {
+      var manualPick = routeMode === "manual" || (routeMode !== "quick" && !!provider);
+      if (!manualPick) provider = nextUp();
+      if (!provider) {
+        set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't send assignment", msg: "No eligible hospitalist is on shift to receive this." }; return s; });
+        return;
+      }
       set(function (s) {
         var acuity = fields.acuity || 3;
         var entry = { id: uid("s"), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: acuity, time: "Today · " + clockLabel(), day: "Today", status: "sent" };
         s.sent = [entry].concat(s.sent);
         // create a board row (routing) + a pending request for the receiving hospitalist view
         s.board = [{ id: uid("b"), initials: fields.initials, room: fields.room || "—", dept: "MED", issue: fields.complaint || "—", acuity: acuity, status: "pending", attending: { name: "", avatar: "" }, unit: [], consultants: consults || [], er: { name: s.me.name, avatar: "Er" } }].concat(s.board);
-        var via = provider.id === (nextUp() || {}).id ? "Round-robin" : "Manual";
+        var via = manualPick ? "Manual" : "Round-robin";
         s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, expiresAt: now() + s.settings.timeout * 60000 }]);
         // append to the admissions log (every admission given to a team)
         s.admissions = [{ id: uid("ad"), at: now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, status: "sent" }].concat(s.admissions || []);
@@ -1537,7 +1598,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

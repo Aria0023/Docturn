@@ -107,6 +107,8 @@ export const GATE_TABLE: readonly GateRule[] = [
   { path: /^\/api\/consults(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/patients\/[^/]+\/consults(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/messaging\/on-call-targets(\/|$)/, module: "routing.roleMessaging" },
+  // Rotation "Next up" preview (server/routes/oncall.ts) — part of admission routing.
+  { path: /^\/api\/rotation(\/|$)/, module: "routing.assignments" },
   // Messaging
   { path: /^\/api\/messaging\/patient-thread(\/|$)/, module: "messaging.patientThreads" },
   { path: /^\/api\/messaging\/attachments(\/|$)/, module: "messaging.attachments" },

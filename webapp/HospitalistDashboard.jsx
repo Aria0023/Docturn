@@ -43,13 +43,19 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
   const sortedPending = (pending || []).slice().sort((a, b) =>
     ((a.acuity || 3) - (b.acuity || 3)) || ((a.expiresAt || 0) - (b.expiresAt || 0)));
 
-  // Slim round-robin position: where this hospitalist stands among everyone rounding.
-  const rot = (providers || []).filter((p) => p.working && p.inRotation);
-  const ordered = rotationMode === "sequential" ? rot.slice() : rot.slice().sort((a, b) => a.census - b.census);
+  // Slim round-robin position among the providers who can take the next
+  // round-robin patient, in the routing planner's pick order (server
+  // GET /api/rotation/next via DT.rotationQueue): round-robin shift, census
+  // below cap, sequential cursor. "You're next up" is only ever said to the
+  // provider the next patient really goes to (A.CON-SHO-29).
+  const DTx = (typeof window !== "undefined" && window.DT) || null;
+  const ordered = DTx && DTx.rotationQueue
+    ? DTx.rotationQueue()
+    : (providers || []).filter((p) => p.working && p.inRotation && p.census < p.cap).sort((a, b) => (rotationMode === "sequential" ? 0 : a.census - b.census));
   const myPos = ordered.findIndex((p) => meName && p.name === meName);
   const rrLabel = myPos === 0 ? "You're next up"
     : myPos > 0 ? "#" + (myPos + 1) + " of " + ordered.length + " · " + myPos + " ahead of you"
-    : "Not in rotation";
+    : "Not eligible for the next round-robin patient";
 
   // Live-metric catalog the "+ New stat" builder offers on this dashboard.
   const cm = commsMetrics || {};
