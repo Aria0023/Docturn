@@ -7,10 +7,12 @@ import { messageAttachments, messages, orgSettings } from "@shared/schema";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { invalidateModules } from "../server/modules.js";
 import { renderPolicy } from "../server/compliance/policies.js";
+import { MODULES } from "@shared/modules";
 import {
   readRetentionSetting,
   runMessageRetentionSweep,
   RETENTION_MAX_DAYS,
+  RETENTION_MIN_RECOMMENDED_DAYS,
 } from "../server/services/retention.js";
 
 /**
@@ -272,6 +274,96 @@ describe("retention: files, orphans, module switch, setting validation", () => {
     expect(c.status).toBe("warn");
     expect(c.detail).toMatch(/set to 0/);
     expect(c.evidence).toMatchObject({ storedValue: "0", interpretation: "off", enforced: false });
+  });
+
+  it("a window below the 7-day floor is enforced, but the control WARNS (never a plain pass) and the PATCH says so", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const chenId = ctx.seedResult.userIds.chen!;
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const convo = (await er.post("/api/messaging/conversations").send({ type: "direct", participantIds: [chenId] })).body;
+    const msg = (await er.post("/api/messaging/send").send({ conversationId: convo.id, content: "two days old" })).body;
+    await ctx.handle.db.update(messages).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) }).where(eq(messages.id, msg.id));
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    expect(RETENTION_MIN_RECOMMENDED_DAYS).toBe(7);
+
+    for (const days of [1, 3, 6]) {
+      const res = await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: days }).expect(200);
+      // The write is accepted (a valid, deliberate setting) but flagged.
+      expect(res.body.retention).toMatchObject({
+        days, moduleEnabled: true, enforced: true, minimumRecommendedDays: 7, belowRecommendedFloor: true,
+      });
+      const c = await control(director, "msg-retention-policy");
+      expect(c.status, `${days} day(s)`).toBe("warn");
+      expect(c.detail).toMatch(new RegExp(`${days} day\\(s\\)`));
+      expect(c.detail).toMatch(/below the 7-day/);
+      expect(c.evidence).toMatchObject({
+        messageRetentionDays: days, enforced: true, minimumRecommendedDays: 7, belowRecommendedFloor: true,
+      });
+      const s = (await director.get("/api/settings").expect(200)).body.org;
+      expect(s.messageRetentionDays).toBe(days);
+      expect(s.messageRetention).toMatchObject({ days, enforced: true, belowRecommendedFloor: true });
+    }
+    // Warn is about the risk, not a refusal: the 1-day window really purges.
+    await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 1 }).expect(200);
+    expect(await runMessageRetentionSweep()).toBe(1);
+    expect(await ctx.storage.getMessage(orgId, msg.id)).toBeUndefined();
+
+    // At and above the floor it is a plain pass again.
+    for (const days of [7, 30]) {
+      const res = await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: days }).expect(200);
+      expect(res.body.retention).toMatchObject({ days, enforced: true, belowRecommendedFloor: false });
+      const c = await control(director, "msg-retention-policy");
+      expect(c.status, `${days} day(s)`).toBe("pass");
+      expect(c.evidence).toMatchObject({ belowRecommendedFloor: false });
+    }
+  });
+
+  it("with ops.retention OFF the settings API says the window is not enforced and refuses to set a new one", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 90 }).expect(200);
+    let s = (await director.get("/api/settings").expect(200)).body.org;
+    expect(s.messageRetention).toMatchObject({ days: 90, moduleEnabled: true, enforced: true });
+
+    // The operator switches the purge off (the developer console's route).
+    const { agent: dev } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    await dev.patch("/api/dev/modules/" + orgId).send({ id: "ops.retention", enabled: false }).expect(200);
+
+    // GET reports the saved window AND that nothing enforces it.
+    s = (await director.get("/api/settings").expect(200)).body.org;
+    expect(s.messageRetentionDays).toBe(90);
+    expect(s.messageRetention).toMatchObject({ days: 90, moduleEnabled: false, enforced: false });
+
+    // A new window would be a promise nothing keeps: refused like every other
+    // switched-off feature, and nothing is written or audited as an update.
+    const auditBefore = (await ctx.storage.listAuditLogs(orgId, 200)).filter((a) => a.action === "settings.org_update").length;
+    const refused = await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 30 });
+    expect(refused.status).toBe(404);
+    expect(refused.body).toEqual({ error: "module_disabled", module: "ops.retention" });
+    expect(await ctx.storage.getOrgSetting(orgId, "messageRetentionDays")).toBe(90);
+    expect((await ctx.storage.listAuditLogs(orgId, 200)).filter((a) => a.action === "settings.org_update").length).toBe(auditBefore);
+
+    // Clearing the saved window ("Keep everything") claims nothing and stops a
+    // re-enable from purging by surprise — allowed.
+    const cleared = await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 0 }).expect(200);
+    expect(cleared.body.retention).toMatchObject({ days: 0, moduleEnabled: false, enforced: false });
+    expect(await ctx.storage.getOrgSetting(orgId, "messageRetentionDays")).toBe(0);
+    // Other org settings are untouched by the retention switch.
+    await director.patch("/api/settings/org").send({ key: "statSmsFallback", value: false }).expect(200);
+    // Validation still comes first for a malformed value.
+    expect((await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 0.5 })).body.error).toBe("validation_error");
+
+    // Back on: a window can be set again.
+    await dev.patch("/api/dev/modules/" + orgId).send({ id: "ops.retention", enabled: true }).expect(200);
+    const back = await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 30 }).expect(200);
+    expect(back.body.retention).toMatchObject({ days: 30, moduleEnabled: true, enforced: true });
+  });
+
+  it("the ops.retention module blurb says what switching it off does", () => {
+    const def = MODULES.find((m) => m.id === "ops.retention")!;
+    expect(def.blurb).toMatch(/hourly/i);
+    expect(def.blurb).toMatch(/attachment/i);
+    expect(def.blurb).toMatch(/Off:.*kept indefinitely/);
   });
 
   it("the attachment-storage control measures file drift: rows whose ciphertext is gone, and files no row references", async () => {

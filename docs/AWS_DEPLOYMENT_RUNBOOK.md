@@ -394,7 +394,10 @@ once by EBS.
   the `fs-encrypted` store has no size ceiling of its own beyond the disk.
   20 GB is plenty for a pilot; watch `df -h /var/lib/docturn`.
 - The retention purge (module `ops.retention`) deletes the encrypted file when
-  it purges a message, so storage does not grow forever.
+  it purges a message, so storage does not grow forever. For an organization
+  with the module switched off nothing is purged (only never-sent uploads are
+  still cleared after 24 h): its Settings → Organization card says so, and a
+  new retention window is refused (`404 module_disabled`) until it is back on.
 
 ---
 

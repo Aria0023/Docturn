@@ -120,15 +120,7 @@ function OrgSettings() {
             <Icon name="clock" size={18} color="var(--primary)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Message retention</h3>
           </div>
-          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted by an hourly, audited purge. "Keep everything" disables it.</p>
-          <select value={st.orgRetentionDays || 0} onChange={(e) => a.setOrgRetention(Number(e.target.value))}
-            style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
-            <option value={0}>Keep everything</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-            <option value={180}>180 days</option>
-            <option value={365}>1 year</option>
-          </select>
+          <MessageRetentionBody st={st} a={a} />
         </Card>
 
         {/* EHR deep links (Epic Haiku/Canto, Hyperspace, Cerner PowerChart) */}
@@ -296,6 +288,71 @@ function OrgDangerZone({ org, onDeleted }) {
         </div>
       )}
     </Card>
+  );
+}
+
+/* Settings → Organization "Message retention" (A.CON-SHO-23 / A.CON-SHO-37).
+   Says what the hourly purge ACTUALLY does for this org, never just what the
+   dropdown holds:
+   - ops.retention off (the platform operator's switch): nothing is deleted.
+     The card says so; the server refuses a new window (404 module_disabled),
+     so the only choice offered is clearing a saved one ("Keep everything").
+   - A window under the 7-day floor (only settable through the API) is shown
+     as itself — never as "Keep everything" because no option matched — and
+     flagged, as the compliance monitor does.
+   Module state comes from the live module map (re-read every minute and right
+   after a refusal); before it loads, from GET /api/settings' messageRetention. */
+const RETENTION_PRESETS = [0, 30, 90, 180, 365];
+function retentionLabel(d) {
+  if (!d) return "Keep everything";
+  if (d === 365) return "1 year";
+  return d + (d === 1 ? " day" : " days");
+}
+function MessageRetentionBody({ st, a }) {
+  const info = st.orgRetention || null;
+  const days = st.orgRetentionDays || 0;
+  const moduleOn = st.modules ? st.modules["ops.retention"] !== false : !(info && info.moduleEnabled === false);
+  const floor = (info && info.minimumRecommendedDays) || 7;
+  const selectStyle = { height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer", maxWidth: "100%" };
+  const note = { fontSize: 12, lineHeight: 1.45, margin: "10px 0 0", display: "flex", gap: 7, alignItems: "flex-start" };
+
+  if (!moduleOn) {
+    return (
+      <div data-retention-state="off">
+        <div role="status" style={{ fontSize: 12.5, lineHeight: 1.45, color: "var(--status-pending-fg, var(--foreground))", background: "var(--status-pending-bg)", border: "1px solid var(--status-pending)", borderRadius: "var(--radius-md)", padding: "9px 11px", margin: "0 0 10px", display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <span style={{ flex: "none", marginTop: 1 }}><Icon name="info" size={15} /></span>
+          <span>
+            <b>The retention purge is switched off</b> for this organization by the platform operator. Nothing is deleted — messages are kept indefinitely.
+            {days > 0 ? " A " + (days === 365 ? "1-year" : days + "-day") + " window is saved but NOT enforced; it would take effect if the purge were switched back on. Choose “Keep everything” to clear it." : " A retention window can be set once the purge is switched on."}
+          </span>
+        </div>
+        <select aria-label="Message retention" value={days} disabled={!days}
+          onChange={(e) => a.setOrgRetention(Number(e.target.value))}
+          style={Object.assign({}, selectStyle, days ? null : { cursor: "not-allowed", opacity: 0.7 })}>
+          {days > 0 && <option value={days}>{retentionLabel(days)} — saved, not enforced</option>}
+          <option value={0}>Keep everything</option>
+        </select>
+      </div>
+    );
+  }
+
+  const options = RETENTION_PRESETS.indexOf(days) >= 0 ? RETENTION_PRESETS : RETENTION_PRESETS.concat([days]).sort((x, y) => x - y);
+  const belowFloor = days > 0 && days < floor;
+  return (
+    <div data-retention-state="on">
+      <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 10px" }}>Messages older than this are permanently deleted, with their attachments, by an hourly, audited purge. "Keep everything" disables it.</p>
+      <select aria-label="Message retention" value={days} onChange={(e) => a.setOrgRetention(Number(e.target.value))} style={selectStyle}>
+        {options.map((d) => (
+          <option key={d} value={d}>{retentionLabel(d)}{RETENTION_PRESETS.indexOf(d) < 0 ? " (set through the API)" : ""}</option>
+        ))}
+      </select>
+      {belowFloor && (
+        <p role="status" style={Object.assign({}, note, { color: "var(--status-rejected-fg, var(--destructive))" })}>
+          <span style={{ flex: "none", marginTop: 1 }}><Icon name="alert-triangle" size={14} /></span>
+          <span>{retentionLabel(days)} is below the {floor}-day minimum: messages are permanently deleted before an incident review or legal hold can reach them. The compliance monitor flags this.</span>
+        </p>
+      )}
+    </div>
   );
 }
 

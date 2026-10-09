@@ -12,7 +12,9 @@ import { attachmentStoreConfig } from "./attachment-store.js";
  * attachment files) and the purge is audited with counts — the compliance
  * behavior buyers ask for, and the only honest basis for any "auto-deletes"
  * claim in the UI. Unset / 0 = retain indefinitely (default: never
- * surprise-delete data).
+ * surprise-delete data). With ops.retention off nothing is purged, and the
+ * settings route refuses to set a NEW window (404 module_disabled) — a window
+ * the director saves must be one the sweep applies; clearing it (0) is allowed.
  *
  * The same hourly sweep also removes ORPHAN uploads: attachments that were
  * uploaded but never linked to a message within ORPHAN_ATTACHMENT_MAX_AGE_MS.
@@ -24,6 +26,15 @@ import { attachmentStoreConfig } from "./attachment-store.js";
 
 /** Upper bound for a retention window (10 years); larger values are invalid. */
 export const RETENTION_MAX_DAYS = 3650;
+/**
+ * The sane floor. A window of 1..6 days is a valid, deliberate setting and the
+ * sweep honours it, but it hard-deletes clinical messages before an incident
+ * review, a complaint or a legal hold can reach them — so the
+ * msg-retention-policy control WARNS (never a plain pass) and the settings API
+ * flags it. The web UI offers 30 days and up; shorter windows only arrive
+ * through the API.
+ */
+export const RETENTION_MIN_RECOMMENDED_DAYS = 7;
 /** Never-linked uploads older than this are removed by the sweep. */
 export const ORPHAN_ATTACHMENT_MAX_AGE_MS = 24 * 3600_000;
 
@@ -49,12 +60,6 @@ export function readRetentionSetting(raw: unknown): RetentionSetting {
         : NaN;
   if (!Number.isInteger(n) || n < 0 || n > RETENTION_MAX_DAYS) return { kind: "invalid" };
   return n === 0 ? { kind: "off" } : { kind: "days", days: n };
-}
-
-/** The retention window the API reports: days, or 0 when off/unset/invalid. */
-export function effectiveRetentionDays(raw: unknown): number {
-  const s = readRetentionSetting(raw);
-  return s.kind === "days" ? s.days : 0;
 }
 
 /**
@@ -94,6 +99,33 @@ export async function getRetentionStatus(orgId: number): Promise<RetentionStatus
   const setting = readRetentionSetting(raw);
   const moduleEnabled = await isModuleEnabled(orgId, "ops.retention");
   return { raw, setting, moduleEnabled, enforced: setting.kind === "days" && moduleEnabled };
+}
+
+/** What the settings API reports about retention (GET /api/settings, PATCH answer). */
+export interface RetentionSummary {
+  /** The window the sweep reads: whole days, 0 when off / unset / invalid. */
+  days: number;
+  /** The ops.retention module switch for this org. */
+  moduleEnabled: boolean;
+  /** True only when the hourly sweep will actually purge. */
+  enforced: boolean;
+  /** True when the stored value is one the sweep refuses (it skips the org). */
+  invalid: boolean;
+  minimumRecommendedDays: number;
+  /** A window under the floor (1..6 days): enforced, but the control warns. */
+  belowRecommendedFloor: boolean;
+}
+
+export function summarizeRetention(status: RetentionStatus): RetentionSummary {
+  const days = status.setting.kind === "days" ? status.setting.days : 0;
+  return {
+    days,
+    moduleEnabled: status.moduleEnabled,
+    enforced: status.enforced,
+    invalid: status.setting.kind === "invalid",
+    minimumRecommendedDays: RETENTION_MIN_RECOMMENDED_DAYS,
+    belowRecommendedFloor: days > 0 && days < RETENTION_MIN_RECOMMENDED_DAYS,
+  };
 }
 
 /** A ciphertext file younger than this may be an upload whose row is not inserted yet. */

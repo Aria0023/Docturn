@@ -128,6 +128,10 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Only the /api/resources* surface: beds/equipment/departments are legacy
   // routes still exercised by existing flows, and ops.resources defaults OFF.
   { path: /^\/api\/resources(\/|$)/, module: "ops.resources" },
+  // ops.retention is also enforced in two places this table cannot express:
+  // the hourly sweep (services/retention.ts) skips the org, and PATCH
+  // /api/settings/org refuses a NEW messageRetentionDays window (after that
+  // route validates the value; clearing it to 0 stays allowed).
   { path: /^\/api\/maintenance\/purge$/, module: "ops.retention" },
   // Platform — theming is written through PATCH /api/org/preferences { theme }.
   { path: /^\/api\/org\/preferences$/, module: "platform.appearance", methods: ["PATCH"], when: bodyHasTheme },

@@ -39,6 +39,7 @@ import {
   getRetentionStatus,
   measureAttachmentFileDrift,
   RETENTION_MAX_DAYS,
+  RETENTION_MIN_RECOMMENDED_DAYS,
   storedValueForEvidence,
   UNREFERENCED_FILE_GRACE_MS,
 } from "../services/retention.js";
@@ -520,6 +521,8 @@ const checks: Record<string, CheckFn> = {
       messageRetentionDays: r.setting.kind === "days" ? r.setting.days : null,
       moduleEnabled: r.moduleEnabled,
       enforced: r.enforced,
+      minimumRecommendedDays: RETENTION_MIN_RECOMMENDED_DAYS,
+      belowRecommendedFloor: r.setting.kind === "days" && r.setting.days < RETENTION_MIN_RECOMMENDED_DAYS,
       validRange: `whole days 1..${RETENTION_MAX_DAYS}, or 0 for indefinite`,
       enforcedBy: "server/services/retention.ts (hourly sweep)",
       scope: "caller's organization only — this endpoint never reads another tenant's settings",
@@ -545,6 +548,16 @@ const checks: Record<string, CheckFn> = {
       return {
         status: "warn",
         detail: `A ${r.setting.days}-day message retention window is configured, but the ops.retention module is OFF for this organization, so the hourly sweep does not enforce it and clinical messages are being retained indefinitely.`,
+        evidence,
+      };
+    }
+    if (r.setting.days < RETENTION_MIN_RECOMMENDED_DAYS) {
+      // Enforced, and a legal setting — but a hard-delete window this short
+      // destroys clinical messages before an incident review, complaint or
+      // legal hold can reach them. Never a plain green.
+      return {
+        status: "warn",
+        detail: `This organization purges clinical messages older than ${r.setting.days} day(s), with their attachment rows and encrypted attachment files — below the ${RETENTION_MIN_RECOMMENDED_DAYS}-day minimum this control expects. Messages are permanently deleted before an incident review, a complaint or a legal hold can reach them. Keep this only as a documented decision; otherwise choose a longer window in Settings → Organization.`,
         evidence,
       };
     }

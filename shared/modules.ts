@@ -61,7 +61,7 @@ export const MODULES: readonly ModuleDef[] = [
   // ---- Operations
   { id: "ops.analytics",          label: "Director analytics",             group: "Operations", default: true, blurb: "Response/acceptance latency, volumes, KPIs (director roles only)." },
   { id: "ops.resources",          label: "Beds & resources",               group: "Operations", default: true,  blurb: "Beds/equipment/department tracking and /api/resources metrics (legacy surface — switch off to retire it per org)." },
-  { id: "ops.retention",          label: "Message retention purge",        group: "Operations", default: true, blurb: "Per-org retention window with audited purge." },
+  { id: "ops.retention",          label: "Message retention purge",        group: "Operations", default: true, blurb: "Hourly, audited hard-delete of messages (with their attachment files) older than the org's retention window. Off: nothing is purged, messages are kept indefinitely and directors cannot set a new window (never-sent uploads are still cleared after 24 h)." },
 
   // ---- Security
   { id: "security.mfaRequired",   label: "Require MFA for privileged roles", group: "Security", default: false, blurb: "Directors / ER directors / developers must enrol MFA before privileged access." },

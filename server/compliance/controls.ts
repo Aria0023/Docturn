@@ -214,7 +214,7 @@ export const CONTROLS: ControlDef[] = [
     id: "msg-retention-policy",
     title: "Message retention policy configured",
     description:
-      "Reads this organization's messageRetentionDays setting through the same interpretation the hourly purge applies, plus the ops.retention module switch. Passes only when the sweep will actually purge. A stored value the sweep rejects (not a whole number of days 0..3650) fails, because the organization believes a window is applied when none is; a window with ops.retention off warns. Unset or 0 means clinical messages are retained indefinitely — permitted, but it must be a deliberate, documented decision rather than an oversight.",
+      "Reads this organization's messageRetentionDays setting through the same interpretation the hourly purge applies, plus the ops.retention module switch. Passes only when the sweep will actually purge with a window of at least 7 days. A stored value the sweep rejects (not a whole number of days 0..3650) fails, because the organization believes a window is applied when none is; a window with ops.retention off warns; an enforced window under 7 days warns, because it hard-deletes clinical messages before an incident review or legal hold can reach them. Unset or 0 means clinical messages are retained indefinitely — permitted, but it must be a deliberate, documented decision rather than an oversight.",
     category: "Data protection",
     hipaa: ["45 CFR §164.316"],
     soc2: ["CC6.5"],

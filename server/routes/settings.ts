@@ -3,7 +3,12 @@ import { z } from "zod";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { statEscalationTimings } from "../services/escalation.js";
-import { effectiveRetentionDays, RETENTION_MAX_DAYS } from "../services/retention.js";
+import { isModuleEnabled } from "../modules.js";
+import {
+  getRetentionStatus,
+  RETENTION_MAX_DAYS,
+  summarizeRetention,
+} from "../services/retention.js";
 import { storage } from "../storage.js";
 
 /**
@@ -36,11 +41,12 @@ export function registerSettingsRoutes(app: Express) {
     const org = await storage().getOrganization(me.organizationId);
     const autoReassignOnDecline =
       (await storage().getOrgSetting(me.organizationId, "autoReassignOnDecline")) === true;
-    // Same interpretation as the sweep: an invalid stored value is reported as
-    // 0 (not enforced) — never as a window the server is not actually applying.
-    const messageRetentionDays = effectiveRetentionDays(
-      await storage().getOrgSetting(me.organizationId, "messageRetentionDays"),
-    );
+    // Same interpretation as the sweep (getRetentionStatus): an invalid stored
+    // value is reported as 0 — never as a window the server is not applying —
+    // and `messageRetention` says whether the hourly purge actually runs for
+    // this org (the ops.retention switch), so the Settings card can say so.
+    const messageRetention = summarizeRetention(await getRetentionStatus(me.organizationId));
+    const messageRetentionDays = messageRetention.days;
     // STAT SMS fallback defaults ON; the operator/developer can disable it.
     const statSmsFallback =
       (await storage().getOrgSetting(me.organizationId, "statSmsFallback")) !== false;
@@ -57,6 +63,7 @@ export function registerSettingsRoutes(app: Express) {
         rotationMode: org?.rotationMode,
         autoReassignOnDecline,
         messageRetentionDays,
+        messageRetention,
         statSmsFallback,
         // When an unacknowledged STAT is re-alerted / escalated to the covering
         // provider — exactly what the sweep applies (A.CON-MIN-18 countdown).
@@ -90,22 +97,40 @@ export function registerSettingsRoutes(app: Express) {
       if (!schema) return res.status(400).json({ error: "unknown_setting", key: parsed.data.key });
       const value = schema.safeParse(parsed.data.value);
       if (!value.success) return res.status(400).json({ error: "validation_error", key: parsed.data.key });
+      const isRetention = parsed.data.key === "messageRetentionDays";
+      // With the ops.retention module off the hourly sweep purges nothing, so a
+      // new window would be a promise nothing keeps (the card used to toast
+      // "auto-delete after 30 days" and the next sweep kept everything).
+      // Refused exactly like every other switched-off feature. Clearing the
+      // window (0) claims nothing and stops a later re-enable from purging by
+      // surprise, so it stays allowed.
+      if (isRetention && value.data !== 0 && !(await isModuleEnabled(me.organizationId, "ops.retention"))) {
+        return res.status(404).json({ error: "module_disabled", module: "ops.retention" });
+      }
       await storage().setOrgSetting(
         me.organizationId,
         parsed.data.key,
         value.data,
         me.id,
       );
+      // What the sweep will now do — the caller's toast is the server's word.
+      const retention = isRetention
+        ? summarizeRetention(await getRetentionStatus(me.organizationId))
+        : undefined;
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,
         action: "settings.org_update",
         resourceType: "org_settings",
         resourceId: null,
-        details: { key: parsed.data.key },
-        riskLevel: "low",
+        // The retention window decides what gets hard-deleted, so its value
+        // (a setting, never clinical content) is part of the record.
+        details: retention
+          ? { key: parsed.data.key, value: retention.days, enforced: retention.enforced, belowRecommendedFloor: retention.belowRecommendedFloor }
+          : { key: parsed.data.key },
+        riskLevel: retention?.belowRecommendedFloor ? "medium" : "low",
       });
-      res.json({ ok: true });
+      res.json(retention ? { ok: true, retention } : { ok: true });
     },
   );
 

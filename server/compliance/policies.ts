@@ -295,7 +295,9 @@ disclosure risk.
   the window together with their delivery rows, their attachment rows and, for
   attachments in the encrypted file store, the ciphertext files, and audits the
   counts. The same sweep removes uploads never attached to a sent message once
-  they are more than 24 hours old.
+  they are more than 24 hours old. With ops.retention off nothing is purged and
+  a new window cannot be saved; a window shorter than 7 days is enforced, but
+  the msg-retention-policy control warns rather than passes.
 - Audit records are never deleted by application code, which is what makes the
   six-year retention requirement of §164.316(b)(2)(i) achievable at all.
 
@@ -1359,7 +1361,11 @@ mode.
   counts (messages.retention_purged). This is a real delete, not a soft flag.
   A stored value outside that range is never guessed at: the sweep skips the
   organization and records a high-risk retention.invalid_setting audit event,
-  and the msg-retention-policy control reports a failure.
+  and the msg-retention-policy control reports a failure. With ops.retention
+  off nothing is purged, Settings → Organization says so, and a new window
+  cannot be saved (the setting answers module_disabled). A window shorter than
+  7 days is enforced, but the control warns, because it destroys messages
+  before an incident review or a legal hold can reach them.
 - **Patient purge.** The maintenance purge removes patient records and their
   dependent assignments and consults.
 - **Tenant deletion** removes an organization's operational data while

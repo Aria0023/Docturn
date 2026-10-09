@@ -1770,6 +1770,10 @@
       DT.set(function (s) {
         if (r.me) s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null };
         if (r.org && typeof r.org.messageRetentionDays === "number") s.orgRetentionDays = r.org.messageRetentionDays;
+        // The server's word on what the hourly purge does for this org (window,
+        // the ops.retention switch, enforced, below the 7-day floor) — the
+        // Settings retention card shows THIS, not the dropdown's value.
+        if (r.org && r.org.messageRetention && typeof r.org.messageRetention === "object") s.orgRetention = r.org.messageRetention;
         // The STAT sweep's real schedule, for the unacknowledged-STAT
         // countdown (A.CON-MIN-18). Absent → no countdown is shown.
         s.statTimings = r.org && r.org.statRealertMs > 0 && r.org.statEscalateMs > 0
@@ -1905,11 +1909,45 @@
       if (r) DT.set(function (s) { s.opsReport = r; return s; });
     }).catch(function () {});
   }
+  // The toast is the SERVER's word: the PATCH answers with what the hourly
+  // purge will now do (retention: {days, moduleEnabled, enforced,
+  // belowRecommendedFloor, minimumRecommendedDays}). A window is only ever
+  // described as deleting messages when the server says it is enforced; with
+  // ops.retention off the server refuses a new window (404 module_disabled) and
+  // the old value is put back (A.CON-SHO-23 / A.CON-SHO-37).
+  function retentionToast(days, r) {
+    if (!(days > 0)) return { tone: "accepted", title: "Retention updated", msg: "Messages are kept indefinitely." };
+    if (r && r.enforced === false) {
+      return { tone: "rejected", title: "Saved — not enforced", msg: "The message retention purge is switched off for your organization, so nothing is deleted; messages are kept indefinitely." };
+    }
+    var msg = "Messages older than " + days + " day" + (days === 1 ? "" : "s") + " are permanently deleted by the hourly purge.";
+    if (r && r.belowRecommendedFloor) msg += " That is below the " + (r.minimumRecommendedDays || 7) + "-day minimum the compliance monitor expects.";
+    return { tone: "accepted", title: "Retention updated", msg: msg };
+  }
   DT.actions.setOrgRetention = function (days) {
-    DT.set(function (s) { s.orgRetentionDays = days; return s; });
-    return api("PATCH", "/api/settings/org", { key: "messageRetentionDays", value: Number(days) || 0 })
-      .then(function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Retention updated", msg: Number(days) > 0 ? "Messages auto-delete after " + days + " days." : "Messages are kept indefinitely." }; return s; }); })
-      .catch(function () { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: "Couldn't update retention." }; return s; }); });
+    var want = Number(days) || 0;
+    var prev = DT.getState().orgRetentionDays;
+    DT.set(function (s) { s.orgRetentionDays = want; return s; });
+    return api("PATCH", "/api/settings/org", { key: "messageRetentionDays", value: want })
+      .then(function (res) {
+        var r = res && res.retention && typeof res.retention === "object" ? res.retention : null;
+        DT.set(function (s) {
+          if (r) { s.orgRetention = r; s.orgRetentionDays = typeof r.days === "number" ? r.days : want; }
+          s.__toast = retentionToast(want, r);
+          return s;
+        });
+      })
+      .catch(function (e) {
+        var off = moduleRefused(e);
+        DT.set(function (s) {
+          s.orgRetentionDays = prev;
+          s.__toast = { tone: "rejected", title: "Not saved", msg: off
+            ? "The message retention purge is switched off for your organization, so no retention window can be set; messages are kept indefinitely."
+            : "Couldn't update retention." };
+          return s;
+        });
+        if (off) refreshModulesAfterRefusal();
+      });
   };
   DT.actions.setMyPref = function (key, value) {
     DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
