@@ -625,12 +625,104 @@ export async function resolveSessionUser(raw: unknown): Promise<User | null> {
   return user;
 }
 
+/* ── Borrowed sessions (developer impersonation / managed-org portal) ────────
+ * POST /api/dev/impersonate and /api/dev/manage-org sign the session in AS
+ * another account and remember the developer in session.impersonatorId, so
+ * /api/dev/impersonate/stop can swap back without a password. Such a session
+ * is the developer's as much as the borrowed account's, so it is bound to the
+ * DEVELOPER's password generation too (session.impersonatorPg, recorded at
+ * entry): when the developer's password is changed or reset, or the developer
+ * is deactivated (or is no longer a developer), every borrowed session they
+ * opened is over — on its next HTTP request (deserializeUser), at the socket
+ * upgrade (server/ws) and at the way back — and its live sockets are closed
+ * through the revoker below. Otherwise a portal entered with the OLD password
+ * kept reading the tenant's PHI, and "stop" then turned it into a full
+ * developer session stamped with the NEW generation (req.login re-serialises
+ * the fresh row).
+ */
+export function beginImpersonation(
+  session: Request["session"],
+  developer: { id: number; passwordChangedAt?: Date | string | null },
+): void {
+  session.impersonatorId = developer.id;
+  session.impersonatorPg = passwordGeneration(developer);
+}
+
+export function clearImpersonation(session: Request["session"] | undefined): void {
+  if (!session) return;
+  delete session.impersonatorId;
+  delete session.impersonatorPg;
+}
+
+export type ImpersonationRevokedReason =
+  | "unbound_session"
+  | "account_missing"
+  | "account_disabled"
+  | "not_developer"
+  | "password_changed";
+
+export type Impersonation =
+  | { state: "none" }
+  /** The session is borrowed, but the developer behind it no longer holds (password, account, role). */
+  | { state: "revoked"; impersonatorId: number | null; reason: ImpersonationRevokedReason }
+  | { state: "ok"; developer: User };
+
+export async function resolveImpersonator(
+  session: Pick<NonNullable<Request["session"]>, "impersonatorId" | "impersonatorPg"> | undefined | null,
+): Promise<Impersonation> {
+  const id = session?.impersonatorId as unknown;
+  if (!session || id === undefined || id === null) return { state: "none" };
+  const pg = session.impersonatorPg as unknown;
+  const impersonatorId = typeof id === "number" && Number.isInteger(id) && id > 0 ? id : null;
+  // A borrowed session written before the generation was recorded cannot be
+  // checked, so it is not honoured: the developer simply signs in again.
+  if (impersonatorId === null || typeof pg !== "number" || !Number.isFinite(pg)) {
+    return { state: "revoked", impersonatorId, reason: "unbound_session" };
+  }
+  const developer = await resolveSessionUser({ id: impersonatorId, pg });
+  if (developer && developer.role === "developer") return { state: "ok", developer };
+  const row = developer ?? (await storage().getUserById(impersonatorId));
+  const reason: ImpersonationRevokedReason = !row
+    ? "account_missing"
+    : row.disabledAt
+      ? "account_disabled"
+      : row.role !== "developer"
+        ? "not_developer"
+        : "password_changed";
+  return { state: "revoked", impersonatorId, reason };
+}
+
+/**
+ * File the end of a borrowed session in the borrowed account's org (where the
+ * portal was acting), naming the developer as the actor. Never throws.
+ */
+export async function auditRevokedImpersonation(
+  borrowed: { id: number; organizationId: number },
+  revoked: Extract<Impersonation, { state: "revoked" }>,
+): Promise<void> {
+  await appendAudit({
+    organizationId: borrowed.organizationId,
+    // A deleted developer row can no longer be referenced (users FK); the id
+    // is still on the record in details.
+    userId: revoked.reason === "account_missing" ? null : revoked.impersonatorId,
+    action: "dev.impersonation_revoked",
+    resourceType: "user",
+    resourceId: borrowed.id,
+    details: { reason: revoked.reason, developerId: revoked.impersonatorId },
+    riskLevel: "high",
+  });
+}
+
 /* ── Session revocation (live transports) ─────────────────────────────────── */
 export interface SessionRevocation {
+  /**
+   * The user whose sessions end: their own sessions AND every borrowed
+   * (impersonated / managed-org) session they opened as a developer.
+   */
   userId: number;
   /** The session performing the change keeps its own live connections. */
   exceptSessionId?: string;
-  reason: "password_changed" | "password_reset";
+  reason: "password_changed" | "password_reset" | "account_deactivated";
 }
 export type SessionRevoker = (revocation: SessionRevocation) => void;
 const sessionRevokers = new Set<SessionRevoker>();
@@ -659,10 +751,25 @@ function revokeSessions(revocation: SessionRevocation): void {
 }
 
 /**
+ * A deactivation is immediate: HTTP sessions (the user's own and any borrowed
+ * session they opened as a developer) stop resolving on their next request
+ * because the row carries disabled_at; this ends the live transports now —
+ * the user's sockets, their demo tokens, and the sockets of every
+ * impersonated / managed-org portal they are inside — instead of leaving them
+ * open until the next reconnect.
+ */
+export function endSessionsOfDeactivatedUser(userId: number): void {
+  revokeSessions({ userId, reason: "account_deactivated" });
+}
+
+/**
  * Persist a new credential and end every OTHER session of that user: the row's
  * password generation moves (so stale sessions stop resolving) and the live
  * transports are told to drop the user's sockets. `keepSessionId` is the
- * session performing a self-service change, which stays signed in.
+ * session performing a self-service change, which stays signed in. A
+ * developer's borrowed (impersonated / managed-org) sessions end too: they
+ * were entered under the old generation (resolveImpersonator), and their
+ * sockets carry the developer as impersonator, which the hub closes as well.
  */
 export async function rotatePassword(
   userId: number,
@@ -799,10 +906,27 @@ export function configurePassport() {
       .catch((err: Error) => done(err));
   });
 
-  passport.deserializeUser(async (raw: unknown, done) => {
+  // Arity 3: Passport hands in the request, so a borrowed session is checked
+  // against the DEVELOPER behind it as well as the account it is signed in as.
+  passport.deserializeUser(async (req: Request, raw: unknown, done: (err: unknown, user?: Express.User | false) => void) => {
     try {
       const user = await resolveSessionUser(raw);
-      done(null, (user ?? false) as unknown as Express.User);
+      if (!user) {
+        // Signed out; a borrowed session's way back to the developer goes with it.
+        clearImpersonation(req.session);
+        return done(null, false);
+      }
+      const imp = await resolveImpersonator(req.session);
+      if (imp.state === "revoked") {
+        // The developer who entered this portal changed or lost their
+        // password, was deactivated or is no longer a developer: the whole
+        // session is over — neither the borrowed account nor (via
+        // /api/dev/impersonate/stop) the developer.
+        clearImpersonation(req.session);
+        await auditRevokedImpersonation(user, imp);
+        return done(null, false);
+      }
+      done(null, user as unknown as Express.User);
     } catch (err) {
       done(err as Error);
     }
@@ -1325,6 +1449,8 @@ declare module "express-session" {
     mfaEnrollmentRequired?: boolean;
     /** Developer who entered an impersonated / managed-org portal (dev.ts). */
     impersonatorId?: number;
+    /** That developer's password generation at entry (beginImpersonation / resolveImpersonator). */
+    impersonatorPg?: number;
     /** App lock (A.CON-SHO-7): who locked this session and when the lock counts from. */
     appLock?: { userId: number; at: number };
   }

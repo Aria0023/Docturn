@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type { User } from "@shared/schema";
-import { issueTemporaryPassword, rotatePassword } from "../auth.js";
+import { endSessionsOfDeactivatedUser, issueTemporaryPassword, rotatePassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
@@ -18,8 +18,10 @@ import { storage } from "../storage.js";
  * of accounts in other tenants is not revealed.
  *
  * Deactivation flips users.disabled_at: sign-in is refused and every live
- * session stops deserialising on its next request (server/auth.ts). It also
- * takes the provider off shift so routing never offers them a patient.
+ * session stops deserialising on its next request (server/auth.ts) — including
+ * any impersonated / managed-org portal a deactivated developer is inside —
+ * and the live sockets of all of them are closed at once. It also takes the
+ * provider off shift so routing never offers them a patient.
  */
 
 const MANAGE_ROLES = ["director", "er_director", "developer"] as const;
@@ -114,6 +116,10 @@ export function registerAccountRoutes(app: Express) {
         await storage().updateHospitalist(target.organizationId, profile.id, { working: false });
       }
     }
+    // The live transports end now, not at the next reconnect: the target's
+    // sockets and demo tokens, and the sockets of every borrowed session a
+    // deactivated developer opened (idempotent for an already-disabled row).
+    endSessionsOfDeactivatedUser(target.id);
     await appendAudit({
       organizationId: target.organizationId,
       userId: me.id,

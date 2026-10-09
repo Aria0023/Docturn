@@ -54,7 +54,12 @@ automatically uses encrypted Postgres instead of the local file database.
 - Input validation (zod), security headers (helmet), login rate-limiting,
   http-only/secure session cookies, 15-minute inactivity timeout.
 - An audit log records who did what, when.
-- In-app password change (so accounts can leave the demo password behind).
+- In-app password change (so accounts can leave the demo password behind). A
+  change or an administrator's reset ends every other session of that account
+  (HTTP, live WebSocket, demo token, half-finished MFA sign-in), and that
+  includes any impersonated / managed-org portal a developer entered: such a
+  portal is bound to the developer's own password and ends with it, as it does
+  when the developer is deactivated. Deactivation closes live sockets at once.
 - **External AI is OFF by default** — intake notes are parsed locally and never
   leave the server unless an operator deliberately turns it on (see below).
 

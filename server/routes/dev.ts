@@ -1,6 +1,14 @@
 import type { Express } from "express";
 import { devCreateUserSchema, toSafeUser, type User } from "@shared/schema";
-import { hashPassword, issueTemporaryPassword, mfaEnrollmentRequired } from "../auth.js";
+import {
+  auditRevokedImpersonation,
+  beginImpersonation,
+  clearImpersonation,
+  hashPassword,
+  issueTemporaryPassword,
+  mfaEnrollmentRequired,
+  resolveImpersonator,
+} from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { getExtractor } from "../services/ai-intake.js";
@@ -583,8 +591,11 @@ export function registerDevRoutes(app: Express) {
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
         // Remember who is really here so /api/dev/impersonate/stop can restore
-        // the developer WITHOUT a password (the client never holds one).
-        req.session.impersonatorId = me.id;
+        // the developer WITHOUT a password (the client never holds one) — bound
+        // to the developer's password generation, so the developer's password
+        // change, reset or deactivation ends this borrowed session too
+        // (server/auth.ts resolveImpersonator).
+        beginImpersonation(req.session, me);
         res.json(body);
       });
     },
@@ -597,15 +608,25 @@ export function registerDevRoutes(app: Express) {
   // Exempt from the borrowed account's forced-password-change and MFA-enrolment
   // gates (server/auth.ts IMPERSONATION_EXIT): a freshly provisioned or
   // unenrolled account must never trap the developer inside its portal.
+  //
+  // The way back is only as good as the developer's credential at entry: if
+  // the developer's password has changed (or been reset) since, or they were
+  // deactivated or are no longer a developer, the session is ended (401) —
+  // a portal entered with an OLD password must never turn into a developer
+  // session stamped with the NEW one. (deserializeUser already ends such a
+  // session on its first request; this is the same rule at the swap itself.)
   app.post("/api/dev/impersonate/stop", requireAuth, async (req, res, next) => {
-    const origId = req.session.impersonatorId;
-    if (!origId) return res.status(400).json({ error: "not_impersonating" });
+    const imp = await resolveImpersonator(req.session);
+    if (imp.state === "none") return res.status(400).json({ error: "not_impersonating" });
     const current = currentUser(req);
-    const orig = await storage().getUserById(origId);
-    if (!orig || orig.role !== "developer" || orig.disabledAt) {
-      delete req.session.impersonatorId;
-      return res.status(403).json({ error: "forbidden" });
+    if (imp.state === "revoked") {
+      await auditRevokedImpersonation(current, imp);
+      return req.logout((err) => {
+        if (err) return next(err);
+        req.session.destroy(() => res.status(401).json({ error: "session_revoked" }));
+      });
     }
+    const orig = imp.developer;
     await appendAudit({
       organizationId: current.organizationId,
       userId: orig.id,
@@ -621,7 +642,9 @@ export function registerDevRoutes(app: Express) {
     const body = await swappedUserBody(orig);
     req.login(orig as unknown as Express.User, (err) => {
       if (err) return next(err);
-      delete req.session.impersonatorId;
+      // req.login regenerated the session; clear explicitly all the same so no
+      // impersonator binding can ever ride into the developer's own session.
+      clearImpersonation(req.session);
       res.json(body);
     });
   });
@@ -663,7 +686,7 @@ export function registerDevRoutes(app: Express) {
       const body = await swappedUserBody(admin);
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);
-        req.session.impersonatorId = me.id; // /api/dev/impersonate/stop returns here
+        beginImpersonation(req.session, me); // /api/dev/impersonate/stop returns here (bound to me's password generation)
         res.json({ ...body, orgCode: org.code, orgName: org.name });
       });
     },

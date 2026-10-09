@@ -4,7 +4,13 @@ import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
 import { demoConnectionId, demoTokenLockedAt, resolveDemoUser } from "../demoAuth.js";
-import { APP_LOCK_CLOSE_CODE, onSessionLocked, onSessionsRevoked, resolveSessionUser } from "../auth.js";
+import {
+  APP_LOCK_CLOSE_CODE,
+  onSessionLocked,
+  onSessionsRevoked,
+  resolveImpersonator,
+  resolveSessionUser,
+} from "../auth.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -20,6 +26,13 @@ import { APP_LOCK_CLOSE_CODE, onSessionLocked, onSessionsRevoked, resolveSession
  * hub closes that user's live sockets (code 1008 "session_revoked") except the
  * ones belonging to the session (or token) that made the change.
  *
+ * A developer's borrowed (impersonated / managed-org) session is held to the
+ * DEVELOPER's credential as well (server/auth.ts resolveImpersonator): it
+ * does not connect once the developer's password has changed or the
+ * developer was deactivated, and each socket remembers its impersonator so a
+ * password change, reset or deactivation of the developer closes the
+ * borrowed portals' sockets too — not only the sockets signed in as them.
+ *
  * App lock (A.CON-SHO-7): a locked session (or demo token) never connects —
  * the upgrade is closed with 4423 "session_locked" — and locking a session
  * closes its open sockets the same way, so nothing is pushed to a locked tab
@@ -32,6 +45,8 @@ interface ClientMeta {
   organizationId: number;
   /** express-session id the socket authenticated with, or a demo token's demoConnectionId(). */
   sessionId: string | null;
+  /** The developer behind a borrowed (impersonated / managed-org) session, else null. */
+  impersonatorId: number | null;
   isAlive: boolean;
   /** When this socket last had a typing event relayed (throttle clock). */
   typingLastAt: number;
@@ -79,11 +94,12 @@ export class WsHub implements WsFanout {
       ws.close(1008, "unauthorized");
       return;
     }
-    const { userId, organizationId, sessionId } = session;
+    const { userId, organizationId, sessionId, impersonatorId } = session;
     this.meta.set(ws, {
       userId,
       organizationId,
       sessionId,
+      impersonatorId,
       isAlive: true,
       typingLastAt: 0,
       typingLastState: null,
@@ -188,7 +204,9 @@ export class WsHub implements WsFanout {
   /** Resolve the session by replaying the session middleware on the upgrade req. */
   private async resolveSession(
     req: IncomingMessage,
-  ): Promise<{ userId: number; organizationId: number; sessionId: string | null } | "locked" | null> {
+  ): Promise<
+    { userId: number; organizationId: number; sessionId: string | null; impersonatorId: number | null } | "locked" | null
+  > {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
     // Same rule as a cookie session (resolveDemoUser → resolveSessionUser): a
@@ -205,6 +223,7 @@ export class WsHub implements WsFanout {
             userId: user.id,
             organizationId: user.organizationId,
             sessionId: demoConnectionId(token),
+            impersonatorId: null, // a token is never a borrowed session
           };
         }
       }
@@ -218,20 +237,29 @@ export class WsHub implements WsFanout {
       this.sessionMiddleware(req as never, res as never, async () => {
         try {
           const r = req as {
-            session?: { passport?: { user?: unknown }; appLock?: { userId?: number; at?: number } };
+            session?: {
+              passport?: { user?: unknown };
+              appLock?: { userId?: number; at?: number };
+              impersonatorId?: number;
+              impersonatorPg?: number;
+            };
             sessionID?: string;
           };
           // ONE rule for "is this session still signed in" — shared with
           // Passport's deserializeUser, so the realtime feed can never outlive
-          // the HTTP session (deactivation, password change/reset).
+          // the HTTP session (deactivation, password change/reset)…
           const user = await resolveSessionUser(r.session?.passport?.user);
           if (!user) return resolve(null);
+          // …including, for a borrowed session, the developer behind it.
+          const imp = await resolveImpersonator(r.session);
+          if (imp.state === "revoked") return resolve(null);
           // A locked session gets no realtime feed (A.CON-SHO-7).
           if (r.session?.appLock?.userId === user.id) return resolve("locked");
           resolve({
             userId: user.id,
             organizationId: user.organizationId,
             sessionId: r.sessionID ?? null,
+            impersonatorId: imp.state === "ok" ? imp.developer.id : null,
           });
         } catch {
           resolve(null);
@@ -241,23 +269,26 @@ export class WsHub implements WsFanout {
   }
 
   /**
-   * Close every live socket of a user (1008 "session_revoked"), optionally
-   * sparing the sockets of one session — the one that changed the password.
+   * Close every live socket of a user (1008 "session_revoked") — the sockets
+   * signed in AS them and the sockets of every borrowed (impersonated /
+   * managed-org) session they opened as a developer — optionally sparing the
+   * sockets of one session, the one that changed the password.
    * Returns how many sockets were closed.
    */
   closeUserSockets(userId: number, opts: { exceptSessionId?: string } = {}): number {
-    const set = this.clients.get(userId);
-    if (!set) return 0;
     let closed = 0;
-    for (const ws of [...set]) {
-      const m = this.meta.get(ws);
-      if (opts.exceptSessionId && m?.sessionId === opts.exceptSessionId) continue;
-      try {
-        ws.close(1008, "session_revoked");
-      } catch {
-        ws.terminate();
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        const m = this.meta.get(ws);
+        if (!m || (m.userId !== userId && m.impersonatorId !== userId)) continue;
+        if (opts.exceptSessionId && m.sessionId === opts.exceptSessionId) continue;
+        try {
+          ws.close(1008, "session_revoked");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
       }
-      closed++;
     }
     return closed;
   }
