@@ -145,7 +145,15 @@ rec("invalid priority is rejected (400)", bad.status === 400, "status=" + bad.st
   if (cardio) {
     before = chenWs.got.length;
     const roleConvo = (await er.f("/api/messaging/conversations", { method: "POST", body: JSON.stringify({ type: "direct", name: cardio.label, participantIds: [cardio.userId] }) })).json;
-    rec("on-call conversation is named after the role", roleConvo && roleConvo.name === "On-call Cardiology", "name=" + (roleConvo && roleConvo.name));
+    // The role label is the CALLER's addressing context, not a shared title
+    // (A.CON-MIN-15): a direct thread is served with name null — each side
+    // falls back to the other person's name — and the label as addressedAs.
+    rec("on-call conversation carries the role as addressedAs, not as a shared name",
+      !!roleConvo && roleConvo.name === null && roleConvo.addressedAs === "On-call Cardiology",
+      "name=" + (roleConvo && roleConvo.name) + " addressedAs=" + (roleConvo && roleConvo.addressedAs));
+    const chenView = ((await chen.f("/api/messaging/conversations")).json || []).find((c) => roleConvo && c.id === roleConvo.id);
+    rec("the on-call holder never sees a thread titled after the role", !!chenView && chenView.name === null,
+      "name=" + (chenView && chenView.name));
     await er.f("/api/messaging/send", { method: "POST", body: JSON.stringify({ conversationId: roleConvo.id, content: "On-call Cardiology, please advise" }) });
     await wait(400);
     rec("messaging a resolved on-call role reaches the holder live", chenWs.got.slice(before).some((e) => e.type === "MESSAGE_RECEIVED"));
