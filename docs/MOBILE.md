@@ -170,10 +170,28 @@ not optimised for it.
 
 ## The Expo native app (`mobile-app/`)
 
-`mobile-app/` remains an Expo / React Native **skeleton, not a product**: a
-typed API client, a reconnecting WebSocket and three screens (login,
-assignments, profile). It has no messaging, directory, intake or director
-surface and no push wiring. The unified PWA above delivers "install on your
-phone and message securely" today; the backend (`/api/mobile/*`, device-token
-storage, push-first notification service) is already in place if a native app
-is ever needed for APNs/FCM or biometric unlock.
+`mobile-app/` remains an Expo / React Native **skeleton, not a shipped
+product**: a typed API client, a reconnecting WebSocket and four tabs (login,
+Messages, Assignments, Profile).
+
+- **Messages** is a text-only client of the same `/api/messaging/*` endpoints
+  the web app uses: the conversation list with unread counts, a thread, and a
+  new-conversation picker. An open thread applies the server's live frames —
+  `MESSAGE_RECEIVED` reloads it, `MESSAGE_RECALLED` removes the recalled
+  message at once (and refreshes the list and the tab badge), and
+  `MESSAGE_READ` turns the sender's receipt from "Sent" to "Read". A thread is
+  marked read only while the app is in the foreground. The sender's own unread
+  messages carry a **Recall** button (44 pt, with a confirm dialog) when the
+  org's `messaging.recall` module is on; a refused recall (already read,
+  module off) says why. The frame handling lives in
+  `mobile-app/src/threadEvents.ts` and is tested against the real server's
+  frames in `tests/mobile-thread-events.test.ts`. There are no attachments,
+  voice notes, priorities, acknowledgements, forwarding or broadcasts here.
+- **Assignments** is the realtime pending queue with accept / decline.
+- **Profile** signs out. At sign-in the app registers an Expo push token,
+  which the server's push service sends content-free titles to.
+
+There is no directory, intake or director surface. The unified PWA above is
+the shipped phone client; the backend (`/api/mobile/*`, device-token storage,
+push-first notification service) is in place if a native app is ever needed
+for APNs/FCM or biometric unlock.

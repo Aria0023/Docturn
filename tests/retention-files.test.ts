@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { messageAttachments, messages, orgSettings } from "@shared/schema";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { invalidateModules } from "../server/modules.js";
+import { renderPolicy } from "../server/compliance/policies.js";
 import {
   readRetentionSetting,
   runMessageRetentionSweep,
@@ -177,6 +178,8 @@ describe("retention: files, orphans, module switch, setting validation", () => {
     const row = audit.find((a) => a.action === "retention.invalid_setting");
     expect(row).toBeTruthy();
     expect(row!.riskLevel).toBe("high");
+    // The audit row names the value it refused, so an operator can find it.
+    expect(row!.details).toMatchObject({ setting: "messageRetentionDays", storedValue: "0.5" });
   });
 
   it("tenant force-delete removes the encrypted files only once the rows commit; a rolled-back delete keeps them", async () => {
@@ -209,6 +212,127 @@ describe("retention: files, orphans, module switch, setting validation", () => {
     await dev.delete("/api/dev/organizations/" + orgId + "?force=true").expect(204);
     expect(await ctx.storage.getOrganization(orgId)).toBeUndefined();
     expect(files()).toHaveLength(0);
+  });
+
+  async function control(agent: import("supertest").Agent, id: string) {
+    const res = await agent.get("/api/compliance/status").expect(200);
+    const row = (res.body.controls as Array<{ id: string; status: string; detail: string; evidence: Record<string, any> }>).find((c) => c.id === id);
+    expect(row, id).toBeTruthy();
+    return row!;
+  }
+
+  it("the msg-retention-policy control reads the stored value exactly as the sweep does — no green for a skipped org", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const { agent: director } = await login(ctx.app, { username: "director" });
+
+    let c = await control(director, "msg-retention-policy");
+    expect(c.status).toBe("warn");
+    expect(c.evidence).toMatchObject({ storedValue: null, interpretation: "off", messageRetentionDays: null, enforced: false });
+
+    // Pre-validation rows: the sweep skips every one of these and audits
+    // retention.invalid_setting, so the control must FAIL, not claim a window.
+    for (const bad of [0.00001, true, 1e9, -5, "abc", 7.5]) {
+      await ctx.storage.setOrgSetting(orgId, "messageRetentionDays", bad, null);
+      c = await control(director, "msg-retention-policy");
+      expect(c.status, JSON.stringify(bad)).toBe("fail");
+      expect(c.detail).not.toMatch(/purges clinical messages older than/);
+      expect(c.detail).toMatch(/NOT being applied/);
+      expect(c.detail).toContain(JSON.stringify(bad));
+      expect(c.evidence).toMatchObject({
+        storedValue: JSON.stringify(bad),
+        storedType: typeof bad,
+        interpretation: "invalid",
+        messageRetentionDays: null,
+        enforced: false,
+      });
+    }
+
+    // A valid window with the module on is the only pass.
+    await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 30 }).expect(200);
+    c = await control(director, "msg-retention-policy");
+    expect(c.status).toBe("pass");
+    expect(c.detail).toContain("older than 30 day(s)");
+    expect(c.evidence).toMatchObject({ storedValue: "30", interpretation: "days", messageRetentionDays: 30, moduleEnabled: true, enforced: true });
+
+    // Configured but the ops.retention switch is off: the sweep leaves the data
+    // alone, so the control must not say it is purging.
+    await ctx.storage.setOrgSetting(orgId, "modules", { "ops.retention": false }, null);
+    invalidateModules();
+    c = await control(director, "msg-retention-policy");
+    expect(c.status).toBe("warn");
+    expect(c.detail).toMatch(/ops\.retention/);
+    expect(c.detail).not.toMatch(/purges clinical messages older than/);
+    expect(c.evidence).toMatchObject({ messageRetentionDays: 30, moduleEnabled: false, enforced: false });
+    await ctx.storage.setOrgSetting(orgId, "modules", { "ops.retention": true }, null);
+    invalidateModules();
+
+    // An explicit 0 is a deliberate "keep everything".
+    await director.patch("/api/settings/org").send({ key: "messageRetentionDays", value: 0 }).expect(200);
+    c = await control(director, "msg-retention-policy");
+    expect(c.status).toBe("warn");
+    expect(c.detail).toMatch(/set to 0/);
+    expect(c.evidence).toMatchObject({ storedValue: "0", interpretation: "off", enforced: false });
+  });
+
+  it("the attachment-storage control measures file drift: rows whose ciphertext is gone, and files no row references", async () => {
+    const chenId = ctx.seedResult.userIds.chen!;
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const convo = (await er.post("/api/messaging/conversations").send({ type: "direct", participantIds: [chenId] })).body;
+    const sent = await uploadAndSend(er, convo.id, "film");
+    const { agent: director } = await login(ctx.app, { username: "director" });
+
+    let c = await control(director, "attachment-storage");
+    expect(c.status).toBe("pass");
+    expect(c.evidence.fileDrift).toMatchObject({ checked: true, encryptedRows: 1, rowsMissingFile: 0, unreferencedFiles: 0 });
+
+    // Ciphertext a failed delete left behind (old) is drift; an upload being
+    // written right now (fresh, row not inserted yet) is not.
+    const stray = join(dir, "ab".repeat(16) + ".bin");
+    const inFlight = join(dir, "cd".repeat(16) + ".bin");
+    writeFileSync(stray, "x");
+    writeFileSync(inFlight, "x");
+    const old = new Date(Date.now() - 2 * 3600_000);
+    utimesSync(stray, old, old);
+    c = await control(director, "attachment-storage");
+    expect(c.status).toBe("warn");
+    expect(c.evidence.fileDrift).toMatchObject({ checked: true, rowsMissingFile: 0, unreferencedFiles: 1 });
+    expect(c.detail).toMatch(/1 encrypted file\(s\) .*no attachment row references/);
+
+    // A row whose ciphertext file has vanished cannot be served.
+    unlinkSync(stray);
+    unlinkSync(inFlight);
+    unlinkSync(fileOf(sent.ref));
+    c = await control(director, "attachment-storage");
+    expect(c.status).toBe("warn");
+    expect(c.evidence.fileDrift).toMatchObject({ checked: true, encryptedRows: 1, rowsMissingFile: 1, unreferencedFiles: 0 });
+    expect(c.detail).toMatch(/1 of 1 encrypted attachment row\(s\)/);
+    // Counts only — never a ref or file name.
+    expect(JSON.stringify(c)).not.toContain(sent.ref.replace(/^fsenc:/, ""));
+  });
+
+  it("the generated HIPAA policies describe attachment storage and deletion as the code does it", () => {
+    const vars = { organizationName: "Test Hospital", effectiveDate: "2026-01-01" };
+    const disposal = renderPolicy("disposal-media", vars)!.markdown;
+    // The old sentence was false under ATTACHMENT_STORE=fs-encrypted.
+    expect(disposal).not.toMatch(/stored\s+base64-encoded inside the message row rather than in separate storage/);
+    expect(disposal).toMatch(/ciphertext file/);
+    expect(disposal).toMatch(/never\s+attached to a sent message/);
+    expect(disposal).toMatch(/ops\.retention/);
+    expect(disposal).toMatch(/This deployment[^\n]*\n?[^\n]*ATTACHMENT_STORE=fs-encrypted/);
+
+    const backup = renderPolicy("contingency-plan", vars)!.markdown;
+    expect(backup).not.toMatch(/Includes attachments: yes, because/);
+    expect(backup).toMatch(/does NOT contain/);
+    for (const id of ["baa-database", "risk-analysis", "backup-tested"]) {
+      const md = renderPolicy(id, vars)!.markdown;
+      expect(md, id).not.toMatch(/attachments are stored base64[- ]\w* inside (the )?(database|message) row/i);
+    }
+
+    // The deployment line follows the store this process is actually using.
+    process.env.ATTACHMENT_STORE = "db";
+    const dbMode = renderPolicy("disposal-media", vars)!.markdown;
+    expect(dbMode).toMatch(/ATTACHMENT_STORE=db/);
+    expect(dbMode).not.toMatch(/\{[a-zA-Z]+\}/);
   });
 
   it("readRetentionSetting interprets stored values strictly", () => {

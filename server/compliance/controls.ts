@@ -214,7 +214,7 @@ export const CONTROLS: ControlDef[] = [
     id: "msg-retention-policy",
     title: "Message retention policy configured",
     description:
-      "Reads this organization's messageRetentionDays setting. Unset means clinical messages are retained indefinitely — permitted, but it must be a deliberate, documented decision rather than an oversight.",
+      "Reads this organization's messageRetentionDays setting through the same interpretation the hourly purge applies, plus the ops.retention module switch. Passes only when the sweep will actually purge. A stored value the sweep rejects (not a whole number of days 0..3650) fails, because the organization believes a window is applied when none is; a window with ops.retention off warns. Unset or 0 means clinical messages are retained indefinitely — permitted, but it must be a deliberate, documented decision rather than an oversight.",
     category: "Data protection",
     hipaa: ["45 CFR §164.316"],
     soc2: ["CC6.5"],
@@ -279,7 +279,7 @@ export const CONTROLS: ControlDef[] = [
     id: "attachment-storage",
     title: "Attachment storage suitable for ePHI",
     description:
-      "Reads the attachment store this process is running with. Passes when ATTACHMENT_STORE=fs-encrypted with a valid 32-byte ATTACHMENT_KEY (AES-256-GCM per file, random IV, auth tag; plaintext never written). The default base64-in-database store — a synthetic-data pilot shortcut — warns. Reports the real count and total bytes currently stored.",
+      "Reads the attachment store this process is running with. Passes when ATTACHMENT_STORE=fs-encrypted with a valid 32-byte ATTACHMENT_KEY (AES-256-GCM per file, random IV, auth tag; plaintext never written). The default base64-in-database store — a synthetic-data pilot shortcut — warns. Reports the real count and total bytes currently stored, and measures row/file drift: encrypted rows whose ciphertext file is missing, and ciphertext files older than ten minutes that no row references (left behind by a failed purge or delete). Any drift is a warn.",
     category: "Data protection",
     hipaa: ["45 CFR §164.312(a)(2)(iv)", "45 CFR §164.312(c)(1)"],
     soc2: ["CC6.1"],

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  AppState,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -18,6 +20,14 @@ import {
   type MobileUser,
 } from "../api";
 import { realtime } from "../realtime";
+import {
+  applyRead,
+  applyRecall,
+  canRecall,
+  isReadFrame,
+  isRecalledFrame,
+  recallErrorText,
+} from "../threadEvents";
 
 const PRIMARY = "#2563EB";
 const BORDER = "#E2E8F0";
@@ -57,9 +67,13 @@ export function MessagesScreen({ user }: { user: MobileUser }) {
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
+  // messaging.recall from GET /api/modules; off until the server says it is on.
+  const [recallOn, setRecallOn] = useState(false);
   const listRef = useRef<FlatList<MobileMessage>>(null);
-  const activeIdRef = useRef<number | null>(null);
-  activeIdRef.current = activeId;
+  // The thread actually ON SCREEN (null on the list / picker), so a frame for
+  // a thread the user backed out of neither reloads nor marks it read.
+  const openIdRef = useRef<number | null>(null);
+  openIdRef.current = view === "thread" ? activeId : null;
 
   const nameFor = useCallback(
     (uid: number) =>
@@ -92,6 +106,9 @@ export function MessagesScreen({ user }: { user: MobileUser }) {
     try {
       const msgs = await ApiClient.messages(id);
       setMessages(msgs);
+      // A read receipt means a person saw it: only while the app is in the
+      // foreground. (It also keeps a message recallable until it is read.)
+      if (AppState.currentState !== "active") return;
       const unreadFromOthers = msgs
         .filter((m) => m.senderId !== user.id)
         .map((m) => m.id);
@@ -101,20 +118,64 @@ export function MessagesScreen({ user }: { user: MobileUser }) {
     }
   }, [user.id]);
 
-  // Initial load + realtime: refresh the open thread and the unread badges.
+  // Initial load + realtime: keep the open thread and the list current.
   useEffect(() => {
     void loadConvos();
     ApiClient.directory().then(setProviders).catch(() => {});
-    return realtime.subscribe((msg) => {
+    ApiClient.modules()
+      .then((r) => setRecallOn(r.modules["messaging.recall"] === true))
+      .catch(() => setRecallOn(false));
+    const offRealtime = realtime.subscribe((msg) => {
       if (msg.type === "MESSAGE_RECEIVED") {
-        const openId = activeIdRef.current;
+        const openId = openIdRef.current;
         if (msg.message && openId && msg.message.conversationId === openId) {
           void loadThread(openId);
         }
         void loadConvos();
+      } else if (isRecalledFrame(msg)) {
+        // The sender recalled it: gone from an open thread at once, and the
+        // list preview / unread badge recomputed from what remains.
+        setMessages((prev) => applyRecall(prev, openIdRef.current, msg));
+        void loadConvos();
+      } else if (isReadFrame(msg)) {
+        // Someone read my message: receipt turns "Read", Recall goes away.
+        setMessages((prev) => applyRead(prev, openIdRef.current, user.id, msg));
       }
     });
-  }, [loadConvos, loadThread]);
+    // Back in the foreground with a thread open: mark what is now on screen.
+    const appState = AppState.addEventListener("change", (s) => {
+      const openId = openIdRef.current;
+      if (s === "active" && openId) void loadThread(openId);
+    });
+    return () => {
+      offRealtime();
+      appState.remove();
+    };
+  }, [loadConvos, loadThread, user.id]);
+
+  function confirmRecall(m: MobileMessage) {
+    Alert.alert(
+      "Recall this message?",
+      "It will be removed for everyone in this conversation. Only a message nobody has read yet can be recalled.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Recall", style: "destructive", onPress: () => void recall(m) },
+      ],
+    );
+  }
+
+  async function recall(m: MobileMessage) {
+    try {
+      await ApiClient.recallMessage(m.id);
+      setMessages((prev) => prev.filter((x) => x.id !== m.id));
+      void loadConvos();
+    } catch (e) {
+      Alert.alert("Couldn't recall", recallErrorText(String((e as Error)?.message ?? "")));
+      // Our copy is stale (e.g. it was read meanwhile): re-read this thread.
+      const openId = openIdRef.current;
+      if (openId) void loadThread(openId);
+    }
+  }
 
   async function openThread(id: number) {
     setActiveId(id);
@@ -243,8 +304,18 @@ export function MessagesScreen({ user }: { user: MobileUser }) {
                 </View>
                 <Text style={{ fontSize: 10.5, color: MUTED, marginTop: 2, marginHorizontal: 4 }}>
                   {hhmm(item.createdAt)}
-                  {mine ? " · Sent" : ""}
+                  {mine ? ((item.readCount ?? 0) > 0 ? " · Read" : " · Sent") : ""}
                 </Text>
+                {canRecall(item, user.id, recallOn, c?.type) && (
+                  <TouchableOpacity
+                    onPress={() => confirmRecall(item)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Recall message"
+                    style={{ minHeight: 44, minWidth: 44, justifyContent: "center", paddingHorizontal: 8 }}
+                  >
+                    <Text style={{ color: PRIMARY, fontSize: 13, fontWeight: "600" }}>Recall</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             );
           }}

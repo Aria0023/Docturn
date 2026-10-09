@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, sql } from "drizzle-orm";
 import type { AuditInput } from "./audit.js";
 import type { DbType } from "./db.js";
-import { attachmentStoreFor } from "./services/attachment-store.js";
+import { attachmentStoreFor, FS_REF_PREFIX } from "./services/attachment-store.js";
 import { getDb } from "./db.js";
 import {
   assignments,
@@ -293,6 +293,13 @@ export interface IStorage {
     orgId: number,
     cutoff: Date,
   ): Promise<OrphanPurgeResult>;
+  /** File ids ("fsenc:" refs without the prefix) of this org's encrypted-file attachments. */
+  listEncryptedAttachmentFileIds(orgId: number): Promise<string[]>;
+  /**
+   * The same across EVERY tenant — used only to decide whether a file on disk
+   * is referenced at all (files carry no tenant). Never returned to a caller.
+   */
+  listAllEncryptedAttachmentFileIds(): Promise<string[]>;
   /** A covering/forward copy of `originalMessageId` already in `conversationId`, if any. */
   findForwardedCopy(
     orgId: number,
@@ -1053,6 +1060,25 @@ export class DatabaseStorage implements IStorage {
     if (gone.length === 0) return { attachments: 0, fileDeleteFailures: 0 };
     const fileDeleteFailures = await deleteAttachmentFiles(gone.map((a) => a.ref));
     return { attachments: gone.length, fileDeleteFailures };
+  }
+  async listEncryptedAttachmentFileIds(orgId: number) {
+    const rows = await this.db
+      .select({ ref: messageAttachments.dataBase64 })
+      .from(messageAttachments)
+      .where(
+        and(
+          eq(messageAttachments.organizationId, orgId),
+          like(messageAttachments.dataBase64, `${FS_REF_PREFIX}%`),
+        ),
+      );
+    return rows.map((r) => r.ref.slice(FS_REF_PREFIX.length));
+  }
+  async listAllEncryptedAttachmentFileIds() {
+    const rows = await this.db
+      .select({ ref: messageAttachments.dataBase64 })
+      .from(messageAttachments)
+      .where(like(messageAttachments.dataBase64, `${FS_REF_PREFIX}%`));
+    return rows.map((r) => r.ref.slice(FS_REF_PREFIX.length));
   }
   async findForwardedCopy(orgId: number, conversationId: number, originalMessageId: number) {
     const [row] = await this.db

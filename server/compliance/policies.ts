@@ -20,7 +20,9 @@
  *     VERIFIABLY does today (scrypt password hashing, a 15-minute rolling idle
  *     timeout, organizationId-scoped queries, audited PHI reads, content-free
  *     push payloads) from the GAPs it does not close (no application-layer
- *     encryption at rest, attachments stored base64 inside database rows, no
+ *     encryption at rest for database records, attachments without object
+ *     storage / antivirus / signed URLs — and, for attachments, whichever store
+ *     the deployment actually runs, rendered from attachmentStoreConfig() — no
  *     BAA that code can see, no backup mechanism inside the app, no automated
  *     incident detection). GAP sections are written to be closed, not signed.
  *
@@ -37,6 +39,7 @@
  * Nothing in this file is legal advice. Every template says so in its own text.
  */
 
+import { attachmentStoreConfig } from "../services/attachment-store.js";
 import { CONTROL_BY_ID } from "./controls.js";
 
 export interface PolicyTemplate {
@@ -287,21 +290,33 @@ disclosure risk.
   the organizationId taken from the caller's session, never from client input.
   The tenant-isolation control probes this live against a second seeded tenant.
 - Message retention is enforceable per organization: when
-  messageRetentionDays is set, an hourly sweep hard-deletes messages older than
-  the window and audits the count.
+  messageRetentionDays is set to a whole number of days (1 to 3650) and the
+  ops.retention module is on, an hourly sweep hard-deletes messages older than
+  the window together with their delivery rows, their attachment rows and, for
+  attachments in the encrypted file store, the ciphertext files, and audits the
+  counts. The same sweep removes uploads never attached to a sent message once
+  they are more than 24 hours old.
 - Audit records are never deleted by application code, which is what makes the
   six-year retention requirement of §164.316(b)(2)(i) achievable at all.
 
 ## 4. GAP — what DocTurn does NOT do
 
-- **No application-layer encryption at rest.** DocTurn does not encrypt column
-  values or files before writing them. Whatever protection exists is provided
-  by the storage tier, and code running inside the app cannot observe it. The
-  encryption-at-rest control therefore never reports a pass on its own.
-- **Attachments are stored base64-encoded inside the database row.** There is
-  no object storage, no antivirus scanning on upload, and no signed-URL
-  delivery. Attachment bytes are inside every database backup, which inflates
-  backup size and widens the blast radius of a leaked dump.
+- **No application-layer encryption at rest for database records.** DocTurn
+  does not encrypt column values before writing them. Whatever protection the
+  database has is provided by the storage tier, and code running inside the app
+  cannot observe it. The encryption-at-rest control therefore never reports a
+  pass on its own. (Attachment files are the one exception, and only when the
+  encrypted file store below is configured.)
+- **Attachments have no object storage, no antivirus scanning on upload, and no
+  signed-URL delivery.** Where their bytes live depends on the attachment
+  store. With ATTACHMENT_STORE=db (the default) they are base64-encoded inside
+  the attachment row, so they are inside every database backup, which inflates
+  backup size and widens the blast radius of a leaked dump. With
+  ATTACHMENT_STORE=fs-encrypted they are AES-256-GCM files under ATTACHMENT_DIR
+  on the application host; a database backup does NOT contain them, that
+  directory needs its own backup under the same BAA, and ATTACHMENT_KEY must be
+  kept apart from it (a copy holding both is not protected by the encryption).
+  This deployment, when this draft was generated: {attachmentStore}
 - **The default development database is an in-process PGlite store** in a local
   directory. It has no encryption, no backups, no replication, and no BAA. It
   is fit for synthetic data only.
@@ -463,7 +478,10 @@ The analysis is invalid if it does not cover everything. Enumerate at minimum:
 
 - the DocTurn application server and its database, including backups and
   snapshots;
-- message attachments, which are stored base64-encoded inside database rows;
+- message attachments: base64 inside database rows (ATTACHMENT_STORE=db), or
+  AES-256-GCM files under ATTACHMENT_DIR plus the ATTACHMENT_KEY that decrypts
+  them (ATTACHMENT_STORE=fs-encrypted). This deployment, when this draft was
+  generated: {attachmentStore}
 - the audit and PHI-access trails (they reference patient records);
 - the mobile PWA served at /m and the native client, and the personal devices
   they run on;
@@ -480,8 +498,10 @@ analysis with a decision recorded against each:
 
 - No application-layer encryption at rest; protection depends entirely on the
   storage tier — §164.312(a)(2)(iv).
-- Attachments stored base64 in the database, with no antivirus scanning and no
-  signed-URL delivery.
+- Attachments have no antivirus scanning, no object storage and no signed-URL
+  delivery; they are either base64 in the database (the default store) or
+  encrypted files on the application host under a single deployment-wide key
+  (the fs-encrypted store).
 - Multi-factor authentication is available but not enforced; enrollment is
   currently below full coverage of privileged accounts — §164.312(d).
 - Login rate limiting can be disabled by environment variable, and a deployment
@@ -866,8 +886,14 @@ Record the truth for this deployment:
 - Storage location and region: _______________
 - Encrypted at rest: yes / no — _______________
 - Covered by a BAA: yes / no — _______________
-- Includes attachments: yes, because attachment bytes live base64-encoded
-  inside message rows and therefore inside the database backup.
+- Includes attachments: yes / no — _______________
+  With ATTACHMENT_STORE=db attachment bytes live base64-encoded inside the
+  attachment rows and are therefore inside the database backup. With
+  ATTACHMENT_STORE=fs-encrypted they are files under ATTACHMENT_DIR that a
+  database backup does NOT contain: back that directory up on the same
+  schedule, and keep ATTACHMENT_KEY recoverable separately, or the restored
+  files cannot be decrypted. This deployment, when this draft was generated:
+  {attachmentStore}
 
 ## 4. Recovery objectives
 
@@ -979,9 +1005,13 @@ actual numbers:
 - [ ] A login succeeds with a known test credential against the restored data.
 - [ ] The patient board renders and shows expected records for one
       organization.
-- [ ] A message thread opens and its attachment downloads and is intact —
-      attachments are stored base64 inside the message row, so a truncated
-      column shows up here and nowhere else.
+- [ ] A message thread opens and its attachment downloads and is intact. With
+      the database store (ATTACHMENT_STORE=db) a truncated base64 column shows
+      up here and nowhere else; with the encrypted file store
+      (ATTACHMENT_STORE=fs-encrypted) this is the step that proves
+      ATTACHMENT_DIR was restored alongside the database and ATTACHMENT_KEY is
+      the right key. The compliance monitor's attachment-storage control also
+      counts attachment rows whose file is missing after a restore.
 - [ ] The audit trail is present and its oldest record is as old as expected;
       six-year retention under §164.316(b)(2)(i) depends on backups actually
       containing history.
@@ -1323,25 +1353,38 @@ mode.
 ## 3. What DocTurn does today — verified
 
 - **Message retention purge.** When an organization sets
-  messageRetentionDays, an hourly sweep hard-deletes messages older than the
-  window along with their delivery rows, and audits the count. This is a real
-  delete, not a soft flag.
+  messageRetentionDays (a whole number of days, 1 to 3650) and the
+  ops.retention module is on, an hourly sweep hard-deletes messages older than
+  the window along with their delivery rows and attachments, and audits the
+  counts (messages.retention_purged). This is a real delete, not a soft flag.
+  A stored value outside that range is never guessed at: the sweep skips the
+  organization and records a high-risk retention.invalid_setting audit event,
+  and the msg-retention-policy control reports a failure.
 - **Patient purge.** The maintenance purge removes patient records and their
   dependent assignments and consults.
 - **Tenant deletion** removes an organization's operational data while
   deliberately retaining the audit and PHI-access history, which is required
   compliance documentation under §164.316(b)(2)(i) and must not be destroyed
   with the tenant.
-- **Attachments are deleted with their message**, because the bytes are stored
-  base64-encoded inside the message row rather than in separate storage.
+- **Attachments are deleted with their message.** The retention purge and
+  tenant deletion remove each attachment row and, for attachments held in the
+  encrypted file store (ATTACHMENT_STORE=fs-encrypted), its ciphertext file
+  under ATTACHMENT_DIR; with the database store the bytes are inside the row and
+  go with it. Uploads never attached to a sent message are removed, row and
+  file, by the same hourly sweep once they are more than 24 hours old
+  (attachments.orphans_purged). A file that cannot be removed is counted as
+  fileDeleteFailures in a high-risk audit event, and the attachment-storage
+  control counts encrypted files no row references. This deployment, when this
+  draft was generated: {attachmentStore}
 
 ## 4. GAP — deletion is not destruction
 
 - **Backups outlive deletes.** A record deleted from the live database persists
   in every backup taken before the deletion, until that backup's retention
   window expires. The true disposal date is therefore the deletion date PLUS
-  the backup retention period. Write both down, and tell patients the truth if
-  asked how long data is kept.
+  the backup retention period. With the encrypted file store the same applies
+  to every backup of ATTACHMENT_DIR. Write both down, and tell patients the
+  truth if asked how long data is kept.
   **Backup retention window for this deployment:** _______________
 - **No cryptographic erasure.** DocTurn does not encrypt records with per-record
   or per-tenant keys, so there is no key to destroy as a shortcut to
@@ -1414,12 +1457,29 @@ const PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9]*)\}/g;
  * must never contain an unresolved template variable that could be mistaken
  * for approved text.
  */
+/**
+ * The attachment store THIS process is configured with, read at render time
+ * (never cached), so the drafts never assert a storage model the deployment is
+ * not running. Mode and readiness only — never the key or a file name.
+ */
+export function describeAttachmentStoreForPolicy(): string {
+  const cfg = attachmentStoreConfig();
+  if (cfg.mode === "fs-encrypted" && cfg.ready) {
+    return "ATTACHMENT_STORE=fs-encrypted — new uploads are written as AES-256-GCM ciphertext files under ATTACHMENT_DIR, outside the database; any attachment uploaded while the database store was active keeps its bytes base64-encoded in its database row until it is deleted.";
+  }
+  if (cfg.mode === "fs-encrypted") {
+    return "ATTACHMENT_STORE=fs-encrypted is requested but not usable (no valid ATTACHMENT_KEY), so new uploads are refused rather than stored in plaintext.";
+  }
+  return "ATTACHMENT_STORE=db (the default) — attachment bytes are stored base64-encoded inside the attachment row in the database.";
+}
+
 function fill(body: string, vars: PolicyVars): string {
   const values: Record<string, string | undefined> = {
     organizationName: vars.organizationName,
     effectiveDate: vars.effectiveDate,
     version: vars.version || DEFAULTS.version,
     owner: vars.owner || DEFAULTS.owner,
+    attachmentStore: describeAttachmentStoreForPolicy(),
   };
   return body.replace(PLACEHOLDER, (_match, key: string) => {
     const v = values[key];

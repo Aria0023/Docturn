@@ -108,9 +108,9 @@ npm run build && NODE_ENV=production npm start         # production (behind TLS 
 
 There is no separate phone product: install the web app from the browser (see
 [`docs/MOBILE.md`](docs/MOBILE.md)). [`mobile-app/`](mobile-app/) is an Expo / React Native
-**skeleton** (typed API client, reconnecting WebSocket, login / assignments / profile screens; no
-messaging and no push wiring) kept for a possible native wrapper; the backend's `/api/mobile/*`
-routes and device-token storage already exist for it.
+**skeleton**, not a shipped client (typed API client, reconnecting WebSocket, login / text-only
+messages with live recall and read receipts / assignments / profile screens) kept for a possible
+native wrapper; the backend's `/api/mobile/*` routes and device-token storage already exist for it.
 
 ## Architecture
 

@@ -69,7 +69,8 @@ export default function App() {
         .catch(() => {});
     void refreshUnread();
     const off = realtime.subscribe((m) => {
-      if (m.type === "MESSAGE_RECEIVED") void refreshUnread();
+      // A recalled unread message must leave the tab badge too.
+      if (m.type === "MESSAGE_RECEIVED" || m.type === "MESSAGE_RECALLED") void refreshUnread();
     });
     const timer = setInterval(refreshUnread, 20000);
     return () => {

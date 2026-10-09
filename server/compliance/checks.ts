@@ -35,6 +35,13 @@ import { getHandle } from "../db.js";
 import { MFA_REQUIRED_MODULE } from "../auth.js";
 import { getModules } from "../modules.js";
 import { attachmentStoreConfig } from "../services/attachment-store.js";
+import {
+  getRetentionStatus,
+  measureAttachmentFileDrift,
+  RETENTION_MAX_DAYS,
+  storedValueForEvidence,
+  UNREFERENCED_FILE_GRACE_MS,
+} from "../services/retention.js";
 import type { DatabaseStorage } from "../storage.js";
 import type { ComplianceAttestation } from "@shared/schema";
 import type { ControlStatus } from "./controls.js";
@@ -499,21 +506,52 @@ const checks: Record<string, CheckFn> = {
    * Scoped to the CALLER'S organization only — reporting another tenant's
    * settings from a tenant-scoped endpoint would itself be a boundary breach.
    */
-  "msg-retention-policy": async ({ organizationId, store }) => {
-    const raw = await store.getOrgSetting(organizationId, "messageRetentionDays");
-    const days = typeof raw === "number" ? raw : Number(raw);
-    const configured = Number.isFinite(days) && days > 0;
+  "msg-retention-policy": async ({ organizationId }) => {
+    // The SAME interpretation the hourly sweep applies (readRetentionSetting +
+    // the ops.retention switch) — this control may only say "purges" when the
+    // sweep will actually purge.
+    const r = await getRetentionStatus(organizationId);
+    const storedValue = storedValueForEvidence(r.raw);
+    const evidence = {
+      organizationId,
+      storedValue,
+      storedType: r.raw === undefined ? null : r.raw === null ? "null" : Array.isArray(r.raw) ? "array" : typeof r.raw,
+      interpretation: r.setting.kind,
+      messageRetentionDays: r.setting.kind === "days" ? r.setting.days : null,
+      moduleEnabled: r.moduleEnabled,
+      enforced: r.enforced,
+      validRange: `whole days 1..${RETENTION_MAX_DAYS}, or 0 for indefinite`,
+      enforcedBy: "server/services/retention.ts (hourly sweep)",
+      scope: "caller's organization only — this endpoint never reads another tenant's settings",
+    };
+    if (r.setting.kind === "invalid") {
+      return {
+        status: "fail",
+        detail: `The stored messageRetentionDays value ${storedValue} is not a whole number of days from 0 to ${RETENTION_MAX_DAYS}, so the hourly sweep skips this organization and retention is NOT being applied (audited as retention.invalid_setting). Save a valid value in Settings → Organization.`,
+        evidence,
+      };
+    }
+    if (r.setting.kind === "off") {
+      return {
+        status: "warn",
+        detail:
+          r.raw === undefined || r.raw === null
+            ? "This organization has no messageRetentionDays setting, so clinical messages are retained indefinitely. That is permitted, but it must be a documented decision rather than an oversight."
+            : "This organization's messageRetentionDays is set to 0, so clinical messages are retained indefinitely. That is permitted, but it must be a documented decision rather than an oversight.",
+        evidence,
+      };
+    }
+    if (!r.enforced) {
+      return {
+        status: "warn",
+        detail: `A ${r.setting.days}-day message retention window is configured, but the ops.retention module is OFF for this organization, so the hourly sweep does not enforce it and clinical messages are being retained indefinitely.`,
+        evidence,
+      };
+    }
     return {
-      status: configured ? "pass" : "warn",
-      detail: configured
-        ? `This organization purges clinical messages older than ${days} day(s); each sweep is audited as messages.retention_purged.`
-        : "This organization has no messageRetentionDays setting, so clinical messages are retained indefinitely. That is permitted, but it must be a documented decision rather than an oversight.",
-      evidence: {
-        organizationId,
-        messageRetentionDays: configured ? days : null,
-        enforcedBy: "server/services/retention.ts (hourly sweep)",
-        scope: "caller's organization only — this endpoint never reads another tenant's settings",
-      },
+      status: "pass",
+      detail: `This organization purges clinical messages older than ${r.setting.days} day(s), with their attachment rows and encrypted attachment files; each sweep is audited as messages.retention_purged.`,
+      evidence,
     };
   },
 
@@ -732,24 +770,52 @@ const checks: Record<string, CheckFn> = {
    * (ATTACHMENT_STORE=fs-encrypted with a valid 32-byte ATTACHMENT_KEY). The
    * default base64-in-database store warns regardless of how many rows exist.
    * The row counts and bytes are real. Never reveals the key.
+   *
+   * Also measures row/file DRIFT (server/services/retention.ts
+   * measureAttachmentFileDrift): encrypted rows whose ciphertext file is gone,
+   * and ciphertext files no row references (what a failed purge/delete leaves
+   * behind). Either one turns a pass into a warn. Counts only — never a ref.
    */
   "attachment-storage": async ({ organizationId, store }) => {
     const s = await store.attachmentStats(organizationId);
     const cfg = attachmentStoreConfig();
     const encrypted = cfg.mode === "fs-encrypted" && cfg.ready;
+    // Rows vs ciphertext files on disk: the retention sweep and tenant delete
+    // claim to remove both, and a restore can bring back one without the other.
+    const drift = await measureAttachmentFileDrift(organizationId);
     const volume =
       s.count === 0
         ? "No attachments are stored for this organization yet."
         : `${s.count} attachment(s) totalling ${mb(s.totalBytes)} are stored for this organization.`;
+    const driftProblems: string[] = [];
+    if (drift.rowsMissingFile > 0) {
+      driftProblems.push(
+        `${drift.rowsMissingFile} of ${drift.encryptedRows} encrypted attachment row(s) for this organization point at a ciphertext file that is not on disk — those attachments cannot be served.`,
+      );
+    }
+    if (drift.unreferencedFiles > 0) {
+      driftProblems.push(
+        `${drift.unreferencedFiles} encrypted file(s) under ATTACHMENT_DIR are older than ${UNREFERENCED_FILE_GRACE_MS / 60_000} minutes and no attachment row references them (a deployment-wide count) — ciphertext a purge or delete left behind.`,
+      );
+    }
+    if (!drift.checked && cfg.mode === "fs-encrypted" && drift.reason) {
+      driftProblems.push(`File drift could not be measured: ${drift.reason}.`);
+    }
+    const driftNote = driftProblems.length ? " " + driftProblems.join(" ") : "";
     const detail = encrypted
-      ? `${volume} New uploads are written as AES-256-GCM ciphertext (random IV and auth tag per file) under the configured attachment directory; plaintext never reaches disk. Object storage under a BAA, antivirus scanning and signed-URL delivery remain the next step for real ePHI.`
+      ? `${volume} New uploads are written as AES-256-GCM ciphertext (random IV and auth tag per file) under the configured attachment directory; plaintext never reaches disk.${driftNote} Object storage under a BAA, antivirus scanning and signed-URL delivery remain the next step for real ePHI.`
       : cfg.mode === "fs-encrypted"
-        ? `${volume} ATTACHMENT_STORE=fs-encrypted is requested but unusable (${cfg.problem}); uploads are refused rather than stored in plaintext. Set a valid 32-byte ATTACHMENT_KEY.`
-        : `${volume} The upload path writes file bytes as base64 directly into the database row (ATTACHMENT_STORE=db). Real ePHI requires encrypted storage: set ATTACHMENT_STORE=fs-encrypted with ATTACHMENT_KEY, then move to object storage under a BAA with antivirus scanning and signed-URL delivery.`;
+        ? `${volume} ATTACHMENT_STORE=fs-encrypted is requested but unusable (${cfg.problem}); uploads are refused rather than stored in plaintext. Set a valid 32-byte ATTACHMENT_KEY.${driftNote}`
+        : `${volume} The upload path writes file bytes as base64 directly into the database row (ATTACHMENT_STORE=db). Real ePHI requires encrypted storage: set ATTACHMENT_STORE=fs-encrypted with ATTACHMENT_KEY, then move to object storage under a BAA with antivirus scanning and signed-URL delivery.${driftNote}`;
     return {
-      status: encrypted ? "pass" : "warn",
+      status: encrypted && driftProblems.length === 0 ? "pass" : "warn",
       detail,
       evidence: {
+        fileDrift: {
+          ...drift,
+          unreferencedGraceMinutes: UNREFERENCED_FILE_GRACE_MS / 60_000,
+          scope: "encryptedRows/rowsMissingFile: this organization; unreferencedFiles/filesOnDisk: whole deployment (files carry no tenant) — counts only",
+        },
         attachments: s.count,
         totalBytes: s.totalBytes,
         storeMode: cfg.mode,

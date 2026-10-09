@@ -1,6 +1,9 @@
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { storage } from "../storage.js";
 import { appendAudit } from "../audit.js";
 import { isModuleEnabled } from "../modules.js";
+import { attachmentStoreConfig } from "./attachment-store.js";
 
 /**
  * Per-org message retention: when an org sets `messageRetentionDays` (> 0) and
@@ -54,6 +57,119 @@ export function effectiveRetentionDays(raw: unknown): number {
   return s.kind === "days" ? s.days : 0;
 }
 
+/**
+ * A short rendering of a stored setting value for audit details and control
+ * evidence (a setting value, never clinical content). null when unset.
+ */
+export function storedValueForEvidence(raw: unknown): string | null {
+  if (raw === undefined) return null;
+  let s: string;
+  try {
+    s = JSON.stringify(raw) ?? String(raw);
+  } catch {
+    s = String(raw);
+  }
+  return s.length > 64 ? s.slice(0, 61) + "..." : s;
+}
+
+export interface RetentionStatus {
+  /** The value exactly as stored (undefined when the org never set one). */
+  raw: unknown;
+  setting: RetentionSetting;
+  /** The ops.retention module switch for this org. */
+  moduleEnabled: boolean;
+  /** True only when the hourly sweep will actually purge for this org. */
+  enforced: boolean;
+}
+
+/**
+ * What the sweep will do for one org — the SAME interpretation the sweep
+ * itself applies (readRetentionSetting + the ops.retention switch). The
+ * compliance control reads this, so it can never report a window the sweep
+ * is skipping (a legacy 0.00001 / true / 1e9 used to read as a green "purges
+ * older than N day(s)" while the sweep refused to touch the org).
+ */
+export async function getRetentionStatus(orgId: number): Promise<RetentionStatus> {
+  const raw = await storage().getOrgSetting(orgId, "messageRetentionDays");
+  const setting = readRetentionSetting(raw);
+  const moduleEnabled = await isModuleEnabled(orgId, "ops.retention");
+  return { raw, setting, moduleEnabled, enforced: setting.kind === "days" && moduleEnabled };
+}
+
+/** A ciphertext file younger than this may be an upload whose row is not inserted yet. */
+export const UNREFERENCED_FILE_GRACE_MS = 10 * 60_000;
+const FS_FILE_RE = /^([0-9a-f]{32})\.bin$/;
+
+export interface AttachmentFileDrift {
+  /** False when there is nothing to compare (db store, no encrypted rows) or the directory could not be read. */
+  checked: boolean;
+  reason: string | null;
+  /** This org's attachment rows whose bytes live in the encrypted file store. */
+  encryptedRows: number;
+  /** ...of which the ciphertext file is not on disk (cannot be served). */
+  rowsMissingFile: number;
+  /**
+   * DEPLOYMENT-WIDE count of ciphertext files under ATTACHMENT_DIR that no
+   * attachment row of any tenant references and that are older than the grace
+   * period — bytes a purge or delete left behind. Files carry no tenant, so
+   * this cannot be narrowed to one org; it is an integer only, never a name.
+   */
+  unreferencedFiles: number;
+  /** Ciphertext files currently under ATTACHMENT_DIR (deployment-wide count). */
+  filesOnDisk: number;
+}
+
+/**
+ * Measure drift between attachment rows and the encrypted files on disk. The
+ * retention sweep and tenant deletion remove both; this is how an operator
+ * sees whether that actually held (a failed unlink, a restore that brought
+ * back rows without files or files without rows). Counts only.
+ */
+export async function measureAttachmentFileDrift(orgId: number): Promise<AttachmentFileDrift> {
+  const cfg = attachmentStoreConfig();
+  const orgIds = await storage().listEncryptedAttachmentFileIds(orgId);
+  const empty = { encryptedRows: orgIds.length, rowsMissingFile: 0, unreferencedFiles: 0, filesOnDisk: 0 };
+  if (cfg.mode !== "fs-encrypted" && orgIds.length === 0) {
+    return { checked: false, reason: "ATTACHMENT_STORE=db and no encrypted-file attachments exist for this organization", ...empty };
+  }
+  let names: string[];
+  try {
+    names = await readdir(cfg.dir);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") {
+      return { checked: false, reason: `ATTACHMENT_DIR could not be listed (${code ?? "error"})`, ...empty };
+    }
+    names = [];
+  }
+  const onDisk = new Set<string>();
+  for (const n of names) {
+    const m = FS_FILE_RE.exec(n);
+    if (m) onDisk.add(m[1]!);
+  }
+  const rowsMissingFile = orgIds.filter((id) => !onDisk.has(id)).length;
+  const referenced = new Set(await storage().listAllEncryptedAttachmentFileIds());
+  const cutoff = Date.now() - UNREFERENCED_FILE_GRACE_MS;
+  let unreferencedFiles = 0;
+  for (const id of onDisk) {
+    if (referenced.has(id)) continue;
+    try {
+      const st = await stat(join(cfg.dir, id + ".bin"));
+      if (st.mtimeMs < cutoff) unreferencedFiles++;
+    } catch {
+      // Removed between readdir and stat — not drift.
+    }
+  }
+  return {
+    checked: true,
+    reason: null,
+    encryptedRows: orgIds.length,
+    rowsMissingFile,
+    unreferencedFiles,
+    filesOnDisk: onDisk.size,
+  };
+}
+
 // Orgs already audited this process for an invalid setting / module-off state,
 // so an hourly sweep does not write the same row forever.
 const invalidAudited = new Set<number>();
@@ -97,10 +213,10 @@ export async function runMessageRetentionSweep(): Promise<number> {
         });
       }
 
-      // 2) The retention window itself.
-      const setting = readRetentionSetting(
-        await storage().getOrgSetting(o.id, "messageRetentionDays"),
-      );
+      // 2) The retention window itself — read through getRetentionStatus, the
+      // same function the msg-retention-policy compliance control reports.
+      const status = await getRetentionStatus(o.id);
+      const setting = status.setting;
       if (setting.kind === "invalid") {
         // Skip rather than guess — and say so where an auditor will see it.
         if (!invalidAudited.has(o.id)) {
@@ -113,6 +229,7 @@ export async function runMessageRetentionSweep(): Promise<number> {
             resourceId: o.id,
             details: {
               setting: "messageRetentionDays",
+              storedValue: storedValueForEvidence(status.raw),
               reason: `must be an integer 0..${RETENTION_MAX_DAYS}; retention is NOT being applied`,
             },
             riskLevel: "high",
@@ -124,7 +241,7 @@ export async function runMessageRetentionSweep(): Promise<number> {
       if (setting.kind === "off") continue;
       // The module switch: with ops.retention off the window is configured but
       // not enforced — honour the switch and leave the data alone.
-      if (!(await isModuleEnabled(o.id, "ops.retention"))) {
+      if (!status.moduleEnabled) {
         if (!moduleOffLogged.has(o.id)) {
           moduleOffLogged.add(o.id);
           console.log(`[retention] ops.retention is off for org ${o.id}: retention window not enforced`);

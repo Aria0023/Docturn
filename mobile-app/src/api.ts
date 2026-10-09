@@ -33,6 +33,9 @@ export interface MobileMessage {
   content: string;
   createdAt: string;
   deletedAt?: string | null;
+  /** Recipients who have read it (server delivery rows). 0 = recallable. */
+  readCount?: number;
+  ackCount?: number;
 }
 
 export interface MobileConversation {
@@ -112,6 +115,15 @@ export const ApiClient = {
       conversationId,
       content,
     }),
+  // Recall (unsend) my own message while nobody has read it. The server
+  // enforces the unread-only rule (409 already_read) and sends
+  // MESSAGE_RECALLED to every participant.
+  recallMessage: (messageId: number) =>
+    request<void>("DELETE", `/api/messaging/messages/${messageId}`),
+  // This org's module switches (e.g. messaging.recall), so the screen only
+  // offers what the server will allow.
+  modules: () =>
+    request<{ modules: Record<string, boolean> }>("GET", "/api/modules"),
   markRead: (messageIds: number[]) =>
     messageIds.length
       ? request<void>("POST", "/api/messaging/messages/mark-read", { messageIds })
