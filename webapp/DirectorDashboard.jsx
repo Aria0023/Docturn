@@ -69,9 +69,21 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const rrStatus = (DTx && DTx.rotationStatus) ? DTx.rotationStatus() : { source: "local", capRelief: false, mode: (settings && settings.rotationMode) || "lowest_census" };
   const rotMode = rrStatus.mode || (settings && settings.rotationMode) || "lowest_census";
   const nextProvider = DTx && DTx.nextUp ? DTx.nextUp() : null;
-  // Rotation position per provider (1-based), so each row shows its place in line.
+  // Rotation position per provider (1-based): the planner's own pick order
+  // (DT.rotationQueue = GET /api/rotation/next `order`), so the numbers are
+  // who gets the next round-robin patients, in turn — census order or the
+  // sequential cursor applied, and nobody at cap, off shift, off rotation or
+  // on a non-round-robin shift. Not "everyone working, in list order".
+  const rrQueue = DTx && DTx.rotationQueue ? DTx.rotationQueue() : [];
   const rotIndex = {};
-  rotation.forEach((p, i) => { rotIndex[p.id] = i + 1; });
+  rrQueue.forEach((p, i) => { rotIndex[p.id] = i + 1; });
+  const rrShifts = (rrStatus.shiftTypes && rrStatus.shiftTypes.length) ? rrStatus.shiftTypes : ["day", "night"];
+  // Why a row has no position (tooltip + screen-reader label).
+  const noPosReason = (p) => !p.working ? "Off shift — not in round-robin"
+    : !p.inRotation ? "Off rotation — not in round-robin"
+    : rrShifts.indexOf(p.shift) < 0 ? "Not on a round-robin shift"
+    : p.census >= p.cap ? "At cap — skipped until a bed frees up"
+    : (rrStatus.source === "server" ? "Not in the round-robin queue" : "Round-robin position unknown");
 
   // Rolling admissions count since the director's last reset (log keeps all).
   const admSinceReset = (admissions || []).filter((a) => a.at >= (admissionsResetAt || 0)).length;
@@ -133,7 +145,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={17} color="var(--primary)" /></span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span style={{ whiteSpace: "nowrap" }}>{schedConfigured ? "On-call schedule synced" : "On-call schedule not connected"}</span>{schedConfigured ? <Badge status="accepted" icon="circle">{schedLabel} · 2m ago</Badge> : <Badge status="pending" icon="circle">{schedLabel}</Badge>}</div>
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows {schedConfigured ? "the live on-call grid" : "this org's schedule once connected"}. Toggles below override locally for this shift.</div>
+        <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows {schedConfigured ? "the live on-call grid" : "this org's schedule once connected"}. Changes below apply to the live rotation for everyone until the next schedule sync.</div>
       </div>
       <Button size="sm" variant="outline" icon="settings" onClick={onOpenSchedule}>Manage sync</Button>
     </Card>
@@ -242,15 +254,14 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "transparent"),
                       borderLeft: isNext ? "3px solid var(--primary)" : "3px solid transparent",
                       opacity: dragId === p.id ? 0.5 : 1, cursor: inRot ? "grab" : "default", transition: "background .12s, opacity .12s" }}>
-                    {/* rotation order indicator */}
+                    {/* round-robin position (the planner's pick order) */}
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, width: 40, flex: "none" }}>
-                      {inRot ? (
-                        <React.Fragment>
-                          <Icon name="grip-vertical" size={14} color="var(--muted-foreground)" />
-                          <span style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{rotIndex[p.id]}</span>
-                        </React.Fragment>
+                      {inRot && <Icon name="grip-vertical" size={14} color="var(--muted-foreground)" />}
+                      {rotIndex[p.id] ? (
+                        <span data-testid="rr-pos" data-provider={p.id} aria-label={"Round-robin position " + rotIndex[p.id]} title={"Round-robin position " + rotIndex[p.id]}
+                          style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{rotIndex[p.id]}</span>
                       ) : (
-                        <span title="Off rotation" style={{ color: "var(--muted-foreground)", fontSize: 13, paddingLeft: 6 }}>—</span>
+                        <span data-testid="rr-pos" data-provider={p.id} aria-label={noPosReason(p)} title={noPosReason(p)} style={{ color: "var(--muted-foreground)", fontSize: 13, paddingLeft: inRot ? 0 : 6 }}>—</span>
                       )}
                     </span>
                     <Avatar initials={p.avatar} size={34} tint={p.working ? "emerald" : "slate"} />
@@ -303,7 +314,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin config</h3>
         <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotMode === "lowest_census" ? "Lowest census first" : "Sequential"} · {rotation.length} in rotation</span>
       </div>
-      <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 14px" }}>The rotation order is the numbered list in the provider rows above — drag any in-rotation row to reorder; the next provider is highlighted.</p>
+      <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 14px" }}>The numbers in the provider rows above are who gets the next round-robin patients, in turn (— = at cap, off shift, off rotation or not on a round-robin shift); the next provider is highlighted. Drag any in-rotation row to change the rotation order.</p>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18, alignItems: "start" }}>
         <Field label="Assignment timeout (min)" icon="timer" value={String((settings && settings.timeout) != null ? settings.timeout : 15)} onChange={(v) => onSetTimeout && onSetTimeout(parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="Unanswered requests re-page the next provider after this." />
         <div>

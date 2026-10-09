@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { orgConfigSchema } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 export function registerOrgRoutes(app: Express) {
@@ -79,6 +80,10 @@ export function registerOrgRoutes(app: Express) {
         details: parsed.data,
         riskLevel: "low",
       });
+      // Rotation mode / round-robin shifts decide who is next for everyone.
+      if (parsed.data.rotationMode !== undefined || parsed.data.roundRobinShiftTypes !== undefined) {
+        broadcastRotationChange(me.organizationId);
+      }
       res.json(updated);
     },
   );

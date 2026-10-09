@@ -209,5 +209,12 @@ design/               # full design-system handoff + UI kits the client is built
   prefers the lowest census. `previewNext` ("Next up") applies the same eligibility, and the web
   client's "Next up" surfaces (Director card, ER Quick hint, hospitalist position chip) read it from
   `GET /api/rotation/next` instead of guessing locally; the ER Quick tab sends `round_robin` without a
-  `hospitalistId` and its confirmation names the provider the server actually assigned.
+  `hospitalistId` and its confirmation names the provider the server actually assigned. Every write
+  that moves "Next up" (cursor reset, on/off shift, caps, census, rotation order, the Director's
+  Rotation/Off switch — `PATCH /api/hospitalists/:id/rotation` — and shift selector —
+  `PATCH /api/hospitalists/:id/shift` — roster and rotation config) broadcasts a content-free
+  `ROTATION_UPDATED` to that org's open sessions, which re-read the preview; the Director's row
+  numbers are the planner's own pick order. A provider taken off rotation stays on shift but is never
+  previewed, picked or cap-relieved. Bulk on/off shift and "Apply to all" caps are
+  `PATCH /api/hospitalists/working-status` and `PATCH /api/physicians/capacity`.
 - Messaging never delivers a message to a non-participant.

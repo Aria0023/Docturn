@@ -19,8 +19,9 @@ export interface SelectOptions {
  * from another tenant because every read is org-scoped through `storage`.
  *
  * Algorithm (see 05_WORKFLOWS.md §2):
- *   pool     = working providers in org whose shift_type ∈ org.roundRobinShiftTypes
- *              (the ROUTABLE pool — nothing below ever looks outside it).
+ *   pool     = working, in-rotation providers in org whose shift_type ∈
+ *              org.roundRobinShiftTypes (the ROUTABLE pool — nothing below
+ *              ever looks outside it).
  *   eligible = pool members whose census < cap, specialty matching if required,
  *              minus the excluded (just-declined / just-expired) provider.
  *   if none and a specialty was asked → drop the specialty preference.
@@ -153,13 +154,14 @@ export function routableShiftTypes(org: Pick<Organization, "roundRobinShiftTypes
 
 /**
  * The routable pool: working providers whose shift is in the org's round-robin
- * set. Shared by selection, cap relief and preview so the three can never
- * drift (e.g. relieving a swing-shift cap that selection would never pick).
+ * set and whom the director has not taken off rotation (inRotation). Shared by
+ * selection, cap relief and preview so the three can never drift (e.g.
+ * relieving a swing-shift cap that selection would never pick).
  */
 async function routablePool(storage: IStorage, org: Organization): Promise<Hospitalist[]> {
   const working = await storage.listWorkingHospitalists(org.id);
   const allowed = routableShiftTypes(org);
-  return working.filter((h) => allowed.includes(h.shiftType));
+  return working.filter((h) => allowed.includes(h.shiftType) && h.inRotation !== false);
 }
 
 /** Eligibility within an already-routable pool: exclusion, specialty, census < cap. */

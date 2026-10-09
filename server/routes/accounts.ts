@@ -3,6 +3,7 @@ import type { User } from "@shared/schema";
 import { endSessionsOfDeactivatedUser, issueTemporaryPassword, rotatePassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 /**
@@ -114,6 +115,7 @@ export function registerAccountRoutes(app: Express) {
       const profile = await storage().getHospitalistByUser(target.organizationId, target.id);
       if (profile && profile.working) {
         await storage().updateHospitalist(target.organizationId, profile.id, { working: false });
+        broadcastRotationChange(target.organizationId);
       }
     }
     // The live transports end now, not at the next reconnect: the target's

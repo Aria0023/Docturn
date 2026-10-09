@@ -31,10 +31,14 @@ export class NoopPush implements PushTransport {
 
 export class NoopWs implements WsFanout {
   delivered: Array<{ userIds: number[]; message: unknown }> = [];
+  /** Org-wide fan-outs, recorded so tests can assert who was told what. */
+  broadcasts: Array<{ orgId: number; message: unknown }> = [];
   sendToUsers(userIds: number[], message: unknown) {
     this.delivered.push({ userIds, message });
   }
-  broadcast(_orgId: number, _message: unknown) {}
+  broadcast(orgId: number, message: unknown) {
+    this.broadcasts.push({ orgId, message });
+  }
 }
 
 export interface NotificationDeps {
@@ -67,6 +71,23 @@ export function broadcastAssignmentChange(orgId: number) {
     deps.ws.broadcast(orgId, { type: "ASSIGNMENT_UPDATED" });
   } catch (err) {
     console.error("[notify] assignment broadcast failed", err);
+  }
+}
+
+/**
+ * Tell every signed-in session of ONE org that something round-robin depends
+ * on changed — the sequential cursor (reset), on/off shift, caps, census,
+ * rotation order, rotation membership, shift type, the roster or the org's
+ * rotation config — so each client re-reads GET /api/rotation/next (and the
+ * roster) instead of naming the pre-change provider as "Next up" in the
+ * Director card, the ER Quick hint and the hospitalist chip (A.CON-SHO-29).
+ * Content-free (no PHI, no ids): the client re-fetches what it may read.
+ */
+export function broadcastRotationChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "ROTATION_UPDATED" });
+  } catch (err) {
+    console.error("[notify] rotation broadcast failed", err);
   }
 }
 

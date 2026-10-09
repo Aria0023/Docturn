@@ -154,6 +154,10 @@ export const hospitalists = pgTable("hospitalists", {
   rotationOrder: integer("rotation_order").notNull().default(0),
   working: boolean("working").notNull().default(false),
   shiftType: text("shift_type", { enum: SHIFT_TYPE }).notNull().default("day"),
+  // Director's "Rotation / Off" switch: an on-shift provider can be taken out
+  // of round-robin (never previewed, picked or cap-relieved) while staying on
+  // shift for manual assignment and on-call (services/rotation.ts routablePool).
+  inRotation: boolean("in_rotation").notNull().default(true),
 });
 
 export const patients = pgTable("patients", {

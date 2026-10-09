@@ -275,7 +275,9 @@
         cap: h.patientCap,
         working: !!h.working,
         shift: h.shiftType,
-        inRotation: true,
+        // The Director's "Rotation / Off" switch is server state (round-robin
+        // never draws an off-rotation provider); older servers had no flag.
+        inRotation: h.inRotation !== false,
       };
     });
   }
@@ -301,6 +303,10 @@
   }
   var ROTATION_ROLES = { er_doctor: 1, er_director: 1, director: 1, hospitalist: 1 };
   var rotationSess = null; // the session whose preview state.rotation holds
+  // Overlapping hydrates (an action's own re-read plus a WS-triggered one) can
+  // answer out of order: the roster and the "Next up" preview from an older
+  // hydrate never overwrite those of a newer one that already landed.
+  var hydrateSeq = 0, rosterAppliedSeq = 0;
   function mapPending(assignments, patientsById, usersById) {
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
@@ -431,6 +437,7 @@
       rotationSess = sessNow;
       DT.set(function (s) { s.rotation = { source: "loading" }; return s; });
     }
+    var seq = ++hydrateSeq;
     return Promise.all([
       get("/api/hospitalists").catch(function () { return null; }),
       // directory is readable by every role and carries provider names; /api/users
@@ -493,13 +500,15 @@
       return Promise.all(extra).then(function (e) {
         var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8];
         DT.set(function (s) {
-          if (hosps && users) s.providers = mapProviders(hosps, usersById);
-          if (rotation) {
+          var fresh = seq >= rosterAppliedSeq;
+          if (fresh && ((hosps && users) || rotation)) rosterAppliedSeq = seq;
+          if (fresh && hosps && users) s.providers = mapProviders(hosps, usersById);
+          if (rotation && fresh) {
             s.rotation = rotation;
             // The org's real rotation mode (the card's "lowest census first" /
             // "sequential" wording and the hospitalist chip follow it).
             if (rotation.source === "server") s.settings = Object.assign({}, s.settings, { rotationMode: rotation.mode });
-          } else if (s.rotation && s.rotation.source === "loading") {
+          } else if (!rotation && s.rotation && s.rotation.source === "loading") {
             s.rotation = null; // no answer and no live server (offline demo): local rules
           }
           // Full registered directory (all roles): drives the ER Consult-services
@@ -569,6 +578,20 @@
   function rehydrate() {
     var st = DT.getState();
     return hydrate(st.session && st.session.role);
+  }
+  // A ROTATION_UPDATED frame (another session reset the cursor, changed a
+  // shift, a cap, the order, …) re-reads the roster and "Next up". Frames come
+  // in bursts (a bulk change, or this session's own write echoed back), so
+  // they are coalesced into one re-read shortly after the last one.
+  var rotationRefreshTimer = null;
+  function rehydrateRotationSoon() {
+    if (rotationRefreshTimer) clearTimeout(rotationRefreshTimer);
+    var epoch = authEpoch;
+    rotationRefreshTimer = setTimeout(function () {
+      rotationRefreshTimer = null;
+      if (epoch !== authEpoch || lockActive() || !DT.getState().session) return;
+      rehydrate();
+    }, 150);
   }
 
   // ---- messaging (real, cross-device) --------------------------------------
@@ -1317,6 +1340,10 @@
         // Server-emitted event names (see server/services + routes): consult and
         // care-team changes also re-hydrate so boards/rosters stay live.
         else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
+        // Something round-robin depends on changed in another session (or
+        // this one): every "Next up" surface re-reads the planner
+        // (A.CON-SHO-29) — never keeps naming the pre-change provider.
+        else if (ev.type === "ROTATION_UPDATED") rehydrateRotationSoon();
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
           // Surface an incoming org-wide broadcast live: insert it (with its
           // real ack requirement) so the banner + card show an Acknowledge
@@ -2887,25 +2914,127 @@
     });
   };
 
-  // director provider management
+  // ---- director provider management (A.CON-SHO-29) ------------------------
+  // Every rotation input is SERVER state: each control writes to the API and
+  // then re-reads the roster and GET /api/rotation/next, so the Next-up card,
+  // the row position badges, the ER Quick hint and every OTHER open session
+  // (the server announces ROTATION_UPDATED) agree with the planner. Several of
+  // these used to change only this tab's copy (Rotation/Off, shift, drag
+  // order, Apply-to-all cap) and "All on/off shift" hit a 404.
+  //   local  the store's own action, applied first as an instant preview; in
+  //          the offline demo (no server) it is the whole action.
+  //   onOk   runs after the re-read (e.g. a toast naming the new Next up).
+  // A refused write says so and re-reads, which puts the true value back.
+  var origProviderActions = {
+    toggleWorking: DT.actions.toggleWorking, adjustCap: DT.actions.adjustCap, adjustCensus: DT.actions.adjustCensus,
+    bulkWorking: DT.actions.bulkWorking, toggleRotation: DT.actions.toggleRotation, setShiftFor: DT.actions.setShiftFor,
+    reorderProviders: DT.actions.reorderProviders, setAllCap: DT.actions.setAllCap, resetRotation: DT.actions.resetRotation,
+  };
+  function rotationWrite(what, request, local, onOk) {
+    if (local) local();
+    return request().then(function (r) {
+      return rehydrate().then(function () { if (onOk) onOk(r); return r; });
+    }, function (e) {
+      if (localDemoSession && isNetworkError(e)) return null; // offline demo: the local change is all there is
+      var why = String((e && e.message) || "");
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: "Couldn't " + what,
+          msg: isNetworkError(e) ? "No connection — nothing changed on the server."
+            : (e && e.status === 403 && /forbidden/i.test(why)) ? "Your role can't change the rotation."
+            : (e && e.status === 404) ? "That provider no longer exists — the list has been refreshed."
+            : "The server refused the change — the list shows what's actually set." };
+        return s;
+      });
+      return rehydrate();
+    });
+  }
+  function providerById(id) { return (DT.getState().providers || []).find(function (x) { return x.id === id; }) || null; }
   DT.actions.toggleWorking = function (id) {
-    var p = DT.getState().providers.find(function (x) { return x.id === id; });
-    if (p) api("PATCH", "/api/hospitalists/" + bid(id) + "/working-status", { working: !p.working }).then(rehydrate).catch(function () {});
+    var p = providerById(id);
+    if (!p) return;
+    rotationWrite(p.working ? "take " + p.name + " off shift" : "put " + p.name + " on shift",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/working-status", { working: !p.working }); },
+      function () { origProviderActions.toggleWorking(id); });
   };
   DT.actions.adjustCap = function (id, d) {
-    var p = DT.getState().providers.find(function (x) { return x.id === id; });
-    if (p) api("PATCH", "/api/physicians/" + bid(id) + "/capacity", { patientCap: Math.max(1, p.cap + d) }).then(rehydrate).catch(function () {});
+    var p = providerById(id);
+    if (!p) return;
+    rotationWrite("change " + p.name + "'s cap",
+      function () { return api("PATCH", "/api/physicians/" + bid(id) + "/capacity", { patientCap: Math.max(1, p.cap + d) }); },
+      function () { origProviderActions.adjustCap(id, d); });
   };
   DT.actions.adjustCensus = function (id, d) {
-    var p = DT.getState().providers.find(function (x) { return x.id === id; });
-    if (p) api("PATCH", "/api/hospitalists/" + bid(id) + "/census", { currentPatientCount: Math.max(0, p.census + d), reason: "manual adjustment" }).then(rehydrate).catch(function () {});
+    var p = providerById(id);
+    if (!p) return;
+    rotationWrite("change " + p.name + "'s census",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/census", { currentPatientCount: Math.max(0, p.census + d), reason: "manual adjustment" }); },
+      function () { origProviderActions.adjustCensus(id, d); });
   };
   DT.actions.bulkWorking = function (on) {
-    api("PATCH", "/api/hospitalists/0/working-status", { all: on }).then(rehydrate).catch(function () {});
+    rotationWrite(on ? "put everyone on shift" : "take everyone off shift",
+      function () { return api("PATCH", "/api/hospitalists/working-status", { all: !!on }); },
+      function () { origProviderActions.bulkWorking(on); });
   };
+  // "Rotation / Off": out of round-robin while staying on shift.
+  DT.actions.toggleRotation = function (id) {
+    var p = providerById(id);
+    if (!p) return;
+    rotationWrite(p.inRotation ? "take " + p.name + " off rotation" : "put " + p.name + " back in rotation",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/rotation", { inRotation: !p.inRotation }); },
+      function () { origProviderActions.toggleRotation(id); });
+  };
+  // Shift selector (Day / Swing / Night): only round-robin shifts are routable.
+  DT.actions.setShiftFor = function (id, sid) {
+    var p = providerById(id);
+    if (!p || p.shift === sid) return;
+    rotationWrite("move " + p.name + " to another shift",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/shift", { shiftType: sid }); },
+      function () { origProviderActions.setShiftFor(id, sid); });
+  };
+  // Drag to reorder: the whole roster's order becomes the rotation order.
+  DT.actions.reorderProviders = function (dragId, targetId) {
+    if (!dragId || dragId === targetId) return;
+    rotationWrite("reorder the rotation",
+      function () {
+        var order = (DT.getState().providers || []).map(function (x) { return bid(x.id); });
+        return api("PATCH", "/api/hospitalists/rotation-order", { order: order });
+      },
+      function () { origProviderActions.reorderProviders(dragId, targetId); });
+  };
+  // "Mass set daily census limit → Apply to all".
+  DT.actions.setAllCap = function (n) {
+    var cap = parseInt(n, 10);
+    if (!(cap >= 1 && cap <= 50)) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Cap not applied", msg: "Enter a daily census limit from 1 to 50." }; return s; });
+      return;
+    }
+    rotationWrite("apply the cap",
+      function () { return api("PATCH", "/api/physicians/capacity", { patientCap: cap }); },
+      null,
+      function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Cap applied", msg: "Daily census limit set to " + cap + " for all providers." }; return s; }); });
+  };
+  // Reset the sequential cursor, then re-read who is next NOW (it changed
+  // for every session; the others hear ROTATION_UPDATED) and name them. A
+  // refused reset never shows a success toast.
   DT.actions.resetRotation = function () {
-    api("POST", "/api/round-robin/reset").catch(function () {});
-    DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin restarts from the top." }; return s; });
+    return api("POST", "/api/round-robin/reset").then(function () {
+      return rehydrate().then(function () {
+        var nx = DT.nextUp && DT.nextUp();
+        DT.set(function (s) {
+          s.__toast = { tone: "accepted", title: "Rotation index reset",
+            msg: nx ? "Round-robin restarts from the top — next up: " + nx.name + "." : "Round-robin restarts from the top." };
+          return s;
+        });
+      });
+    }, function (e) {
+      if (localDemoSession && isNetworkError(e)) { if (origProviderActions.resetRotation) origProviderActions.resetRotation(); return; }
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: "Couldn't reset rotation",
+          msg: isNetworkError(e) ? "No connection — the rotation index was NOT reset." : "The server refused the reset — the rotation index is unchanged." };
+        return s;
+      });
+      return rehydrate();
+    });
   };
   // Emergency broadcast: persist + fan out via the real backend (WS
   // BROADCAST_CREATED reaches every signed-in member of the org). The kit's

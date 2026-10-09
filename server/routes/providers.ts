@@ -1,9 +1,10 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { censusOverrideSchema } from "@shared/schema";
+import { censusOverrideSchema, SHIFT_TYPE } from "@shared/schema";
 import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 const createProviderSchema = z.object({
@@ -30,11 +31,21 @@ const workingStatusSchema = z.object({
 });
 
 const capacitySchema = z.object({ patientCap: z.number().int().min(1).max(50) });
+const bulkWorkingSchema = z.object({ all: z.boolean() });
+const rotationMembershipSchema = z.object({ inRotation: z.boolean() });
+const shiftSchema = z.object({ shiftType: z.enum(SHIFT_TYPE) });
 
 const rotationOrderSchema = z.object({
   order: z.array(z.number().int().positive()).min(1),
 });
 
+/**
+ * Every write below changes who the next round-robin patient goes to, so each
+ * successful one ends with broadcastRotationChange(org): every open session of
+ * that org (and no other) re-reads GET /api/rotation/next, so a Director card
+ * or an ER Quick hint never keeps naming the pre-change provider
+ * (A.CON-SHO-29). Refused / cross-tenant writes announce nothing.
+ */
 export function registerProviderRoutes(app: Express) {
   app.get("/api/hospitalists", requireAuth, async (req, res) => {
     const me = currentUser(req);
@@ -71,6 +82,7 @@ export function registerProviderRoutes(app: Express) {
           details: {},
           riskLevel: "low",
         });
+        broadcastRotationChange(me.organizationId);
       }
       res.status(201).json({ hospitalistId: h.id });
     },
@@ -169,7 +181,38 @@ export function registerProviderRoutes(app: Express) {
         details: { role: data.role },
         riskLevel: "low",
       });
+      if (hospitalist) broadcastRotationChange(me.organizationId);
       res.status(201).json({ user: { id: user.id, username: user.username }, hospitalist, temporaryPassword });
+    },
+  );
+
+  // Bulk on/off shift for the whole org ("All on shift" / "All off shift").
+  // Its own id-less path: the numeric `:id` guard (server/params.ts) answers
+  // `/api/hospitalists/0/...` with 404, so the old "id 0 + all" form below was
+  // unreachable from the Director dashboard.
+  async function bulkWorking(me: { id: number; organizationId: number }, working: boolean) {
+    await storage().bulkSetWorking(me.organizationId, working);
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "hospitalist.working_bulk",
+      resourceType: "organization",
+      resourceId: me.organizationId,
+      details: { working },
+      riskLevel: "medium",
+    });
+    broadcastRotationChange(me.organizationId);
+  }
+  app.patch(
+    "/api/hospitalists/working-status",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = bulkWorkingSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      await bulkWorking(me, parsed.data.all);
+      res.json({ ok: true, bulk: true, working: parsed.data.all });
     },
   );
 
@@ -181,12 +224,12 @@ export function registerProviderRoutes(app: Express) {
       const parsed = workingStatusSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
 
-      // Bulk form (director/developer only).
+      // Bulk form (director/developer only; kept for older callers).
       if (parsed.data.all !== undefined) {
         if (me.role !== "director" && me.role !== "developer") {
           return res.status(403).json({ error: "forbidden" });
         }
-        await storage().bulkSetWorking(me.organizationId, parsed.data.all);
+        await bulkWorking(me, parsed.data.all);
         return res.json({ ok: true, bulk: true, working: parsed.data.all });
       }
 
@@ -205,7 +248,99 @@ export function registerProviderRoutes(app: Express) {
       const updated = await storage().updateHospitalist(me.organizationId, id, {
         working: parsed.data.working,
       });
+      broadcastRotationChange(me.organizationId);
       res.json(updated);
+    },
+  );
+
+  // The Director's "Rotation / Off" switch: take an on-shift provider out of
+  // round-robin (or put them back) without touching their shift. Director
+  // decision, so not self-service; audited; org-scoped.
+  app.patch(
+    "/api/hospitalists/:id/rotation",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = rotationMembershipSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const updated = await storage().updateHospitalist(me.organizationId, id, {
+        inRotation: parsed.data.inRotation,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.rotation_membership",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { inRotation: parsed.data.inRotation, from: h.inRotation },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json(updated);
+    },
+  );
+
+  // The Director's shift selector (Day / Swing / Night). Only shifts in
+  // org.roundRobinShiftTypes are routable, so this moves a provider into or
+  // out of round-robin. A schedule sync (Amion) may set it again later.
+  app.patch(
+    "/api/hospitalists/:id/shift",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = shiftSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const updated = await storage().updateHospitalist(me.organizationId, id, {
+        shiftType: parsed.data.shiftType,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.shift_change",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { from: h.shiftType, to: parsed.data.shiftType },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json(updated);
+    },
+  );
+
+  // "Mass set daily census limit → Apply to all": every provider in the org.
+  app.patch(
+    "/api/physicians/capacity",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = capacitySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const all = await storage().listHospitalists(me.organizationId);
+      for (const h of all) {
+        if (h.patientCap !== parsed.data.patientCap) {
+          await storage().updateHospitalist(me.organizationId, h.id, { patientCap: parsed.data.patientCap });
+        }
+      }
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.cap_bulk",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { patientCap: parsed.data.patientCap, providers: all.length },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json({ ok: true, bulk: true, patientCap: parsed.data.patientCap });
     },
   );
 
@@ -223,6 +358,7 @@ export function registerProviderRoutes(app: Express) {
     const updated = await storage().updateHospitalist(me.organizationId, id, {
       patientCap: parsed.data.patientCap,
     });
+    broadcastRotationChange(me.organizationId);
     res.json(updated);
   });
 
@@ -234,12 +370,24 @@ export function registerProviderRoutes(app: Express) {
       const me = currentUser(req);
       const parsed = rotationOrderSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // Only this org's providers are reordered (updateHospitalist is
+      // org-scoped, so a foreign id is a no-op).
       let i = 0;
       for (const hid of parsed.data.order) {
         await storage().updateHospitalist(me.organizationId, hid, {
           rotationOrder: i++,
         });
       }
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "rotation.reorder",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { order: parsed.data.order },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
       res.json(await storage().listHospitalists(me.organizationId));
     },
   );
@@ -266,6 +414,7 @@ export function registerProviderRoutes(app: Express) {
         details: {},
         riskLevel: "medium",
       });
+      broadcastRotationChange(me.organizationId);
       res.status(204).end();
     },
   );
@@ -303,6 +452,7 @@ export function registerProviderRoutes(app: Express) {
         },
         riskLevel: "medium",
       });
+      broadcastRotationChange(me.organizationId);
       res.json(updated);
     },
   );
@@ -313,9 +463,21 @@ export function registerProviderRoutes(app: Express) {
     requireRole("director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
+      const org = await storage().getOrganization(me.organizationId);
       await storage().updateOrganization(me.organizationId, {
         rotationIndex: 0,
       });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "rotation.reset",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { fromIndex: org?.rotationIndex ?? null },
+        riskLevel: "low",
+      });
+      // The sequential "Next up" just changed for everyone in the org.
+      broadcastRotationChange(me.organizationId);
       res.json({ ok: true });
     },
   );

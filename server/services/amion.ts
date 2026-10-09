@@ -4,6 +4,7 @@ import { appendAudit } from "../audit.js";
 import { hashPassword } from "../auth.js";
 import { isModuleEnabled } from "../modules.js";
 import { storage, type DatabaseStorage } from "../storage.js";
+import { broadcastRotationChange } from "./notifications.js";
 
 /**
  * Amion on-call schedule sync.
@@ -267,6 +268,7 @@ export async function syncAmion(
 
   let created = 0;
   let updated = 0;
+  let rotationChanged = false; // a shift / on-shift change or a new provider
   for (const [key, row] of unique) {
     const displayName = toDisplayName(row.name);
     let user = byName.get(key);
@@ -296,6 +298,7 @@ export async function syncAmion(
     if (profile) {
       if (profile.shiftType !== row.shift || !profile.working) {
         await db.updateHospitalist(org.id, profile.id, { shiftType: row.shift, working: true });
+        rotationChanged = true;
       }
       updated++;
     } else {
@@ -311,6 +314,7 @@ export async function syncAmion(
         shiftType: row.shift,
       });
       created++;
+      rotationChanged = true;
     }
   }
 
@@ -338,6 +342,9 @@ export async function syncAmion(
     },
     riskLevel: "low",
   });
+  // The synced grid moved someone on shift / to another shift: every open
+  // session's "Next up" must re-read the planner (A.CON-SHO-29).
+  if (rotationChanged) broadcastRotationChange(org.id);
   return state;
 }
 

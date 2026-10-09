@@ -240,7 +240,12 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   // next: ask the server for exactly that preview.
   const specialty = fields.specialty || "";
   const [specPreview, setSpecPreview] = React.useState(null);
-  const rosterKey = list.map((p) => p.id + ":" + p.census + "/" + p.cap + (p.working ? "w" : "")).join(",") + "|" + (rrNext ? rrNext.id : "-");
+  // Re-ask whenever anything the pick depends on changes: the roster (census,
+  // cap, on/off shift, rotation membership, shift, specialty) or the general
+  // preview itself (cursor reset, mode, order — a ROTATION_UPDATED re-read).
+  const rot = DTx && DTx.getState ? DTx.getState().rotation : null;
+  const rotSig = rot ? (rot.source || "") + ":" + (rot.mode || "") + ":" + (rot.order || []).join(".") + (rot.capRelief ? "!" : "") : "-";
+  const rosterKey = list.map((p) => p.id + ":" + p.census + "/" + p.cap + (p.working ? "w" : "") + (p.inRotation ? "r" : "") + (p.shift || "") + "~" + (p.specialty || "")).join(",") + "|" + (rrNext ? rrNext.id : "-") + "|" + rotSig;
   React.useEffect(() => {
     if (!specialty || !DTx || !DTx.previewRotation) { setSpecPreview(null); return undefined; }
     let live = true;

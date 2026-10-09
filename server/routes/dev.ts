@@ -14,6 +14,7 @@ import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
 import { parseId } from "../params.js";
+import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 /**
@@ -266,6 +267,10 @@ export function registerDevRoutes(app: Express) {
         details: patch,
         riskLevel: "medium",
       });
+      // That tenant's sessions re-read "Next up" (its rotation config moved).
+      if (patch.rotationMode !== undefined || patch.roundRobinShiftTypes !== undefined) {
+        broadcastRotationChange(id);
+      }
       res.json(updated);
     },
   );
@@ -557,6 +562,7 @@ export function registerDevRoutes(app: Express) {
             working: d.working ?? false,
             shiftType: d.shiftType ?? "day",
           });
+          if (d.working) broadcastRotationChange(d.organizationId);
         }
         res.status(201).json({ ...toSafeUser(user), temporaryPassword });
       } catch (err) {

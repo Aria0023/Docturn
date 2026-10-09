@@ -244,6 +244,8 @@ CREATE TABLE IF NOT EXISTS hospitalists (
   working BOOLEAN NOT NULL DEFAULT FALSE,
   shift_type TEXT NOT NULL DEFAULT 'day'
 );
+-- Director's "Rotation / Off" switch (A.CON-SHO-29); additive, existing rows stay in rotation.
+ALTER TABLE hospitalists ADD COLUMN IF NOT EXISTS in_rotation BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS patients (
   id SERIAL PRIMARY KEY,
