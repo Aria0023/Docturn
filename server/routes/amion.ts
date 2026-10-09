@@ -1,11 +1,12 @@
 import type { Express } from "express";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
-import { amionConfigured, getAmionStatus, syncAmion } from "../services/amion.js";
+import { amionFeedFor, amionTargetOrgId, getAmionStatus, syncAmion } from "../services/amion.js";
 
 /**
- * Live Amion schedule feed. The feed URL (with its Lo= token) lives only in
- * the AMION_OCS_URL env var — no response here ever includes it.
+ * Live Amion schedule feed, per hospital: the org's own saved feed
+ * (Settings → Integrations → Amion, encrypted) or the operator's env feed for
+ * AMION_ORG_CODE. The feed URL (with its Lo= token) is never in a response.
  */
 export function registerAmionRoutes(app: Express) {
   // Feed status + the last-synced grid (drives the director's Schedule Sync UI).
@@ -22,11 +23,12 @@ export function registerAmionRoutes(app: Express) {
     requireRole("director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
-      if (!amionConfigured()) {
+      const orgId = await amionTargetOrgId(storage(), me);
+      if (!(await amionFeedFor(storage(), orgId))) {
         return res.status(409).json({ error: "amion_not_configured" });
       }
       try {
-        await syncAmion(storage(), { actorUserId: me.id });
+        await syncAmion(storage(), { actorUserId: me.id, orgId });
       } catch (err) {
         // Config-shaped failures (missing org). Fetch/parse errors are already
         // captured in the stored state and don't throw.

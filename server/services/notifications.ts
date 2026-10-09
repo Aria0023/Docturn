@@ -2,6 +2,7 @@ import type { Assignment } from "@shared/schema";
 import { getNotificationProfile } from "../config.js";
 import { storage } from "../storage.js";
 import { smsFor, type SmsService } from "./sms.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 
 /**
  * Out-of-app delivery. Push and SMS payloads carry NO PHI — only a generic
@@ -150,6 +151,8 @@ async function escalateSms(
   targetUserIds: number[],
   carrier: string,
 ) {
+  // SMS switched off for the org (Settings → Integrations → Twilio): no text.
+  if (!(await smsAllowedForOrg(assignment.organizationId))) return;
   const sms = deps.smsFor(carrier);
   for (const userId of targetUserIds) {
     try {

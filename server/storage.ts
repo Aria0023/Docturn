@@ -26,6 +26,7 @@ import {
   messageDeliveryStatus,
   messageTemplates,
   messages,
+  orgIntegrationCredentials,
   orgSettings,
   organizations,
   patientConsults,
@@ -60,6 +61,7 @@ import {
   type MessageAttachment,
   type MessageDeliveryStatus,
   type Organization,
+  type OrgIntegrationCredential,
   type PatientConsult,
   type PendingRegistration,
   type Patient,
@@ -446,6 +448,13 @@ export interface IStorage {
     value: unknown,
     updatedBy: number | null,
   ): Promise<void>;
+  // per-hospital integration credentials (ciphertext only — server/integrations/)
+  getIntegrationCredential(orgId: number, integrationId: string): Promise<OrgIntegrationCredential | undefined>;
+  listIntegrationCredentials(integrationId?: string): Promise<OrgIntegrationCredential[]>;
+  upsertIntegrationCredential(
+    row: Omit<OrgIntegrationCredential, "id" | "updatedAt">,
+  ): Promise<OrgIntegrationCredential>;
+  deleteIntegrationCredential(orgId: number, integrationId: string): Promise<boolean>;
   getUserPreference(userId: number, key: string): Promise<unknown>;
   setUserPreference(
     orgId: number,
@@ -1394,6 +1403,60 @@ export class DatabaseStorage implements IStorage {
         set: { value, updatedBy, updatedAt: new Date() },
       });
   }
+  // ── per-hospital integration credentials ─────────────────────────────────────
+  // Rows hold ciphertext + non-secret summary only; encryption/decryption is
+  // server/integrations/crypto.ts's job, never this layer's.
+  async getIntegrationCredential(orgId: number, integrationId: string) {
+    const [row] = await this.db
+      .select()
+      .from(orgIntegrationCredentials)
+      .where(
+        and(
+          eq(orgIntegrationCredentials.organizationId, orgId),
+          eq(orgIntegrationCredentials.integrationId, integrationId),
+        ),
+      );
+    return row;
+  }
+  async listIntegrationCredentials(integrationId?: string) {
+    const q = this.db.select().from(orgIntegrationCredentials);
+    const rows = integrationId
+      ? await q.where(eq(orgIntegrationCredentials.integrationId, integrationId))
+      : await q;
+    return rows.sort((a, b) => a.organizationId - b.organizationId);
+  }
+  async upsertIntegrationCredential(row: Omit<OrgIntegrationCredential, "id" | "updatedAt">) {
+    const set = {
+      ciphertext: row.ciphertext,
+      iv: row.iv,
+      authTag: row.authTag,
+      keyVersion: row.keyVersion,
+      summary: row.summary,
+      updatedBy: row.updatedBy,
+      updatedAt: new Date(),
+    };
+    const [saved] = await this.db
+      .insert(orgIntegrationCredentials)
+      .values({ ...row, updatedAt: set.updatedAt })
+      .onConflictDoUpdate({
+        target: [orgIntegrationCredentials.organizationId, orgIntegrationCredentials.integrationId],
+        set,
+      })
+      .returning();
+    return saved!;
+  }
+  async deleteIntegrationCredential(orgId: number, integrationId: string) {
+    const gone = await this.db
+      .delete(orgIntegrationCredentials)
+      .where(
+        and(
+          eq(orgIntegrationCredentials.organizationId, orgId),
+          eq(orgIntegrationCredentials.integrationId, integrationId),
+        ),
+      )
+      .returning({ id: orgIntegrationCredentials.id });
+    return gone.length > 0;
+  }
   async getUserPreference(userId: number, key: string) {
     const [row] = await this.db
       .select()
@@ -1980,6 +2043,8 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(suggestions).where(eq(suggestions.organizationId, id));
       await tx.delete(featureFlags).where(eq(featureFlags.organizationId, id));
       await tx.delete(orgSettings).where(eq(orgSettings.organizationId, id));
+      // The hospital's own integration credentials (ciphertext) leave with it.
+      await tx.delete(orgIntegrationCredentials).where(eq(orgIntegrationCredentials.organizationId, id));
       await tx.delete(equipment).where(eq(equipment.organizationId, id));
       await tx.delete(beds).where(eq(beds.organizationId, id));
       await tx.delete(departments).where(eq(departments.organizationId, id));

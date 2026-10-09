@@ -1,14 +1,21 @@
 /* DocTurn web-app UI kit — Organization Settings.
    Spec: Req FR-2.2/2.3/2.4 (org config: timeout, round-robin rules, custom shift
-   types, per-portal feature toggles) + Eng §9 (integrations). Director surface.
-   Store-backed: reflects the selected tenant and persists every change. */
+   types) + Eng §9 (integrations). Director surface.
+   Every switch on this page is the SERVER's: the STAT SMS fallback is an org
+   setting (PATCH /api/settings/org), the assignment timeout is the org's
+   config (PATCH /api/org/config), and Integrations (Integrations.jsx) are the
+   org's gating modules + encrypted hospital credentials (/api/integrations).
+   The old "Feature toggles" card and the "On-call only" / "Active only" rows
+   were browser-only booleans nothing enforced; they are gone. */
 
-function Toggle({ on, onClick }) {
+function Toggle({ on, onClick, label }) {
+  // 44×44 tap target around the 44×26 track.
   return (
-    <button onClick={onClick}
-      style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative", flex: "none",
-        background: on ? "var(--status-accepted)" : "var(--status-neutral-bg)", transition: "background .2s" }}>
-      <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
+    <button type="button" role="switch" aria-checked={!!on} aria-label={label} onClick={onClick}
+      style={{ width: 52, height: 44, minWidth: 44, padding: 0, border: "none", background: "transparent", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+      <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "#CBD5E1", transition: "background .2s" }}>
+        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
+      </span>
     </button>
   );
 }
@@ -23,7 +30,7 @@ function FlagRow({ icon, title, desc, on, onToggle, last }) {
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{title}</div>
         <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{desc}</div>
       </div>
-      <Toggle on={on} onClick={onToggle} />
+      <Toggle on={on} onClick={onToggle} label={title} />
     </div>
   );
 }
@@ -33,19 +40,13 @@ function OrgSettings() {
   const a = useActions();
   const s = st.settings;
   const org = st.orgs.find((o) => o.code === st.selectedOrg) || st.orgs[0];
-
-  const INTEGRATIONS = [
-    { key: "twilio", name: "Twilio", desc: "SMS notifications & 2FA", icon: "message-circle" },
-    { key: "firebase", name: "Firebase", desc: "Push notifications (FCM)", icon: "bell" },
-    { key: "openai", name: "OpenAI", desc: "AI intake extraction", icon: "sparkles" },
-    { key: "amion", name: "Amion", desc: "Provider schedule sync", icon: "calendar-clock" },
-  ];
+  const smsOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("integration.sms");
 
   return (
     <PageWrap>
       <SettingsTabs />
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
-        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>{org.code.slice(0, 2)}</span>
+        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{org.code.slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 17, lineHeight: 1.3 }}><EditableText value={org.name} onSave={(v) => a.updateOrg(org.code, { name: v })} size={17} weight={700} /></div>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.4, display: "flex", gap: 8, alignItems: "center" }}>
@@ -64,12 +65,13 @@ function OrgSettings() {
             <Icon name="route" size={18} color="var(--primary)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Assignment &amp; rotation</h3>
           </div>
-          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation. Default 15." />
+          <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)} help="If a provider doesn't answer within this many minutes, the request is re-paged to the next provider in rotation (1–120, default 15). Saved to the server." inputMode="numeric" />
           <div style={{ marginTop: 14 }}>
-            <FlagRow icon="phone-call" title="On-call providers only" desc="Restrict rotation to on-call hospitalists." on={s.onCallOnly} onToggle={() => a.setSetting("onCallOnly", !s.onCallOnly)} />
-            <FlagRow icon="activity" title="Active (on-shift) only" desc="Skip providers not working today." on={s.activeOnly} onToggle={() => a.setSetting("activeOnly", !s.activeOnly)} />
-            <FlagRow icon="message-circle" title="STAT SMS fallback" desc="If a STAT message stays unacknowledged after escalation, send a PHI-free SMS nudge as a last resort. Requires an SMS carrier under a BAA." on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} last />
+            <FlagRow icon="message-circle" title="STAT SMS fallback" desc={"If a STAT message stays unacknowledged after escalation, send a PHI-free text nudge as a last resort." + (smsOn ? " Needs Twilio SMS to be active under Integrations." : " Twilio SMS is switched off for this organization under Integrations, so no text is sent.")} on={s.statSmsFallback !== false} onToggle={() => a.setSetting("statSmsFallback", !(s.statSmsFallback !== false))} last />
           </div>
+          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "10px 0 0", lineHeight: 1.45 }}>
+            Rotation includes hospitalists who are on shift with a routable shift type and under their patient cap — the same rule the server's router applies.
+          </p>
           {/* Resetting the index only affects SEQUENTIAL rotation; in lowest-census
               mode next-up is census-driven, so the button would be a no-op. */}
           {s.rotationMode === "sequential" && (
@@ -100,20 +102,6 @@ function OrgSettings() {
           </div>
         </Card>
 
-        {/* Feature flags */}
-        <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <Icon name="toggle-right" size={18} color="var(--primary)" />
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Feature toggles</h3>
-          </div>
-          <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 6px" }}>Per-portal availability for this tenant.</p>
-          <FlagRow icon="message-circle" title="SMS notifications" desc="Twilio assignment alerts & fallback." on={s.flags.sms} onToggle={() => a.toggleFlag("sms")} />
-          <FlagRow icon="bell" title="Push notifications" desc="Firebase Cloud Messaging." on={s.flags.push} onToggle={() => a.toggleFlag("push")} />
-          <FlagRow icon="sparkles" title="AI intake assistant" desc="OpenAI free-text extraction." on={s.flags.ai} onToggle={() => a.toggleFlag("ai")} />
-          <FlagRow icon="megaphone" title="Emergency broadcasts" desc="Org-wide urgent messaging." on={s.flags.broadcasts} onToggle={() => a.toggleFlag("broadcasts")} />
-          <FlagRow icon="calendar-clock" title="Amion schedule sync" desc="External on-call import." on={s.flags.amion} onToggle={() => a.toggleFlag("amion")} last />
-        </Card>
-
         {/* Message retention (server-enforced purge, audited) */}
         <Card style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -133,36 +121,12 @@ function OrgSettings() {
 
         {/* EHR deep links (Epic Haiku/Canto, Hyperspace, Cerner PowerChart) */}
         <EhrDeepLinkCard />
+      </div>
 
-        {/* Integrations */}
-        <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <Icon name="plug" size={18} color="var(--primary)" />
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Integrations</h3>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {INTEGRATIONS.map((it) => {
-              const on = s.integrations[it.key];
-              return (
-                <div key={it.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-                  <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-                    <Icon name={it.icon} size={17} color={on ? "var(--primary)" : "var(--muted-foreground)"} />
-                  </span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 600 }}>{it.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{it.desc}</div>
-                  </div>
-                  {on
-                    ? <button onClick={() => a.toggleIntegration(it.key)} title="Disconnect" style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0 }}><Badge status="accepted" icon="circle">Connected</Badge></button>
-                    : <Button size="sm" variant="outline" onClick={() => a.toggleIntegration(it.key)}>Connect</Button>}
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ marginTop: 13, display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, color: "var(--muted-foreground)" }}>
-            <Icon name="lock" size={13} />Credentials are stored server-side, never exposed to clients.
-          </div>
-        </Card>
+      {/* Integrations — real, server-backed cards (Integrations.jsx). Full width:
+          each card carries purpose, PHI/BAA, live status, switch, test, set-up. */}
+      <div id="integrations" style={{ marginTop: 18 }}>
+        <IntegrationsPanel />
       </div>
 
       {/* Danger zone — platform operators only, bottom of settings (standard

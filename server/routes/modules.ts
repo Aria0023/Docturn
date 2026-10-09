@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { MODULES, MODULE_IDS } from "@shared/modules";
 import { appendAudit } from "../audit.js";
 import { getModules, setModule } from "../modules.js";
+import { buildCard, integrationForModule } from "../integrations/registry.js";
+import { notReadyBody } from "./integrations.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
 
@@ -66,6 +68,14 @@ export function registerModuleRoutes(app: Express) {
       if (typeof b.enabled !== "boolean") return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(orgId);
       if (!org) return res.status(404).json({ error: "not_found" });
+      // An integration's gating module follows the same rule as Settings →
+      // Integrations: it cannot be switched ON while the integration is not
+      // configured (or, for OpenAI, has no BAA attestation).
+      const integration = integrationForModule(id);
+      if (integration && b.enabled) {
+        const card = await buildCard(storage(), integration, org);
+        if (!card.canEnable) return res.status(409).json(notReadyBody(card));
+      }
 
       const modules = await setModule(orgId, id, b.enabled, me.id);
       await appendAudit({

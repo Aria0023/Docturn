@@ -18,6 +18,7 @@ export type ModuleGroup =
   | "EHR"
   | "Operations"
   | "Security"
+  | "Integrations"
   | "Platform";
 
 export interface ModuleDef {
@@ -52,8 +53,8 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Schedule
   { id: "oncall.board",           label: "Who's on call board",            group: "Schedule",  default: true,  blurb: "Every role/service and its current holder, from the configured schedule source." },
-  { id: "schedule.amion",         label: "Amion schedule sync",            group: "Schedule",  default: true,  blurb: "Automated pull of the Amion on-call grid (needs AMION_OCS_URL)." },
-  { id: "schedule.epic",          label: "Epic on-call (FHIR)",            group: "Schedule",  default: false, blurb: "On-call from Epic via FHIR R4 (needs Epic app credentials)." },
+  { id: "schedule.amion",         label: "Amion schedule sync",            group: "Schedule",  default: true,  blurb: "Automated pull of the Amion on-call grid — the hospital's own OCS feed (Settings → Integrations) or the operator's AMION_OCS_URL." },
+  { id: "schedule.epic",          label: "Epic on-call (FHIR)",            group: "Schedule",  default: false, blurb: "On-call from Epic via FHIR R4 — the hospital's own Epic backend-app credentials (Settings → Integrations) or the operator's EPIC_* env." },
 
   // ---- EHR
   { id: "ehr.deepLinks",          label: "Open in EHR",                    group: "EHR",       default: false, blurb: "Deep-link a patient into Epic Haiku/Canto or Cerner from any patient row." },
@@ -65,6 +66,15 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Security
   { id: "security.mfaRequired",   label: "Require MFA for privileged roles", group: "Security", default: false, blurb: "Directors / ER directors / developers must enrol MFA before privileged access." },
+
+  // ---- Integrations — third-party connections (server/integrations/registry.ts).
+  // Default ON so an org that never touched them behaves exactly as before:
+  // each one only does anything once its platform credentials exist. A
+  // director switches them per org from Settings → Integrations, which refuses
+  // to switch one ON while it is not configured (or, for OpenAI, has no BAA).
+  { id: "integration.sms",        label: "SMS texts (Twilio)",             group: "Integrations", default: true, blurb: "Content-free texts through the platform's Twilio account: STAT fallback nudges, escalation texts and SMS sign-in codes. Off = no texts for this org." },
+  { id: "integration.push",       label: "Push alerts (Web Push + Expo)",  group: "Integrations", default: true, blurb: "Content-free lock-screen wake-ups: Web Push (VAPID) for the web app / iPhone PWA, Expo for the native app. Off = no pushes; devices cannot register." },
+  { id: "integration.aiIntake",   label: "AI intake extraction (OpenAI)",  group: "Integrations", default: true, blurb: "Sends ER intake notes (PHI) to OpenAI — only when the operator attests a signed BAA (AI_EXTERNAL_PHI_OK=true). Off = the local extractor; notes never leave DocTurn." },
 
   // ---- Platform
   { id: "platform.appearance",    label: "Appearance / theming",           group: "Platform",  default: true,  blurb: "Per-org colours and branding." },

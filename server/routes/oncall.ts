@@ -21,7 +21,6 @@ import {
 } from "../services/schedule-sources/index.js";
 import {
   EPIC_NOT_CONFIGURED_MESSAGE,
-  epicConfigured,
   syncEpic,
   type EpicClientDeps,
 } from "../services/schedule-sources/epic-fhir.js";
@@ -549,12 +548,13 @@ export function registerOnCallRoutes(app: Express) {
     requireRole("director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
+      // Configured = this org's own saved Epic app, or the env app for EPIC_ORG_CODE.
       const status = await sources().get("epic").status(me.organizationId);
-      if (!epicConfigured(epicDeps?.env) || !status.configured) {
+      if (!status.configured) {
         return res.status(409).json({ error: "epic_not_configured", message: status.message ?? EPIC_NOT_CONFIGURED_MESSAGE });
       }
       try {
-        await syncEpic(storage(), { ...epicDeps, actorUserId: me.id });
+        await syncEpic(storage(), { ...epicDeps, actorUserId: me.id, orgId: me.organizationId });
       } catch (err) {
         console.error("[epic] sync-now failed:", err instanceof Error ? err.message : err);
         return res.status(502).json({ error: "epic_sync_failed" });

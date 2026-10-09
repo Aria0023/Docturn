@@ -3,7 +3,7 @@ import { devCreateUserSchema, toSafeUser, type User } from "@shared/schema";
 import { hashPassword, issueTemporaryPassword, mfaEnrollmentRequired } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { getExtractor } from "../services/ai-intake.js";
+import { externalExtractorActive, getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
 import { parseId } from "../params.js";
 import { storage } from "../storage.js";
@@ -679,7 +679,9 @@ export function registerDevRoutes(app: Express) {
       );
       res.json({
         extractor: getExtractor().constructor.name,
-        liveAi: !!process.env.OPENAI_API_KEY,
+        // True only when notes really go to the external LLM (key AND the
+        // BAA attestation AI_EXTERNAL_PHI_OK) — a key alone sends nothing.
+        liveAi: externalExtractorActive(),
         sample,
       });
     },

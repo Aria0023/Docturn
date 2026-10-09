@@ -208,6 +208,13 @@ aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/
 aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/ATTACHMENT_KEY \
   --value "$(openssl rand -hex 32)"
 
+# 3b. Integration-credential key: encrypts each hospital's own Amion / Epic
+#     credentials saved in Settings → Integrations (AES-256-GCM). Without it,
+#     saving them is refused. Keep an offline copy (losing it only means
+#     directors re-enter those credentials — no patient data depends on it).
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/INTEGRATION_KEY \
+  --value "$(openssl rand -hex 32)"
+
 # 4. Database connection string from §4
 aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/DATABASE_URL \
   --value "postgresql://docturn:<MASTER_PASSWORD>@<ENDPOINT>:5432/docturn?sslmode=require"
@@ -239,14 +246,44 @@ box.
 | `SYNTHETIC_DATA=false` | yes (real PHI) | **real-PHI mode**: refuses to seed the shared demo org/accounts; stub AI only |
 | `PLATFORM_ADMIN_PASSWORD` | yes | provisions/rotates the `dev` operator account (≥ 12 chars); it is the only way that account exists |
 | `ATTACHMENT_STORE=fs-encrypted` + `ATTACHMENT_DIR` + `ATTACHMENT_KEY` | yes (real PHI) | attachments (incl. voice messages) stored as AES-256-GCM files, never plaintext, never inline in the DB |
+| `INTEGRATION_KEY` | yes | encrypts each hospital's own integration credentials (Amion OCS feed, Epic backend app) saved in Settings → Integrations — AES-256-GCM, 64 hex chars or any 32+ char secret (HKDF-SHA256). Without it saving them is refused (never plaintext); `fetch-env-from-ssm.sh` warns when it is missing |
 | `HOST` | leave unset | production default `127.0.0.1`: the Node port answers only on loopback, so the only thing that can reach it is Caddy on this host (which also makes forwarded headers trustworthy). Set `HOST=0.0.0.0` only for a platform that connects to the process over the network (e.g. Render) — never here |
 | `TRUST_PROXY` | leave unset | default `loopback`: `X-Forwarded-For` / `-Proto` are believed only from a peer on this host (Caddy), one hop — that is what gives correct client IPs (rate limiting, audit rows) and lets the `Secure` cookie be set. Other accepted values: `0`/`false` (trust nothing — sign-in then fails with `insecure_transport` behind Caddy), or a comma list of IPs / CIDRs / `loopback`, `linklocal`, `uniquelocal` for a proxy on another host. A bare hop count ≥ 2 still works but is logged as spoofable |
 | `RATE_LIMIT` | leave unset | defaults **on**; never set `off` in production (the compliance monitor flags it) |
 | `VAPID_*` | recommended | the web-push key pair. Without them the server generates a pair on first boot and stores it in the database (platform org settings), so push still works; setting them in SSM keeps the private key out of the database and under your control |
-| `TWILIO_*` | **leave unset** | no Twilio → SMS is unavailable in production: MFA SMS codes and `/api/sms/send` return `503 sms_unavailable`, SMS escalation is skipped (logged, content-free). Nothing is sent, nothing costs money, and nothing is reported as sent. Clinicians use TOTP / backup codes for MFA. The console stub that records messages exists only outside `NODE_ENV=production` and never logs numbers or bodies |
-| `OPENAI_API_KEY`, `AI_EXTERNAL_PHI_OK`, `USE_STUB_AI` | **leave unset** | AI intake stays on the deterministic local extractor; no PHI leaves the box |
+| `TWILIO_*` | only to send texts | unset → SMS is unavailable in production: MFA SMS codes and `/api/sms/send` return `503 sms_unavailable`, SMS escalation is skipped (logged, content-free). Nothing is sent, nothing costs money, and nothing is reported as sent. Clinicians use TOTP / backup codes for MFA. Set all three (§7a) to send content-free texts through Twilio; each org can switch SMS off in Settings → Integrations |
+| `OPENAI_API_KEY`, `AI_EXTERNAL_PHI_OK`, `USE_STUB_AI` | **leave unset** unless OpenAI signed a BAA | AI intake stays on the deterministic local extractor; no PHI leaves the box. Intake notes are PHI: set the key AND `AI_EXTERNAL_PHI_OK=true` only after OpenAI has signed a BAA with you (§7a) |
 | `PORT` | leave unset | 3000 (Caddy proxies to `127.0.0.1:3000`) |
-| `AMION_*` / Epic vars | optional | only if you have those integrations; modules default appropriately |
+| `AMION_*` / Epic vars | optional, legacy | one-organization fallback only. Each hospital now connects its OWN Amion feed / Epic app in Settings → Integrations (§7a), stored encrypted with `INTEGRATION_KEY`; a hospital's saved credentials always win over these |
+
+### 7a. Connecting integrations (any time after go-live)
+
+Every integration has a card in **Settings → Integrations** (director) and in
+**Organization config → Integrations** / **Enterprise defaults → Integrations**
+(developer). The card shows the live status (`Active`, `Off`, `Not set up`,
+`Needs BAA`, `Error`), what is missing **by name**, a real **Test connection**,
+and a **Set up** sheet. Full plain-language guide: `docs/INTEGRATIONS.md`.
+
+*Platform integrations* — the operator's own accounts, set in SSM, then
+`REGION=$REGION bash /opt/docturn/deploy/aws/fetch-env-from-ssm.sh && systemctl restart docturn`:
+
+```bash
+# Twilio SMS (content-free texts — no PHI, no BAA needed for this use)
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_ACCOUNT_SID --value "AC…"
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/TWILIO_AUTH_TOKEN  --value "<auth token>"
+aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/TWILIO_FROM_NUMBER --value "+15551234567"
+
+# Push: the VAPID keys from §7 step 5 (the native app's Expo relay needs nothing)
+
+# OpenAI intake — ONLY after OpenAI has signed a BAA with you (notes are PHI)
+aws ssm put-parameter --region $REGION --type SecureString --name /docturn/prod/OPENAI_API_KEY     --value "sk-…"
+aws ssm put-parameter --region $REGION --type String       --name /docturn/prod/AI_EXTERNAL_PHI_OK --value "true"
+```
+
+*Organization integrations* — each hospital's director opens **Settings →
+Integrations → Amion (or Epic) → Set up**, pastes the hospital's own
+credentials (write-only; encrypted with `INTEGRATION_KEY`), presses **Test
+connection**, and switches it on. Nothing to do in SSM for those.
 
 ---
 
@@ -444,7 +481,11 @@ A backup you have never restored is a hope, not a backup.
 [ ] PLATFORM_ADMIN_PASSWORD ≥ 12 chars; `dev` account has MFA enrolled   (§7/§10)
 [ ] ATTACHMENT_STORE=fs-encrypted with key in SSM + offline copy         (§7/§11)
 [ ] RATE_LIMIT not "off"; TRUST_PROXY unset (loopback); HOST unset       (§7)
-[ ] TWILIO_* unset (no SMS spend); OPENAI/AI_EXTERNAL_PHI_OK unset       (§7)
+[ ] INTEGRATION_KEY in SSM (SecureString) + offline copy                (§7)
+[ ] TWILIO_* set only if you want texts; OPENAI/AI_EXTERNAL_PHI_OK unset
+    unless OpenAI has signed a BAA                                      (§7/§7a)
+[ ] Settings → Integrations: every card you rely on is Active and its
+    Test connection passes                                              (§7a)
 [ ] security.mfaRequired ON for the org                                  (§10)
 [ ] Developer → Compliance monitor: all automated controls green          (§10)
 [ ] Backup plan exists for the EBS volume; one restore test done          (§12)

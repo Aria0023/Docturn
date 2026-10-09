@@ -28,7 +28,8 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | M7 | React web client (login, role dashboards, messaging, directory, settings) | ✅ |
 | M8 | Hardening: Helmet, tiered rate limiting, error shape, audit, reduced-motion | ✅ |
 | M9 | Full MFA: TOTP enroll/verify, single-use backup codes, SMS OTP, 202 gate | ✅ |
-| M10 | Live integration factories (OpenAI/Twilio+carriers/FCM) — env-gated, stubbed | ✅ |
+| M10 | Live integration factories (OpenAI/Twilio+carriers/Web Push+Expo) — env-gated, stubbed | ✅ |
+| I1 | Real Settings → Integrations: live status, server-enforced per-org switches, real connection tests, encrypted per-hospital Amion/Epic credentials ([`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)) | ✅ |
 | M11 | Registration approval queue + developer console + CMS | ✅ |
 | M12 | Departments/beds/equipment + metrics; emergency broadcasts + acks | ✅ |
 | M13 | Mobile API + Expo app skeleton (`mobile-app/`) | ✅ |
@@ -69,7 +70,9 @@ run it to see the current total.
     `<tmp>/docturn-interop`), and only `UPDATE_DOCS=1` rewrites `docs/mobile/interop-phone-final.png`.
   - `npm run test:login`, `npm run test:offline` (service-worker offline shell, dev and bundle
     modes, starts its own server), `scripts/realtime-e2e.mjs`, `scripts/csp-check.mjs` and the
-    `scripts/phone-*-check.mjs` layout checks (real Chromium, iPhone profiles).
+    `scripts/phone-*-check.mjs` layout checks (real Chromium, iPhone profiles), and
+    `scripts/integrations-panel-check.mjs` (Settings → Integrations against the server: statuses,
+    switch round-trip, test result, write-only credentials, phone layout, CSP; needs `INTEGRATION_KEY`).
 - CI (`.github/workflows/ci.yml`) runs typecheck + `npm test`, the `test:ui` / `test:rt` smokes, the
   build, and a production-dependency audit that fails on any high/critical advisory.
 
@@ -126,7 +129,10 @@ enforced in code:
 - **Server-authoritative state.** Assignment routing, expiry, and roles are computed on the server,
   never trusted from the client.
 - **Integrations behind interfaces** with local stubs (AI extractor, push, SMS, WS fan-out), so the
-  app runs and tests with **zero secrets**.
+  app runs and tests with **zero secrets**. `server/integrations/` is the registry the Settings →
+  Integrations panel reads: status from live config, per-org switches (modules), real connection
+  tests through one injectable, time-bounded fetch, and AES-256-GCM per-hospital credentials
+  (`INTEGRATION_KEY`). How to connect each one: [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
 - **One source of truth for types** — Drizzle tables + Zod schemas in `shared/schema.ts`; the
   idempotent DDL in `server/db.ts` (`SCHEMA_SQL`) mirrors it and is applied on every boot.
 

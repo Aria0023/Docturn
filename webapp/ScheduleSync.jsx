@@ -59,9 +59,9 @@ function ssAgo(iso) {
 // demo carries a real captured grid; the others ingest the org's own data.
 const SS_SOURCES = {
   amion:      { label: "Amion",          kind: "vendor", demo: true, blurb: "amion.com on-call grid",         loginUrl: "https://www.amion.com",         api: "https://www.amion.com/api" },
-  // Epic on-call via FHIR R4 (SMART Backend Services). Credentials are server
-  // env only (EPIC_FHIR_BASE_URL / EPIC_CLIENT_ID / EPIC_PRIVATE_KEY_PEM /
-  // EPIC_TOKEN_URL) — issued through the health system's Epic app registration.
+  // Epic on-call via FHIR R4 (SMART Backend Services). Each hospital connects
+  // its own Epic backend app under Settings → Integrations → Epic (encrypted
+  // on the server); the operator's EPIC_* env remains a one-org fallback.
   epic:       { label: "Epic (FHIR)",    kind: "epic",   blurb: "PractitionerRole + Schedule/Slot via FHIR R4", loginUrl: "", api: "" },
   manual:     { label: "Manual list",    kind: "manual", blurb: "Director-maintained on-call slots in DocTurn", loginUrl: "", api: "" },
   qgenda:     { label: "QGenda",         kind: "vendor", blurb: "QGenda provider schedules",                  loginUrl: "https://app.qgenda.com",        api: "https://api.qgenda.com/v2" },
@@ -349,7 +349,7 @@ function ScheduleSync({ org }) {
             <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
               <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
               <span>
-                <b style={{ color: "var(--foreground)" }}>Needs Epic app credentials</b> (App Orchard / Vendor Services registration). DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) using SMART Backend Services — a registered backend app, its client ID and RS384 private key, and the site's FHIR base + token URLs, set on the server as <code>EPIC_FHIR_BASE_URL</code>, <code>EPIC_CLIENT_ID</code>, <code>EPIC_PRIVATE_KEY_PEM</code>, <code>EPIC_TOKEN_URL</code> (and <code>EPIC_ORG_CODE</code> for this organization). Nothing is fabricated until those are present.
+                <b style={{ color: "var(--foreground)" }}>Needs Epic app credentials</b> (App Orchard / Vendor Services registration). DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) using SMART Backend Services — a backend app your Epic team registers for DocTurn, its client ID and RS384 private key, and your FHIR base URL. Enter them under <b style={{ color: "var(--foreground)" }}>Integrations → Epic on-call (FHIR) → Set up</b> (stored encrypted), then switch it on. Nothing is shown until they work.
                 {epicStatus && epicStatus.message ? <span style={{ display: "block", marginTop: 6, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.message}</span> : null}
               </span>
             </div>
@@ -363,7 +363,20 @@ function ScheduleSync({ org }) {
         </div>
       )}
 
-      {!connected && !notConfigured && src.kind === "vendor" && (
+      {/* Amion is a REAL connection: the hospital's OCS feed, saved encrypted
+          under Integrations → Amion → Set up. No browser-side "connect". */}
+      {srcKey === "amion" && !(amion && amion.configured) && (
+        <div data-amion-connect style={{ display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap", marginTop: 14, background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+          <Icon name="plug-zap" size={15} style={{ marginTop: 1, flex: "none" }} />
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <b style={{ color: "var(--foreground)" }}>Amion isn't connected for {orgCode}.</b> Add your schedule's OCS feed link under <b style={{ color: "var(--foreground)" }}>Integrations → Amion → Set up</b> (below). It is stored encrypted on the server; DocTurn then pulls the grid automatically and this panel shows the live schedule.
+          </span>
+          <button type="button" onClick={() => { try { const el = document.getElementById("integrations"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {} }}
+            style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--primary)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Go to Integrations</button>
+        </div>
+      )}
+
+      {!connected && !notConfigured && src.kind === "vendor" && srcKey !== "amion" && (
         <React.Fragment>
           {/* mode selector */}
           <div style={{ display: "flex", gap: 10, margin: "14px 0 6px" }}>

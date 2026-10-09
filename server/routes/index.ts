@@ -10,6 +10,7 @@ import { registerComplianceRoutes } from "./compliance.js";
 import { registerConfigRoutes } from "./config.js";
 import { registerDevRoutes } from "./dev.js";
 import { registerHealthRoutes } from "./health.js";
+import { registerIntegrationRoutes } from "./integrations.js";
 import { registerMessagingRoutes } from "./messaging.js";
 import { registerMetricsRoutes } from "./metrics.js";
 import { registerReportsRoutes } from "./reports.js";
@@ -50,6 +51,7 @@ export function registerRoutes(app: Express) {
   registerMobileRoutes(app);
   registerAmionRoutes(app);
   registerModuleRoutes(app);
+  registerIntegrationRoutes(app);
   registerOnCallRoutes(app);
   registerAccountRoutes(app);
 }

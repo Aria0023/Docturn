@@ -57,6 +57,12 @@ automatically uses encrypted Postgres instead of the local file database.
 - In-app password change (so accounts can leave the demo password behind).
 - **External AI is OFF by default** — intake notes are parsed locally and never
   leave the server unless an operator deliberately turns it on (see below).
+- **Integrations are real and fail closed** (Settings → Integrations,
+  `docs/INTEGRATIONS.md`): status comes from live configuration, each org's
+  switch is enforced server-side, OpenAI cannot be switched on without the BAA
+  attestation, and each hospital's own Amion/Epic credentials are write-only,
+  AES-256-GCM encrypted with `INTEGRATION_KEY` (bound to the org), never
+  returned or logged, and can only reach public `https://` hosts.
 
 ---
 
@@ -97,5 +103,7 @@ The only AI is parsing a free-text ER note into initials/room/complaint. The
 **local** parser does this on-server with nothing sent out, and is the default.
 The external (OpenAI) version is now disabled unless you set BOTH
 `OPENAI_API_KEY` and `AI_EXTERNAL_PHI_OK=true` — and you should only ever do that
-with a BAA-covered, HIPAA-eligible endpoint (e.g. Azure OpenAI). For the pilot,
-leave it off.
+with a BAA-covered, HIPAA-eligible endpoint. (DocTurn's client calls
+`api.openai.com`; a different endpoint such as Azure OpenAI would need a code
+change.) Each organization can additionally switch it off for itself in
+Settings → Integrations. For the pilot, leave it off.

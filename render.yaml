@@ -55,6 +55,22 @@ services:
       # site legitimately trips it — do not turn the limiter off.
       - key: SESSION_SECRET
         generateValue: true
+      # Encryption key for each hospital's own integration credentials (Amion
+      # OCS feed, Epic backend app) saved in Settings → Integrations — AES-256-GCM
+      # at rest, key derived with HKDF-SHA256 from this value. Render generates
+      # a random value once and keeps it across deploys. Without it, saving
+      # hospital credentials is disabled (never stored in plaintext). Do not
+      # rotate it casually: saved credentials then read as "can't be decrypted"
+      # until a director re-enters them.
+      - key: INTEGRATION_KEY
+        generateValue: true
+      # Platform integrations are connected by adding their variables in the
+      # Render dashboard → Environment (never here — secrets must not live in
+      # git). See docs/INTEGRATIONS.md:
+      #   Twilio SMS   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
+      #   Push         VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
+      #   OpenAI       OPENAI_API_KEY + AI_EXTERNAL_PHI_OK=true ONLY after a
+      #                signed BAA with OpenAI (this demo holds synthetic data only)
       # The cross-tenant operator account `dev` (developer console) is NOT
       # provisioned on this deployment by design: it can read every tenant, so
       # the app refuses to create it without an explicitly configured secret.

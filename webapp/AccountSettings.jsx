@@ -175,6 +175,9 @@ function EnableAlertsCard() {
   }, [flash]);
   const role = st.session && st.session.role;
   if (!role || role === "developer") return null; // platform operators get no clinical alerts
+  // Push switched off for the org (Settings → Integrations): the server refuses
+  // device registration, so never offer it.
+  if (window.DT && DT.moduleOn && !DT.moduleOn("integration.push")) return null;
   const finish = () => { lsSet(ALERTS_CARD_KEY, "1"); setDone(true); };
   if (flash) {
     return (
@@ -270,7 +273,9 @@ function AccountSettings({ onLock }) {
     unsupported: "Not supported by this browser",
     error: "Couldn't turn alerts on — check your connection and try again",
   };
-  const pushRight = pushState === "granted" ? <Badge status="accepted">On</Badge>
+  const pushOff = !on("integration.push");
+  const pushRight = pushOff ? <Badge status="offline">Off</Badge>
+    : pushState === "granted" ? <Badge status="accepted">On</Badge>
     : pushState === "default" || pushState === "error" ? <Button size="sm" onClick={enablePush} style={{ opacity: pushBusy ? 0.6 : 1 }}>{pushBusy ? "Turning on…" : "Turn on"}</Button>
     : null;
 
@@ -308,7 +313,7 @@ function AccountSettings({ onLock }) {
 
       <SettingsGroup title="Notifications">
         <SettingsRow icon="bell" title="Push notifications" wrapSub rowProps={{ "data-push-row": pushState }}
-          sub={PUSH_SUB[pushState] || PUSH_SUB.default}
+          sub={pushOff ? "Switched off for your organization — a director can turn push notifications back on in Settings → Integrations" : (PUSH_SUB[pushState] || PUSH_SUB.default)}
           right={pushRight} />
         <SettingsRow icon="smartphone" title={standalone ? "Installed on this device" : "Install as an app"}
           sub={standalone ? "Running as a home-screen app" : "iPhone: Share → Add to Home Screen · Android: Install app"} />

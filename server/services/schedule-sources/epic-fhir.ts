@@ -1,6 +1,9 @@
 import { createSign, randomUUID } from "node:crypto";
 import { appendAudit } from "../../audit.js";
-import type { DatabaseStorage } from "../../storage.js";
+import { isModuleEnabled } from "../../modules.js";
+import { storage, type DatabaseStorage } from "../../storage.js";
+import { deriveEpicTokenUrl, readOrgCredentials } from "../../integrations/credentials.js";
+import { guardedFetch, IntegrationCallError } from "../../integrations/http.js";
 import { mapHoursToShift, normalizeName } from "../amion.js";
 import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus, ShiftType } from "./types.js";
 
@@ -25,14 +28,20 @@ import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus, ShiftType } from
  *   5. The organization the credentials belong to → EPIC_ORG_CODE (default ISPN,
  *      mirroring AMION_ORG_CODE) so tenants never share a feed.
  *
- * The private key and client id live ONLY in env: never in the database, never
- * logged, never returned by any API response. The client is fully testable
- * offline: `fetchImpl` is injectable and tests feed it a fixture bundle.
+ * Per hospital: each org can instead save ITS OWN Epic app (base URL, client
+ * id, private key, token URL) in Settings → Integrations → Epic; those are
+ * read FIRST (epicConfigFor) and the env above is the fallback for the one
+ * EPIC_ORG_CODE org. Saved credentials are AES-256-GCM ciphertext in the
+ * database (server/integrations/crypto.ts); env ones live only in env. Either
+ * way the private key and client id are never logged and never returned by
+ * any API response, and a hospital-supplied URL can only reach a public https
+ * host. The client is fully testable offline: `fetchImpl` is injectable and
+ * tests feed it a fixture bundle.
  */
 
 export const EPIC_SETTING_KEY = "epicSync";
 const ASSERTION_TTL_S = 4 * 60; // Epic caps JWT exp at 5 minutes from now
-const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_TIMEOUT_MS = 10_000;
 
 export interface EpicConfig {
   baseUrl: string;
@@ -46,7 +55,7 @@ export interface EpicConfig {
 export function epicConfig(env: NodeJS.ProcessEnv = process.env): EpicConfig {
   const baseUrl = (env.EPIC_FHIR_BASE_URL ?? "").replace(/\/+$/, "");
   // Epic's token endpoint sits beside the FHIR base: …/interconnect-fhir-oauth/oauth2/token
-  const derivedToken = baseUrl ? baseUrl.replace(/\/api\/FHIR\/R4$/i, "") + "/oauth2/token" : "";
+  const derivedToken = deriveEpicTokenUrl(baseUrl);
   return {
     baseUrl,
     clientId: env.EPIC_CLIENT_ID ?? "",
@@ -64,7 +73,48 @@ export function epicConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
 
 export const EPIC_NOT_CONFIGURED_MESSAGE =
   "Epic on-call needs Epic app credentials (App Orchard/Vendor Services registration): " +
-  "set EPIC_FHIR_BASE_URL, EPIC_CLIENT_ID, EPIC_PRIVATE_KEY_PEM (RS384 private key) and EPIC_TOKEN_URL on the server.";
+  "a director connects this hospital's Epic backend app in Settings → Integrations → Epic " +
+  "(FHIR base URL, client ID, RS384 private key), or the operator sets EPIC_FHIR_BASE_URL, " +
+  "EPIC_CLIENT_ID, EPIC_PRIVATE_KEY_PEM and EPIC_TOKEN_URL on the server.";
+
+export type EpicSourcedConfig = EpicConfig & { source: "organization" | "env" };
+
+/**
+ * One org's Epic connection: its OWN saved credentials first, else the env
+ * app when this org is EPIC_ORG_CODE. Null = not connected. SECRET fields
+ * (clientId, privateKeyPem) — never log or return the result.
+ */
+export async function epicConfigFor(
+  db: DatabaseStorage,
+  orgId: number,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<EpicSourcedConfig | null> {
+  const base = epicConfig(env);
+  const creds = await readOrgCredentials(db, orgId, "epic-fhir");
+  if (creds.state === "ok" && creds.values.baseUrl && creds.values.clientId && creds.values.privateKeyPem) {
+    const org = await db.getOrganization(orgId);
+    const baseUrl = creds.values.baseUrl.replace(/\/+$/, "");
+    return {
+      baseUrl,
+      clientId: creds.values.clientId,
+      privateKeyPem: creds.values.privateKeyPem,
+      tokenUrl: creds.values.tokenUrl || deriveEpicTokenUrl(baseUrl),
+      orgCode: org?.code ?? "",
+      intervalMin: base.intervalMin,
+      source: "organization",
+    };
+  }
+  if (!epicConfigured(env)) return null;
+  const org = await db.getOrganization(orgId);
+  return org && org.code === base.orgCode ? { ...base, source: "env" } : null;
+}
+
+/** Hospital-supplied URLs may only reach a public https host (SSRF guard). */
+function fetchFor(cfg: EpicSourcedConfig, fetchImpl: typeof fetch): typeof fetch {
+  if (cfg.source !== "organization") return fetchImpl;
+  return ((input: string | URL | Request, init?: RequestInit) =>
+    guardedFetch(String(input instanceof Request ? input.url : input), init ?? {}, fetchImpl)) as typeof fetch;
+}
 
 // ── SMART Backend Services JWT assertion ─────────────────────────────────────
 function b64url(input: Buffer | string): string {
@@ -330,6 +380,7 @@ async function fetchAllPages(url: string, token: string, fetchImpl: typeof fetch
 
 // Secrets must never leak through error text.
 function sanitizeError(err: unknown, cfg: EpicConfig): string {
+  if (err instanceof IntegrationCallError) return `epic_${err.code}`;
   let msg = err instanceof Error ? (err.name === "AbortError" ? "epic_timeout" : err.message) : String(err);
   for (const s of [cfg.privateKeyPem, cfg.clientId]) if (s) msg = msg.split(s).join("<redacted>");
   return msg.slice(0, 300);
@@ -341,13 +392,22 @@ function sanitizeError(err: unknown, cfg: EpicConfig): string {
  */
 export async function syncEpic(
   db: DatabaseStorage,
-  opts: { actorUserId?: number } & EpicClientDeps = {},
+  opts: { actorUserId?: number; orgId?: number } & EpicClientDeps = {},
 ): Promise<EpicSyncState> {
-  const cfg = epicConfig(opts.env);
-  if (!epicConfigured(opts.env)) throw new Error("epic_not_configured");
-  const org = await db.getOrganizationByCode(cfg.orgCode);
+  // Which org: the one asked for, else (legacy callers) the env EPIC_ORG_CODE org.
+  let orgId = opts.orgId;
+  if (orgId == null) {
+    if (!epicConfigured(opts.env)) throw new Error("epic_not_configured");
+    const envOrg = await db.getOrganizationByCode(epicConfig(opts.env).orgCode);
+    if (!envOrg) throw new Error("epic_org_not_found");
+    orgId = envOrg.id;
+  }
+  const org = await db.getOrganization(orgId);
   if (!org) throw new Error("epic_org_not_found");
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // The org's OWN saved Epic app first, the env app as the fallback.
+  const cfg = await epicConfigFor(db, org.id, opts.env);
+  if (!cfg) throw new Error("epic_not_configured");
+  const fetchImpl = fetchFor(cfg, opts.fetchImpl ?? fetch);
   const now = opts.now?.() ?? new Date();
   const updatedBy = (opts.actorUserId ?? null) as unknown as number;
 
@@ -420,13 +480,11 @@ export async function syncEpic(
 
 export function createEpicSource(db: DatabaseStorage, deps: EpicClientDeps = {}): ScheduleSource {
   const env = () => deps.env ?? process.env;
-  // One in-flight background refresh per process; never block a board read.
-  let inflight: Promise<unknown> | null = null;
+  // One in-flight background refresh per org; never block a board read.
+  const inflight = new Map<number, Promise<unknown>>();
 
   async function orgMatches(orgId: number): Promise<boolean> {
-    if (!epicConfigured(env())) return false;
-    const org = await db.getOrganizationByCode(epicConfig(env()).orgCode);
-    return !!org && org.id === orgId;
+    return !!(await epicConfigFor(db, orgId, env()));
   }
   async function state(orgId: number): Promise<EpicSyncState | null> {
     const raw = (await db.getOrgSetting(orgId, EPIC_SETTING_KEY)) as Partial<EpicSyncState> | null;
@@ -447,8 +505,8 @@ export function createEpicSource(db: DatabaseStorage, deps: EpicClientDeps = {})
       const s = await state(orgId);
       // Stale (or never synced) → refresh in the background; serve what we have.
       const ageMs = s?.lastSyncAt ? Date.now() - new Date(s.lastSyncAt).getTime() : Infinity;
-      if (ageMs > epicConfig(env()).intervalMin * 60_000 && !inflight) {
-        inflight = syncEpic(db, deps).catch(() => {}).finally(() => { inflight = null; });
+      if (ageMs > epicConfig(env()).intervalMin * 60_000 && !inflight.has(orgId)) {
+        inflight.set(orgId, syncEpic(db, { ...deps, orgId }).catch(() => {}).finally(() => { inflight.delete(orgId); }));
       }
       if (!s || !s.slots.length) return [];
       const users = await db.listUsers(orgId);
@@ -479,9 +537,64 @@ export function createEpicSource(db: DatabaseStorage, deps: EpicClientDeps = {})
         message: configured
           ? null
           : epicConfigured(env())
-            ? "Epic credentials are registered for a different organization (EPIC_ORG_CODE)."
+            ? "Epic credentials are registered for a different organization (EPIC_ORG_CODE) — connect this hospital's own Epic app in Settings → Integrations → Epic."
             : EPIC_NOT_CONFIGURED_MESSAGE,
       };
     },
   };
+}
+
+// ── background loop ──────────────────────────────────────────────────────────
+/**
+ * One scheduled tick over EVERY org with an Epic connection (its own saved
+ * app, or the env EPIC_ORG_CODE org) whose schedule.epic module is on. One
+ * org's failure never stops the others (syncEpic records errors in the org's
+ * epicSync state).
+ */
+export async function runScheduledEpicSyncAll(
+  db: DatabaseStorage = storage(),
+  deps: EpicClientDeps = {},
+): Promise<Array<{ orgId: number; outcome: "synced" | "skipped_module_off" | "failed" }>> {
+  const ids = new Set<number>((await db.listIntegrationCredentials("epic-fhir")).map((r) => r.organizationId));
+  if (epicConfigured(deps.env)) {
+    const envOrg = await db.getOrganizationByCode(epicConfig(deps.env).orgCode);
+    if (envOrg) ids.add(envOrg.id);
+  }
+  const out: Array<{ orgId: number; outcome: "synced" | "skipped_module_off" | "failed" }> = [];
+  for (const orgId of [...ids].sort((a, b) => a - b)) {
+    if (!(await epicConfigFor(db, orgId, deps.env))) continue;
+    if (!(await isModuleEnabled(orgId, "schedule.epic"))) {
+      out.push({ orgId, outcome: "skipped_module_off" });
+      continue;
+    }
+    try {
+      await syncEpic(db, { ...deps, orgId });
+      out.push({ orgId, outcome: "synced" });
+    } catch {
+      out.push({ orgId, outcome: "failed" });
+    }
+  }
+  return out;
+}
+
+let epicBootTimer: NodeJS.Timeout | null = null;
+let epicLoopTimer: NodeJS.Timeout | null = null;
+
+/** Background Epic pulls every EPIC_SYNC_INTERVAL_MIN (default 60) minutes; timers unref'd. */
+export function startEpicSyncLoop() {
+  if (epicLoopTimer) return;
+  const intervalMin = epicConfig().intervalMin;
+  const run = () => {
+    runScheduledEpicSyncAll().catch((err) => console.error("[epic] scheduled sync tick failed:", err instanceof Error ? err.name : "error"));
+  };
+  epicBootTimer = setTimeout(run, 8_000);
+  epicBootTimer.unref?.();
+  epicLoopTimer = setInterval(run, intervalMin * 60_000);
+  epicLoopTimer.unref?.();
+  console.log(`[epic] on-call sync loop — every ${intervalMin} min for each org with a connected Epic app and schedule.epic on`);
+}
+
+export function stopEpicSyncLoop() {
+  if (epicBootTimer) { clearTimeout(epicBootTimer); epicBootTimer = null; }
+  if (epicLoopTimer) { clearInterval(epicLoopTimer); epicLoopTimer = null; }
 }
