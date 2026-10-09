@@ -23,6 +23,15 @@ function AvatarStack({ lead, unit }) {
   );
 }
 
+// "Message team" opens the patient-linked care-team thread — a per-org feature
+// module (messaging.patientThreads). The control is hidden while the org has it
+// switched off; the server still refuses a stale tap (404 module_disabled) and
+// DT.actions.openPatientThread says so. Read at render time: the app re-renders
+// on every store change, including the module map's refresh.
+function patientThreadsOn() {
+  try { return !(window.DT && window.DT.moduleOn) || window.DT.moduleOn("messaging.patientThreads"); } catch (e) { return true; }
+}
+
 const BOARD_STATUS = {
   admitted:    { status: "accepted", label: "Admitted" },
   observation: { status: "active",   label: "Observation" },
@@ -226,6 +235,7 @@ function ConsultantsCell({ p, onAddConsult, onRespondConsult, consultServices })
 // table row, laid out vertically so nothing needs a 1080px horizontal scroll.
 function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRemove, onAddConsult, onRespondConsult, consultServices }) {
   const bs = BOARD_STATUS[p.status] || BOARD_STATUS.admitted;
+  const canThread = p.patientId != null && patientThreadsOn();
   const Label = ({ children }) => (
     <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 4 }}>{children}</div>
   );
@@ -279,7 +289,7 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
       {/* Actions */}
       {(p.patientId != null || canEdit) && (
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          {p.patientId != null && (
+          {canThread && (
             <button onClick={() => window.DT.actions.openPatientThread(p.patientId)}
               style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
               <Icon name="message-square" size={16} />Message team
@@ -306,6 +316,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
   const M = modules || { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
   const DEPTS = ["ALL", "ER", "ICU", "MED", "TELE"];
   const canEdit = (role === "director" || role === "er_director") && onUpdate;
+  const threadsOn = patientThreadsOn();
 
   const rows = patients.filter((p) =>
     (dept === "ALL" || p.dept === dept) &&
@@ -463,7 +474,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
                 <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
               </div>
               {/* Patient-linked care-team thread */}
-              {p.patientId != null && (
+              {p.patientId != null && threadsOn && (
                 <button onClick={() => window.DT.actions.openPatientThread(p.patientId)} title="Message the care team about this patient"
                   onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                   style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>

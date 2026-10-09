@@ -22,7 +22,16 @@
  *   modules  (A.CON-SHO-40)
  *     • with messaging.attachments / messaging.priority off the paperclip, mic
  *       and STAT/Urgent chips are gone; a STAT the server refuses because the
- *       switch went off is shown as not sent with "Send as routine";
+ *       switch went off is shown as not sent with "Send as routine", and the
+ *       refusal makes the client re-read its module map (the chips go away
+ *       without a reload);
+ *     • a stale paperclip upload refused because messaging.attachments went off
+ *       names the switched-off feature (not just "Upload failed <name>") and
+ *       the paperclip disappears;
+ *     • with messaging.patientThreads off the board offers no "Message team"
+ *       (phone card + desktop row); a stale tap says patient threads are
+ *       switched off and the control disappears; with it on, "Message team"
+ *       opens the thread itself on a phone (not the conversation list);
  *   recall   (A.CON-SHO-25)
  *     • MESSAGE_RECALLED removes the message from the recipient's open thread
  *       live; the sender's Recall control removes an unread message;
@@ -171,7 +180,7 @@ const dev = await session("DOCTURN", "dev");
 const orgId = chen.me.organizationId;
 const CHEN = chen.me.displayName, PATEL = patel.me.displayName, LOPEZ = lopez.me.displayName;
 const setModule = (id, enabled) => dev.call("PATCH", "/api/dev/modules/" + orgId, { id, enabled });
-for (const m of ["messaging.attachments", "messaging.voice", "messaging.priority", "messaging.recall", "messaging.forwarding", "messaging.templates", "broadcasts"]) await setModule(m, true);
+for (const m of ["messaging.attachments", "messaging.voice", "messaging.priority", "messaging.recall", "messaging.forwarding", "messaging.templates", "messaging.patientThreads", "broadcasts"]) await setModule(m, true);
 
 // Fixtures: two direct threads with chen (patel, lopez), long enough to scroll;
 // patel's ends with a STAT (unacked), a PDF, a text note, an undecodable
@@ -349,7 +358,16 @@ const receiptOf = (text) => page.evaluate((t) => { const el = [...document.query
   const ok = await page.waitForFunction((t) => [...document.querySelectorAll("[data-message]")].some((m) => (m.textContent || "").includes(t) && m.querySelector('[data-receipt="delivered"], [data-receipt="read"]')), t, { timeout: 8000 }).then(() => true).catch(() => false);
   const srv = ((await patel.call("GET", `/api/messaging/conversations/${pConv.id}/messages`)).body || []).find((m) => m.content === t);
   rec("Send as routine delivers it as routine", ok && srv && srv.priority === "routine", srv ? srv.priority : "missing");
+  const chipsGone = await page.waitForFunction(() => ![...document.querySelectorAll("button")].some((b) => /^(STAT|Urgent)$/.test((b.textContent || "").trim()) && b.offsetParent !== null), null, { timeout: 6000 }).then(() => true).catch(() => false);
+  rec("the refusal refreshes the module map: STAT/Urgent chips disappear without a reload", chipsGone);
+  // Attachments switched off while this page still shows the paperclip.
+  await page.evaluate(() => window.DT.set((s) => { s.__toast = null; return s; }));
   await setModule("messaging.attachments", false);
+  await page.locator('input[type="file"]').setInputFiles({ name: "stale-upload.png", mimeType: "image/png", buffer: png(4, 4) }).catch(() => {});
+  const upToast = await page.waitForFunction(() => { const t = document.querySelector("[data-toast]"); return t && /Upload failed/.test(t.textContent || "") ? t.textContent : null; }, null, { timeout: 6000 }).then((h) => h.jsonValue()).catch(() => null);
+  rec("a stale upload refused by the switch names it (and the file), not just \"Upload failed\"", /file attachments are switched off/i.test(upToast || "") && /stale-upload\.png/.test(upToast || ""), JSON.stringify(upToast));
+  const clipGone = await page.waitForFunction(() => !document.querySelector('button[title="Attach a file"]') && !document.querySelector('input[type="file"]'), null, { timeout: 6000 }).then(() => true).catch(() => false);
+  rec("…and the paperclip disappears without a reload", clipGone);
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => { const s = window.DT && window.DT.getState(); return s && s.session && s.modules && s.modules["messaging.priority"] === false; }, null, { timeout: 15000 }).catch(() => {});
   await openMessages(page);
@@ -497,11 +515,52 @@ await pctx.close();
   await ctx.close();
 }
 
+// K. Patient-linked threads (messaging.patientThreads) on the patient board.
+{
+  cur = "patient threads ";
+  const erdoc = await session("ISPN", "er.doc");
+  await erdoc.call("POST", "/api/patients", { initials: "ZQ", roomNumber: "7", issueSummary: "Synthetic board row — no PHI", department: "ER", acuity: 3, specialty: "Hospital Medicine" });
+  const teamBtns = (pg) => pg.evaluate(() => [...document.querySelectorAll("button")].filter((b) => /Message team/.test(b.textContent || "") || b.title === "Message the care team about this patient").length);
+  const toBoard = async (pg) => { await pg.evaluate(() => window.DT.actions.setNav("board")); await pg.waitForFunction(() => (window.DT.getState().board || []).some((p) => p.patientId != null), null, { timeout: 15000 }).catch(() => {}); await sleep(600); };
+  await setModule("messaging.patientThreads", false);
+  for (const [label, mk] of [["390", () => newPhone(browser, 390)], ["desktop", async () => { const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } }); const page = await ctx.newPage(); watch(page); return { ctx, page }; }]]) {
+    const { ctx, page: pb } = await mk();
+    await uiLogin(pb, "er_doctor", "ISPN", "er.doc");
+    await toBoard(pb);
+    const n = await teamBtns(pb);
+    rec(`off at sign-in (${label}): no "Message team" control`, n === 0, "buttons=" + n);
+    await ctx.close();
+  }
+  await setModule("messaging.patientThreads", true);
+  const { ctx, page: pb } = await newPhone(browser, 390);
+  await uiLogin(pb, "er_doctor", "ISPN", "er.doc");
+  await toBoard(pb);
+  const before = await teamBtns(pb);
+  await setModule("messaging.patientThreads", false); // this page is now stale
+  await pb.locator("button", { hasText: "Message team" }).first().click().catch(() => {});
+  const t = await pb.waitForFunction(() => { const x = document.querySelector("[data-toast]"); return x ? x.textContent : null; }, null, { timeout: 6000 }).then((h) => h.jsonValue()).catch(() => null);
+  rec("a stale tap says patient threads are switched off (not \"Try again\")", before > 0 && /Patient-linked threads are switched off/.test(t || "") && !/Try again/.test(t || ""), JSON.stringify({ before, toast: t }));
+  const gone = await pb.waitForFunction(() => ![...document.querySelectorAll("button")].some((b) => /Message team/.test(b.textContent || "")), null, { timeout: 6000 }).then(() => true).catch(() => false);
+  rec("…and the control disappears without a reload", gone);
+  await setModule("messaging.patientThreads", true);
+  await pb.reload({ waitUntil: "networkidle" });
+  await pb.waitForFunction(() => { const s = window.DT && window.DT.getState(); return s && s.session && s.modules && s.modules["messaging.patientThreads"] !== false; }, null, { timeout: 15000 }).catch(() => {});
+  await toBoard(pb);
+  await pb.locator("button", { hasText: "Message team" }).first().click().catch(() => {});
+  const opened = await pb.waitForFunction(() => window.DT.getState().ui.nav === "messages" && !!document.querySelector('input[aria-label="Message"]'), null, { timeout: 8000 }).then(() => true).catch(() => false);
+  rec("on: \"Message team\" opens the thread itself on a phone (composer on screen)", opened);
+  await pb.evaluate(() => window.DT.actions.setNav("board")); await sleep(400);
+  await pb.evaluate(() => window.DT.actions.setNav("messages")); await sleep(700);
+  const atList = await pb.evaluate(() => !document.querySelector('input[aria-label="Message"]'));
+  rec("…and a later visit to Messages starts at the list again", atList);
+  await ctx.close();
+}
+
 await browser.close();
 cur = "";
 rec("ZERO CSP violations across the run", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 rec("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
-for (const m of ["messaging.attachments", "messaging.priority"]) await setModule(m, true);
+for (const m of ["messaging.attachments", "messaging.priority", "messaging.patientThreads"]) await setModule(m, true);
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed} passed, ${failed} failed, ${results.length} total`);
 process.exit(failed ? 1 : 0);

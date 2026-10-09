@@ -266,7 +266,10 @@ function Messaging() {
   const [keepPrio, setKeepPrio] = React.useState(false); // forward: keep the original priority (default routine)
   const [tplOpen, setTplOpen] = React.useState(false); // composer template picker
   const [statusFor, setStatusFor] = React.useState(null); // message id whose per-recipient status is expanded
-  const [mobileView, setMobileView] = React.useState("list"); // phone: "list" | "thread"
+  // phone: "list" | "thread". A jump from another screen ("Message team" on the
+  // board, Directory, on-call board) asks for its thread explicitly via
+  // s.__openThread, so it opens on the thread, not the list.
+  const [mobileView, setMobileView] = React.useState(st.__openThread != null ? "thread" : "list");
   const [viewing, setViewing] = React.useState(null); // attachment open in the in-app viewer
   // Feature modules: hide a control when the org has switched it off (server
   // enforces; a missing helper means "enabled").
@@ -277,6 +280,14 @@ function Messaging() {
 
   // follow a store-initiated conversation switch (e.g. "Message" from another screen)
   React.useEffect(() => { if (st.__activeConvo && st.__activeConvo !== active) setActive(st.__activeConvo); }, [st.__activeConvo]);
+  // ...and an explicit request to SHOW a thread (see mobileView) is honoured on a
+  // phone too, then consumed so a later visit to Messages starts at the list.
+  React.useEffect(() => {
+    if (st.__openThread == null) return;
+    setActive(st.__openThread);
+    if (isMobile) setMobileView("thread");
+    if (window.DT && window.DT.set) window.DT.set((s) => { s.__openThread = null; return s; });
+  }, [st.__openThread]);
   // a different thread starts with an empty attachment tray
   React.useEffect(() => { setPending([]); }, [active]);
   // Priority switched off for the org: nothing but routine can be composed.
@@ -374,7 +385,7 @@ function Messaging() {
     files.forEach((f) => {
       Promise.resolve(a.uploadAttachment && a.uploadAttachment(f))
         .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
-        .catch(() => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: f.name }); });
+        .catch((err) => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: (err && err.reason && err.reason.text) || f.name }); });
     });
   };
   const removePending = (id) => setPending((prev) => prev.filter((p) => p.id !== id));
@@ -428,7 +439,7 @@ function Messaging() {
       const file = new File([blob], "voice-" + Date.now() + "." + ext, { type: baseType });
       Promise.resolve(a.uploadAttachment && a.uploadAttachment(file, { durationMs }))
         .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
-        .catch(() => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: "Voice message" }); });
+        .catch((err) => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: (err && err.reason && err.reason.text) || "Voice message" }); });
     };
     mr.start(); recStartRef.current = Date.now(); setRecording(true); setRecSecs(0);
     recTimerRef.current = setInterval(() => {

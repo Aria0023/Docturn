@@ -968,6 +968,7 @@
     }).catch(function (e) {
       if (outbox.indexOf(o) < 0) return { ok: false };
       o.status = "failed"; o.reason = sendFailure(e, o);
+      if (moduleRefused(e)) refreshModulesAfterRefusal(); // stale priority chips go away
       refreshOutbox(o.convoId);
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Message not sent", msg: o.reason.text.replace(/^Not sent — /, "") }; return s; });
       return { ok: false, reason: o.reason };
@@ -1001,6 +1002,8 @@
     outbox = []; readPosted = {}; recalled = {};
     Object.keys(threadTimers).forEach(function (k) { clearTimeout(threadTimers[k]); delete threadTimers[k]; });
     if (listSyncTimer) { clearTimeout(listSyncTimer); listSyncTimer = null; }
+    // An unconsumed "open this thread" request belongs to the previous identity.
+    if (DT.getState().__openThread != null) DT.set(function (s) { s.__openThread = null; return s; });
   });
 
   // ---- live WebSocket ------------------------------------------------------
@@ -2105,11 +2108,47 @@
         // caps it independently. NOTE: audio bytes stay in memory only — never
         // written to localStorage (PHI can be spoken into a clip).
         if (opts.durationMs && opts.durationMs > 0) body.durationMs = Math.round(opts.durationMs);
-        api("POST", "/api/messaging/attachments", body).then(resolve, reject);
+        api("POST", "/api/messaging/attachments", body).then(resolve, function (e) {
+          var err = e instanceof Error ? e : new Error(String(e));
+          err.reason = uploadFailure(err, file, opts);
+          if (err.reason.code === "module_disabled") refreshModulesAfterRefusal();
+          reject(err);
+        });
       };
       reader.readAsDataURL(file);
     });
   };
+  // Why an upload failed, in words a clinician can act on ({code, text}). The
+  // composer shows `text`. A voice note is an audio attachment: the server
+  // refuses it (404 module_disabled) when messaging.attachments OR
+  // messaging.voice is off — either way voice messages are unavailable.
+  function uploadFailure(e, file, opts) {
+    var code = String((e && e.message) || "");
+    var voice = !!(opts && opts.durationMs) || /^audio\//i.test(String((file && file.type) || ""));
+    var name = voice ? "Voice message" : String((file && file.name) || "File");
+    var offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    if (offline || isNetworkError(e)) return { code: "offline", text: name + " — no connection, not uploaded." };
+    if (moduleRefused(e)) return { code: "module_disabled", text: name + " — " + (voice ? "voice messages are" : "file attachments are") + " switched off for your organization." };
+    if (/too_large/.test(code) || (e && e.status === 413)) return { code: "too_large", text: name + " — too large to attach (" + (voice ? "5" : "8") + " MB max)." };
+    if (/too_long/.test(code)) return { code: "too_long", text: name + " — longer than the 3-minute limit." };
+    if (/bad_type/.test(code)) return { code: "bad_type", text: name + " — this file type can't be attached." };
+    if (/attachment_store_unavailable/.test(code) || (e && e.status === 503)) return { code: "store_unavailable", text: name + " — the attachment store is unavailable; try again shortly." };
+    if (e && e.status === 401) return { code: "session", text: name + " — your session expired." };
+    return { code: "server", text: name + " — not uploaded; try again." };
+  }
+  // The server's moduleGate refuses a switched-off feature with 404 (400 for a
+  // refused priority) {error:"module_disabled"}.
+  function moduleRefused(e) { return /module_disabled/.test(String((e && e.message) || "")); }
+  // A refusal means this client's module map is stale (the switch flipped after
+  // it was fetched; the regular refetch is once a minute). Re-read it now so the
+  // refused control disappears. Refusals arriving together (several files picked
+  // at once) share ONE re-read, issued a moment after the first; a refusal
+  // after that re-read was sent gets its own (another switch may have flipped).
+  var moduleRefreshTimer = null;
+  function refreshModulesAfterRefusal() {
+    if (moduleRefreshTimer) return;
+    moduleRefreshTimer = setTimeout(function () { moduleRefreshTimer = null; hydrateModules(); }, 150);
+  }
   // Send through the outbox: the bubble reads "Sending…" until the server
   // stores it, and a refusal / lost connection leaves a "Not sent" bubble with
   // Retry and Edit instead of a message that only LOOKS sent. `attachments` may
@@ -2214,11 +2253,21 @@
     return api("POST", "/api/messaging/patient-thread", { patientId: Number(patientId) })
       .then(function (convo) {
         return ensureConversation(convo.id).then(function () {
-          DT.set(function (s) { s.__activeConvo = convo.id; s.ui.nav = "messages"; return s; });
+          DT.set(function (s) { s.__activeConvo = convo.id; s.__openThread = convo.id; s.ui.nav = "messages"; return s; });
         });
       })
-      .catch(function () {
-        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open patient thread", msg: "Try again." }; return s; });
+      .catch(function (e) {
+        var why = String((e && e.message) || "");
+        var off = moduleRefused(e);
+        // A stale client (switch flipped after the board loaded): re-read the
+        // module map so the "Message team" control disappears without a reload.
+        if (off) refreshModulesAfterRefusal();
+        var msg = off ? "Patient-linked threads are switched off for your organization."
+          : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — try again when you're back online."
+          : /forbidden/.test(why) ? "Only this patient's care team (or a director) can open the thread."
+          : /not_found/.test(why) ? "That patient is no longer on the board."
+          : "Try again.";
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't open patient thread", msg: msg }; return s; });
       });
   };
   DT.actions.startConversation = function (participant) {
@@ -2227,10 +2276,10 @@
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(other.id) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
       if (existing) {
-        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; return s; }); });
+        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.__openThread = existing.id; return s; }); });
       }
       return api("POST", "/api/messaging/conversations", { type: "direct", participantIds: [other.id] }).then(function (convo) {
-        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; s.__openThread = convo.id; return s; }); });
       });
     }).catch(function () { if (origStartConversation) origStartConversation(participant); });
   };
@@ -2261,10 +2310,10 @@
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(target.userId) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
       if (existing) {
-        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; return s; }); });
+        return ensureConversation(existing.id).then(function () { DT.set(function (s) { s.__activeConvo = existing.id; s.__openThread = existing.id; return s; }); });
       }
       return api("POST", "/api/messaging/conversations", { type: "direct", name: target.label, participantIds: [target.userId] }).then(function (convo) {
-        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; return s; }); });
+        return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; s.__openThread = convo.id; return s; }); });
       });
     }).catch(function () {});
   };
