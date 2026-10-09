@@ -72,6 +72,23 @@ export function registerAccountRoutes(app: Express) {
   // every org; directors / ER directors get their own.
   app.get("/api/accounts", requireAuth, requireRole(...MANAGE_ROLES), async (req, res) => {
     const me = currentUser(req);
+    if (me.role === "developer") {
+      // A developer's list is a CROSS-TENANT read (every tenant's workforce:
+      // usernames, roles, credentials, account state) — the same data as
+      // GET /api/dev/users, so the same ids-only row, filed BEFORE the read in
+      // the developer's own (platform) org, never with organization_id NULL
+      // (launch finding A.CON-SHO-9; see the header of server/routes/dev.ts).
+      // A director's list of their own org is not cross-tenant: no row.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.users_list",
+        resourceType: "user",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
+    }
     const orgs = await storage().listOrganizations();
     const orgCode = new Map(orgs.map((o) => [o.id, o.code]));
     const users =

@@ -11,6 +11,9 @@ import {
   users,
 } from "@shared/schema";
 import { createTestApp, login, type TestContext } from "./helpers.js";
+import { invalidateModules, setModule } from "../server/modules.js";
+
+const MFA_MODULE = "security.mfaRequired";
 
 /**
  * Developer-console audit integrity (launch findings A.CON-SHO-9 / -32 / -38 /
@@ -86,6 +89,10 @@ describe("A.CON-SHO-9 — developer cross-tenant reads are audited", () => {
       { path: "/api/dev/compliance-overview", action: "dev.compliance_overview", org: platformId },
       { path: "/api/dev/compliance-archive", action: "dev.archive_read", org: platformId },
       { path: "/api/dev/compliance-archive?orgId=" + orgId, action: "dev.archive_read", org: platformId },
+      // The account-lifecycle list hands a developer EVERY tenant's workforce
+      // (username, role, credential, disabled, must-change) — the same data as
+      // /api/dev/users, so the same ids-only row (fix-up of A.CON-SHO-9).
+      { path: "/api/accounts", action: "dev.users_list", org: platformId },
       // Per-tenant reads land in THAT tenant's trail, so its director sees them.
       { path: "/api/dev/organizations/" + orgId + "/settings", action: "dev.org_read", org: orgId },
       { path: "/api/dev/organizations/" + orgId + "/audit", action: "dev.audit_read", org: orgId, risk: "medium" },
@@ -116,6 +123,34 @@ describe("A.CON-SHO-9 — developer cross-tenant reads are audited", () => {
     const before = await ctx.storage.countAuditLogs(orgId);
     await director.get("/api/dev/modules/" + orgId).expect(200);
     expect(await ctx.storage.countAuditLogs(orgId)).toBe(before);
+  });
+
+  it("GET /api/accounts is a cross-tenant read for a developer only", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const platformId = ctx.seedResult.platformOrgId;
+    const devId = ctx.seedResult.userIds.dev!;
+
+    // A developer gets every tenant's accounts → audited in the platform org.
+    const { agent: dev } = await devLogin();
+    const before = await ctx.storage.countAuditLogs(platformId);
+    const all = await dev.get("/api/accounts").expect(200);
+    const orgsSeen = new Set((all.body as Array<{ org: string }>).map((u) => u.org));
+    expect(orgsSeen.size).toBeGreaterThan(1); // really cross-tenant
+    expect(await ctx.storage.countAuditLogs(platformId)).toBe(before + 1);
+    const row = (await audit(platformId)).find((a) => a.action === "dev.users_list");
+    expect(row).toBeTruthy();
+    expect(row!.userId).toBe(devId);
+    expect(row!.organizationId).toBe(platformId);
+    expect(row!.resourceId).toBeNull();
+
+    // A director's list of their OWN org is not cross-tenant: no row.
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    const ownBefore = await ctx.storage.countAuditLogs(orgId);
+    const platformBefore = await ctx.storage.countAuditLogs(platformId);
+    const own = await director.get("/api/accounts").expect(200);
+    expect(new Set((own.body as Array<{ org: string }>).map((u) => u.org))).toEqual(new Set(["ISPN"]));
+    expect(await ctx.storage.countAuditLogs(orgId)).toBe(ownBefore);
+    expect(await ctx.storage.countAuditLogs(platformId)).toBe(platformBefore);
   });
 
   it("a refused read (unknown tenant, malformed id) writes no row", async () => {
@@ -205,6 +240,124 @@ describe("A.CON-SHO-38 — impersonated sessions keep the operator identity", ()
     const own = (await phi(orgId)).find((r) => r.resource === "patients" && r.userId === ctx.seedResult.userIds.chen);
     expect(own).toBeTruthy();
     expect(own!.impersonatorUserId).toBeNull();
+  });
+
+  /* The way back must survive the borrowed account's own gates (fix-up). A
+     freshly provisioned account still holds its one-time password, and a
+     privileged account in an org that requires MFA may not have enrolled:
+     both gates 403 every route but their exemptions, and before the fix that
+     included POST /api/dev/impersonate/stop — the developer could only sign
+     out and back in by hand. */
+
+  const leaveAndCheck = async (
+    dev: Awaited<ReturnType<typeof devLogin>>["agent"],
+    orgId: number,
+    borrowedId: number,
+  ) => {
+    const devId = ctx.seedResult.userIds.dev!;
+    const back = await dev.post("/api/dev/impersonate/stop").send({});
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    expect(back.body.id).toBe(devId);
+    expect(back.body.role).toBe("developer");
+    expect(back.body.mfaEnrollmentRequired).toBeUndefined(); // the developer's own org does not require it
+    expect((await dev.get("/api/user").expect(200)).body.id).toBe(devId);
+    await dev.get("/api/dev/organizations").expect(200); // a working developer session again
+    const stop = (await audit(orgId)).find(
+      (a) => a.action === "dev.impersonate_stop" && a.resourceId === borrowedId,
+    );
+    expect(stop, "stop not audited").toBeTruthy();
+    expect(stop!.userId).toBe(devId);
+    // Leaving twice is still refused: the exemption opens only a real exit.
+    await dev.post("/api/dev/impersonate/stop").send({}).expect(400, { error: "not_impersonating" });
+  };
+
+  it("returns to the developer from an account that must still change its one-time password", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const { agent: dev } = await devLogin();
+    const made = await dev
+      .post("/api/dev/users")
+      .send({ organizationId: orgId, role: "director", displayName: "Fresh Director", username: "fresh.director" })
+      .expect(201);
+    expect(made.body.mustChangePassword).toBe(true);
+
+    const enter = await dev.post("/api/dev/impersonate").send({ userId: made.body.id }).expect(200);
+    expect(enter.body.mustChangePassword).toBe(true);
+    // The borrowed identity is held exactly as its owner would be…
+    await dev.get("/api/hospitalists").expect(403, { error: "password_change_required" });
+    // …but the developer can always leave, without a password.
+    await leaveAndCheck(dev, orgId, made.body.id);
+  });
+
+  it("returns to the developer from a managed brand-new tenant whose only admin is still provisional", async () => {
+    const { agent: dev } = await devLogin();
+    const org = await ctx.storage.createOrganization({
+      name: "RPG General",
+      code: "RPG",
+      city: null,
+      state: null,
+      timezone: "America/New_York",
+      assignmentTimeoutMin: 10,
+      roundRobinShiftTypes: ["day", "night"],
+      rotationMode: "lowest_census",
+      rotationIndex: 0,
+    });
+    const first = await dev
+      .post("/api/dev/users")
+      .send({ organizationId: org.id, role: "director", displayName: "RPG Director", username: "rpg.director" })
+      .expect(201);
+    const enter = await dev.post("/api/dev/manage-org").send({ orgId: org.id }).expect(200);
+    expect(enter.body.id).toBe(first.body.id);
+    expect(enter.body.mustChangePassword).toBe(true);
+    await dev.get("/api/settings/org").expect(403, { error: "password_change_required" });
+    await leaveAndCheck(dev, org.id, first.body.id);
+  });
+
+  it("returns to the developer from a privileged account that has not enrolled the MFA its org requires", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const directorId = ctx.seedResult.userIds.director!;
+    await setModule(orgId, MFA_MODULE, true);
+    try {
+      const { agent: dev } = await devLogin();
+      const enter = await dev.post("/api/dev/impersonate").send({ userId: directorId }).expect(200);
+      // The entry answer already says where the borrowed session stands.
+      expect(enter.body.mfaEnrollmentRequired).toBe(true);
+      await dev.get("/api/hospitalists").expect(403, { error: "mfa_enrollment_required" });
+      await leaveAndCheck(dev, orgId, directorId);
+
+      // Same through the managed-org door.
+      const managed = await dev.post("/api/dev/manage-org").send({ orgId }).expect(200);
+      expect(managed.body.role).toBe("director");
+      expect(managed.body.mfaEnrollmentRequired).toBe(true);
+      await dev.get("/api/settings/org").expect(403, { error: "mfa_enrollment_required" });
+      await leaveAndCheck(dev, orgId, directorId);
+    } finally {
+      invalidateModules();
+    }
+  });
+
+  it("the exemption is only the exit: gated sessions stay gated, and the developer's own gate still applies", async () => {
+    const orgId = ctx.seedResult.orgId;
+    const platformId = ctx.seedResult.platformOrgId;
+    await setModule(orgId, MFA_MODULE, true);
+    try {
+      // A gated director who is NOT impersonating gets a 400, not a way in.
+      const { agent: director } = await login(ctx.app, { username: "director" });
+      await director.post("/api/dev/impersonate/stop").send({}).expect(400, { error: "not_impersonating" });
+      await director.get("/api/hospitalists").expect(403, { error: "mfa_enrollment_required" });
+
+      // The platform org starts requiring MFA while the developer is inside a
+      // portal: leaving still works, the answer says the developer must now
+      // enrol, and the developer's session is held by its OWN gate.
+      const { agent: dev } = await devLogin();
+      await dev.post("/api/dev/impersonate").send({ userId: ctx.seedResult.userIds.chen! }).expect(200);
+      await setModule(platformId, MFA_MODULE, true);
+      const back = await dev.post("/api/dev/impersonate/stop").send({}).expect(200);
+      expect(back.body.role).toBe("developer");
+      expect(back.body.mfaEnrollmentRequired).toBe(true);
+      await dev.get("/api/dev/organizations").expect(403, { error: "mfa_enrollment_required" });
+    } finally {
+      invalidateModules();
+    }
   });
 });
 

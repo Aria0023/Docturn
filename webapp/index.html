@@ -407,6 +407,54 @@ function NotificationsPanel({ open, items, onClose }) {
   );
 }
 
+/* A developer inside an impersonated / managed-org portal. The Return button is
+   a server-side session swap (POST /api/dev/impersonate/stop), exempt from the
+   borrowed account's password / MFA gates, so it works on every screen. */
+function ImpersonationBanner({ imp, onReturn }) {
+  if (!imp) return null;
+  return (
+    <div data-testid="impersonation-banner" style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: imp.managing ? "#1E3A5F" : "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
+      <Icon name={imp.managing ? "building-2" : "eye"} size={16} color="#FDBA74" />
+      <span style={{ fontSize: 13, fontWeight: 600 }}>
+        {imp.managing
+          ? "Managing " + imp.name + " (" + imp.org + ") — full per-organization portal"
+          : "Root access — viewing " + imp.name + "'s portal (" + String(imp.role || "").replace(/_/g, " ") + " · " + imp.org + ")"}
+      </span>
+      <span style={{ fontSize: 12, color: "#FED7AA" }}>{imp.managing ? "Every change applies to this organization only. Actions are audited." : "You're seeing exactly what this user sees. Actions are audited."}</span>
+      <button type="button" onClick={onReturn} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
+    </div>
+  );
+}
+
+/* The borrowed account is still held by its own gate — a one-time password not
+   yet replaced, or two-factor enrolment its org requires. Those steps belong to
+   the account's owner, so the developer is NOT shown the enrolment / change
+   forms (the enrolment screen would start a TOTP setup on the owner's account
+   the moment it mounted); they see why the portal is closed and the way back. */
+function ImpersonationGateHold({ imp, gate, me, onReturn, onSignOut }) {
+  const mobile = useIsMobile();
+  const who = (me && me.name) || imp.name || "This account";
+  const why = gate === "mfa"
+    ? who + " hasn't enrolled the two-factor authentication this organization requires for their role yet."
+    : who + " still has the one-time password the account was created or reset with, and hasn't chosen their own yet.";
+  return (
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
+      <ImpersonationBanner imp={imp} onReturn={onReturn} />
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "20px 16px" : 28 }}>
+        <div data-testid="impersonation-gate-hold" style={{ width: "100%", maxWidth: 440, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 20px" : "30px 28px", textAlign: "center" }}>
+          <span style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name={gate === "mfa" ? "shield-check" : "key-round"} size={20} color="var(--primary)" /></span>
+          <h1 style={{ fontSize: 19, fontWeight: 700, margin: "16px 0 8px" }}>{gate === "mfa" ? "Two-factor enrolment pending" : "Password change pending"}</h1>
+          <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: "0 0 18px", lineHeight: 1.55 }}>
+            {why} The portal opens once they do it themselves when they sign in. Nothing here is available until then.
+          </p>
+          <Button full size="lg" icon="arrow-left" onClick={onReturn}>Return to developer</Button>
+          <button type="button" onClick={onSignOut} style={{ marginTop: 10, border: "none", background: "transparent", color: "var(--muted-foreground)", fontSize: 12.5, cursor: "pointer", fontFamily: "var(--font-sans)", padding: 6 }}>Sign out instead</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const st = useStore();
   const a = useActions();
@@ -490,6 +538,12 @@ function App() {
   // login (202) until the code arrives, so there is no session yet.
   if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
   if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
+  // A developer inside a portal whose account is held by its own gate: show
+  // why, with the way back (A.CON-SHO-38) — never the owner's enrolment /
+  // change forms.
+  // The toast is rendered here too: a failed Return ("Couldn't leave portal")
+  // must be visible on this screen, not only inside the shell.
+  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
   // The org requires MFA for this privileged role and the user hasn't enrolled:
   // the server 403s every other route, so hold the whole app (no navigation)
   // on the enrolment screen until /api/user says the block has lifted.
@@ -604,18 +658,7 @@ function App() {
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
 
-  const impersonationBanner = st.impersonating && (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: st.impersonating.managing ? "#1E3A5F" : "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
-      <Icon name={st.impersonating.managing ? "building-2" : "eye"} size={16} color="#FDBA74" />
-      <span style={{ fontSize: 13, fontWeight: 600 }}>
-        {st.impersonating.managing
-          ? "Managing " + st.impersonating.name + " (" + st.impersonating.org + ") — full per-organization portal"
-          : "Root access — viewing " + st.impersonating.name + "'s portal (" + st.impersonating.role.replace(/_/g, " ") + " · " + st.impersonating.org + ")"}
-      </span>
-      <span style={{ fontSize: 12, color: "#FED7AA" }}>{st.impersonating.managing ? "Every change applies to this organization only. Actions are audited." : "You're seeing exactly what this user sees. Actions are audited."}</span>
-      <button onClick={() => a.stopImpersonating()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
-    </div>
-  );
+  const impersonationBanner = <ImpersonationBanner imp={st.impersonating} onReturn={() => a.stopImpersonating()} />;
 
   if (isMobile) {
     // Bottom tab bar (TigerConnect/native style): the primary destinations as

@@ -37,6 +37,17 @@ const scryptAsync = promisify(scrypt) as unknown as (
  */
 export const MFA_REQUIRED_MODULE = "security.mfaRequired";
 
+/**
+ * The way back from an impersonated / managed-org portal. The session's
+ * identity is then the BORROWED account, so its gates apply to it — and a
+ * freshly provisioned account (one-time password) or an unenrolled privileged
+ * account in an MFA-required org would otherwise trap the developer inside
+ * (A.CON-SHO-38). The route itself only ever swaps back to the developer the
+ * session recorded at entry (400 for a session that is not impersonating) and
+ * is audited; the developer's OWN gates apply again from the next request.
+ */
+const IMPERSONATION_EXIT = /^\/dev\/impersonate\/stop\/?$/;
+
 /** Paths (relative to the /api mount) a flagged session may still use. */
 const MFA_GATE_EXEMPT: readonly RegExp[] = [
   /^\/user\/?$/,
@@ -45,6 +56,7 @@ const MFA_GATE_EXEMPT: readonly RegExp[] = [
   /^\/mfa(\/|$)/,
   /^\/modules\/?$/,
   /^\/config\/?$/,
+  IMPERSONATION_EXIT,
 ];
 
 export function isMfaGateExempt(apiRelativePath: string): boolean {
@@ -94,6 +106,7 @@ const PASSWORD_GATE_EXEMPT: readonly RegExp[] = [
   /^\/account\/password\/?$/,
   /^\/modules\/?$/,
   /^\/config\/?$/,
+  IMPERSONATION_EXIT,
 ];
 
 /**

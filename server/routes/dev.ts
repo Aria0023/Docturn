@@ -1,6 +1,6 @@
 import type { Express } from "express";
-import { devCreateUserSchema, toSafeUser } from "@shared/schema";
-import { hashPassword, issueTemporaryPassword } from "../auth.js";
+import { devCreateUserSchema, toSafeUser, type User } from "@shared/schema";
+import { hashPassword, issueTemporaryPassword, mfaEnrollmentRequired } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { getExtractor } from "../services/ai-intake.js";
@@ -9,13 +9,27 @@ import { parseId } from "../params.js";
 import { storage } from "../storage.js";
 
 /**
+ * The answer to a session swap (impersonate / manage-org / stop): the new
+ * identity's safe user body plus the gate flag GET /api/user would report, so
+ * the client routes the swapped session correctly at once — a privileged
+ * account in an org that requires MFA and has not enrolled is held at
+ * enrolment (`mustChangePassword` is already in the safe body). Live state,
+ * never the session.
+ */
+async function swappedUserBody(u: User) {
+  return (await mfaEnrollmentRequired(u)) ? { ...toSafeUser(u), mfaEnrollmentRequired: true } : toSafeUser(u);
+}
+
+/**
  * Developer console: cross-tenant administration. The developer role bypasses
  * org-scoping deliberately; EVERY cross-tenant action is audited before/with it
  * — READS included. A read of ONE tenant is filed in that tenant's trail (so
  * its director can see the platform looked); a cross-tenant list is filed in
  * the developer's own (platform) org, never with organization_id NULL, where no
  * view, archive or compliance count could ever show it. Audit details carry
- * ids and counts only.
+ * ids and counts only. Developer reads served OUTSIDE this file follow the same
+ * rule: GET /api/dev/modules/:orgId (routes/modules.ts) and a developer's
+ * GET /api/accounts (routes/accounts.ts, every tenant's workforce).
  */
 export function registerDevRoutes(app: Express) {
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
@@ -565,12 +579,13 @@ export function registerDevRoutes(app: Express) {
         details: { from: me.id, to: target.id },
         riskLevel: "high",
       });
+      const body = await swappedUserBody(target);
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
         // Remember who is really here so /api/dev/impersonate/stop can restore
         // the developer WITHOUT a password (the client never holds one).
         req.session.impersonatorId = me.id;
-        res.json(toSafeUser(target));
+        res.json(body);
       });
     },
   );
@@ -579,6 +594,9 @@ export function registerDevRoutes(app: Express) {
   // developer recorded at entry. Reachable while the session is the impersonated
   // user (no developer role check — the session isn't a developer right now);
   // the recorded developer must still exist, still be a developer and be active.
+  // Exempt from the borrowed account's forced-password-change and MFA-enrolment
+  // gates (server/auth.ts IMPERSONATION_EXIT): a freshly provisioned or
+  // unenrolled account must never trap the developer inside its portal.
   app.post("/api/dev/impersonate/stop", requireAuth, async (req, res, next) => {
     const origId = req.session.impersonatorId;
     if (!origId) return res.status(400).json({ error: "not_impersonating" });
@@ -597,10 +615,14 @@ export function registerDevRoutes(app: Express) {
       details: { from: current.id, to: orig.id },
       riskLevel: "high",
     });
+    // The developer's OWN gates apply again from the next request; the answer
+    // already says whether one holds them (e.g. the platform org began
+    // requiring MFA while they were inside the portal).
+    const body = await swappedUserBody(orig);
     req.login(orig as unknown as Express.User, (err) => {
       if (err) return next(err);
       delete req.session.impersonatorId;
-      res.json(toSafeUser(orig));
+      res.json(body);
     });
   });
 
@@ -638,10 +660,11 @@ export function registerDevRoutes(app: Express) {
         details: { as: admin.id, role: admin.role },
         riskLevel: "high",
       });
+      const body = await swappedUserBody(admin);
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);
         req.session.impersonatorId = me.id; // /api/dev/impersonate/stop returns here
-        res.json({ ...toSafeUser(admin), orgCode: org.code, orgName: org.name });
+        res.json({ ...body, orgCode: org.code, orgName: org.name });
       });
     },
   );

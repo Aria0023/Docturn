@@ -2663,6 +2663,23 @@
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not delete", msg: msg }; return s; });
     });
   };
+  // Gate state carried by a session-swap answer (impersonate / manage-org /
+  // stop, and GET /api/user): `mustChangePassword` and `mfaEnrollmentRequired`
+  // of the identity the session now holds. The de-dupe flags move with the UI
+  // flags so a later 403 can raise them again, and leaving a held portal
+  // clears them (A.CON-SHO-38).
+  function swapGates(u) {
+    var g = { mfa: !!(u && u.mfaEnrollmentRequired), pw: !!(u && u.mustChangePassword) };
+    mfaFlagged = g.mfa; pwChangeFlagged = g.pw;
+    return g;
+  }
+  // A held identity answers 403 on everything but its exemptions: stop the
+  // previous identity's socket instead of reconnecting one that is refused.
+  function dropWs() {
+    try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
+  }
+
   // developer ROOT access — open any user's portal (audited session swap) to
   // see exactly what they see and fix things in place.
   DT.actions.impersonate = function (user) {
@@ -2675,13 +2692,18 @@
         meId = u.id;
         auditLoaded = false;
         prefsLoaded = false;
+        var g = swapGates(u);
         DT.set(function (s) {
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.impersonating = { name: u.displayName, role: u.role, org: user.org || s.selectedOrg };
+          s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
           s.ui.nav = "dashboard"; s.ui.notifOpen = false;
           return s;
         });
+        // The account is held by its own gate: the shell shows why, with the
+        // way back (index.html ImpersonationGateHold); nothing else would answer.
+        if (g.mfa || g.pw) { dropWs(); return u; }
         connectWs();
         return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
       })
@@ -2696,13 +2718,18 @@
       meId = u.id;
       auditLoaded = false; prefsLoaded = false;
       dashHydrated = false; lastDashSnap = null;
+      // The borrowed account's gate flags go with it; the developer's own (if
+      // any — e.g. the platform org began requiring MFA) come from the answer.
+      var g = swapGates(u);
       DT.set(function (s) {
         s.impersonating = null;
         s.session = { role: u.role, org: PLATFORM_ORG, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
         s.ui.nav = "dashboard"; s.ui.notifOpen = false;
         return s;
       });
+      if (g.mfa || g.pw) { dropWs(); return u; } // held at the developer's own enrolment / change screen
       return bootSession(u);
     }).catch(function (e) {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't leave portal", msg: "Sign out and sign back in as the developer." }; return s; });
@@ -2723,14 +2750,19 @@
         meId = u.id;
         auditLoaded = false;
         prefsLoaded = false;
+        var g = swapGates(u);
         DT.set(function (s) {
           s.session = { role: u.role, org: u.orgCode || code, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.selectedOrg = u.orgCode || code;
           s.impersonating = { name: u.orgName || code, role: u.role, org: u.orgCode || code, managing: true };
+          s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
           s.ui.nav = "dashboard"; s.ui.notifOpen = false;
           return s;
         });
+        // The tenant's admin is still held by its own gate (a brand-new
+        // tenant's first director has a one-time password): show the hold.
+        if (g.mfa || g.pw) { dropWs(); return u; }
         connectWs();
         return hydrate(u.role).then(function (r) { hydrateConversations(); return r; });
       })
