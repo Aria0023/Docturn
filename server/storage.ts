@@ -356,8 +356,9 @@ export interface IStorage {
   ): Promise<{ messages: Message[]; hasMore: boolean }>;
   /**
    * Recipient delivery rows (never the sender's own) of live messages with
-   * id <= maxMessageId in `conversationIds` that were delivered, read or
-   * acknowledged at/after `since` — receipts a disconnected client missed.
+   * id <= maxMessageId in `conversationIds` that were delivered, read,
+   * acknowledged, STAT-re-alerted or STAT-escalated at/after `since` —
+   * receipts a disconnected client missed.
    */
   listReceiptChangesSince(
     orgId: number,
@@ -396,8 +397,10 @@ export interface IStorage {
       createdAt: Date;
     }>
   >;
-  markDeliveryRealerted(deliveryId: number): Promise<void>;
-  markDeliveryEscalated(deliveryId: number): Promise<void>;
+  /** `at` (default now) is the time stored — the sweep sends the same value
+   * in its STAT_REALERT / STAT_ESCALATED frames. */
+  markDeliveryRealerted(deliveryId: number, at?: Date): Promise<void>;
+  markDeliveryEscalated(deliveryId: number, at?: Date): Promise<void>;
 
   // message attachments
   createAttachment(a: {
@@ -992,6 +995,11 @@ export class DatabaseStorage implements IStorage {
             gte(messageDeliveryStatus.deliveredAt, since),
             gte(messageDeliveryStatus.readAt, since),
             gte(messageDeliveryStatus.acknowledgedAt, since),
+            // The STAT sweep's steps: a device whose socket was down when the
+            // STAT_REALERT / STAT_ESCALATED frame went out still moves its
+            // countdown on at reconnect (A.CON-MIN-18).
+            gte(messageDeliveryStatus.realertedAt, since),
+            gte(messageDeliveryStatus.escalatedAt, since),
           ),
         ),
       )
@@ -1100,16 +1108,16 @@ export class DatabaseStorage implements IStorage {
         ),
       );
   }
-  async markDeliveryRealerted(deliveryId: number) {
+  async markDeliveryRealerted(deliveryId: number, at: Date = new Date()) {
     await this.db
       .update(messageDeliveryStatus)
-      .set({ realertedAt: new Date() })
+      .set({ realertedAt: at })
       .where(eq(messageDeliveryStatus.id, deliveryId));
   }
-  async markDeliveryEscalated(deliveryId: number) {
+  async markDeliveryEscalated(deliveryId: number, at: Date = new Date()) {
     await this.db
       .update(messageDeliveryStatus)
-      .set({ escalatedAt: new Date() })
+      .set({ escalatedAt: at })
       .where(eq(messageDeliveryStatus.id, deliveryId));
   }
 

@@ -56,7 +56,10 @@ async function sendStatSmsFallback(
  *                                 deliver the message to them in a sender ↔
  *                                 covering thread (see services/covering.ts —
  *                                 the original thread's membership is never
- *                                 changed), notify, and audit (risk high)
+ *                                 changed), notify, and audit (risk high).
+ *                                 The sender and the recipient get a
+ *                                 STAT_ESCALATED frame whether or not anyone
+ *                                 was covering.
  *
  * Each step fires exactly once per recipient (realerted_at / escalated_at on the
  * delivery row). No PHI leaves the system: pushes are generic wake-ups and audit
@@ -165,29 +168,37 @@ export async function runStatEscalationSweep(
 
     // Step 1 — re-alert the original recipient.
     if (age >= realertMs && !row.realertedAt) {
+      const realertedAt = new Date();
+      await s.markDeliveryRealerted(row.deliveryId, realertedAt);
       // To the recipient (the nudge) and the sender (their countdown moves on,
-      // A.CON-MIN-18). Ids only; `userId` = who was re-alerted.
+      // A.CON-MIN-18). Ids only; `userId` = who was re-alerted, `at` = the
+      // stored realertedAt.
       deps.ws.sendToUsers(Array.from(new Set([row.userId, row.senderId])), {
         type: "STAT_REALERT",
         messageId: row.messageId,
         conversationId: row.conversationId,
         userId: row.userId,
+        at: realertedAt.toISOString(),
       });
       await deps.push
         .send(row.userId, { title: "STAT message awaiting your acknowledgement" })
         .catch(() => {});
-      await s.markDeliveryRealerted(row.deliveryId);
       realerted++;
     }
 
     // Step 2 — escalate to the covering provider.
     if (age >= escalateMs && !row.escalatedAt) {
+      const escalatedAt = new Date();
       const coveringId = await resolveCovering(
         s,
         row.organizationId,
         row.userId,
       );
       let delivery: CoveringDelivery | null = null;
+      // The sweep created the covering provider's delivery row on the original
+      // message (a thread member who had none) — the sender's open thread
+      // re-reads once to show it.
+      let coveringRowAdded = false;
       if (coveringId != null && coveringId !== row.senderId) {
         const [convo, message, sender, unresponsive] = await Promise.all([
           s.getConversation(row.organizationId, row.conversationId),
@@ -213,6 +224,7 @@ export async function runStatEscalationSweep(
                   escalatedAt: new Date(), // and never re-escalates from this row
                 },
               ]);
+              coveringRowAdded = true;
             }
             delivery = {
               conversationId: row.conversationId,
@@ -249,13 +261,12 @@ export async function runStatEscalationSweep(
             originalMessageId: row.messageId,
             originalConversationId: row.conversationId,
             forUserId: row.userId,
+            escalatedAt: escalatedAt.toISOString(),
           });
-          deps.ws.sendToUsers([row.senderId, row.userId], {
-            type: "MESSAGE_ACK", // reuse: nudges clients to re-hydrate the thread
-            messageId: row.messageId,
-            conversationId: row.conversationId,
-            userId: coveringId,
-          });
+          // The sender and the unresponsive recipient hear about it below —
+          // NEVER through MESSAGE_ACK: nobody acknowledged anything, and a
+          // covering provider who is a thread member already has a delivery
+          // row a client would stamp "acknowledged" (A.CON-MIN-18).
           await deps.push
             .send(coveringId, { title: "Escalated STAT message needs attention" })
             .catch(() => {});
@@ -271,7 +282,20 @@ export async function runStatEscalationSweep(
       );
       // Mark even when no covering exists so the sweep doesn't retry forever;
       // the audit row records whether it went anywhere.
-      await s.markDeliveryEscalated(row.deliveryId);
+      await s.markDeliveryEscalated(row.deliveryId, escalatedAt);
+      // The step ran — with or without a covering provider: the sender's and
+      // the recipient's countdowns move to "Escalated" live (A.CON-MIN-18).
+      // Ids only; `userId` = whose row escalated, `escalatedAt` = the stored
+      // value, `coveringUserId` = who was handed the message (null: nobody).
+      deps.ws.sendToUsers([row.senderId, row.userId], {
+        type: "STAT_ESCALATED",
+        messageId: row.messageId,
+        conversationId: row.conversationId,
+        userId: row.userId,
+        escalatedAt: escalatedAt.toISOString(),
+        coveringUserId: delivery != null ? coveringId : null,
+        coveringRowAdded,
+      });
       await appendAudit({
         organizationId: row.organizationId,
         userId: null,

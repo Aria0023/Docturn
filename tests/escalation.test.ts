@@ -225,6 +225,98 @@ describe("stat escalation + dnd forwarding", () => {
     expect(again.realerted + again.escalated).toBe(0);
   });
 
+  // A.CON-MIN-18 (end states): the sender's and the recipient's countdowns can
+  // only reach "Escalated" live if the sweep TELLS them the escalation step ran
+  // — with or without a covering provider — and never by a frame that reads as
+  // an acknowledgement.
+  const frames = (type: string) =>
+    ctx.ws.delivered.filter((d) => (d.message as { type?: string }).type === type);
+
+  it("no covering provider: sender and recipient are told it escalated (STAT_ESCALATED with the stored escalatedAt), and nothing reads as an ack", async () => {
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const chenId = ctx.seedResult.userIds.chen!;
+    const erId = ctx.seedResult.userIds["er.doc"]!;
+    const convo = await directConvo(er, chenId);
+    const sent = await er
+      .post("/api/messaging/send")
+      .send({ conversationId: convo.id, content: "STAT no cover", priority: "stat" })
+      .expect(201);
+    ctx.ws.delivered = [];
+    await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+
+    const [row] = (await ctx.storage.listDeliveryForMessages([sent.body.id])).filter((d) => d.userId === chenId);
+    expect(row!.escalatedAt).toBeInstanceOf(Date);
+    expect(row!.acknowledgedAt).toBeNull();
+    const esc = frames("STAT_ESCALATED");
+    expect(esc).toHaveLength(1);
+    expect(new Set(esc[0]!.userIds)).toEqual(new Set([erId, chenId]));
+    expect(esc[0]!.message).toEqual({
+      type: "STAT_ESCALATED",
+      messageId: sent.body.id,
+      conversationId: convo.id,
+      userId: chenId,
+      escalatedAt: row!.escalatedAt!.toISOString(),
+      coveringUserId: null,
+      coveringRowAdded: false,
+    });
+    // The re-alert frame carries the stored time too.
+    const [realert] = frames("STAT_REALERT");
+    expect(realert!.message).toMatchObject({ userId: chenId, at: row!.realertedAt!.toISOString() });
+    expect(frames("MESSAGE_ACK")).toHaveLength(0);
+  });
+
+  it("group thread whose covering provider is a member: no MESSAGE_ACK, nobody's row acknowledged; sender + recipient get STAT_ESCALATED", async () => {
+    const patelId = ctx.seedResult.userIds.patel!;
+    const chenId = ctx.seedResult.userIds.chen!;
+    const lopezId = ctx.seedResult.userIds.lopez!;
+    const { agent: chen } = await login(ctx.app, { username: "chen" });
+    await chen.patch("/api/settings/me").send({ key: "coveringUserId", value: lopezId }).expect(200);
+    const { agent: patel } = await login(ctx.app, { username: "patel" });
+    const group = await patel
+      .post("/api/messaging/conversations")
+      .send({ type: "group", name: "Night team", participantIds: [chenId, lopezId] })
+      .expect(201);
+    const sent = await patel
+      .post("/api/messaging/send")
+      .send({ conversationId: group.body.id, content: "STAT group", priority: "stat" })
+      .expect(201);
+    ctx.ws.delivered = [];
+    const out = await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    expect(out.escalated).toBe(1); // chen → lopez (lopez has no covering of their own)
+
+    // The sweep never claims an acknowledgement.
+    expect(frames("MESSAGE_ACK")).toHaveLength(0);
+    const rows = await ctx.storage.listDeliveryForMessages([sent.body.id]);
+    const recipients = rows.filter((d) => d.userId !== patelId);
+    expect(recipients.map((d) => d.userId).sort()).toEqual([chenId, lopezId].sort());
+    for (const d of recipients) {
+      expect(d.acknowledgedAt).toBeNull();
+      expect(d.escalatedAt).toBeInstanceOf(Date);
+    }
+    // What the sender's thread shows after the sweep: 0 acks.
+    const thread = (await patel.get(`/api/messaging/conversations/${group.body.id}/messages`).expect(200)).body as Array<{ id: number; ackCount: number }>;
+    expect(thread.find((m) => m.id === sent.body.id)!.ackCount).toBe(0);
+
+    // Each escalated row is announced to the sender and that recipient.
+    const toSender = frames("STAT_ESCALATED").filter((f) => f.userIds.includes(patelId));
+    const byUser = new Map(toSender.map((f) => [(f.message as { userId: number }).userId, f]));
+    expect(new Set(byUser.keys())).toEqual(new Set([chenId, lopezId]));
+    const chenRow = recipients.find((d) => d.userId === chenId)!;
+    expect(new Set(byUser.get(chenId)!.userIds)).toEqual(new Set([patelId, chenId]));
+    expect(byUser.get(chenId)!.message).toMatchObject({
+      messageId: sent.body.id,
+      conversationId: group.body.id,
+      userId: chenId,
+      escalatedAt: chenRow.escalatedAt!.toISOString(),
+      coveringUserId: lopezId,
+      coveringRowAdded: false,
+    });
+    expect(byUser.get(lopezId)!.message).toMatchObject({ userId: lopezId, coveringUserId: null });
+    // The covering provider still gets their own pointer at the message.
+    const cover = frames("STAT_ESCALATED").find((f) => f.userIds.length === 1 && f.userIds[0] === lopezId && (f.message as { forUserId?: number }).forUserId === chenId);
+    expect(cover!.message).toMatchObject({ messageId: sent.body.id, conversationId: group.body.id, originalMessageId: sent.body.id, forUserId: chenId });
+  });
+
   it("DND forwards new messages to the covering provider at send time — via a covering thread, never by joining the 1:1", async () => {
     const orgId = ctx.seedResult.orgId;
     const chenId = ctx.seedResult.userIds.chen!;

@@ -428,6 +428,68 @@ describe("web client realtime (jsdom, real store.js + api-bridge.js)", () => {
     expect(h.reqs.filter((r) => r.path.startsWith("/api/messaging"))).toEqual([]);
   });
 
+  // A.CON-MIN-18 end states: the sweep's STAT_ESCALATED frame (sent to the
+  // sender and the unresponsive recipient whether or not a covering provider
+  // exists) moves the countdown to "Escalated" live, and is never an ack.
+  it("MIN-18: STAT_ESCALATED stamps that recipient's row escalated (the stored time) — no ack, no request", async () => {
+    const h = await boot({ threads: { 1: [msg(110, 1, CHEN.id, "STAT: call me", { priority: "stat" })], 2: [] } });
+    h.reqs.length = 0;
+    const at = iso(Date.now() - 1500);
+    h.sockets[0].emit({ type: "STAT_REALERT", messageId: 110, conversationId: 1, userId: PATEL, at: iso(Date.now() - 9000) });
+    h.sockets[0].emit({ type: "STAT_ESCALATED", messageId: 110, conversationId: 1, userId: PATEL, escalatedAt: at, coveringUserId: null, coveringRowAdded: false });
+    const m = h.convo(1).messages.find((x: any) => x.id === 110);
+    const row = m.deliveries.find((d: any) => d.userId === PATEL);
+    expect(row.escalatedAt).toBe(at);
+    expect(row.acknowledgedAt).toBeNull();
+    expect(m.ackCount).toBe(0);
+    expect(m.receipt).toBe("delivered");
+    await sleep(400);
+    expect(h.reqs.filter((r) => r.path.startsWith("/api/messaging"))).toEqual([]);
+  });
+
+  it("MIN-18: in a group whose covering provider is a member, escalation acks nobody — on the sender's device or the covering provider's", async () => {
+    const LOPEZ = 13;
+    const convos = [
+      { id: 1, type: "direct", name: null, participantIds: [CHEN.id, PATEL], patientId: null },
+      { id: 3, type: "group", name: "Night team", participantIds: [CHEN.id, PATEL, LOPEZ], patientId: null },
+    ];
+    // Sender's device (chen sent the STAT; patel is unresponsive, lopez covers).
+    const h = await boot({ convos, threads: { 1: [], 3: [msg(120, 3, CHEN.id, "STAT group", { priority: "stat", recipients: [PATEL, LOPEZ] })] } });
+    h.w.DT.actions.openConversation(3);
+    await until(() => !!h.convo(3).loaded);
+    h.reqs.length = 0;
+    const at = iso(Date.now());
+    h.sockets[0].emit({ type: "STAT_ESCALATED", messageId: 120, conversationId: 3, userId: PATEL, escalatedAt: at, coveringUserId: LOPEZ, coveringRowAdded: false });
+    let m = h.convo(3).messages.find((x: any) => x.id === 120);
+    expect(m.deliveries.find((d: any) => d.userId === PATEL).escalatedAt).toBe(at);
+    const cover = m.deliveries.find((d: any) => d.userId === LOPEZ);
+    expect(cover.acknowledgedAt).toBeNull();
+    expect(cover.escalatedAt ?? null).toBeNull(); // lopez's own row did not escalate here
+    expect(m.ackCount).toBe(0);
+    await sleep(400);
+    expect(gets(h, /^\/api\/messaging\//)).toEqual([]);
+    // When the sweep had to ADD the covering provider's row, the open thread is
+    // re-read once so the sender sees that row.
+    h.sockets[0].emit({ type: "STAT_ESCALATED", messageId: 120, conversationId: 3, userId: LOPEZ, escalatedAt: at, coveringUserId: 14, coveringRowAdded: true });
+    await sleep(400);
+    const reread = gets(h, /^\/api\/messaging\//).map((r) => r.path);
+    expect(reread).toHaveLength(1);
+    expect(reread[0]).toMatch(/^\/api\/messaging\/conversations\/3\/messages\?limit=\d+$/);
+    m = h.convo(3).messages.find((x: any) => x.id === 120);
+    expect(m.ackCount).toBe(0);
+
+    // The covering provider's device: the pointer frame names the unresponsive
+    // recipient (forUserId) — the covering provider's own row is not touched.
+    const h2 = await boot({ user: CHEN, convos, threads: { 1: [], 3: [msg(130, 3, PATEL, "STAT to the team", { priority: "stat", recipients: [CHEN.id, LOPEZ] })] } });
+    h2.sockets[0].emit({ type: "STAT_ESCALATED", messageId: 130, conversationId: 3, originalMessageId: 130, originalConversationId: 3, forUserId: LOPEZ, escalatedAt: at });
+    const m2 = h2.convo(3).messages.find((x: any) => x.id === 130);
+    expect(m2.deliveries.find((d: any) => d.userId === LOPEZ).escalatedAt).toBe(at);
+    const mine = m2.deliveries.find((d: any) => d.userId === CHEN.id);
+    expect(mine.acknowledgedAt).toBeNull();
+    expect(mine.escalatedAt ?? null).toBeNull();
+    expect(m2.ackedByMe).toBe(false);
+  });
+
   it("SHO-65: a sync naming a conversation this device does not know costs one list request; one it no longer holds is dropped", async () => {
     const h = await boot();
     h.sockets[0].serverClose(1006);

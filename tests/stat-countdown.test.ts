@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "drizzle-orm";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { runStatEscalationSweep } from "../server/services/escalation.js";
 import { invalidateModules } from "../server/modules.js";
@@ -61,6 +62,24 @@ describe("STAT re-alert / escalation timing", () => {
     expect(d.userId).toBe(chenId);
     expect(typeof d.realertedAt).toBe("string");
     expect(d.escalatedAt).toBeNull();
+  });
+
+  it("a socket that was down while the sweep ran learns the re-alert / escalation from GET /api/messaging/sync", async () => {
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const chenId = ctx.seedResult.userIds.chen!;
+    const convo = await er.post("/api/messaging/conversations").send({ type: "direct", participantIds: [chenId] });
+    const sent = await er.post("/api/messaging/send").send({ conversationId: convo.body.id, content: "STAT: call me", priority: "stat" });
+    expect(sent.status).toBe(201);
+    // Delivered long ago (outside the sync overlap window): only the sweep's
+    // steps can make this row a "change since the cursor".
+    await ctx.handle.db.execute(sql`UPDATE message_delivery_status SET delivered_at = now() - interval '1 hour' WHERE message_id = ${sent.body.id}`);
+    const c0 = (await er.get(`/api/messaging/sync?after=${sent.body.id}`).expect(200)).body.cursor as string;
+    await runStatEscalationSweep(ctx.storage, { realertMs: 0, escalateMs: 0 });
+    const r = await er.get(`/api/messaging/sync?after=${sent.body.id}&since=${encodeURIComponent(c0)}`).expect(200);
+    const rc = (r.body.receipts as any[]).filter((x) => x.messageId === sent.body.id);
+    expect(rc).toEqual([expect.objectContaining({ userId: chenId, acknowledgedAt: null })]);
+    expect(typeof rc[0].realertedAt).toBe("string");
+    expect(typeof rc[0].escalatedAt).toBe("string");
   });
 
   it("an invalid override falls back to the defaults (never 0 / NaN)", async () => {

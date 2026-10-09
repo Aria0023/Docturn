@@ -1052,8 +1052,9 @@
     return found;
   }
   // MESSAGE_ACK {messageId, conversationId, userId}: that recipient acknowledged
-  // (which also marks it read). The STAT sweep reuses this frame with the
-  // covering provider's id — no row here, so an open thread is re-read once.
+  // (which also marks it read). Only the ack route sends it — the STAT sweep's
+  // escalation has its own frame (STAT_ESCALATED), so this never stamps a
+  // covering provider "acknowledged" when nobody acked (A.CON-MIN-18).
   function applyAck(ev) {
     var at = new Date().toISOString();
     var ok = patchDelivery(ev.conversationId, [ev.messageId], ev.userId, function (d) {
@@ -1079,6 +1080,32 @@
     patchDelivery(ev.conversationId, [ev.messageId], uid, function (d) {
       return d.realertedAt ? d : Object.assign({}, d, { realertedAt: at });
     });
+  }
+  // STAT_ESCALATED: the sweep's escalation step ran for one recipient's row —
+  // whether or not anyone was covering — so the sender's and that recipient's
+  // countdowns read "Escalated" now, not after a reload (A.CON-MIN-18). It only
+  // stamps escalatedAt: it is never an acknowledgement, for anyone.
+  //   to the sender / the recipient: {messageId, conversationId, userId,
+  //     escalatedAt, coveringUserId, coveringRowAdded}
+  //   to the covering provider: {messageId, conversationId (where THEY open
+  //     it), originalMessageId, originalConversationId, forUserId, escalatedAt}
+  function applyEscalated(ev) {
+    var mid = ev.originalMessageId != null ? ev.originalMessageId : ev.messageId;
+    var cid = ev.originalConversationId != null ? ev.originalConversationId : ev.conversationId;
+    var uid = ev.forUserId != null ? ev.forUserId : (ev.userId != null ? ev.userId : meId);
+    if (mid == null) return;
+    var at = ev.escalatedAt || new Date().toISOString();
+    var ok = patchDelivery(cid, [mid], uid, function (d) {
+      return d.escalatedAt ? d : Object.assign({}, d, { escalatedAt: at });
+    });
+    // The sweep added the covering provider's row to the original message (a
+    // member who had none), or the message is here without that row: an OPEN
+    // thread re-reads once. A thread or message this device does not hold
+    // (e.g. the covering provider is not a member of the original) costs
+    // nothing — it is read with the escalation already on it when opened.
+    var c = findConvo(cid);
+    var held = !!c && (c.messages || []).some(function (m) { return m.id === mid; });
+    if (held && (ev.coveringRowAdded || !ok)) refreshThread(cid);
   }
   // MESSAGE_RECALLED (A.CON-SHO-25): drop it from the thread at once — even
   // while it is open on screen — and recount unread from what remains.
@@ -1319,6 +1346,9 @@
         else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) applyRecall(ev);
         // The STAT sweep re-alerted a recipient (sent to them and the sender).
         else if (ev.type === "STAT_REALERT" && ev.messageId != null) applyRealert(ev);
+        // The sweep escalated a recipient's row (to the sender, that recipient
+        // and the covering provider) — never an ack.
+        else if (ev.type === "STAT_ESCALATED" && ev.messageId != null) applyEscalated(ev);
         // Someone read messages in a thread I'm in (A.CON-SHO-26).
         else if (ev.type === "MESSAGE_READ" && Array.isArray(ev.messageIds)) applyRead(ev);
         // Real typing indicator: a peer relayed typing_start/stop through the

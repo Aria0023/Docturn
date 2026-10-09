@@ -831,7 +831,8 @@ export function registerMessagingRoutes(app: Express) {
   //                       rows, at most SYNC_MESSAGE_LIMIT (`more` = call again
   //                       with the last id).
   //   ?since=<cursor>     the `cursor` of the client's previous sync: recipient
-  //                       receipts (delivered/read/acknowledged) on messages it
+  //                       receipts (delivered/read/acknowledged, and the STAT
+  //                       sweep's re-alert/escalation steps) on messages it
   //                       already holds, and recalls, since then.
   // Always: `cursor` for next time and a PHI-free per-thread summary (ids and
   // counters only). A response that carries no message content writes no
