@@ -129,6 +129,13 @@ export const users = pgTable(
       t.organizationId,
       t.username,
     ),
+    // Usernames are case-insensitive (server/usernames.ts, A.CON-SHO-12/57):
+    // one account per (org, lower(username)). Mirrored in server/db.ts, which
+    // also repairs pre-existing case variants before building it.
+    usernameCiPerOrg: uniqueIndex("users_org_username_ci_uniq").on(
+      t.organizationId,
+      sql`lower(${t.username})`,
+    ),
   }),
 );
 

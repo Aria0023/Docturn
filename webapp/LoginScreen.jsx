@@ -1,8 +1,28 @@
 /* DocTurn web-app UI kit — auth / login screen */
 
+// True while the viewport is SHORT — an iPhone SE (375×667) or any phone in
+// Safari with its toolbars showing (390×664 visible on a 390×844 iPhone).
+function useShortViewport(maxHeight) {
+  const q = "(max-height: " + maxHeight + "px)";
+  const get = () => { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
+  const [short, setShort] = React.useState(get);
+  React.useEffect(() => {
+    let mql; try { mql = window.matchMedia(q); } catch (e) { return undefined; }
+    const on = () => setShort(mql.matches);
+    if (mql.addEventListener) mql.addEventListener("change", on); else if (mql.addListener) mql.addListener(on);
+    on();
+    return () => { if (mql.removeEventListener) mql.removeEventListener("change", on); else if (mql.removeListener) mql.removeListener(on); };
+  }, [q]);
+  return short;
+}
+
 function LoginScreen({ onLogin, appName }) {
   const brand = appName || "DocTurn";
   const mobile = useIsMobile();
+  // On a short phone screen the demo role picker is one native <select> row
+  // instead of a 3-row grid, and the header tightens, so "Sign in" stays
+  // above the fold at 375×667 and in Safari's 390×664 (A.CON-MIN-12).
+  const short = useShortViewport(760) && mobile;
   const _st = (typeof useStore === "function") ? useStore() : {};
   const loginError = _st.loginError || null;
   // Demo affordances (role picker, "any password" hint) exist ONLY in
@@ -101,11 +121,23 @@ function LoginScreen({ onLogin, appName }) {
           style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, padding: mobile ? "9px 6px" : "11px 6px", minHeight: 44,
             borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12, fontWeight: 500, fontFamily: "inherit",
             border: `1px solid ${current === r.id ? "var(--primary)" : "var(--border)"}`,
-            background: current === r.id ? "var(--primary-tint, #EFF6FF)" : "#fff", color: current === r.id ? "var(--primary)" : "var(--foreground)" }}>
+            background: current === r.id ? "var(--primary-tint, #EFF6FF)" : "#fff", color: current === r.id ? "var(--primary-ink, #1D4ED8)" : "var(--foreground)" }}>
           <Icon name={r.icon} size={18} />
           {r.label}
         </button>
       ))}
+    </div>
+  );
+
+  // Compact demo picker for short phone screens: same choices, same pre-fill,
+  // one 44px row (the native iOS picker opens on tap).
+  const roleSelect = (list, current, onPick) => (
+    <div style={{ position: "relative" }}>
+      <select id="dt-demo-role" value={current} onChange={(e) => onPick(e.target.value)}
+        style={{ width: "100%", height: 44, appearance: "none", WebkitAppearance: "none", padding: "0 36px 0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 16, fontFamily: "inherit", cursor: "pointer" }}>
+        {list.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+      </select>
+      <Icon name="chevron-down" size={16} color="var(--muted-foreground)" style={{ position: "absolute", right: 12, top: 14, pointerEvents: "none" }} />
     </div>
   );
 
@@ -117,29 +149,29 @@ function LoginScreen({ onLogin, appName }) {
   );
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: mobile ? "16px 14px" : 28, paddingLeft: mobile ? "max(14px, var(--sai-left, 0px))" : 28, paddingRight: mobile ? "max(14px, var(--sai-right, 0px))" : 28 }}>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: short ? "10px 12px" : mobile ? "16px 14px" : 28, paddingTop: mobile ? "max(" + (short ? 10 : 16) + "px, var(--sai-top, 0px))" : 28, paddingLeft: mobile ? "max(" + (short ? 12 : 14) + "px, var(--sai-left, 0px))" : 28, paddingRight: mobile ? "max(" + (short ? 12 : 14) + "px, var(--sai-right, 0px))" : 28 }}>
       {/* Single sleek card — no split graphics panel */}
-      <div style={{ width: "100%", maxWidth: 400, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "22px 18px" : "32px 30px" }}>
+      <div style={{ width: "100%", maxWidth: 400, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: short ? "16px 16px" : mobile ? "22px 18px" : "32px 30px" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
             <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
             <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{brand}</span>
           </div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, margin: mobile ? "16px 0 4px" : "22px 0 5px", textAlign: "center" }}>{mode === "register" ? "Create an account" : "Sign in"}</h1>
-          <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: mobile ? "0 0 16px" : "0 0 22px", textAlign: "center" }}>
+          <h1 style={{ fontSize: short ? 20 : 22, fontWeight: 700, margin: short ? "10px 0 2px" : mobile ? "16px 0 4px" : "22px 0 5px", textAlign: "center" }}>{mode === "register" ? "Create an account" : "Sign in"}</h1>
+          <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: short ? "0 0 10px" : mobile ? "0 0 16px" : "0 0 22px", textAlign: "center" }}>
             {mode === "register" ? "Request access with your organization's code — a director approves it." : "Secure access to your hospital workspace."}
           </p>
 
           {mode === "signin" ? (
-          <form onSubmit={onSubmitSignin} noValidate autoComplete="on" style={{ display: "flex", flexDirection: "column", gap: mobile ? 13 : 16 }}>
+          <form onSubmit={onSubmitSignin} noValidate autoComplete="on" style={{ display: "flex", flexDirection: "column", gap: short ? 10 : mobile ? 13 : 16 }}>
             <Field label="Organization code" icon="building-2" value={org} onChange={typed(setOrg)} help={mobile ? undefined : "Your hospital's short code."} placeholder="e.g. ISPN" {...ORG_PROPS} />
             <Field label="Username" icon="user" value={user} onChange={typed(setUser)} {...USER_PROPS} />
             <Field label="Password" icon="lock" type="password" value={pass} onChange={typed(setPass)} name="password" autoComplete="current-password" enterKeyHint="go" />
 
             {demoMode && (
             <div>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Demo as role</label>
-              {roleGrid(roles, role, pickRole)}
+              <label htmlFor={short ? "dt-demo-role" : undefined} style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: short ? 6 : 8 }}>Demo as role</label>
+              {short ? roleSelect(roles, role, pickRole) : roleGrid(roles, role, pickRole)}
             </div>
             )}
 

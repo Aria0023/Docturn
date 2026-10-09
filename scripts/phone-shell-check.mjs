@@ -10,15 +10,26 @@
  *    <main> reserves exactly the bar's height; thread composer sits flush on the
  *    bar with no dead band                                  (A.CON-SHO-42/45/46/60)
  *  - landscape phone keeps the mobile shell, content and tab bar honour the
- *    left/right insets, no horizontal overflow               (A.CON-MIN-10, A.CON-NEE-2)
+ *    left/right insets, no horizontal overflow; the compact landscape tab bar
+ *    (44px row); an OPEN thread gets the full height — composer tappable on
+ *    the inset, message list >= 120px, even with the install banner
+ *                                                            (A.CON-MIN-10, A.CON-NEE-2)
  *  - every control >= 44x44 CSS px, every text control >= 16px, no UI text
  *    under 12px, on every primary screen                    (A.CON-SHO-52, -12/44/51/57, A.CON-MIN-11)
- *  - login: role picker keeps 2 columns, "Sign in" above the 390x844 fold,
- *    forms carry the iOS/autofill attributes, Enter submits  (A.CON-MIN-12, A.CON-SHO-12/57)
+ *  - login: role picker keeps 2 columns, "Sign in" above the 390x844 fold
+ *    and on short screens (375x667, Safari's 390x664), forms carry the
+ *    iOS/autofill attributes, Enter submits                  (A.CON-MIN-12, A.CON-SHO-12/57)
+ *  - Patient board: every select (the "Assign…" reassign included) >= 16px;
+ *    the data-source banner wraps, Connect EHR on its own row (A.CON-SHO-44/51, A.CON-MIN-12)
  *  - deep links /messages/42 and /messages/ render the shell  (A.CON-SHO-58)
  *  - lock survives a reload, the /api/modules poll pauses while locked and
- *    resumes after a real unlock, a wrong password stays locked (A.CON-SHO-7)
- *  - status tokens as the browser renders them meet 4.5:1   (A.CON-SHO-53)
+ *    resumes after a real unlock, a wrong password stays locked; the lock is
+ *    the SERVER's: the page's own fetches get 423, the socket closes, ward
+ *    activity triggers zero requests, and deleting the browser's lock flag
+ *    then reloading still lands on the lock screen          (A.CON-SHO-7)
+ *  - status tokens as the browser renders them meet 4.5:1, and a sweep of
+ *    every visible text node (4 roles, phone) finds nothing under AA
+ *                                                            (A.CON-SHO-53)
  *  - iOS polish CSS is in effect (tap highlight, overscroll, text-size-adjust) (A.CON-MIN-16)
  *
  * Usage: BASE_URL=http://127.0.0.1:5050 node scripts/phone-shell-check.mjs [--shots DIR]
@@ -123,6 +134,28 @@ const navRects = (page) => page.evaluate(() => {
   };
 });
 
+// Open a thread with the first directory colleague and measure it (landscape).
+async function openThreadAndMeasure(page) {
+  const banner = await page.evaluate(() => !!document.querySelector(".dt-install-slot > div"));
+  await page.evaluate(() => { const d = (window.DT.getState().directory || []).find((p) => p.id !== (window.DT.getState().me || {}).id); if (d) window.DT.actions.startConversation(d); window.DT.actions.setNav("messages"); });
+  await page.waitForTimeout(900);
+  if (!(await page.locator("input[aria-label=Message]").count())) {
+    const row = page.locator("main button[style*='border-bottom']").first();
+    if (await row.count()) await row.click();
+  }
+  if (!(await page.waitForSelector("input[aria-label=Message]", { timeout: 8000 }).then(() => true).catch(() => false))) return null;
+  await page.waitForTimeout(400);
+  return page.evaluate((b) => {
+    const inp = document.querySelector("input[aria-label=Message]"); const r = inp.getBoundingClientRect();
+    return {
+      banner: b,
+      inputTappable: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === inp,
+      listH: Math.round(document.querySelector("[data-thread-scroll]").getBoundingClientRect().height),
+      composerBottom: Math.round(document.querySelector("[data-composer]").getBoundingClientRect().bottom),
+    };
+  }, banner);
+}
+
 // ---------------------------------------------------------------------------
 // 1. Tab bar geometry at three iPhone widths with a 34px home indicator (and
 //    once with no inset), plus the thread composer.
@@ -176,11 +209,16 @@ for (const [w, h] of [[844, 390], [932, 430]]) {
     if (m) {
       check(`${tag}: tab bar content inset by the left/right safe areas`, Math.abs(m.nav.padLeft - 59) < 1 && Math.abs(m.nav.padRight - 59) < 1 && m.tabs[0].left >= 59 && m.tabs[m.tabs.length - 1].right <= w - 59 + 0.5, `padL ${m.nav.padLeft} padR ${m.nav.padRight} first tab left ${m.tabs[0].left.toFixed(1)}`);
       check(`${tag}: shell content inset by the left/right safe areas`, Math.abs(m.shellPadLeft - 59) < 1 && Math.abs(m.shellPadRight - 59) < 1 && m.headerLeft >= 59 && m.mainLeft >= 59 && m.mainRight <= w - 59 + 0.5, `shell padL ${m.shellPadLeft} padR ${m.shellPadRight} main ${m.mainLeft}-${m.mainRight}`);
-      check(`${tag}: bar height = 58 + 21`, Math.abs(m.nav.height - 79) <= 1, `${m.nav.height}`);
+      check(`${tag}: compact landscape bar = 44 + 21, tabs >= 44`, Math.abs(m.nav.height - 65) <= 1 && m.tabs.every((t) => t.height >= 44 && t.width >= 44), `${m.nav.height}`);
     }
     const a = await auditScreen(page);
     check(`${tag}: no horizontal overflow`, a.docOverflow <= 0 && a.mainOverflow <= 0, `doc +${a.docOverflow} main +${a.mainOverflow}`);
     await shot(page, `landscape-${w}x${h}`);
+    const t = await openThreadAndMeasure(page);
+    check(`${tag}: thread composer input is tappable`, t && t.inputTappable, JSON.stringify(t));
+    check(`${tag}: thread composer sits on the home-indicator inset`, t && Math.abs(t.composerBottom - (h - 21)) <= 1.5, t && `composer bottom ${t.composerBottom} vs ${h - 21}`);
+    check(`${tag}: thread message list >= 120px`, t && t.listH >= 120, t && `${t.listH}px (install banner: ${t.banner})`);
+    await shot(page, `landscape-thread-${w}x${h}`);
   } catch (e) { check(`${tag}: run`, false, e.message); }
   await ctx.close();
 }
@@ -188,11 +226,12 @@ for (const [w, h] of [[844, 390], [932, 430]]) {
 // ---------------------------------------------------------------------------
 // 3. Ergonomics audit across screens at 390x844 (hospitalist) and a director.
 const SCREENS = ["dashboard", "messages", "directory", "oncall", "history", "compliance", "account"];
+const DIRECTOR_SCREENS = ["dashboard", "board", "admissions", "messages", "directory", "oncall", "approvals", "broadcasts", "settings", "compliance", "account"];
 for (const creds of [CREDS, { org: "ISPN", user: "director", pass: "docturn" }]) {
   const { ctx, page } = await phone({ w: 390, h: 844, insets: { bottom: 34 } });
   try {
     await login(page, creds);
-    for (const id of SCREENS) {
+    for (const id of (creds.user === "director" ? DIRECTOR_SCREENS : SCREENS)) {
       await page.evaluate((nid) => window.DT.actions.setNav(nid), id);
       await page.waitForTimeout(500);
       const a = await auditScreen(page);
@@ -201,6 +240,18 @@ for (const creds of [CREDS, { org: "ISPN", user: "director", pass: "docturn" }])
       check(`${tag}: text controls >= 16px`, a.smallFontControls.length === 0, a.smallFontControls.slice(0, 4).join(" | "));
       check(`${tag}: no text under 12px`, a.smallText.length === 0, a.smallText.slice(0, 6).join(" | "));
       check(`${tag}: no horizontal overflow`, a.docOverflow <= 0, `doc +${a.docOverflow}`);
+      if (id === "board") {
+        const b = await page.evaluate(() => {
+          const sels = [...document.querySelectorAll("main select")].map((x) => parseFloat(getComputedStyle(x).fontSize));
+          const ban = document.querySelector("[data-testid=data-source-banner]");
+          if (!ban) return { sels, ban: null };
+          const tr = ban.children[1].getBoundingClientRect(); const btn = ban.querySelector("button");
+          const br = btn ? btn.getBoundingClientRect() : null;
+          return { sels, ban: { wrap: getComputedStyle(ban).flexWrap, textW: Math.round(tr.width), textBottom: Math.round(tr.bottom), btnTop: br && Math.round(br.top), btnW: br && Math.round(br.width) } };
+        });
+        check(`${tag}: every board select (Assign… included) >= 16px`, b.sels.length > 0 && b.sels.every((f) => f >= 16), JSON.stringify(b.sels));
+        check(`${tag}: data-source banner wraps, text >= 200px wide, Connect EHR on its own row`, b.ban && b.ban.wrap === "wrap" && b.ban.textW >= 200 && (b.ban.btnTop == null || (b.ban.btnTop >= b.ban.textBottom && b.ban.btnW >= 300)), JSON.stringify(b.ban));
+      }
       await shot(page, `audit-${creds.user}-${id}`);
     }
     // The More drawer (Sidebar footer actions) at phone width.
@@ -266,6 +317,24 @@ for (const creds of [CREDS, { org: "ISPN", user: "director", pass: "docturn" }])
     const navOk = await page.waitForSelector("nav[aria-label=Primary]", { timeout: 15000 }).then(() => true).catch(() => false);
     check("login: Enter/Go submits the form", navOk);
   } catch (e) { check("login: run", false, e.message); }
+  await ctx.close();
+}
+
+// 4b. Short phone screens: "Sign in" above the fold (compact role picker).
+for (const [w, h] of [[375, 667], [390, 664]]) {
+  const { ctx, page } = await phone({ w, h });
+  try {
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    await page.waitForSelector("form input[name=username]");
+    await page.waitForTimeout(300);
+    const m = await page.evaluate(() => { const b = document.querySelector("form button[type=submit]").getBoundingClientRect(); const sel = document.querySelector("#dt-demo-role"); return { bottom: Math.round(b.bottom), vh: innerHeight, sel: sel ? parseFloat(getComputedStyle(sel).fontSize) : null }; });
+    check(`login ${w}x${h}: Sign in above the fold`, m.bottom <= m.vh, `submit bottom ${m.bottom} / ${m.vh}`);
+    if (m.sel != null) {
+      await page.selectOption("#dt-demo-role", "er_doctor");
+      check(`login ${w}x${h}: compact demo picker (16px) still pre-fills`, m.sel >= 16 && (await page.inputValue("input[name=username]")) === "er.doc");
+    }
+    await shot(page, `login-${w}x${h}`);
+  } catch (e) { check(`login ${w}x${h}: run`, false, e.message); }
   await ctx.close();
 }
 
@@ -364,6 +433,99 @@ for (const p of ["/messages/42", "/messages/", "/board/x/y"]) {
     check("iOS polish: touch-action manipulation on buttons", /manipulation/.test(c.touchAction), c.touchAction);
   } catch (e) { check("contrast: run", false, e.message); }
   await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 6b. The lock is the SERVER's (A.CON-SHO-7 fix-up): 423 for the page's own
+//     fetches, socket closed, zero requests during ward activity (an admission
+//     routed to this user + an org broadcast), and a reload with every
+//     browser-side trace of the lock deleted still lands on the lock screen.
+{
+  const { ctx, page } = await phone({ w: 390, h: 844, insets: { bottom: 34 } });
+  const reqs = [];
+  page.on("request", (r) => { if (r.url().includes("/api/")) reqs.push({ t: Date.now(), u: r.method() + " " + r.url().replace(BASE, "") }); });
+  const sockets = [];
+  page.on("websocket", (ws) => { const sk = { closed: false }; sockets.push(sk); ws.on("close", () => { sk.closed = true; }); });
+  const asUser = async (username) => {
+    const r = await fetch(BASE + "/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orgCode: "ISPN", username, password: "docturn" }) });
+    const cookie = (r.headers.get("set-cookie") || "").split(";")[0];
+    return (method, path, body) => fetch(BASE + path, { method, headers: { Cookie: cookie, ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined }).then(async (x) => ({ status: x.status, body: await x.json().catch(() => null) }));
+  };
+  try {
+    await login(page, { org: "ISPN", user: "patel", pass: "docturn" });
+    await page.waitForTimeout(800);
+    const meId = await page.evaluate(() => window.DT.getState().me.id);
+    await page.click("header button[aria-label='Lock app']");
+    await page.waitForSelector("[role=dialog][aria-labelledby=dt-lock-title]");
+    await page.waitForTimeout(800);
+    check("server lock: socket closed on lock", sockets.length > 0 && sockets.every((sk) => sk.closed));
+    const p = await page.evaluate(async () => ({ patients: (await fetch("/api/patients", { credentials: "include" })).status, modules: (await fetch("/api/modules", { credentials: "include" })).status, user: await fetch("/api/user", { credentials: "include" }).then((r) => r.json()) }));
+    check("server lock: the page's own fetch of /api/patients and /api/modules is 423", p.patients === 423 && p.modules === 423, `${p.patients}/${p.modules}`);
+    check("server lock: /api/user reports locked", p.user && p.user.locked === true, JSON.stringify(p.user && { locked: p.user.locked, orgCode: p.user.orgCode }));
+    const tQuiet = Date.now();
+    const er = await asUser("er.doc"), dir = await asUser("director");
+    const hs = (await er("GET", "/api/hospitalists")).body || [];
+    const mine = hs.find((x) => x.userId === meId);
+    const pt = await er("POST", "/api/patients", { initials: "ZQ", roomNumber: "77", issueSummary: "lock probe", specialty: "Hospital Medicine" });
+    await er("POST", "/api/assignments", mine ? { mode: "manual", hospitalistId: mine.id, patientId: pt.body && pt.body.id } : { mode: "round_robin", patientId: pt.body && pt.body.id });
+    await dir("POST", "/api/broadcasts", { message: "lock probe", severity: "info" });
+    await page.waitForTimeout(3500);
+    const during = reqs.filter((r) => r.t > tQuiet).map((r) => r.u);
+    check("server lock: zero requests from the locked tab during ward activity", during.length === 0, during.join(", "));
+    await page.evaluate(() => { localStorage.removeItem("docturn.lock"); sessionStorage.removeItem("docturn.lock"); });
+    await page.reload({ waitUntil: "networkidle" });
+    const back = await page.waitForSelector("[role=dialog][aria-labelledby=dt-lock-title]", { timeout: 10000 }).then(() => true).catch(() => false);
+    await page.waitForTimeout(800);
+    const noShell = await page.evaluate(() => !document.querySelector("nav[aria-label=Primary]") && !document.querySelector("main"));
+    check("server lock: flag deleted + reload still lands on the lock screen", back && noShell);
+    await page.fill("[role=dialog] input[type=password]", "docturn");
+    await page.click("[role=dialog] button[type=submit]");
+    const ok = await page.waitForSelector("nav[aria-label=Primary]", { timeout: 15000 }).then(() => true).catch(() => false);
+    const after = ok ? await page.evaluate(async () => (await fetch("/api/patients", { credentials: "include" })).status) : 0;
+    check("server lock: password re-authentication unlocks (200 again)", ok && after === 200, String(after));
+  } catch (e) { check("server lock: run", false, e.message); }
+  await ctx.close();
+}
+
+// ---------------------------------------------------------------------------
+// 7b. Rendered text contrast: every visible text node vs its effective
+//     background, 4 roles at phone width. Inactive controls (pointer-events
+//     none / not-allowed / faded to <= .5) are exempt, as WCAG 1.4.3 allows.
+{
+  const sweep = () => {
+    const parse = (str) => { const m = str.match(/rgba?\(([^)]+)\)/); if (!m) return null; const v = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return { r: v[0], g: v[1], b: v[2], a: v.length > 3 ? v[3] : 1 }; };
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+    const ratio = (x, y) => { const l1 = lum(x), l2 = lum(y); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+    const blend = (t, u) => ({ r: t.r * t.a + u.r * (1 - t.a), g: t.g * t.a + u.g * (1 - t.a), b: t.b * t.a + u.b * (1 - t.a), a: 1 });
+    const bgOf = (el) => { const layers = []; for (let e = el; e && e.nodeType === 1; e = e.parentElement) { const cs = getComputedStyle(e); if (cs.backgroundImage && cs.backgroundImage !== "none") return null; const c = parse(cs.backgroundColor); if (c && c.a > 0) { layers.push(c); if (c.a >= 1) break; } } let base = { r: 255, g: 255, b: 255, a: 1 }; for (let i = layers.length - 1; i >= 0; i--) base = blend(layers[i], base); return base; };
+    const fails = []; const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n;
+    while ((n = walker.nextNode())) {
+      const txt = n.nodeValue.trim(); if (!txt) continue;
+      const el = n.parentElement; if (!el || el.closest("script,style,[aria-hidden=true],[disabled],option")) continue;
+      const btn = el.closest("button,[role=button]"); if (btn) { const bs = getComputedStyle(btn); if (bs.pointerEvents === "none" || bs.cursor === "not-allowed" || parseFloat(bs.opacity) <= 0.5) continue; }
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el); if (!r.width || !r.height || cs.visibility === "hidden") continue;
+      let op = 1; for (let e = el; e && e.nodeType === 1; e = e.parentElement) op *= parseFloat(getComputedStyle(e).opacity);
+      const bg = bgOf(el); let fg = parse(cs.color); if (!bg || !fg) continue;
+      fg = blend({ ...fg, a: fg.a * op }, bg);
+      const fs = parseFloat(cs.fontSize), min = (fs >= 24 || (parseInt(cs.fontWeight) >= 700 && fs >= 18.66)) ? 3 : 4.5, cr = ratio(fg, bg);
+      if (cr < min) fails.push(`"${txt.slice(0, 24)}" ${cr.toFixed(2)}:1 @${fs}px`);
+    }
+    return [...new Set(fails)];
+  };
+  const ROLE_SCREENS = { chen: ["dashboard", "history", "oncall", "messages", "directory", "compliance", "account"], "er.doc": ["dashboard", "oncall", "messages", "directory", "account"], director: ["dashboard", "board", "admissions", "oncall", "approvals", "consult", "roles", "broadcasts", "settings", "appearance", "compliance-monitor", "account"], "er.director": ["dashboard", "board", "oncall", "approvals", "broadcasts", "settings", "compliance-monitor", "account"] };
+  for (const [user, screens] of Object.entries(ROLE_SCREENS)) {
+    const { ctx, page } = await phone({ w: 390, h: 844 });
+    try {
+      await login(page, { org: "ISPN", user, pass: "docturn" });
+      for (const id of screens) {
+        await page.evaluate((nid) => window.DT.actions.setNav(nid), id);
+        await page.waitForTimeout(700);
+        const f = await page.evaluate(sweep);
+        check(`contrast sweep ${user}/${id}: no text under AA`, f.length === 0, f.slice(0, 5).join(" | "));
+      }
+    } catch (e) { check(`contrast sweep ${user}: run`, false, e.message); }
+    await ctx.close();
+  }
 }
 
 // ---------------------------------------------------------------------------

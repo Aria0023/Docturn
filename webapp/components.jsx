@@ -237,17 +237,22 @@ function AcuityChip({ level, showName, size }) {
 // Per-specialty color scheme so consult services are distinguishable at a
 // glance (each gets a stable color whether selected or not). Common services
 // are fixed; anything else (manually-added) hashes to a palette slot.
+// `color` is the chip TEXT on `bg` (12px bold on phones), the dot, the border
+// and the fill behind white icons, so every shade is the Tailwind 700 step:
+// ≥4.76:1 on its tint and ≥4.9:1 under white (WCAG AA, A.CON-SHO-53;
+// scripts/contrast-check.mjs recomputes them). The 500/600 steps used before
+// read 3.07–4.41:1 (GI, Pulmonology, ID, Neurology, Cardiology chips).
 const SPECIALTY_PALETTE = [
-  { color: "#2563EB", bg: "#EFF6FF" }, // blue
-  { color: "#DC2626", bg: "#FEF2F2" }, // red
-  { color: "#D97706", bg: "#FFFBEB" }, // amber
-  { color: "#0891B2", bg: "#ECFEFF" }, // cyan
-  { color: "#7C3AED", bg: "#F5F3FF" }, // violet
-  { color: "#059669", bg: "#ECFDF5" }, // emerald
-  { color: "#DB2777", bg: "#FDF2F8" }, // pink
-  { color: "#4F46E5", bg: "#EEF2FF" }, // indigo
-  { color: "#CA8A04", bg: "#FEFCE8" }, // yellow
-  { color: "#0D9488", bg: "#F0FDFA" }, // teal
+  { color: "#1D4ED8", bg: "#EFF6FF" }, // blue     6.16:1
+  { color: "#B91C1C", bg: "#FEF2F2" }, // red      5.91:1
+  { color: "#B45309", bg: "#FFFBEB" }, // amber    4.84:1
+  { color: "#0E7490", bg: "#ECFEFF" }, // cyan     5.15:1
+  { color: "#6D28D9", bg: "#F5F3FF" }, // violet   6.48:1
+  { color: "#047857", bg: "#ECFDF5" }, // emerald  5.21:1
+  { color: "#BE185D", bg: "#FDF2F8" }, // pink     5.53:1
+  { color: "#4338CA", bg: "#EEF2FF" }, // indigo   7.07:1
+  { color: "#A16207", bg: "#FEFCE8" }, // yellow   4.76:1
+  { color: "#0F766E", bg: "#F0FDFA" }, // teal     5.25:1
 ];
 const SPECIALTY_FIXED = {
   "hospital medicine": 0, "cardiology": 1, "gi": 2, "gastroenterology": 2, "pulmonology": 3, "pulm": 3,

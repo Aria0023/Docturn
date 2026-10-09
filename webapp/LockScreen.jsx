@@ -17,8 +17,10 @@
    page reload and this screen works before the session restore completes.
    (A.CON-SHO-7)
 
-   Note the real control here is the SERVER's 15-minute rolling idle expiry;
-   this screen is the client-side companion to it, not a substitute. */
+   The lock itself is the SERVER's: the shell's lockNow calls
+   POST /api/session/lock, after which every data route answers 423 and
+   GET /api/user reports locked, so this screen comes back on a reload even if
+   the browser flag is deleted, and only the sign-in above unlocks. */
 
 function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
   const st = (typeof useStore === "function") ? useStore() : {};

@@ -61,16 +61,20 @@ function BoardStatusSelect({ value, onChange }) {
   );
 }
 
+// Wraps instead of squeezing (A.CON-MIN-12): the text keeps a readable
+// minimum width beside the icon, and on a phone the action buttons take their
+// own full-width row underneath instead of crushing the text to a 92px column.
 function DataSourceBanner({ fhir, canEdit, onConnect, onDisconnect, onSync }) {
   const connected = fhir && fhir.connected;
+  const isMobile = useIsMobile();
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 16px", marginBottom: 18, borderRadius: "var(--radius-lg)",
+    <div data-testid="data-source-banner" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 13, padding: "12px 16px", marginBottom: 18, borderRadius: "var(--radius-lg)",
       background: connected ? "var(--status-accepted-bg)" : "var(--secondary)", border: `1px solid ${connected ? "var(--status-accepted)" : "var(--border)"}` }}>
       <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", flex: "none", display: "flex", alignItems: "center", justifyContent: "center",
         background: connected ? "var(--status-accepted)" : "#fff", color: connected ? "#fff" : "var(--muted-foreground)", border: connected ? "none" : "1px solid var(--border)" }}>
         <Icon name={connected ? "cloud" : "cloud-off"} size={19} />
       </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ flex: "1 1 200px", minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
           {connected ? `Live · synced from ${fhir.source}` : "Manual census entry"}
           {connected && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><StatusDot status="online" pulse />{" "}</span>}
@@ -82,12 +86,12 @@ function DataSourceBanner({ fhir, canEdit, onConnect, onDisconnect, onSync }) {
         </div>
       </div>
       {connected ? (
-        <div style={{ display: "flex", gap: 8, flex: "none" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, flex: isMobile ? "1 1 100%" : "none" }}>
           <Button size="sm" variant="outline" icon="refresh-cw" onClick={onSync}>Sync now</Button>
           {canEdit && <Button size="sm" variant="ghost" icon="unplug" onClick={onDisconnect}>Disconnect</Button>}
         </div>
       ) : (
-        canEdit && <Button size="sm" icon="plug" onClick={onConnect}>Connect EHR (FHIR)</Button>
+        canEdit && <div style={{ display: "flex", flex: isMobile ? "1 1 100%" : "none" }}><Button size="sm" icon="plug" full={isMobile} onClick={onConnect}>Connect EHR (FHIR)</Button></div>
       )}
     </div>
   );

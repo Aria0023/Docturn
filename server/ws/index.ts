@@ -3,8 +3,8 @@ import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
-import { demoConnectionId, resolveDemoUser } from "../demoAuth.js";
-import { onSessionsRevoked, resolveSessionUser } from "../auth.js";
+import { demoConnectionId, demoTokenLockedAt, resolveDemoUser } from "../demoAuth.js";
+import { APP_LOCK_CLOSE_CODE, onSessionLocked, onSessionsRevoked, resolveSessionUser } from "../auth.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -19,6 +19,12 @@ import { onSessionsRevoked, resolveSessionUser } from "../auth.js";
  * password change never connects, and when a password is changed or reset the
  * hub closes that user's live sockets (code 1008 "session_revoked") except the
  * ones belonging to the session (or token) that made the change.
+ *
+ * App lock (A.CON-SHO-7): a locked session (or demo token) never connects —
+ * the upgrade is closed with 4423 "session_locked" — and locking a session
+ * closes its open sockets the same way, so nothing is pushed to a locked tab
+ * and nothing it receives can make it re-fetch. 4423 is not 1008: the client
+ * keeps its lock screen instead of treating the session as dead.
  */
 
 interface ClientMeta {
@@ -48,6 +54,7 @@ export class WsHub implements WsFanout {
   private meta = new WeakMap<WebSocket, ClientMeta>();
   private heartbeat: NodeJS.Timeout | null = null;
   private unsubscribeRevoker: () => void;
+  private unsubscribeLock: () => void;
 
   constructor(
     server: HttpServer,
@@ -58,11 +65,16 @@ export class WsHub implements WsFanout {
     this.unsubscribeRevoker = onSessionsRevoked((r) =>
       this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId }),
     );
+    this.unsubscribeLock = onSessionLocked((e) => this.closeSessionSockets(e.userId, e.connectionId));
     this.startHeartbeat();
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage) {
     const session = await this.resolveSession(req);
+    if (session === "locked") {
+      ws.close(APP_LOCK_CLOSE_CODE, "session_locked");
+      return;
+    }
     if (!session) {
       ws.close(1008, "unauthorized");
       return;
@@ -176,7 +188,7 @@ export class WsHub implements WsFanout {
   /** Resolve the session by replaying the session middleware on the upgrade req. */
   private async resolveSession(
     req: IncomingMessage,
-  ): Promise<{ userId: number; organizationId: number; sessionId: string | null } | null> {
+  ): Promise<{ userId: number; organizationId: number; sessionId: string | null } | "locked" | null> {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
     // Same rule as a cookie session (resolveDemoUser → resolveSessionUser): a
@@ -188,6 +200,7 @@ export class WsHub implements WsFanout {
       if (token) {
         const user = await resolveDemoUser(token);
         if (user) {
+          if (demoTokenLockedAt(token) != null) return "locked";
           return {
             userId: user.id,
             organizationId: user.organizationId,
@@ -204,12 +217,17 @@ export class WsHub implements WsFanout {
       const res = new ServerResponse(req);
       this.sessionMiddleware(req as never, res as never, async () => {
         try {
-          const r = req as { session?: { passport?: { user?: unknown } }; sessionID?: string };
+          const r = req as {
+            session?: { passport?: { user?: unknown }; appLock?: { userId?: number; at?: number } };
+            sessionID?: string;
+          };
           // ONE rule for "is this session still signed in" — shared with
           // Passport's deserializeUser, so the realtime feed can never outlive
           // the HTTP session (deactivation, password change/reset).
           const user = await resolveSessionUser(r.session?.passport?.user);
           if (!user) return resolve(null);
+          // A locked session gets no realtime feed (A.CON-SHO-7).
+          if (r.session?.appLock?.userId === user.id) return resolve("locked");
           resolve({
             userId: user.id,
             organizationId: user.organizationId,
@@ -236,6 +254,23 @@ export class WsHub implements WsFanout {
       if (opts.exceptSessionId && m?.sessionId === opts.exceptSessionId) continue;
       try {
         ws.close(1008, "session_revoked");
+      } catch {
+        ws.terminate();
+      }
+      closed++;
+    }
+    return closed;
+  }
+
+  /** Close the sockets of ONE session (it was locked): 4423 "session_locked". */
+  closeSessionSockets(userId: number, sessionId: string): number {
+    const set = this.clients.get(userId);
+    if (!set) return 0;
+    let closed = 0;
+    for (const ws of [...set]) {
+      if (this.meta.get(ws)?.sessionId !== sessionId) continue;
+      try {
+        ws.close(APP_LOCK_CLOSE_CODE, "session_locked");
       } catch {
         ws.terminate();
       }
@@ -293,6 +328,7 @@ export class WsHub implements WsFanout {
   close() {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.unsubscribeRevoker();
+    this.unsubscribeLock();
     this.wss.close();
   }
 }

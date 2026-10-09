@@ -128,7 +128,10 @@ function ErRosterPanel({ erPhysicians, shifts, onToggle, onUpdate, onSetShift, o
             </React.Fragment>
           );
           return (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", opacity: p.working ? 1 : 0.62 }}>
+          // Off-shift rows are marked by the slate avatar, the offline dot, the
+          // "Off" state and a grey surface — not by fading the row, which took
+          // its text to 2.6:1 (A.CON-SHO-53).
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: p.working ? "#fff" : "var(--secondary)" }}>
             <div style={{ position: "relative", flex: "none" }}>
               <Avatar initials={p.avatar} size={38} tint={p.working ? "blue" : "slate"} />
               {/* display:flex so the dot sits on the avatar rim, not 10px up in a line box */}

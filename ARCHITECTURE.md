@@ -288,11 +288,21 @@ broadcast — it says nothing was sent (`tests/offline-signin.test.ts`).
 client makes no local judgement about correctness.
 
 **Consequences.** (a) The control is real, and inherits the auth rate limiter.
-(b) The genuine automatic-logoff control remains the **server's** 15-minute
-rolling idle expiry; this screen is its companion, not a substitute. (c) The
-lock is a storage flag shared by every tab, so a reload (F5) shows the lock
-screen again, and background polling pauses while locked so it cannot keep the
-rolling session alive.
+(b) The lock is the **session's**, not the browser's (A.CON-SHO-7): `POST
+/api/session/lock` marks the session (or demo token) locked; every `/api` route
+except `/user`, `/session`, `/config` and the sign-in routes then answers
+`423 session_locked` (`/modules` included), `GET /api/user` reports
+`locked: true`, the session's sockets are closed (4423) and it cannot open a new
+one. Only a real sign-in unlocks — `POST /api/login` regenerates the session — so
+deleting the browser's lock flag and reloading still lands on the lock screen.
+(c) A locked session cannot be kept alive by traffic: express-session rolls its
+15-minute expiry on every request (a 423 included), so the lock gate signs the
+session out one idle window after the lock however often it is poked; the
+client's 15-minute idle lock back-dates the lock by that idle time, which ends
+the server session at once (automatic logoff). (d) Client side, the browser flag
+is shared by every tab; while it is set the tab sends nothing but sign-in /
+identity calls — no hydrate, no WebSocket-driven re-hydrate, no poll.
+(`tests/app-lock.test.ts`, `scripts/phone-shell-check.mjs`.)
 
 ### ADR-015: Rate limiting is on by default and must stay on
 

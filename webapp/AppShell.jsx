@@ -41,7 +41,7 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
               onMouseLeave={(e) => { if (!on) e.currentTarget.style.background = "transparent"; }}
               style={{ display: "flex", alignItems: "center", gap: 11, padding: compact ? "10px 0" : "9px 12px", justifyContent: compact ? "center" : "flex-start", borderRadius: "var(--radius-md)",
                 border: "none", cursor: "pointer", fontSize: 14, fontWeight: 500, textAlign: "left", position: "relative",
-                background: on ? "var(--primary-tint, #EFF6FF)" : "transparent", color: on ? "var(--primary)" : "var(--foreground)" }}>
+                background: on ? "var(--primary-tint, #EFF6FF)" : "transparent", color: on ? "var(--primary-ink, #1D4ED8)" : "var(--foreground)" }}>
               <Icon name={item.icon} size={18} />
               {!compact && <span style={{ flex: 1 }}>{item.label}</span>}
               {!compact && item.badge ? <Badge status="pending">{item.badge}</Badge> : null}
@@ -187,7 +187,7 @@ function ChangePasswordButton() {
 function SyntheticBanner({ on }) {
   if (!on) return null;
   return (
-    <div role="status" style={{
+    <div role="status" className="dt-synthetic-banner" style={{
       flex: "none", zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
       padding: "6px 14px", fontSize: 12.5, fontWeight: 700, color: "#7C2D12", textAlign: "center",
       background: "repeating-linear-gradient(45deg, #FEF3C7, #FEF3C7 14px, #FDE68A 14px, #FDE68A 28px)",
@@ -296,6 +296,28 @@ var PALETTES = {
 };
 var PALETTE_KEYS = ["--background-ch", "--foreground-ch", "--secondary-ch", "--muted-ch", "--accent-ch", "--muted-foreground-ch", "--border-ch", "--input-ch"];
 
+// WCAG relative luminance / contrast for the theme's derived shades
+// (A.CON-SHO-53): the accent is operator-chosen, so the text-on-tint colours
+// are COMPUTED to meet AA rather than assumed.
+function hslToRgb255(h, s, l) {
+  s /= 100; l /= 100;
+  var k = function (n) { return (n + h / 30) % 12; };
+  var a = s * Math.min(l, 1 - l);
+  var f = function (n) { return l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); };
+  return [f(0), f(8), f(4)].map(function (v) { return Math.round(v * 255); });
+}
+function relLum(rgb) {
+  var c = rgb.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function contrastRatio(a, b) {
+  var l1 = relLum(a), l2 = relLum(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+// The light blue the kit hard-codes behind icon/initial tiles (#DBEAFE).
+var TILE_BLUE = [219, 234, 254];
+var AA = 4.6; // 4.5:1 plus a margin for sub-pixel rounding in the browser
+
 // Imperatively apply the theme to :root CSS variables (whole-app recolor).
 function applyTheme(theme) {
   if (!theme) return;
@@ -319,9 +341,23 @@ function applyTheme(theme) {
   // at ≤40%. The default accent (#2563EB, L 53%) alone is 4.24:1 on #DBEAFE.
   root.setProperty("--status-active", "hsl(" + hsl.h + " " + hsl.s + "% " + Math.min(hsl.l, 46) + "%)");
   root.setProperty("--status-active-fg", "hsl(" + hsl.h + " " + hsl.s + "% " + Math.min(hsl.l, 40) + "%)");
-  // soft + faint accent tints used for active surfaces
-  root.setProperty("--primary-tint", "hsl(" + hsl.h + " " + Math.min(hsl.s, 90) + "% 95%)");
-  root.setProperty("--primary-tint-2", "hsl(" + hsl.h + " " + Math.min(hsl.s, 90) + "% 90%)");
+  // soft + faint accent tints used for active surfaces. --primary text sits on
+  // --primary-tint all over the kit (active nav item, selected chips, the
+  // "Rotation" tag), so the tint is lightened from 95% until the accent reads
+  // AA on it (the default accent is 4.45:1 at 95% — A.CON-SHO-53).
+  var tintS = Math.min(hsl.s, 90);
+  var accentRgb = hslToRgb255(hsl.h, hsl.s, hsl.l);
+  var tintL = 95;
+  while (tintL < 99 && contrastRatio(accentRgb, hslToRgb255(hsl.h, tintS, tintL)) < AA) tintL += 0.5;
+  root.setProperty("--primary-tint", "hsl(" + hsl.h + " " + tintS + "% " + tintL + "%)");
+  root.setProperty("--primary-tint-2", "hsl(" + hsl.h + " " + tintS + "% 90%)");
+  // --primary-ink: the accent darkened until it reads AA as TEXT on the light
+  // tiles (#DBEAFE, --status-active-bg) and on --primary-tint — initials,
+  // selected chips, the active nav item. Solid fills keep --primary.
+  var inkL = hsl.l;
+  var tintRgb = hslToRgb255(hsl.h, tintS, tintL);
+  while (inkL > 20 && (contrastRatio(hslToRgb255(hsl.h, hsl.s, inkL), TILE_BLUE) < AA || contrastRatio(hslToRgb255(hsl.h, hsl.s, inkL), tintRgb) < AA)) inkL -= 1;
+  root.setProperty("--primary-ink", "hsl(" + hsl.h + " " + hsl.s + "% " + inkL + "%)");
   root.setProperty("--radius", ((theme.radius != null ? theme.radius : 8) / 16) + "rem");
   root.setProperty("--content-max", theme.contentWidth === "wide" ? "1280px" : (theme.contentWidth === "full" ? "100%" : "1040px"));
 }

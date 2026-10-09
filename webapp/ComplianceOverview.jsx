@@ -48,7 +48,7 @@ function ComplianceOverview({ onOpenOrg }) {
         {list.map((o) => (
           <Card key={o.code} style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: o.recent && o.recent.length ? "1px solid var(--border)" : "none" }}>
-              <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", fontWeight: 700, fontSize: 12.5, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(o.code || "").slice(0, 2)}</span>
+              <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 12.5, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(o.code || "").slice(0, 2)}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
                 <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}><span className="ds-mono">{o.code}</span></div>

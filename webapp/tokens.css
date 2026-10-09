@@ -48,6 +48,13 @@
   --ring:                 hsl(var(--ring-ch));
   --destructive:          hsl(var(--destructive-ch));
   --destructive-foreground: #ffffff;
+  /* Accent surfaces. applyTheme (AppShell.jsx) re-derives both from the org's
+     accent so the contrast contract holds for any accent (A.CON-SHO-53):
+     --primary text reads ≥4.5:1 on --primary-tint, and --primary-ink — the
+     colour for TEXT on light blue tiles (#DBEAFE / --status-active-bg) and on
+     --primary-tint — reads ≥4.5:1 on both. Solid fills keep --primary. */
+  --primary-tint:         #EFF6FF;
+  --primary-ink:          #1D4ED8;  /* 5.49:1 on #DBEAFE, 6.16:1 on #EFF6FF */
 
   /* --- Brand blue + marketing "sky" family ------------------------------ */
   --brand-blue:  #2563EB;   /* PWA theme_color, brand mark, marketing CTA */

@@ -3,6 +3,7 @@ import type { AuditInput } from "./audit.js";
 import type { DbType } from "./db.js";
 import { attachmentStoreFor, FS_REF_PREFIX } from "./services/attachment-store.js";
 import { getDb } from "./db.js";
+import { normalizeUsername, usernameKey } from "./usernames.js";
 import {
   assignments,
   auditLogs,
@@ -486,12 +487,17 @@ export class DatabaseStorage implements IStorage {
     const [row] = await this.db.select().from(users).where(eq(users.id, id));
     return row;
   }
+  /**
+   * Case- and surrounding-whitespace-insensitive (server/usernames.ts): "Chen"
+   * and "chen " find the account "chen". The unique index on
+   * (organization_id, lower(username)) guarantees at most one match.
+   */
   async getUserByUsername(orgId: number, username: string) {
     const [row] = await this.db
       .select()
       .from(users)
       .where(
-        and(eq(users.organizationId, orgId), eq(users.username, username)),
+        and(eq(users.organizationId, orgId), sql`lower(${users.username}) = ${usernameKey(username)}`),
       );
     return row;
   }
@@ -503,7 +509,8 @@ export class DatabaseStorage implements IStorage {
       .orderBy(asc(users.id));
   }
   async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt">>) {
-    const [row] = await this.db.insert(users).values(user).returning();
+    // Stored trimmed; uniqueness is on lower(username) (server/db.ts).
+    const [row] = await this.db.insert(users).values({ ...user, username: normalizeUsername(user.username) }).returning();
     return row!;
   }
 
@@ -2082,7 +2089,7 @@ export class DatabaseStorage implements IStorage {
   ) {
     const [created] = await this.db
       .insert(pendingRegistrations)
-      .values(row)
+      .values({ ...row, username: normalizeUsername(row.username) })
       .returning();
     return created!;
   }

@@ -593,7 +593,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", transition: "background .12s" }}>
-                <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: o.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: o.active ? "var(--primary)" : "var(--status-neutral)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: o.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: o.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                   {o.code.slice(0, 2)}
                 </span>
                 <div style={{ flex: "1 1 140px", minWidth: 0 }}>

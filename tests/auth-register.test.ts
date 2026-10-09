@@ -31,8 +31,11 @@ describe("self-registration", () => {
   });
 
   it("never queues a request for the platform org (any casing) — it is handled exactly like a nonexistent org", async () => {
-    for (const orgCode of ["DOCTURN", "docturn", "DocTurn", "NOPE"]) {
-      const res = await register(ctx, { orgCode, username: `wannabe.root.${orgCode}` });
+    // Distinct usernames per attempt: usernames are case-insensitive
+    // (A.CON-SHO-12/57), so `wannabe.root.DOCTURN` and `wannabe.root.docturn`
+    // would be one and the same request (409 on the second).
+    for (const [i, orgCode] of ["DOCTURN", "docturn", "DocTurn", "NOPE"].entries()) {
+      const res = await register(ctx, { orgCode, username: `wannabe.root.${i}` });
       // The same answer a real org gives (see the org-oracle test below).
       expect(res.status, orgCode).toBe(201);
       expect(res.body).toEqual({ pending: true });
@@ -271,6 +274,9 @@ describe("self-registration", () => {
       // Degrade to the shape a store written by the previous release has.
       await h.db.execute(sql`ALTER TABLE users DROP COLUMN password_changed_at`);
       await h.db.execute(sql`DROP INDEX pending_registrations_org_username_pending_uniq`);
+      // …nor the case-insensitive indexes added for A.CON-SHO-12/57.
+      await h.db.execute(sql`DROP INDEX pending_registrations_org_username_ci_pending_uniq`);
+      await h.db.execute(sql`DROP INDEX users_org_username_ci_uniq`);
       await h.db.execute(
         sql`INSERT INTO organizations (name, code) VALUES ('Old Hospital', 'OLDH')`,
       );
@@ -293,6 +299,11 @@ describe("self-registration", () => {
       expect(idx.rows).toHaveLength(1);
       expect(String((idx.rows[0] as { indexdef: string }).indexdef)).toMatch(/UNIQUE/);
       expect(String((idx.rows[0] as { indexdef: string }).indexdef)).toMatch(/WHERE/);
+      for (const name of ["pending_registrations_org_username_ci_pending_uniq", "users_org_username_ci_uniq"]) {
+        const ci = await h.db.execute(sql`SELECT indexdef FROM pg_indexes WHERE indexname = ${name}`);
+        expect(ci.rows, name).toHaveLength(1);
+        expect(String((ci.rows[0] as { indexdef: string }).indexdef)).toMatch(/UNIQUE.*lower\(username\)/);
+      }
       const rows = (
         await h.db.execute(
           sql`SELECT password_hash, status FROM pending_registrations WHERE username = 'dup.user' ORDER BY id`,

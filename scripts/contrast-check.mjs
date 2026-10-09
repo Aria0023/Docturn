@@ -61,6 +61,23 @@ pairs.push(["var(--muted-foreground)", WHITE, 4.5, "muted text on white"]);
 pairs.push([WHITE, "var(--destructive)", 4.5, "white text on destructive"]);
 pairs.push([WHITE, "var(--primary)", 4.5, "white text on primary"]);
 pairs.push(["var(--foreground)", "var(--secondary)", 7.0, "body text on --secondary"]);
+// Accent text on light accent surfaces (A.CON-SHO-53 fix-up): the active nav
+// item / selected chips (--primary on --primary-tint) and initials or labels
+// on the kit's light blue tiles (#DBEAFE) use --primary-ink.
+pairs.push(["var(--primary)", "var(--primary-tint)", 4.5, "primary text on --primary-tint"]);
+pairs.push(["var(--primary-ink)", "var(--primary-tint)", 4.5, "primary-ink on --primary-tint"]);
+pairs.push(["var(--primary-ink)", "#DBEAFE", 4.5, "primary-ink on the #DBEAFE tile"]);
+pairs.push(["var(--primary-ink)", "var(--status-active-bg)", 4.5, "primary-ink on --status-active-bg"]);
+// Consult specialty chips (components.jsx SPECIALTY_PALETTE): chip text on its
+// tint, and white icons on the solid shade.
+const kit = fs.readFileSync(path.join(ROOT, "webapp", "components.jsx"), "utf8");
+const palSrc = (kit.match(/const SPECIALTY_PALETTE = \[([\s\S]*?)\];/) || [])[1] || "";
+const palette = [...palSrc.matchAll(/color:\s*"(#[0-9A-Fa-f]{6})",\s*bg:\s*"(#[0-9A-Fa-f]{6})"/g)].map((m) => [m[1], m[2]]);
+if (palette.length < 8) { console.log("FAIL  could not read SPECIALTY_PALETTE from components.jsx"); process.exit(1); }
+for (const [c, b] of palette) {
+  pairs.push([c, b, 4.5, `specialty chip ${c} on ${b}`]);
+  pairs.push([WHITE, c, 4.5, `white icon/text on specialty ${c}`]);
+}
 
 let failed = 0;
 for (const [fg, bg, min, label] of pairs) {

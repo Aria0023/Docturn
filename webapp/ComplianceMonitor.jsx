@@ -65,7 +65,8 @@ function CmCount({ status, n }) {
       <Icon name={s.icon} size={15} color={s.fg} />
       <div style={{ lineHeight: 1.15 }}>
         <div style={{ fontSize: 16, fontWeight: 800, color: s.fg, fontVariantNumeric: "tabular-nums" }}>{n}</div>
-        <div style={{ fontSize: 10.5, fontWeight: 600, color: s.fg, opacity: 0.85 }}>{s.label}</div>
+        {/* Full-strength status colour: at opacity .85 these labels read 3.5–4.3:1 on their tint (A.CON-SHO-53). */}
+        <div style={{ fontSize: 10.5, fontWeight: 600, color: s.fg }}>{s.label}</div>
       </div>
     </div>
   );

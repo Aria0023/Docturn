@@ -15,7 +15,8 @@ import {
 import { storage } from "./storage.js";
 import { appendAudit } from "./audit.js";
 import { getModules } from "./modules.js";
-import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, clientIpKey, getRateLimitState } from "./config.js";
+import { normalizeUsername, usernameKey } from "./usernames.js";
+import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, SESSION_POLICY, clientIpKey, getRateLimitState } from "./config.js";
 
 // promisify() picks the 3-argument overload; we always pass explicit parameters.
 const scryptAsync = promisify(scrypt) as unknown as (
@@ -127,6 +128,181 @@ export function passwordChangeGate(): RequestHandler {
         return res.status(403).json({ error: "password_change_required" });
       }
       return next();
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
+
+/* ── App lock (A.CON-SHO-7) ─────────────────────────────────────────────────
+ * The web client's lock screen is backed by the SESSION, not by a flag in the
+ * browser: POST /api/session/lock marks the session (or the demo bearer token
+ * making the request) locked, and from then on
+ *  - every /api route except the identity / sign-in ones below answers
+ *    423 { error: "session_locked" } — /api/modules included (it is exempt
+ *    from the MFA gate, not from this one);
+ *  - GET /api/user and GET /api/session still answer, flagged `locked: true`
+ *    (plus the org code the lock screen re-authenticates against), so a page
+ *    reload with the browser's own flag deleted still lands on the lock screen;
+ *  - the session's live sockets are closed (4423 "session_locked") and a
+ *    locked session cannot open a new one (server/ws);
+ *  - there is no unlock route: only re-authentication unlocks. POST /api/login
+ *    (and its second factor, /api/2fa/complete-login) regenerates the session,
+ *    so a successful sign-in replaces the locked session with a fresh one and
+ *    a wrong password leaves it locked;
+ *  - a locked session cannot be kept alive by traffic. Every request — a 423
+ *    included — rolls express-session's 15-minute inactivity expiry, so the
+ *    gate enforces its own deadline: one idle window (SESSION_POLICY.maxAgeMs)
+ *    after the lock, the session is signed out on its next request however
+ *    often it was touched meanwhile. The client may back-date the lock by the
+ *    time it had already been idle (`idleMs`, clamped to [0, window]) — which
+ *    can only shorten that deadline: the 15-minute idle auto-lock therefore
+ *    ends the server session outright, a real automatic logoff.
+ */
+export const APP_LOCK_CLOSE_CODE = 4423;
+
+/** Paths (relative to /api) the gate never touches: they ARE re-authentication or sign-out. */
+const APP_LOCK_PASSTHROUGH: readonly RegExp[] = [
+  /^\/login\/?$/,
+  /^\/logout\/?$/,
+  /^\/2fa\/(complete-login|request-sms)\/?$/,
+];
+
+/** Paths (relative to /api) a locked (unexpired) session may still use. */
+const APP_LOCK_EXEMPT: readonly RegExp[] = [
+  /^\/user\/?$/,
+  /^\/session\/?$/,
+  /^\/session\/lock\/?$/,
+  /^\/config\/?$/,
+];
+
+export function isAppLockExempt(apiRelativePath: string): boolean {
+  return APP_LOCK_EXEMPT.some((re) => re.test(apiRelativePath));
+}
+
+interface AppLockHandle {
+  /** Epoch ms the lock counts from, or null when not locked. */
+  lockedAt(): number | null;
+  /** Lock (never moves an existing lock later). */
+  lock(at: number): Promise<void>;
+  /** Sign this session (or token) out. */
+  end(): Promise<void>;
+  /** What this session's live sockets carry as their session id. */
+  connectionId: string | null;
+}
+
+function cookieSessionUserId(req: Request): number | null {
+  const sess = req.session as (typeof req.session & { passport?: { user?: unknown } }) | undefined;
+  return parseSessionPrincipal(sess?.passport?.user)?.id ?? null;
+}
+
+/**
+ * The lock state of the credential that authenticated this request: the demo
+ * bearer token when one did (it overrides the cookie), otherwise the cookie
+ * session — and only when that session is signed in AS the request's user.
+ */
+function appLockOf(req: Request, res: Response): AppLockHandle | null {
+  const me = req.user as unknown as User | undefined;
+  if (!me) return null;
+  const bearer = bearerCredentialOf(res);
+  if (bearer) {
+    if (!bearer.lockedAt || !bearer.lock || !bearer.end) return null;
+    return {
+      lockedAt: () => bearer.lockedAt!(),
+      lock: async (at) => bearer.lock!(at),
+      end: async () => {
+        bearer.end!();
+        (req as unknown as { user?: unknown }).user = undefined;
+      },
+      connectionId: bearer.connectionId,
+    };
+  }
+  if (!req.session || cookieSessionUserId(req) !== me.id) return null;
+  return {
+    lockedAt: () => {
+      const l = req.session.appLock;
+      return l && l.userId === me.id && typeof l.at === "number" ? l.at : null;
+    },
+    lock: (at) =>
+      new Promise<void>((resolve, reject) => {
+        const prev = req.session.appLock;
+        const keep = prev && prev.userId === me.id && typeof prev.at === "number" ? Math.min(prev.at, at) : at;
+        req.session.appLock = { userId: me.id, at: keep };
+        req.session.save((err) => (err ? reject(err) : resolve()));
+      }),
+    end: () =>
+      new Promise<void>((resolve, reject) => {
+        // passport's logOut regenerates the session: the locked one is gone.
+        req.logout((err) => (err ? reject(err) : resolve()));
+      }),
+    connectionId: req.sessionID ?? null,
+  };
+}
+
+/** Epoch ms this request's session (or token) was locked at, or null. */
+export function appLockedAt(req: Request, res: Response): number | null {
+  return appLockOf(req, res)?.lockedAt() ?? null;
+}
+
+/** Has a lock that started at `at` outlived the idle window? */
+export function appLockExpired(at: number, now = Date.now()): boolean {
+  return now - at >= SESSION_POLICY.maxAgeMs;
+}
+
+export interface SessionLockEvent {
+  userId: number;
+  /** The session (or demo token connection id) that was locked. */
+  connectionId: string;
+}
+type SessionLockListener = (e: SessionLockEvent) => void;
+const sessionLockListeners = new Set<SessionLockListener>();
+
+/** The WebSocket hub registers here to close a session's sockets when it locks. */
+export function onSessionLocked(fn: SessionLockListener): () => void {
+  sessionLockListeners.add(fn);
+  return () => {
+    sessionLockListeners.delete(fn);
+  };
+}
+
+function announceSessionLocked(e: SessionLockEvent): void {
+  for (const fn of sessionLockListeners) {
+    try {
+      fn(e);
+    } catch (err) {
+      console.error("[auth] session-lock listener failed", err);
+    }
+  }
+}
+
+/** Express middleware mounted at /api by registerAuthRoutes, before every other gate. */
+export function appLockGate(): RequestHandler {
+  return async (req, res, next) => {
+    try {
+      if (APP_LOCK_PASSTHROUGH.some((re) => re.test(req.path))) return next();
+      const me = req.user as unknown as User | undefined;
+      if (!me) return next();
+      const lock = appLockOf(req, res);
+      const at = lock?.lockedAt() ?? null;
+      if (!lock || at == null) return next();
+      if (appLockExpired(at)) {
+        // The lock outlived the idle window: this session is over, whatever
+        // traffic kept rolling its cookie. The route then sees a signed-out
+        // request (401, or { authenticated:false } from the probe).
+        await lock.end();
+        void appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "auth.lock_expired",
+          resourceType: "user",
+          resourceId: me.id,
+          details: { lockedForMs: Date.now() - at },
+          riskLevel: "low",
+        });
+        return next();
+      }
+      if (isAppLockExempt(req.path)) return next();
+      return res.status(423).json({ error: "session_locked" });
     } catch (err) {
       return next(err);
     }
@@ -519,6 +695,12 @@ export interface BearerCredential {
   connectionId: string;
   /** Re-bind this credential to the user's new password generation. */
   restamp(user: User): void;
+  /** App lock (A.CON-SHO-7): when this credential was locked, or null. */
+  lockedAt?(): number | null;
+  /** Lock this credential (an existing lock is never moved later). */
+  lock?(at: number): void;
+  /** Revoke this credential (its lock outlived the idle window). */
+  end?(): void;
 }
 
 export function bearerCredentialOf(res: Response): BearerCredential | undefined {
@@ -640,7 +822,7 @@ export function isPlatformOrg(org: { code: string }): boolean {
  */
 export function unroutedRegistrationKey(orgCode: string, username: string): string {
   return createHash("sha256")
-    .update(`docturn.unrouted-registration\u0000${orgCode.toUpperCase()}\u0000${username}`)
+    .update(`docturn.unrouted-registration\u0000${orgCode.toUpperCase()}\u0000${usernameKey(username)}`)
     .digest("hex");
 }
 
@@ -672,8 +854,42 @@ const wrap = (fn: AsyncHandler): RequestHandler => (req, res, next) => {
 export function registerAuthRoutes(app: Express) {
   // Privileged-role MFA enrolment gate. Mounted here, before every /api route
   // that follows (registerRoutes calls this second, right after /api/health).
+  // The app lock goes first: a locked session gets 423 on everything but the
+  // identity / sign-in routes, before any other gate looks at it.
+  app.use("/api", appLockGate());
   app.use("/api", mfaEnrollmentGate());
   app.use("/api", passwordChangeGate());
+
+  // Lock this session (A.CON-SHO-7). Idempotent; never moves an existing
+  // lock later. `idleMs` (optional) back-dates the lock by how long the client
+  // had already been idle — clamped to [0, idle window], so it can only bring
+  // the session's end closer. The session's live sockets are closed.
+  app.post(
+    "/api/session/lock",
+    requireAuth,
+    wrap(async (req, res) => {
+      const me = req.user as unknown as User;
+      const lock = appLockOf(req, res);
+      if (!lock) return res.status(401).json({ error: "unauthorized" });
+      const rawIdle = Number((req.body ?? {}).idleMs);
+      const idleMs = Number.isFinite(rawIdle) ? Math.min(Math.max(rawIdle, 0), SESSION_POLICY.maxAgeMs) : 0;
+      const wasLocked = lock.lockedAt() != null;
+      await lock.lock(Date.now() - idleMs);
+      if (lock.connectionId) announceSessionLocked({ userId: me.id, connectionId: lock.connectionId });
+      if (!wasLocked) {
+        void appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "auth.lock",
+          resourceType: "user",
+          resourceId: me.id,
+          details: idleMs > 0 ? { idleMs } : {},
+          riskLevel: "low",
+        });
+      }
+      return res.json({ locked: true });
+    }),
+  );
 
   // Public self-registration is the one unauthenticated WRITE in the API, and
   // every accepted request lands in a director's queue. The auth limiter in
@@ -744,8 +960,11 @@ export function registerAuthRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // Usernames are stored trimmed and compared case-insensitively
+      // (server/usernames.ts) — "Chen " is a request for "chen".
+      const username = normalizeUsername(parsed.data.username);
+      if (username.length < 3) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganizationByCode(parsed.data.orgCode);
-      const username = parsed.data.username;
       if (!org || isPlatformOrg(org)) {
         // Unrouted (see the policy above): same answers, same cost, nothing queued.
         const claimed = await storage().claimUnroutedRegistration(
@@ -773,7 +992,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(201).json({ pending: true });
       }
       const pending = (await storage().listPendingRegistrations(org.id)).find(
-        (r) => r.username === username,
+        (r) => usernameKey(r.username) === usernameKey(username),
       );
       if (pending) return res.status(409).json({ error: "request_pending" });
       try {
@@ -815,12 +1034,13 @@ export function registerAuthRoutes(app: Express) {
       const rows = await storage().listPendingRegistrations(me.organizationId);
       // The reviewer legitimately knows their own roster: flag requests whose
       // username already belongs to an account (approving one is refused).
-      const taken = new Set((await storage().listUsers(me.organizationId)).map((u) => u.username));
+      // Compared like sign-in compares: case- and whitespace-insensitively.
+      const taken = new Set((await storage().listUsers(me.organizationId)).map((u) => usernameKey(u.username)));
       // Never expose credential hashes to the approval UI.
       res.json(
         rows.map(({ passwordHash: _ph, ...rest }) => ({
           ...rest,
-          usernameTaken: taken.has(rest.username),
+          usernameTaken: taken.has(usernameKey(rest.username)),
         })),
       );
     }),
@@ -947,6 +1167,10 @@ export function registerAuthRoutes(app: Express) {
           beginPendingMfa(req.session, user);
           return res.status(202).json({ twoFactorRequired: true });
         }
+        // Re-authenticating a locked session (the lock screen) — recorded on
+        // the login row. req.login regenerates the session, so the new one
+        // starts unlocked and the locked one is gone.
+        const unlocking = req.session?.appLock?.userId === user.id;
         req.login(user as unknown as Express.User, async (loginErr) => {
           if (loginErr) return next(loginErr);
           // Login SUCCEEDS for a privileged user who still has to enrol MFA —
@@ -965,7 +1189,10 @@ export function registerAuthRoutes(app: Express) {
             action: "auth.login",
             resourceType: "user",
             resourceId: user.id,
-            details: enrolmentRequired ? { mfaEnrollmentRequired: true } : {},
+            details: {
+              ...(enrolmentRequired ? { mfaEnrollmentRequired: true } : {}),
+              ...(unlocking ? { unlock: true } : {}),
+            },
             riskLevel: "low",
           });
           return res.status(200).json(
@@ -987,7 +1214,7 @@ export function registerAuthRoutes(app: Express) {
 
   // The signed-in user's own record (the same body for GET /api/user and the
   // GET /api/session probe below).
-  async function currentUserBody(req: Request) {
+  async function currentUserBody(req: Request, res: Response) {
     const me = req.user as unknown as User;
     // Re-checked from the DB + module map on every call (not the session):
     // the UI polls this to learn the block has lifted after enrolment.
@@ -996,7 +1223,15 @@ export function registerAuthRoutes(app: Express) {
       if (required) req.session.mfaEnrollmentRequired = true;
       else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
     }
-    return required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me);
+    const body = required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me);
+    // A locked session: the client must show its lock screen (not the app),
+    // and re-authenticate against this org — even after a reload that lost
+    // every browser-side trace of the lock (A.CON-SHO-7).
+    if (appLockedAt(req, res) != null) {
+      const org = await storage().getOrganization(me.organizationId);
+      return { ...body, locked: true as const, orgCode: org?.code ?? null };
+    }
+    return body;
   }
 
   app.get("/api/user", async (req, res, next) => {
@@ -1004,7 +1239,7 @@ export function registerAuthRoutes(app: Express) {
       return res.status(401).json({ error: "unauthorized" });
     }
     try {
-      return res.json(await currentUserBody(req));
+      return res.json(await currentUserBody(req, res));
     } catch (err) {
       return next(err);
     }
@@ -1023,7 +1258,7 @@ export function registerAuthRoutes(app: Express) {
       return res.json({ authenticated: false });
     }
     try {
-      return res.json({ authenticated: true, user: await currentUserBody(req) });
+      return res.json({ authenticated: true, user: await currentUserBody(req, res) });
     } catch (err) {
       return next(err);
     }
@@ -1090,6 +1325,8 @@ declare module "express-session" {
     mfaEnrollmentRequired?: boolean;
     /** Developer who entered an impersonated / managed-org portal (dev.ts). */
     impersonatorId?: number;
+    /** App lock (A.CON-SHO-7): who locked this session and when the lock counts from. */
+    appLock?: { userId: number; at: number };
   }
 }
 

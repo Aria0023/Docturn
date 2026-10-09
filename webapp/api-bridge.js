@@ -35,6 +35,61 @@
   // so three users can run side by side in one browser. Null for normal use.
   var DEMO_TOKEN = (function () { try { return new URLSearchParams(window.location.search).get("token"); } catch (e) { return null; } })();
   var ws = null;     // live WebSocket for real-time messages + assignment events
+
+  // ---- app lock (A.CON-SHO-7) ---------------------------------------------
+  // The lock is the SERVER's: POST /api/session/lock makes every data route
+  // answer 423 session_locked and closes this session's sockets (4423), and
+  // only a real sign-in (POST /api/login, the lock screen) unlocks. On this
+  // side, while the lock flag (window.__dtLock, index.html) is set the tab
+  // sends NOTHING but the sign-in / identity calls below: no hydrate, no
+  // re-hydrate on a realtime event, no broadcast catch-up, no resync, no poll,
+  // no socket — so a locked tab neither renews the session nor pulls data
+  // into memory. A 423 from the server (or a 4423 socket close) engages the
+  // lock here too, even if the browser's own flag was deleted.
+  var LOCK_ALLOWED = /^\/api\/(login|logout|session|session\/lock|user|config|2fa\/complete-login|2fa\/request-sms)(\?|$)/;
+  // True once THIS page load has the server's word that the session is live
+  // and unlocked (sign-in, restore, demo-token bootstrap). A session object
+  // restored from the persisted snapshot is only a display hint: nothing is
+  // fetched on its strength — not even the module map — until the server has
+  // confirmed it, so a reload of a locked tab whose browser flag was deleted
+  // sends only the restore probe.
+  var sessionConfirmed = false;
+  function lockActive() {
+    try { return !!(window.__dtLock && window.__dtLock.isLocked()); } catch (e) { return false; }
+  }
+  function lockedError() { var e = new Error("session_locked"); e.status = 423; return e; }
+  function dropSocket() {
+    try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
+    try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
+  }
+  // The server says this session is locked: show the lock screen (index.html
+  // listens for dt-lock-change) with the identity to re-authenticate.
+  function engageLock(identity) {
+    dropSocket();
+    sessionConfirmed = false;
+    var L = window.__dtLock;
+    if (!L) return;
+    if (!L.isLocked()) {
+      var sess = DT.getState().session || {};
+      var id = identity || { org: sess.org, user: sess.user, name: sess.name, role: sess.role };
+      if (!L.set(id)) {
+        // No identity to re-authenticate with: this tab cannot show a lock
+        // screen, so it signs out instead of showing data it cannot refresh.
+        if (sess.role) expireSession();
+        return;
+      }
+      try { if (DT.purgePersisted) DT.purgePersisted(); } catch (e) {}
+    }
+    try { window.dispatchEvent(new Event("dt-lock-change")); } catch (e) {}
+  }
+  // Another tab of this browser locked: its server call locked the shared
+  // session (and closed these sockets too); drop ours at once regardless.
+  try {
+    window.addEventListener("storage", function (e) {
+      if (!window.__dtLock || (e.key !== null && e.key !== window.__dtLock.KEY)) return;
+      if (lockActive()) dropSocket();
+    });
+  } catch (e) {}
   // Safety: some screens call DT.actions.toast(); ensure it exists.
   if (!DT.actions.toast) {
     DT.actions.toast = function (t) { DT.set(function (s) { s.__toast = t; return s; }); };
@@ -88,6 +143,8 @@
   var BOARD_ROLES = { hospitalist: 1, er_doctor: 1, er_director: 1, director: 1 };
 
   function rawApi(method, path, body) {
+    // Locked: nothing but sign-in / identity calls leave this tab (A.CON-SHO-7).
+    if (lockActive() && !LOCK_ALLOWED.test(path)) return Promise.reject(lockedError());
     var headers = body ? { "Content-Type": "application/json" } : {};
     if (DEMO_TOKEN) headers["Authorization"] = "Bearer " + DEMO_TOKEN;
     return fetch(path, {
@@ -103,6 +160,7 @@
         if (!r.ok) {
           var err = new Error((d && d.error) || r.statusText || ("HTTP " + r.status));
           err.status = r.status;
+          if (r.status === 423 && d && d.error === "session_locked" && !lockActive()) engageLock();
           throw err;
         }
         return d;
@@ -119,6 +177,7 @@
   function expireSession(why) {
     if (sessionExpiring) return;
     sessionExpiring = true;
+    sessionConfirmed = false;
     newAuthEpoch();
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
@@ -973,7 +1032,7 @@
   var wsEstablishedOnce = false;
   var wsTimer = null;
   function wsWanted() {
-    return !!DT.getState().session && !sessionExpiring && typeof WebSocket !== "undefined" && typeof location !== "undefined";
+    return !!DT.getState().session && !sessionExpiring && !lockActive() && typeof WebSocket !== "undefined" && typeof location !== "undefined";
   }
   function scheduleReconnect() {
     if (wsTimer || wsPaused || !wsWanted()) return;
@@ -1013,6 +1072,7 @@
     if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
     if (wsEpoch !== authEpoch) { wsEpoch = authEpoch; wsAttempt = 0; wsRefusals = 0; wsPaused = false; wsEstablishedOnce = false; }
     if (typeof WebSocket === "undefined" || typeof location === "undefined") return;
+    if (lockActive()) return; // a locked session gets no realtime feed (A.CON-SHO-7)
     var epoch = authEpoch;
     try {
       var proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1021,6 +1081,9 @@
       ws = sock;
       sock.onmessage = function (e) {
         if (epoch !== authEpoch) return;
+        // Locked: no event may re-hydrate, resync or fetch anything — those
+        // requests would renew the session and pull data into a locked tab.
+        if (lockActive()) { dropSocket(); return; }
         var ev; try { ev = JSON.parse(e.data); } catch (_) { return; }
         if (!ev || !ev.type) return;
         if (ev.type === "CONNECTION_ESTABLISHED") {
@@ -1092,6 +1155,9 @@
       };
       sock.onclose = function (e) {
         if (ws === sock) ws = null;
+        // The server locked this session (here or in another tab): show the
+        // lock screen and do NOT reconnect (A.CON-SHO-7).
+        if (e && e.code === 4423) { if (epoch === authEpoch) engageLock(); return; }
         if (epoch !== authEpoch || !wsWanted()) return; // signed out / identity changed
         if (e && e.code === 1008) return onWsRefused(String(e.reason || ""), epoch);
         scheduleReconnect();
@@ -1214,6 +1280,10 @@
     }
 
     function finish(u) {
+      // A successful sign-in IS the unlock (the server regenerated the
+      // session): clear the lock flag before anything is fetched.
+      try { if (window.__dtLock) window.__dtLock.clear(); } catch (e) {}
+      sessionConfirmed = true;
       localDemoSession = false;
       lastAuth = { org: orgCode, username: u.username };
       newAuthEpoch();
@@ -1958,6 +2028,7 @@
     return done;
   }
   DT.actions.logout = function () {
+    sessionConfirmed = false;
     try { if (ws) { ws.onclose = null; ws.close(); ws = null; } } catch (e) {}
     try { if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; } } catch (e) {}
     newAuthEpoch();
@@ -2952,6 +3023,8 @@
   // enters directly as that token's user (same path as a successful login).
   if (DEMO_TOKEN) {
     get("/api/user").then(function (u) {
+      if (u && u.locked) { engageLock({ org: u.orgCode, user: u.username, name: u.displayName, role: u.role }); return; }
+      sessionConfirmed = true;
       lastAuth = { role: u.role, org: u.role === "developer" ? PLATFORM_ORG : "ISPN" };
       meId = u.id;
       DT.set(function (s) {
@@ -2985,7 +3058,17 @@
     return rawApi("GET", "/api/session").then(function (probe) {
       var u = probe && probe.authenticated ? probe.user : null;
       if (!u || u.id == null) throw new Error("no_session");
-      var orgCode = orgForRole(u.role, savedSess && savedSess.org);
+      var orgCode = u.orgCode || orgForRole(u.role, savedSess && savedSess.org);
+      // The SERVER says this session is locked (A.CON-SHO-7): the lock screen
+      // and nothing else — even if this browser's own lock flag is gone.
+      if (u.locked) {
+        engageLock({ org: orgCode, user: u.username, name: u.displayName, role: u.role });
+        return;
+      }
+      // Locked here but not on the server (the lock call never reached it):
+      // bring the server in line and boot nothing.
+      if (lockActive()) { DT.actions.lockSession(0); return; }
+      sessionConfirmed = true;
       localDemoSession = false;
       lastAuth = { role: u.role, org: orgCode };
       newAuthEpoch();
@@ -3021,6 +3104,18 @@
       if (savedSess) DT.set(function (s) { s.session = null; return s; });
     });
   }
+  // Lock this session on the server (A.CON-SHO-7). Called by the shell's lock
+  // button / idle timer AFTER it set the lock flag; `idleMs` = how long the
+  // user had already been idle (the 15-minute idle lock passes 15 min, which
+  // ends the server session outright — a real automatic logoff). The socket
+  // goes first so no event can trigger a fetch meanwhile. A failure (offline,
+  // session already gone) leaves the local lock in place; the next restore
+  // re-sends it.
+  DT.actions.lockSession = function (idleMs) {
+    dropSocket();
+    var idle = Math.max(0, Number(idleMs) || 0);
+    return rawApi("POST", "/api/session/lock", { idleMs: idle }).catch(function () { return null; });
+  };
   if (!DEMO_TOKEN) restoreSession();
   // Re-run the restore on demand: the shell calls this when the app lock is
   // cleared in ANOTHER tab (index.html), whose re-authentication may have
@@ -3105,7 +3200,7 @@
     var sess = DT.getState().session || null;
     if (sess === lastModuleSess) return;
     lastModuleSess = sess;
-    if (sess) hydrateModules();
+    if (sess && (sessionConfirmed || localDemoSession)) hydrateModules();
     else DT.set(function (s) { s.modules = null; s.orgModules = {}; return s; });
   }
   if (DT.subscribe) DT.subscribe(syncModulesForSession);
@@ -3120,7 +3215,7 @@
     try { if (typeof document !== "undefined" && document.visibilityState === "hidden") return false; } catch (e) {}
     return true;
   }
-  function pollModules() { if (DT.getState().session && pollingAllowed()) hydrateModules(); }
+  function pollModules() { if (DT.getState().session && sessionConfirmed && pollingAllowed()) hydrateModules(); }
   setInterval(pollModules, 60000);
   try { document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") pollModules(); }); } catch (e) {}
   // ==== modules — END =======================================================

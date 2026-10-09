@@ -4,8 +4,8 @@
    requests together and appear on every assignment thread. */
 
 const TEAM_ROLE = {
-  MD: { label: "MD", tint: "blue",    fg: "var(--primary)" },
-  DO: { label: "DO", tint: "blue",    fg: "var(--primary)" },
+  MD: { label: "MD", tint: "blue",    fg: "var(--primary-ink, #1D4ED8)" },
+  DO: { label: "DO", tint: "blue",    fg: "var(--primary-ink, #1D4ED8)" },
   PA: { label: "PA", tint: "emerald", fg: "var(--status-accepted)" },
   NP: { label: "NP", tint: "amber",   fg: "var(--status-pending)" },
   RN: { label: "RN", tint: "slate",   fg: "var(--status-neutral)" },

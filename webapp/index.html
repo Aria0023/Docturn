@@ -32,14 +32,17 @@
     window.__dtInstallEvent = e;
     window.dispatchEvent(new Event("dt-installable"));
   });
-  // App lock flag (A.CON-SHO-7). The lock must survive a reload, so the flag —
-  // plus the non-PHI identity the lock screen needs to re-authenticate (org
-  // code, username, display name, role) — lives in storage under its OWN key:
-  // DT.purgePersisted() drops the store snapshot on lock and leaves this
-  // intact, and every tab of this browser sees the same locked state
-  // (localStorage; sessionStorage if that is unavailable). It is cleared only
-  // by a successful server re-authentication or by signing out. api-bridge.js
-  // reads isLocked() to pause its background polling while locked.
+  // App lock flag (A.CON-SHO-7). The lock itself is the SERVER's (POST
+  // /api/session/lock: every data route then answers 423 and GET /api/user
+  // says locked, so deleting this flag and reloading still lands on the lock
+  // screen). This flag is the browser's copy — plus the non-PHI identity the
+  // lock screen needs to re-authenticate (org code, username, display name,
+  // role) — under its OWN key: DT.purgePersisted() drops the store snapshot on
+  // lock and leaves this intact, and every tab of this browser sees the same
+  // locked state (localStorage; sessionStorage if that is unavailable). It is
+  // cleared only by a successful server re-authentication or by signing out.
+  // While it is set, api-bridge.js sends nothing but sign-in / identity calls
+  // (no hydrate, no socket, no poll), so a locked tab cannot renew the session.
   window.__dtLock = (function () {
     var KEY = "docturn.lock";
     function stores() {
@@ -121,11 +124,36 @@
     /* Legibility floor: no UI text under 12px on a phone (A.CON-MIN-11). The
        kit sets sizes inline (React serialises fontSize: 10.5 as
        "font-size: 10.5px"), so match those attribute values and floor them —
-       this reaches every screen, not just the shell. */
-    [style*="font-size: 5px"], [style*="font-size: 5."], [style*="font-size: 6px"], [style*="font-size: 6."],
+       this reaches every screen, not just the shell. Wrapped in :where() so
+       the floor has ZERO specificity: its !important still beats the inline
+       size, but every more specific !important rule wins over it — above all
+       the 16px rule for form controls, which a bare `select`/`textarea`
+       selector (0,0,1) used to lose to an attribute selector (0,1,0), leaving
+       e.g. the Patient board's "Assign…" select at 12px and iOS zooming on
+       focus (A.CON-SHO-44/51). */
+    :where([style*="font-size: 5px"], [style*="font-size: 5."], [style*="font-size: 6px"], [style*="font-size: 6."],
     [style*="font-size: 7px"], [style*="font-size: 7."], [style*="font-size: 8px"], [style*="font-size: 8."],
     [style*="font-size: 9px"], [style*="font-size: 9."], [style*="font-size: 10px"], [style*="font-size: 10."],
-    [style*="font-size: 11px"], [style*="font-size: 11."] { font-size: 12px !important; }
+    [style*="font-size: 11px"], [style*="font-size: 11."]) { font-size: 12px !important; }
+  }
+  /* Landscape phone (A.CON-MIN-10 fix-up). The mobile shell is kept in
+     landscape, where the height is 375–430px: a compact tab bar (44px row,
+     icon beside label — the iOS landscape tab bar), a slimmer top bar and test
+     banner everywhere, and with a conversation OPEN (its composer is on
+     screen) the thread takes the whole height like a pushed view in iOS
+     Messages: no app top bar, no install nudge, no tab bar — the thread's own
+     header has Back (to the list, where the tab bar returns). The composer
+     then sits on the home-indicator inset and the message list keeps a usable
+     height. */
+  @media (max-height: 500px) and (orientation: landscape) {
+    .dt-mobile-shell { --dt-tabbar-h: 44px; }
+    .dt-mobile-shell .dt-tab { flex-direction: row !important; gap: 6px !important; }
+    .dt-mobile-shell > header.dt-appbar { height: 48px !important; }
+    .dt-synthetic-banner { padding-top: 2px !important; padding-bottom: 2px !important; }
+    .dt-mobile-shell:has([data-composer]) > header.dt-appbar,
+    .dt-mobile-shell:has([data-composer]) > .dt-install-slot,
+    .dt-mobile-shell:has([data-composer]) > nav.dt-tabbar { display: none !important; }
+    .dt-mobile-shell:has([data-composer]) > main { padding-bottom: var(--sai-bottom) !important; }
   }
   @media (hover: none) and (pointer: coarse) {
     /* 44×44 CSS px minimum tap target for every control (Apple HIG, WCAG
@@ -467,7 +495,10 @@ function App() {
   const [lockFlag, setLockFlag] = React.useState(() => (lockApi ? lockApi.read() : null));
   const locked = !!lockFlag;
   const navBeforeLock = React.useRef(null);
-  const lockNow = React.useCallback(() => {
+  // `idleMs`: how long the user had already been idle (the idle timer passes
+  // 15 min; a tap on Lock passes 0). The server back-dates its lock by it, so
+  // the idle lock ends the server session outright (automatic logoff).
+  const lockNow = React.useCallback((idleMs) => {
     const s = DT.getState();
     const sess = s && s.session;
     if (!sess || !sess.org || !sess.user) return;
@@ -479,7 +510,11 @@ function App() {
     if (lockApi) lockApi.set(identity);
     setLockFlag((lockApi && lockApi.read()) || Object.assign({ locked: true }, identity));
     try { a.toggleNotif(false); } catch (e) {}
+    // Lock the SERVER session (423 on every data route, sockets closed). The
+    // flag above is set first, so nothing else leaves this tab meanwhile.
+    try { if (a.lockSession) a.lockSession(typeof idleMs === "number" ? idleMs : 0); } catch (e) {}
   }, []);
+  const lockByHand = React.useCallback(() => lockNow(0), [lockNow]);
   // Unlock = a successful server re-authentication (LockScreen → DT.actions.login),
   // which also re-hydrates every clinical slice. Put the user back where they were.
   const unlocked = React.useCallback(() => {
@@ -500,8 +535,12 @@ function App() {
       setLockFlag(v);
       if (!v && e.oldValue && a.rehydrate) { try { a.rehydrate(); } catch (err) {} }
     };
+    // api-bridge engaged the lock because the SERVER said so (a 423, a 4423
+    // socket close, or GET /api/session reporting the session locked).
+    const onServerLock = () => setLockFlag(lockApi.read());
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener("dt-lock-change", onServerLock);
+    return () => { window.removeEventListener("storage", onStorage); window.removeEventListener("dt-lock-change", onServerLock); };
   }, []);
   const isMobile = useIsMobile();
   const [drawer, setDrawer] = React.useState(false);
@@ -512,7 +551,8 @@ function App() {
   React.useEffect(() => {
     if (!role || locked) return;
     let timer;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(lockNow, 15 * 60 * 1000); };
+    const IDLE_MS = 15 * 60 * 1000;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => lockNow(IDLE_MS), IDLE_MS); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
@@ -611,7 +651,7 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
-  else if (nav === "account") screen = <AccountSettings onLock={lockNow} />;
+  else if (nav === "account") screen = <AccountSettings onLock={lockByHand} />;
   else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
@@ -676,15 +716,15 @@ function App() {
     // squashed the tabs to 23px on Face-ID iPhones). `main` reserves exactly
     // the same amount so nothing hides behind the bar and no dead band appears
     // above it (the thread composer therefore adds NO inset of its own).
-    const TABBAR_H = 58;
-    const TABBAR_TOTAL = "calc(" + TABBAR_H + "px + var(--sai-bottom))";
+    // --dt-tabbar-h: 58px row, 44px on a landscape phone (stylesheet above).
+    const TABBAR_TOTAL = "calc(var(--dt-tabbar-h, 58px) + var(--sai-bottom))";
     return (
       <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
-        <InstallPrompt />
+        <div className="dt-install-slot"><InstallPrompt /></div>
         {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
-        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
+        <header className="dt-appbar" style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</h1>
           </div>
@@ -692,18 +732,18 @@ function App() {
             <Icon name="bell" size={20} />
             {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
           </button>
-          <button type="button" onClick={lockNow} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
+          <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
 
         {/* Bottom tab bar: full-bleed background, content inset by the side
             safe areas in landscape (A.CON-NEE-2), tab row above the home indicator. */}
-        <nav aria-label="Primary" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
+        <nav aria-label="Primary" className="dt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
           {primaryTabs.map((t) => {
             const on = nav === t.id;
             return (
-              <button key={t.id} type="button" onClick={() => a.setNav(t.id)} aria-current={on ? "page" : undefined}
+              <button key={t.id} type="button" className="dt-tab" onClick={() => a.setNav(t.id)} aria-current={on ? "page" : undefined}
                 style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative", padding: 0 }}>
                 <div style={{ position: "relative" }}>
                   <Icon name={t.icon} size={22} />
@@ -713,7 +753,7 @@ function App() {
               </button>
             );
           })}
-          <button type="button" onClick={() => setDrawer(true)} aria-label="More" aria-expanded={drawer}
+          <button type="button" className="dt-tab" onClick={() => setDrawer(true)} aria-label="More" aria-expanded={drawer}
             style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", padding: 0 }}>
             <Icon name="menu" size={22} />
             <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>More</span>
@@ -760,7 +800,7 @@ function App() {
           onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
           notifCount={DT.unreadNotifs()}
           onBell={() => a.toggleNotif()}
-          onLock={lockNow}
+          onLock={lockByHand}
           right={st.syntheticData !== false ? <React.Fragment>
             <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
               title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"

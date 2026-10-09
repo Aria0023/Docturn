@@ -25,6 +25,14 @@ import {
  * WebSocket alike. Revoked tokens are also dropped from memory eagerly.
  */
 const tokens = new Map<string, SessionPrincipal>(); // token -> { id, pg }
+/** App lock (A.CON-SHO-7): token -> epoch ms its lock counts from. */
+const lockedTokens = new Map<string, number>();
+
+/** When this token was locked (POST /api/session/lock through it), or null. */
+export function demoTokenLockedAt(token: string): number | null {
+  const at = lockedTokens.get(token);
+  return typeof at === "number" ? at : null;
+}
 
 export function issueDemoToken(user: { id: number; passwordChangedAt?: Date | string | null }): string {
   const t = randomBytes(24).toString("hex");
@@ -48,7 +56,10 @@ export async function resolveDemoUser(token: string): Promise<User | null> {
   const user = await resolveSessionUser(principal);
   // A stale token never comes back (re-mint with the current password). Only
   // forget it if it was not re-stamped meanwhile by the change it lost to.
-  if (!user && tokens.get(token) === principal) tokens.delete(token);
+  if (!user && tokens.get(token) === principal) {
+    tokens.delete(token);
+    lockedTokens.delete(token);
+  }
   return user;
 }
 
@@ -56,7 +67,10 @@ export async function resolveDemoUser(token: string): Promise<User | null> {
 // generation check above would refuse them anyway on their next use).
 onSessionsRevoked(({ userId, exceptSessionId }) => {
   for (const [t, p] of tokens) {
-    if (p.id === userId && demoConnectionId(t) !== exceptSessionId) tokens.delete(t);
+    if (p.id === userId && demoConnectionId(t) !== exceptSessionId) {
+      tokens.delete(t);
+      lockedTokens.delete(t);
+    }
   }
 });
 
@@ -82,6 +96,17 @@ export function demoTokenAuth() {
           connectionId: demoConnectionId(token),
           restamp: (u) => {
             tokens.set(token, sessionPrincipalFor(u));
+          },
+          lockedAt: () => demoTokenLockedAt(token),
+          lock: (at) => {
+            const prev = lockedTokens.get(token);
+            lockedTokens.set(token, typeof prev === "number" ? Math.min(prev, at) : at);
+          },
+          // A token whose lock outlived the idle window is revoked outright —
+          // the pane signs in again (POST /api/demo/login) for a new one.
+          end: () => {
+            tokens.delete(token);
+            lockedTokens.delete(token);
           },
         };
         (res.locals as { bearerCredential?: BearerCredential }).bearerCredential = credential;

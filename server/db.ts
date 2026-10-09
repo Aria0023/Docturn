@@ -522,6 +522,53 @@ UPDATE pending_registrations p SET status = 'rejected'
 CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_pending_uniq
   ON pending_registrations(organization_id, username) WHERE status = 'pending';
 
+-- Usernames are case- and surrounding-whitespace-insensitive (A.CON-SHO-12/57,
+-- server/usernames.ts): stored trimmed, unique per (org, lower(username)).
+-- A database written before that rule may hold variants of one name in one
+-- org ("chen" + "Chen", "lopez" + "lopez "), every one of them able to sign
+-- in. Repair before the index is built: the OLDEST account keeps the name;
+-- every later variant is deactivated (its sessions stop resolving at once)
+-- and renamed out of the way ("Chen~variant-30"), with a medium-risk audit
+-- row naming it, so an administrator can review, reset or remove it. Then
+-- surrounding whitespace is stripped from every stored name. Idempotent.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+           PARTITION BY organization_id,
+                        lower(regexp_replace(username, '^[[:space:]]+|[[:space:]]+$', '', 'g'))
+           ORDER BY id) AS rn
+    FROM users
+), blocked AS (
+  UPDATE users u
+     SET disabled_at = COALESCE(u.disabled_at, NOW()),
+         username = regexp_replace(u.username, '^[[:space:]]+|[[:space:]]+$', '', 'g') || '~variant-' || u.id
+    FROM ranked r
+   WHERE r.id = u.id AND r.rn > 1
+  RETURNING u.id, u.organization_id, u.username
+)
+INSERT INTO audit_logs (organization_id, user_id, action, resource_type, resource_id, details, risk_level)
+SELECT organization_id, NULL, 'user.username_variant_blocked', 'user', id,
+       jsonb_build_object('renamedTo', username, 'reason', 'case_or_whitespace_variant_of_an_older_account'),
+       'medium'
+  FROM blocked;
+UPDATE users SET username = regexp_replace(username, '^[[:space:]]+|[[:space:]]+$', '', 'g')
+ WHERE username ~ '^[[:space:]]|[[:space:]]$';
+CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_ci_uniq ON users(organization_id, lower(username));
+-- The same rule for the approval queue: one PENDING request per normalised
+-- name (the newest wins, as above), stored trimmed.
+UPDATE pending_registrations p SET status = 'rejected'
+  WHERE p.status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM pending_registrations q
+       WHERE q.organization_id = p.organization_id
+         AND lower(btrim(q.username)) = lower(btrim(p.username))
+         AND q.status = 'pending'
+         AND q.id > p.id
+    );
+UPDATE pending_registrations SET username = btrim(username)
+ WHERE status = 'pending' AND username <> btrim(username);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_ci_pending_uniq
+  ON pending_registrations(organization_id, lower(username)) WHERE status = 'pending';
+
 -- Requests naming an unknown org code or the platform org: dropped, but
 -- answered like a real org's (201, then 409 on a re-submission) so POST
 -- /api/register is not an org-code oracle. Only an opaque SHA-256 key of

@@ -121,7 +121,7 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
       {/* Header — wraps so the badge/"Manage full portal" button land under the
           title on phones instead of past the viewport edge */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
-        <span style={{ width: 42, height: 42, borderRadius: "var(--radius-md)", background: isEnt ? "#1E293B" : "#DBEAFE", color: isEnt ? "#7DD3FC" : "var(--primary)", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <span style={{ width: 42, height: 42, borderRadius: "var(--radius-md)", background: isEnt ? "#1E293B" : "#DBEAFE", color: isEnt ? "#7DD3FC" : "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           {isEnt ? <Icon name="globe" size={20} /> : (scope || "").slice(0, 2)}
         </span>
         <div style={{ flex: "1 1 180px", minWidth: 0 }}>
