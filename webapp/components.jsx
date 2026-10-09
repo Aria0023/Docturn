@@ -19,6 +19,15 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     border: "1px solid transparent", cursor: "pointer", whiteSpace: "nowrap",
     transition: "background .15s ease, box-shadow .15s ease, opacity .15s ease",
     width: full ? "100%" : "auto",
+    // A nowrap label must never be squeezed: on touch screens the 44px
+    // tap-target rule (index.html, `button { min-width: 44px }`) replaces a
+    // flex item's content-based minimum, so in a tight row the button shrank
+    // below its label and drew it outside its box ("Add person" at 375px,
+    // A.CON-SHO-50). Not shrinking restores the desktop behaviour; a caller
+    // that wants a flexible button passes `flex` in `style` (left alone, so
+    // shorthand and longhand never mix on one element), and `full` buttons
+    // keep shrinking with their row.
+    flexShrink: full || (style && (style.flex != null || style.flexShrink != null)) ? undefined : 0,
   };
   const sizes = {
     sm: { height: 36, padding: "0 12px", fontSize: 13 },

@@ -180,7 +180,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
       </div>
       {/* vertical divider only makes sense when everything sits on one line */}
       {!mobile && <div style={{ width: 1, height: 28, background: "var(--border)" }} />}
-      <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+      {/* wraps on a phone: the three buttons keep their labels (they no
+          longer shrink) and need ~378px, more than a 375-390px Card row */}
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8, marginLeft: "auto", minWidth: 0, maxWidth: "100%" }}>
         <Button size="sm" variant="outline" icon="toggle-left" onClick={() => onBulkWorking(false)} style={allOff ? { opacity: .5 } : null}>All off shift</Button>
         <Button size="sm" variant="outline" icon="toggle-right" onClick={() => onBulkWorking(true)} style={allOn ? { opacity: .5 } : null}>All on shift</Button>
         <Button size="sm" variant="default" icon="user-plus" onClick={() => setAdding(true)}>Add provider</Button>
@@ -386,7 +388,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
               <Field label="Full name" icon="user" value={form.name} onChange={(v) => setForm({ ...form, name: v })} placeholder="Dr. Jane Smith / Priya Shah, NP" />
               <div>
                 <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Role</label>
-                <div style={{ display: "flex", gap: 6 }}>
+                {/* 4 across in the 460px modal, 2×2 on a phone: four equal
+                    flex shares (66px at 375) drew "Hospitalist" past its box */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))", gap: 6 }}>
                   {ROLE_OPTIONS.map((r) => (
                     <button key={r.id} onClick={() => setForm({ ...form, role: r.id })}
                       style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
@@ -397,14 +401,16 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
               {form.role === "hospitalist" && (
                 <>
                   <Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => setForm({ ...form, specialty: v })} placeholder="e.g. Cardiology" />
-                  <div style={{ display: "flex", gap: 12 }}>
+                  {/* Shift drops below Patient cap when the row is too narrow
+                      for three readable shift choices (phones) */}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
                     <div style={{ width: 120 }}><Field label="Patient cap" icon="gauge" value={form.cap} onChange={(v) => setForm({ ...form, cap: v.replace(/[^0-9]/g, "") })} /></div>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: "1 1 200px", minWidth: 0 }}>
                       <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Shift</label>
                       <div style={{ display: "flex", gap: 6 }}>
                         {shifts.map((s) => (
                           <button key={s.id} onClick={() => setForm({ ...form, shift: s.id })}
-                            style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
+                            style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600, overflowWrap: "anywhere",
                               border: form.shift === s.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.shift === s.id ? "#EFF6FF" : "#fff", color: form.shift === s.id ? "var(--primary)" : "var(--foreground)" }}>{s.label}</button>
                         ))}
                       </div>

@@ -212,7 +212,7 @@ function Topbar({ title, subtitle, working, onToggleWorking, right, onBell, noti
       <div style={{ display: "flex", alignItems: "center", gap: 14, minWidth: 0, maxWidth: "100%" }}>
         {right}
         {onToggleWorking && (
-          <button type="button" onClick={onToggleWorking} aria-pressed={!!working} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap" }}>
+          <button type="button" onClick={onToggleWorking} aria-pressed={!!working} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", flex: "none" }}>
             <StatusDot status={working ? "online" : "offline"} pulse={working} />
             {working ? "On shift" : "Off shift"}
           </button>
@@ -384,8 +384,12 @@ function SettingsTabs() {
       {tabs.map(function (t) {
         var id = t[0], label = t[1], icon = t[2], on = nav === id;
         return (
+          // flex "none": the strip scrolls sideways instead of squashing the
+          // tabs. Under the touch-screen `button { min-width: 44px }` rule a
+          // shrinkable tab narrowed to 74-99px at 375px and drew its label
+          // 44-50px over the next one ("OrganizaⓅoAppea", A.CON-SHO-50).
           <button key={id} onClick={function () { a.setNav(id); }}
-            style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
               background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
             <Icon name={icon} size={15} />{label}
           </button>

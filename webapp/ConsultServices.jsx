@@ -47,8 +47,11 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
             {onCallVal ? "On call: " + onCallVal : "On call: synced from on-call schedule"} · {members.length} PA/NP
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-          <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>On-call</span>
+        {/* On its own wrapped line on a phone this group may narrow (the
+            select gives way) so the remove button stays inside the Card
+            instead of 10px past its edge at 375px. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 1 auto", minWidth: 0, maxWidth: "100%" }}>
+          <span style={{ fontSize: 12, color: "var(--muted-foreground)", flex: "none" }}>On-call</span>
           {customOn ? (
             <React.Fragment>
               <Field value={customName} onChange={setCustomName} placeholder="Type consultant name" icon="user" />
@@ -56,9 +59,9 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
               <Button size="sm" variant="ghost" icon="x" onClick={() => { setCustomOn(false); setCustomName(""); }} />
             </React.Fragment>
           ) : (
-            <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+            <div style={{ position: "relative", display: "inline-flex", alignItems: "center", flex: "0 1 auto", minWidth: 0 }}>
               <select value={onCallVal} onChange={(e) => pickOnCall(e.target.value)}
-                style={{ appearance: "none", WebkitAppearance: "none", height: 32, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer", maxWidth: 240 }}>
+                style={{ appearance: "none", WebkitAppearance: "none", height: 32, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer", maxWidth: 240, minWidth: 0 }}>
                 <option value="">Auto — synced from schedule</option>
                 {providerOpts.map((p, i) => <option key={i} value={p.name}>{p.name}{p.specialty ? " · " + p.specialty : ""}</option>)}
                 <option value="__custom__">✎ Enter name manually…</option>

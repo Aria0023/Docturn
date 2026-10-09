@@ -18,7 +18,10 @@
  * fix-up items: the Admissions log "Clear all" header (director Home panel and
  * Admissions log screen), the Compliance screen (tabs / Export / Clear logs row,
  * audit / PHI / logs tables), the presence dots in CareTeam and Messaging, and
- * the Appearance screen for developer, director and ER director.
+ * the Appearance screen for developer, director and ER director. The final
+ * A.CON-SHO-50 round adds the Settings tab strip (Organization / Appearance /
+ * Compliance / Compliance monitor) and a sweep of every screen of every role
+ * that no button draws its label or icon outside its own box.
  *
  * Usage: start a seeded synthetic server, then
  *   BASE_URL=http://127.0.0.1:5060 node scripts/phone-layout-check.mjs
@@ -71,7 +74,64 @@ const HELPERS = `
     const overlap = (a, b) => { const ra = rect(a), rb = rect(b); return ra.left < rb.right - 0.5 && rb.left < ra.right - 0.5 && ra.top < rb.bottom - 0.5 && rb.top < ra.bottom - 0.5; };
     const truncated = (el) => el.scrollWidth > el.clientWidth + 1;
     const summarize = (els) => els.map((e) => ({ r: rect(e), vis: fullyVisible(e), text: (e.textContent || e.getAttribute("title") || e.tagName).trim().slice(0, 24) }));
-    return { rect, visible, fullyVisible, inViewportX, overflow, byText, h2, overlap, truncated, summarize, vw };
+    // Horizontal extent of what a control actually DRAWS: its text runs and
+    // in-flow descendants (icons), clamped by any clipping box inside it.
+    // Absolutely positioned descendants (a count badge on the bell's corner)
+    // are deliberate overhangs and are left out.
+    const contentBox = (el) => {
+      let minL = Infinity, maxR = -Infinity;
+      const add = (r, cl, cr) => { if (!r.width) return; const l = Math.max(r.left, cl), rt = Math.min(r.right, cr); if (rt <= l) return; minL = Math.min(minL, l); maxR = Math.max(maxR, rt); };
+      const visit = (n, cl, cr) => {
+        for (const c of n.childNodes) {
+          if (c.nodeType === 3) {
+            if (!c.textContent.trim()) continue;
+            const rg = document.createRange(); rg.selectNodeContents(c); add(rg.getBoundingClientRect(), cl, cr);
+          } else if (c.nodeType === 1) {
+            const cs = getComputedStyle(c);
+            if (cs.display === "none" || cs.position === "absolute" || cs.position === "fixed") continue;
+            const r = c.getBoundingClientRect();
+            add(r, cl, cr);
+            const clips = cs.overflowX !== "visible";
+            visit(c, clips ? Math.max(cl, r.left) : cl, clips ? Math.min(cr, r.right) : cr);
+          }
+        }
+      };
+      const own = el.getBoundingClientRect(), ocs = getComputedStyle(el);
+      const clips = ocs.overflowX !== "visible";
+      visit(el, clips ? own.left : -Infinity, clips ? own.right : Infinity);
+      return minL === Infinity ? null : { left: minL, right: maxR };
+    };
+    // px of label/icon drawn outside the control's own box (0 = all inside)
+    const labelSpill = (el) => { const r = el.getBoundingClientRect(), c = contentBox(el); return c ? Math.max(0, c.right - r.right, r.left - c.left) : 0; };
+    const spilledButtons = () => [...document.querySelectorAll("button,[role='button']")]
+      .filter((b) => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== "hidden"; })
+      .map((b) => ({ b, s: labelSpill(b) })).filter((x) => x.s > 1)
+      .map((x) => ({ text: (x.b.textContent || x.b.getAttribute("title") || "").trim().slice(0, 24), spill: Math.round(x.s * 10) / 10, w: Math.round(x.b.getBoundingClientRect().width * 10) / 10 }));
+    // Buttons that sit past the viewport or stick out of their Card (nearest
+    // ancestor drawn as a card: shadow + rounded corners) — controls inside a
+    // sideways-scrolling strip are reached by scrolling it and are skipped.
+    const outOfBox = () => {
+      const out = [];
+      for (const b of document.querySelectorAll("main button, main [role='button']")) {
+        const r = b.getBoundingClientRect();
+        if (!r.width || !r.height || getComputedStyle(b).visibility === "hidden") continue;
+        let p = b.parentElement, scroller = false, card = null;
+        while (p && p.tagName !== "MAIN") {
+          const cs = getComputedStyle(p);
+          if (/(auto|scroll)/.test(cs.overflowX)) { scroller = true; break; }
+          if (!card && cs.boxShadow !== "none" && parseFloat(cs.borderTopLeftRadius) > 0 && p.getBoundingClientRect().width > r.width + 20) card = p;
+          p = p.parentElement;
+        }
+        if (scroller) continue;
+        const t = (b.textContent || b.getAttribute("title") || "").trim().slice(0, 24);
+        const c = card && card.getBoundingClientRect();
+        const span = "'" + t + "' [" + Math.round(r.left) + ".." + Math.round(r.right) + "]";
+        if (!inViewportX(r)) out.push(span + " past the " + vw() + "px viewport");
+        else if (c && (r.left < c.left - 0.5 || r.right > c.right + 0.5)) out.push(span + " outside its card [" + Math.round(c.left) + ".." + Math.round(c.right) + "]");
+      }
+      return out;
+    };
+    return { rect, visible, fullyVisible, inViewportX, overflow, byText, h2, overlap, truncated, summarize, vw, contentBox, labelSpill, spilledButtons, outOfBox };
   })();
 `;
 
@@ -690,6 +750,100 @@ async function checkAccessStrip(page, label) {
   rec(`${label} access & people: tabs single-line, tap height ≥ 44`, t.tabs.every((b) => b.h >= TAP && b.h < 60), t.tabs.map((b) => fmt(b.h)).join(","));
 }
 
+// Settings tab strip (A.CON-SHO-50 final round). SettingsTabs heads the
+// director / ER director Organization, Appearance, Compliance and Compliance
+// monitor screens. Under the coarse-pointer `button { min-width: 44px }` rule
+// (A.CON-SHO-52) its flex '0 1 auto' tabs shrank to 74-118px while their
+// labels need 123-185px, drawing each label 33-50px over the next tab
+// ('OrganizaⓅoAppea'); the strip must scroll instead of squashing.
+const SETTINGS_TAB_SCREENS = ["settings", "appearance", "compliance", "compliance-monitor"];
+async function checkSettingsTabs(page, label) {
+  for (const id of SETTINGS_TAB_SCREENS) {
+    await nav(page, id);
+    const t = await page.evaluate(() => {
+      const M = window.__m;
+      const mon = M.byText("button", /^Compliance monitor$/).find((b) => b.parentElement && b.parentElement.querySelectorAll(":scope > button").length === 4);
+      if (!mon) return null;
+      const strip = mon.parentElement;
+      const tabs = [...strip.querySelectorAll(":scope > button")];
+      const stripR = M.rect(strip);
+      strip.scrollLeft = 0;
+      const info = tabs.map((b) => ({ text: b.textContent.trim(), w: M.rect(b).width, spill: M.labelSpill(b), h: M.rect(b).height }));
+      // how far each tab's label is drawn into the NEXT tab's box
+      const into = tabs.slice(0, -1).map((b, i) => { const c = M.contentBox(b); return c ? Math.max(0, c.right - M.rect(tabs[i + 1]).left) : 0; });
+      strip.scrollLeft = strip.scrollWidth;
+      const after = M.rect(mon);
+      const reach = after.left >= stripR.left - 0.5 && after.right <= stripR.right + 0.5 && M.inViewportX(after) && M.labelSpill(mon) <= 1;
+      strip.scrollLeft = 0;
+      return { info, into, reach, after, stripRight: stripR.right, sw: strip.scrollWidth, cw: strip.clientWidth, vw: window.innerWidth };
+    });
+    const l = `${label} ${id}`;
+    if (!t) { rec(`${l}: Settings tab strip present (4 tabs)`, false); continue; }
+    rec(`${l}: every Settings tab label inside its own tab`, t.info.every((b) => b.spill <= 1), t.info.map((b) => `${b.text}=${fmt(b.w)}px${b.spill > 1 ? `(+${fmt(b.spill)} outside)` : ""}`).join(" "));
+    rec(`${l}: no Settings tab label drawn over the next tab`, t.into.every((d) => d <= 0.5), `overlap into next=${t.into.map(fmt).join("/")}px`);
+    rec(`${l}: Settings tab strip inside the viewport`, t.stripRight <= t.vw + 0.5, `strip.right=${fmt(t.stripRight)} scrollWidth=${t.sw} clientWidth=${t.cw}`);
+    rec(`${l}: 'Compliance monitor' tab reachable by scrolling the strip`, t.reach, `after scroll=${rectStr(t.after)}`);
+    rec(`${l}: Settings tab tap height ≥ 44, single line`, t.info.every((b) => b.h >= TAP && b.h < 60), t.info.map((b) => fmt(b.h)).join(","));
+  }
+}
+
+// Every control on every screen of a role keeps its label and icon inside its
+// own box. Same root cause as the Settings tab strip: with min-width:44px a
+// nowrap button in a tight flex row shrinks below its label — the Access &
+// people / People "Add person" button drew its icon outside an 79px box, and
+// Roles & permissions' "Create new role" its label 9-15px past its edge.
+const SCREENS = {
+  hospitalist: ["dashboard", "history", "oncall", "messages", "directory", "compliance", "account"],
+  er_doctor: ["dashboard", "oncall", "messages", "directory", "compliance", "account"],
+  director: ["dashboard", "board", "admissions", "oncall", "approvals", "consult", "roles", "broadcasts", "messages", "directory", "settings", "appearance", "compliance", "compliance-monitor", "account", "access"],
+  er_director: ["dashboard", "board", "oncall", "approvals", "broadcasts", "messages", "directory", "settings", "appearance", "compliance", "compliance-monitor", "account", "access"],
+  developer: ["dashboard", "enterprise", "settings", "users", "compliance", "compliance-monitor", "appearance", "account"],
+};
+async function checkLabelsInside(page, label) {
+  const bad = await page.evaluate(() => window.__m.spilledButtons());
+  rec(`${label}: every button label/icon drawn inside its button`, bad.length === 0, bad.slice(0, 4).map((b) => `'${b.text}' ${b.spill}px outside a ${b.w}px button`).join("; "));
+  // ...and a button that keeps its width must wrap with its row, not be
+  // pushed past its Card or the screen (director Home "Add provider",
+  // Consult services "Remove service").
+  const out = await page.evaluate(() => window.__m.outOfBox());
+  rec(`${label}: every button inside the viewport and its card`, out.length === 0, `${out.length} outside${out.length ? ": " + [...new Set(out)].slice(0, 3).join("; ") : ""}`);
+}
+// Forms a screen opens in place or as a modal, checked the same way once open
+// (the Add provider modal's 4 equal-width role choices left "Hospitalist"
+// drawn past its button at 375px).
+const OPENERS = {
+  director: { dashboard: ["Add provider"], access: ["Add person"], roles: ["Create new role"] },
+  er_director: { dashboard: ["Add"], access: ["Add person"] },
+  developer: { dashboard: ["Add user / provider"] },
+};
+async function sweepLabels(page, role, label) {
+  for (const id of SCREENS[role]) {
+    await nav(page, id);
+    // a button that no longer shrinks must not push the page sideways instead
+    await noOverflow(page, `${label} ${id}`);
+    await checkLabelsInside(page, `${label} ${id}`);
+    for (const opener of (OPENERS[role] || {})[id] || []) {
+      const ok = await page.evaluate((t) => { const b = window.__m.byText("main button", new RegExp("^" + t.replace(/[/]/g, "\\/") + "$"))[0]; if (b) b.click(); return !!b; }, opener);
+      if (!ok) { rec(`${label} ${id}: '${opener}' present`, false); continue; }
+      await sleep(400);
+      await prep(page);
+      await noOverflow(page, `${label} ${id} › ${opener} open`);
+      await checkLabelsInside(page, `${label} ${id} › ${opener} open`);
+    }
+    if (id === "directory" && (role === "director" || role === "er_director")) {
+      for (const sub of ["People", "Consult services", "Roles & permissions", "Directory"]) {
+        const ok = await page.evaluate((s) => { const b = window.__m.byText("button", new RegExp("^" + s.replace(/[&]/g, "\\&") + "$"))[0]; if (b) b.click(); return !!b; }, sub);
+        if (!ok) { rec(`${label} directory › ${sub}: sub-tab present`, false); continue; }
+        await sleep(400);
+        await prep(page);
+        if (sub === "Directory") continue;
+        await noOverflow(page, `${label} directory › ${sub}`);
+        await checkLabelsInside(page, `${label} directory › ${sub}`);
+      }
+    }
+  }
+}
+
 // ---- driver -----------------------------------------------------------------
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 try {
@@ -702,40 +856,62 @@ try {
     await page.waitForFunction(() => window.DT && document.querySelector("#root") && document.querySelector("#root").children.length > 0, null, { timeout: 60000 });
     await prep(page);
     cur = `[${w}] `;
-    const fx = await ensureFixtures(page);
-    rec("fixtures: ER→hospitalist routed/accepted row available", !!fx, JSON.stringify(fx));
+    // The 44px tap-target rule (and the squash it caused) only applies under
+    // (hover: none) and (pointer: coarse); without it these checks prove nothing.
+    rec("profile is a touch phone: (hover: none) and (pointer: coarse) matches", await page.evaluate(() => matchMedia("(hover: none) and (pointer: coarse)").matches));
+    // LABELS_ONLY=1 runs just the Settings tab strip + label sweep (A.CON-SHO-50 final round).
+    const all = !process.env.LABELS_ONLY;
+    if (all) {
+      const fx = await ensureFixtures(page);
+      rec("fixtures: ER→hospitalist routed/accepted row available", !!fx, JSON.stringify(fx));
+    }
 
     await login(page, "hospitalist", "ISPN", "chen");
-    await checkHospitalistHome(page);
-    await checkDirectory(page, false);
-    await checkCareTeamDots(page);
-    await checkMessagingDots(page);
-    await checkCompliance(page, "hospitalist", { clear: false });
+    if (all) {
+      await checkHospitalistHome(page);
+      await checkDirectory(page, false);
+      await checkCareTeamDots(page);
+      await checkMessagingDots(page);
+      await checkCompliance(page, "hospitalist", { clear: false });
+    }
+    await sweepLabels(page, "hospitalist", "hospitalist");
 
     await login(page, "er_doctor", "ISPN", "er.doc");
-    await checkErDoctorHome(page);
+    if (all) await checkErDoctorHome(page);
+    await sweepLabels(page, "er_doctor", "ER doctor");
 
     await login(page, "director", "ISPN", "director");
-    await checkDirectorHome(page);
-    await checkAdmissionsHeader(page, "director home");
-    await checkDirectory(page, true);
-    await checkBoardControls(page, "director");
-    await nav(page, "admissions");
-    await noOverflow(page, "director admissions log");
-    await checkAdmissionsHeader(page, "director admissions log");
-    await checkCompliance(page, "director");
-    await checkAppearance(page, "director");
-    await checkAccessStrip(page, "director");
+    if (all) {
+      await checkDirectorHome(page);
+      await checkAdmissionsHeader(page, "director home");
+      await checkDirectory(page, true);
+      await checkBoardControls(page, "director");
+      await nav(page, "admissions");
+      await noOverflow(page, "director admissions log");
+      await checkAdmissionsHeader(page, "director admissions log");
+      await checkCompliance(page, "director");
+      await checkAppearance(page, "director");
+      await checkAccessStrip(page, "director");
+    }
+    await checkSettingsTabs(page, "director");
+    await sweepLabels(page, "director", "director");
 
     await login(page, "er_director", "ISPN", "er.director");
-    await checkErDirectorHome(page);
-    await checkBoardControls(page, "ER director");
-    await checkCompliance(page, "ER director");
-    await checkAppearance(page, "ER director");
+    if (all) {
+      await checkErDirectorHome(page);
+      await checkBoardControls(page, "ER director");
+      await checkCompliance(page, "ER director");
+      await checkAppearance(page, "ER director");
+    }
+    await checkSettingsTabs(page, "ER director");
+    await sweepLabels(page, "er_director", "ER director");
 
     await login(page, "developer", "DOCTURN", "dev");
-    await checkDeveloper(page);
-    await checkAppearance(page, "developer");
+    if (all) {
+      await checkDeveloper(page);
+      await checkAppearance(page, "developer");
+    }
+    await sweepLabels(page, "developer", "developer");
 
     rec("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
     await ctx.close();
