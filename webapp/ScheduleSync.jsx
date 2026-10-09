@@ -238,9 +238,9 @@ function ScheduleSync({ org }) {
   const [baseUrl, setBaseUrl] = React.useState("https://www.amion.com/api");
   // Capture fields
   const [loginUrl, setLoginUrl] = React.useState("https://www.amion.com");
-  const [username, setUsername] = React.useState("tarzana.isp");
-  const [password, setPassword] = React.useState("••••••••••");
-  const [schedKey, setSchedKey] = React.useState("!299a6dc6iJRQ");
+  const [username, setUsername] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [schedKey, setSchedKey] = React.useState("");
   // Document / online-page ingestion (non-vendor sources).
   const [fileName, setFileName] = React.useState("");
   const [pageUrl, setPageUrl] = React.useState("");

@@ -20393,9 +20393,9 @@ function ScheduleSync() {
   const [baseUrl, setBaseUrl] = React.useState("https://www.amion.com/api");
   // Capture fields
   const [loginUrl, setLoginUrl] = React.useState("https://www.amion.com");
-  const [username, setUsername] = React.useState("tarzana.isp");
-  const [password, setPassword] = React.useState("••••••••••");
-  const [schedKey, setSchedKey] = React.useState("!299a6dc6iJRQ");
+  const [username, setUsername] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [schedKey, setSchedKey] = React.useState("");
   const run = () => {
     setBusy(true);
     setTimeout(() => {
