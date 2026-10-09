@@ -28,6 +28,25 @@
   // that nothing reached the server.
   var localDemoSession = false;
   var meId = null;   // current user's backend id (for messaging "me" / participants)
+  // A message window is mapped FOR one identity: mapMessage() derives "me",
+  // "unread by me" and the receipt from meId, and hydrateConversations() keeps
+  // a known conversation's loaded window. So when a DIFFERENT person takes over
+  // this page without a sign-out — the demo role switch signs straight in as
+  // another account; a developer opens, leaves or manages a portal — the
+  // previous person's threads are dropped in the same update that installs the
+  // new identity (never re-used, not even a conversation both are in) and the
+  // new identity's list maps every thread from its own side. No previous
+  // identity (fresh page, or after a sign-out, which already cleared them) is
+  // not a switch.
+  function adoptIdentity(id) {
+    var switched = meId != null && id !== meId;
+    meId = id;
+    return switched;
+  }
+  function dropPreviousThreads(s, switched) {
+    if (switched) { s.conversations = []; s.__activeConvo = null; s.__openThread = null; }
+    return s;
+  }
   var auditLoaded = false; // fetch the per-org audit trail once per context, then only while viewing Compliance
   var prefsLoaded = false; // load per-org consult catalog + theme once per context (later rehydrates keep local edits)
   // Demo console: when loaded as an iframe pane with ?token=<t>, this pane
@@ -1467,11 +1486,12 @@
       localDemoSession = false;
       lastAuth = { org: orgCode, username: u.username };
       newAuthEpoch();
-      meId = u.id;
+      var switched = adoptIdentity(u.id);
       auditLoaded = false; // new login context → reload that org's audit on first hydrate
       prefsLoaded = false;
       dashHydrated = false; lastDashSnap = null; // pause layout-save until the new user's layout hydrates
       DT.set(function (s) {
+        dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.ui.nav = "dashboard";
@@ -3089,11 +3109,12 @@
       .then(function () { return get("/api/user"); })
       .then(function (u) {
         newAuthEpoch();
-        meId = u.id;
+        var switched = adoptIdentity(u.id);
         auditLoaded = false;
         prefsLoaded = false;
         var g = swapGates(u);
         DT.set(function (s) {
+          dropPreviousThreads(s, switched);
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.impersonating = { name: u.displayName, role: u.role, org: user.org || s.selectedOrg };
@@ -3115,13 +3136,14 @@
   DT.actions.stopImpersonating = function () {
     return api("POST", "/api/dev/impersonate/stop", {}).then(function (u) {
       newAuthEpoch();
-      meId = u.id;
+      var switched = adoptIdentity(u.id);
       auditLoaded = false; prefsLoaded = false;
       dashHydrated = false; lastDashSnap = null;
       // The borrowed account's gate flags go with it; the developer's own (if
       // any — e.g. the platform org began requiring MFA) come from the answer.
       var g = swapGates(u);
       DT.set(function (s) {
+        dropPreviousThreads(s, switched);
         s.impersonating = null;
         s.session = { role: u.role, org: PLATFORM_ORG, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
@@ -3147,11 +3169,12 @@
     return api("POST", "/api/dev/manage-org", { orgId: Number(id) })
       .then(function (u) {
         newAuthEpoch();
-        meId = u.id;
+        var switched = adoptIdentity(u.id);
         auditLoaded = false;
         prefsLoaded = false;
         var g = swapGates(u);
         DT.set(function (s) {
+          dropPreviousThreads(s, switched);
           s.session = { role: u.role, org: u.orgCode || code, user: u.username, name: u.displayName };
           s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
           s.selectedOrg = u.orgCode || code;
@@ -3260,8 +3283,9 @@
       if (u && u.locked) { engageLock({ org: u.orgCode, user: u.username, name: u.displayName, role: u.role }); return; }
       sessionConfirmed = true;
       lastAuth = { role: u.role, org: u.role === "developer" ? PLATFORM_ORG : "ISPN" };
-      meId = u.id;
+      var switched = adoptIdentity(u.id);
       DT.set(function (s) {
+        dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: lastAuth.org, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.ui.nav = "dashboard"; s.ui.notifOpen = false; s.loginError = null;
@@ -3306,11 +3330,14 @@
       localDemoSession = false;
       lastAuth = { role: u.role, org: orgCode };
       newAuthEpoch();
-      meId = u.id;
+      // A later rehydrate can find a different person behind the shared
+      // cookie (another tab signed out and in as someone else).
+      var switched = adoptIdentity(u.id);
       auditLoaded = false;
       prefsLoaded = false;
       dashHydrated = false; lastDashSnap = null;
       DT.set(function (s) {
+        dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
         s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
         s.loginError = null;

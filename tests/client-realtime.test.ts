@@ -27,6 +27,10 @@ import { afterEach, describe, expect, it } from "vitest";
  *                  later state changes.
  *  - A.CON-MIN-14  a developer's hydrate never requests /api/patient-board.
  *  - A.CON-MIN-17  unread count in document.title and navigator.setAppBadge.
+ *  - identity switch on one page (demo role switch, developer impersonation):
+ *                  a thread both people are in is mapped from the NEW user's
+ *                  side — the previous person's window (mapped for their id)
+ *                  is never re-used by the paged list (A.CON-SHO-65 follow-up).
  */
 
 // CLIENT_SRC_ROOT points the suite at another checkout's webapp/ (e.g. to show
@@ -71,6 +75,8 @@ interface Harness {
   state(): any;
   convo(id: number): any;
   close(): void;
+  /** Who the scripted server answers as from now on (after a POST /api/login). */
+  setUser(u: any): void;
 }
 
 const harnesses: Harness[] = [];
@@ -87,7 +93,7 @@ async function until(pred: () => boolean, ms = 3000) {
 
 /** Boot the real client signed in as `user` against scripted routes. */
 async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?: any[]; push?: "default" | "granted" | null } = {}): Promise<Harness> {
-  const user = opts.user ?? CHEN;
+  let user = opts.user ?? CHEN;
   const dom = new JSDOM("<!doctype html><html><head><title>DocTurn</title></head><body></body></html>", { url: "https://app.test/", runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window;
   const reqs: Req[] = [];
@@ -106,6 +112,7 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
     state: () => w.DT.getState(),
     convo: (id: number) => (w.DT.getState().conversations || []).find((c: any) => c.id === id),
     close: () => { try { w.close(); } catch { /* ignore */ } },
+    setUser: (u: any) => { user = u; },
   };
   harnesses.push(h);
   const unreadIn = (msgs: any[]) => msgs.filter((m) => m.senderId !== user.id && m.deliveries.some((d: any) => d.userId === user.id && !d.readAt)).length;
@@ -522,5 +529,58 @@ describe("web client realtime (jsdom, real store.js + api-bridge.js)", () => {
     const hosp = await boot();
     await sleep(100);
     expect(hosp.reqs.some((r) => r.path.startsWith("/api/patient-board"))).toBe(true);
+  });
+
+  // A message window is mapped FOR one identity ("me", "unread by me" and the
+  // receipt come from the signed-in user's id), and the conversation list keeps
+  // a known thread's window. A different person taking over the page without a
+  // sign-out — the demo role switch signs straight in as another account, a
+  // developer opens an impersonated portal — must get every thread mapped from
+  // THEIR side, at every moment, even for a conversation both are in.
+  const PATEL_USER = { id: PATEL, username: "patel", displayName: "Dr. Priya Patel", role: "hospitalist", credential: "MD" };
+  const shared = (sender: number, recipient: number) => ({
+    threads: { 1: [msg(101, 1, recipient, "older", { read: true, recipients: [sender] }), msg(102, 1, sender, "X-user ping", { recipients: [recipient] })] },
+    convos: [{ id: 1, type: "direct", name: null, participantIds: [sender, recipient], patientId: null }],
+  });
+  function watchPerspective(h: Harness, who: string, senderId: number) {
+    const seen = { wrong: 0 };
+    h.w.DT.subscribe(() => {
+      const s = h.state();
+      if (!s.session || s.session.user !== who) return;
+      (s.conversations || []).forEach((c: any) => (c.messages || []).forEach((m: any) => { if (m.senderId === senderId && m.me) seen.wrong++; }));
+    });
+    return seen;
+  }
+
+  it("identity switch: signing in as another account on the same page (demo role switch) maps a shared thread from the NEW user's side", async () => {
+    const h = await boot(shared(CHEN.id, PATEL));
+    expect(h.convo(1).messages.find((m: any) => m.id === 102)).toMatchObject({ me: true });
+    h.w.DT.actions.openConversation(1); // chen has the thread open (loaded window)
+    await until(() => h.convo(1).loaded);
+    const seen = watchPerspective(h, "patel", CHEN.id);
+    h.setUser(PATEL_USER);
+    await h.w.DT.actions.login("hospitalist", "ISPN", "patel", "docturn");
+    await until(() => h.state().session?.user === "patel" && !!h.convo(1));
+    await sleep(100);
+    const c = h.convo(1);
+    expect(c.messages.find((m: any) => m.id === 102)).toMatchObject({ me: false, unreadByMe: true });
+    expect(c.unread).toBe(1);
+    expect(c.loaded).toBe(false); // patel's own thread read happens when HE opens it
+    expect(h.state().__activeConvo ?? null).toBeNull();
+    expect(seen.wrong).toBe(0); // never shown as patel's own, not even before his list arrived
+  });
+
+  it("identity switch: a developer opening an impersonated portal sees the shared thread from the impersonated user's side", async () => {
+    const DEV = { id: 1, username: "dev", displayName: "Platform Dev", role: "developer" };
+    const h = await boot({ user: DEV, ...shared(DEV.id, CHEN.id) });
+    expect(h.convo(1).messages.find((m: any) => m.id === 102)).toMatchObject({ me: true });
+    const seen = watchPerspective(h, "chen", DEV.id);
+    h.setUser(CHEN);
+    await h.w.DT.actions.impersonate({ id: CHEN.id, role: "hospitalist", org: "ISPN" });
+    await until(() => h.state().session?.user === "chen" && !!h.convo(1));
+    await sleep(100);
+    expect(h.convo(1).messages.find((m: any) => m.id === 102)).toMatchObject({ me: false, unreadByMe: true });
+    expect(h.convo(1).unread).toBe(1);
+    expect(seen.wrong).toBe(0);
   });
 });
