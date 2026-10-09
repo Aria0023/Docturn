@@ -538,9 +538,12 @@ function Messaging() {
               <button key={c.id} onClick={() => openThread(c.id)}
                 style={{ width: "100%", display: "flex", gap: 11, padding: isMobile ? "15px 16px" : "12px 16px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left",
                   background: active === c.id ? "#EFF6FF" : "#fff" }}>
-                <div style={{ position: "relative", flex: "none" }}>
+                {/* alignSelf: the row is a stretch flex container; a stretched
+                    wrapper is taller than the avatar and would hang the
+                    presence dot below the avatar's rim. */}
+                <div style={{ position: "relative", flex: "none", alignSelf: "flex-start" }}>
                   <Avatar initials={c.initials} size={isMobile ? 46 : 40} tint={c.tint} />
-                  {!c.group && !c.broadcast && <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={c.presence} /></span>}
+                  {!c.group && !c.broadcast && <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={c.presence} /></span>}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -629,7 +632,7 @@ function Messaging() {
                     style={{ width: "100%", display: "flex", gap: 13, alignItems: "center", padding: "11px 24px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", background: "#fff" }}>
                     <div style={{ position: "relative", flex: "none" }}>
                       <Avatar initials={p.avatar} size={40} tint={p.working ? "emerald" : "slate"} />
-                      <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
+                      <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{p.name}</div>

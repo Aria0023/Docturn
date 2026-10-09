@@ -14,7 +14,11 @@
  *   • the ER intake triage (ESI) row fits its card under the shell's 12px
  *     text floor and names the selected level.
  *
- * Covers findings A.CON-SHO-48/49/50/54/55/56 and A.CON-MIN-13.
+ * Covers findings A.CON-SHO-48/49/50/54/55/56 and A.CON-MIN-13, including the
+ * fix-up items: the Admissions log "Clear all" header (director Home panel and
+ * Admissions log screen), the Compliance screen (tabs / Export / Clear logs row,
+ * audit / PHI / logs tables), the presence dots in CareTeam and Messaging, and
+ * the Appearance screen for developer, director and ER director.
  *
  * Usage: start a seeded synthetic server, then
  *   BASE_URL=http://127.0.0.1:5060 node scripts/phone-layout-check.mjs
@@ -456,6 +460,236 @@ async function checkDeveloper(page) {
   }
 }
 
+// Admissions log header (A.CON-SHO-49 fix-up): the "Clear 24h+" / "Clear all"
+// buttons share a no-wrap row with the title inside an overflow:hidden Card;
+// at ≤390px "Clear all" was drawn 21-36px past the Card edge ("Clea").
+// Shown on the director Home admissions panel and on the Admissions log screen.
+async function checkAdmissionsHeader(page, label) {
+  const m = await page.evaluate(() => {
+    const M = window.__m;
+    const h = M.byText("h3", /^Admissions log$/)[0];
+    if (!h) return null;
+    const row = h.parentElement;
+    const btns = [/^Clear 24h\+$/, /^Clear all$/].map((re) => M.byText("button", re).find((b) => row.contains(b))).filter(Boolean);
+    return { scroll: row.scrollWidth, client: row.clientWidth, btns: btns.map((b) => ({ t: b.textContent.trim(), vis: M.fullyVisible(b), r: M.rect(b) })) };
+  });
+  if (!m) { rec(`${label}: Admissions log header present`, false); return; }
+  rec(`${label}: Admissions log header row does not overflow its Card`, m.scroll <= m.client + 1, `scrollWidth=${m.scroll} clientWidth=${m.client}`);
+  rec(`${label}: 'Clear 24h+' and 'Clear all' fully visible`, m.btns.length === 2 && m.btns.every((b) => b.vis), m.btns.map((b) => `${b.t}=${rectStr(b.r)}`).join(" "));
+  rec(`${label}: Clear buttons tap height ≥ 44`, m.btns.length === 2 && m.btns.every((b) => b.r.height >= TAP), m.btns.map((b) => fmt(b.r.height)).join(","));
+}
+
+// Compliance (A.CON-SHO-50 fix-up): tabs + Export + Clear logs row, the
+// ComplianceTabs strip, and the audit / PHI / logs tables with fixed-width
+// columns used to push <main> to 449px and clip the Risk column.
+async function checkCompliance(page, label, { clear = true } = {}) {
+  await nav(page, "compliance");
+  await noOverflow(page, `${label} compliance`);
+  const top = await page.evaluate(() => {
+    const M = window.__m;
+    const logsTab = M.byText("button", /^System logs$/)[0];
+    if (!logsTab) return null;
+    const strip = logsTab.parentElement;
+    const stripR = M.rect(strip);
+    strip.scrollLeft = strip.scrollWidth;
+    const after = M.rect(logsTab);
+    const reach = M.inViewportX(after) && after.right <= stripR.right + 0.5 && after.left >= stripR.left - 0.5;
+    strip.scrollLeft = 0;
+    const tabs = [...strip.querySelectorAll("button")];
+    const exp = M.byText("button", /^Export$/)[0];
+    const clr = M.byText("button", /^Clear logs$/)[0];
+    const tiles = [...document.querySelectorAll("div")].filter((d) => getComputedStyle(d).fontSize === "28px" && getComputedStyle(d).fontWeight === "700").map((v) => v.parentElement);
+    return {
+      stripRight: stripR.right, reach, after, minTabH: Math.min(...tabs.map((b) => M.rect(b).height)),
+      exp: exp ? { vis: M.fullyVisible(exp), r: M.rect(exp) } : null,
+      clr: clr ? { vis: M.fullyVisible(clr), r: M.rect(clr) } : null,
+      expClrOverlap: exp && clr ? M.overlap(exp, clr) : false,
+      tilesClipped: tiles.filter((t) => !M.fullyVisible(t) || t.scrollWidth > t.clientWidth + 1).length, tiles: tiles.length,
+      vw: window.innerWidth,
+    };
+  });
+  if (!top) { rec(`${label} compliance: tab strip present`, false); return; }
+  rec(`${label} compliance: KPI tiles inside the viewport, values not clipped`, top.tiles === 4 && top.tilesClipped === 0, `${top.tiles} tiles, ${top.tilesClipped} clipped`);
+  rec(`${label} compliance: tab strip inside the viewport`, top.stripRight <= top.vw + 0.5, `strip.right=${fmt(top.stripRight)}`);
+  rec(`${label} compliance: 'System logs' tab reachable by scrolling the strip`, top.reach, `after scroll=${rectStr(top.after)}`);
+  rec(`${label} compliance: tab tap height ≥ 44`, top.minTabH >= TAP, `minH=${fmt(top.minTabH)}`);
+  rec(`${label} compliance: Export fully visible`, !!(top.exp && top.exp.vis), top.exp ? rectStr(top.exp.r) : "none");
+  if (clear) {
+    rec(`${label} compliance: Clear logs fully visible`, !!(top.clr && top.clr.vis), top.clr ? rectStr(top.clr.r) : "none");
+    rec(`${label} compliance: Export and Clear logs do not overlap`, !top.expClrOverlap);
+    rec(`${label} compliance: Export / Clear logs tap height ≥ 44`, !!(top.exp && top.clr) && top.exp.r.height >= TAP && top.clr.r.height >= TAP, top.exp && top.clr ? `${fmt(top.exp.r.height)},${fmt(top.clr.r.height)}` : "");
+  } else {
+    rec(`${label} compliance: no Clear logs for this role`, !top.clr);
+    rec(`${label} compliance: Export tap height ≥ 44`, !!top.exp && top.exp.r.height >= TAP, top.exp ? fmt(top.exp.r.height) : "");
+  }
+
+  for (const [tabLabel, lastHead] of [["Audit log", "Risk"], ["PHI access", "Result"], ["System logs", "Event"], ["Security incidents", null]]) {
+    if (!lastHead) {
+      // The web client lists no incidents from the server today, so render two
+      // display-only rows in local state (never sent anywhere) to measure the
+      // incident card layout; the previous list is restored afterwards.
+      await page.evaluate(() => window.DT.set((s) => {
+        window.__savedIncidents = s.incidents;
+        s.incidents = [
+          { id: "lay-1", type: "unusual_access_pattern_detected", sev: "high", desc: "Layout check: 48 chart opens in 5 minutes from one workstation", status: "open", at: Date.now() - 600000 },
+          { id: "lay-2", type: "brute_force", sev: "critical", desc: "Layout check: repeated failed sign-ins", status: "investigating", at: Date.now() - 60000 },
+        ];
+        return s;
+      }));
+    }
+    await page.evaluate((t) => { const b = window.__m.byText("button", new RegExp("^" + t + "$"))[0]; if (b) b.click(); }, tabLabel);
+    await sleep(200);
+    await noOverflow(page, `${label} compliance ${tabLabel}`);
+    const t = await page.evaluate((lastHead) => {
+      const M = window.__m;
+      if (!lastHead) {
+        // incident cards: Resolve buttons and status badges inside the viewport
+        const res = M.byText("button", /^Resolve$/);
+        const cards = res.map((b) => { let p = b.parentElement; while (p && !/box-shadow/.test(p.getAttribute("style") || "")) p = p.parentElement; return p; }).filter(Boolean);
+        const all = [...document.querySelectorAll("span.ds-mono")].filter((t) => /^[a-z ]+$/i.test(t.textContent.trim())).map((t) => { let p = t.parentElement; while (p && !/box-shadow/.test(p.getAttribute("style") || "")) p = p.parentElement; return p; }).filter(Boolean);
+        const spill = (c) => [...c.querySelectorAll("div,span")].some((e) => getComputedStyle(e).display !== "inline" && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflow === "visible");
+        return { kind: "incidents", res: res.map((b) => ({ vis: M.fullyVisible(b), h: M.rect(b).height })), cards: cards.map((c) => ({ vis: M.fullyVisible(c), over: c.scrollWidth > c.clientWidth + 1 })), spilling: [...new Set(all)].filter(spill).length, n: new Set(all).size };
+      }
+      const head = [...document.querySelectorAll("span")].find((s) => s.textContent.trim() === lastHead && s.children.length === 0 && getComputedStyle(s.parentElement).textTransform === "uppercase");
+      if (!head) return null;
+      const headRow = head.parentElement;
+      const card = headRow.parentElement;
+      const rows = [...card.children].filter((r) => r !== headRow && getComputedStyle(r).display === "flex");
+      const sample = rows.slice(0, 12);
+      const lastCells = sample.map((r) => r.lastElementChild);
+      // text columns that must not draw over each other (audit: actor vs action)
+      const overlaps = sample.filter((r) => { const kids = [...r.children]; for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) if (M.rect(kids[i]).width && M.rect(kids[j]).width && M.overlap(kids[i], kids[j])) return true; return false; }).length;
+      // a cell whose content is wider than the cell and not clipped/ellipsised
+      // draws over its neighbour (the "ExpoC" / action-over-actor smear)
+      const spills = (k) => k.scrollWidth > k.clientWidth + 1 && getComputedStyle(k).overflow === "visible";
+      const spilling = sample.map((r) => [...r.children].map((k, i) => spills(k) ? `#${i}:${k.textContent.trim().slice(0, 16)}(${k.scrollWidth}>${k.clientWidth})` : null).filter(Boolean)).filter((x) => x.length);
+      const textOverflow = spilling.length;
+      return {
+        kind: "table",
+        head: { vis: M.fullyVisible(head), r: M.rect(head) },
+        headOver: headRow.scrollWidth > headRow.clientWidth + 1,
+        rowsOver: sample.filter((r) => r.scrollWidth > r.clientWidth + 1).length,
+        lastVis: lastCells.filter((c) => c && !M.fullyVisible(c)).length,
+        overlaps, textOverflow, spillWhat: spilling.slice(0, 2).map((x) => x.join(" ")).join(" | "), n: rows.length,
+      };
+    }, lastHead);
+    if (!t) { rec(`${label} compliance ${tabLabel}: table present`, false); continue; }
+    if (t.kind === "incidents") {
+      rec(`${label} compliance incidents: cards and Resolve buttons inside the viewport`, t.cards.every((c) => c.vis && !c.over) && t.res.every((b) => b.vis), `${t.cards.length} open cards`);
+      rec(`${label} compliance incidents: no text spills out of its column`, t.n === 2 && t.spilling === 0, `${t.spilling} of ${t.n} cards spill`);
+      rec(`${label} compliance incidents: Resolve tap height ≥ 44`, t.res.length === 2 && t.res.every((b) => b.h >= TAP), t.res.map((b) => fmt(b.h)).join(","));
+      await page.evaluate(() => window.DT.set((s) => { s.incidents = window.__savedIncidents || []; return s; }));
+      continue;
+    }
+    rec(`${label} compliance ${tabLabel}: '${lastHead}' header fully visible`, t.head.vis, rectStr(t.head.r));
+    rec(`${label} compliance ${tabLabel}: header and rows fit the Card`, !t.headOver && t.rowsOver === 0, `headOver=${t.headOver} rowsOver=${t.rowsOver}/${t.n}`);
+    rec(`${label} compliance ${tabLabel}: last column visible in every row`, t.lastVis === 0, `${t.lastVis} clipped`);
+    rec(`${label} compliance ${tabLabel}: no column drawn over another`, t.overlaps === 0 && t.textOverflow === 0, `overlapping rows=${t.overlaps} rows with spilling cells=${t.textOverflow} ${t.spillWhat || ""}`);
+  }
+  await page.evaluate(() => { const b = window.__m.byText("button", /^Audit log$/)[0]; if (b) b.click(); });
+}
+
+// Presence dot on an avatar (A.CON-SHO-55 fix-up). Each wrapper is a
+// position:relative box holding an Avatar and an absolutely-positioned ring
+// around the 9px StatusDot; without display:flex the ring's line box is
+// 19-23px tall, so the white ring becomes a tall pill over the initials.
+async function checkPresenceDots(page, label, scopeKind) {
+  const d = await page.evaluate((kind) => {
+    const M = window.__m;
+    let scope = null;
+    if (kind === "careteam") { const h = M.h2(/^Doctors on service$/); scope = h ? h.parentElement.nextElementSibling : null; }
+    else if (kind === "convlist") { const h = M.h2(/^Messages$/); scope = h ? h.parentElement.parentElement.parentElement : null; }
+    else if (kind === "picker") { const t = M.byText("div", /^New message$/).find((x) => x.children.length === 0); scope = t ? t.parentElement.parentElement : null; }
+    if (!scope) return null;
+    const rings = [...scope.querySelectorAll("span[style*='position: absolute'][style*='border: 2px solid']")].filter((s) => s.firstElementChild && getComputedStyle(s.firstElementChild).width === "9px");
+    return rings.map((ring) => {
+      const avatar = ring.previousElementSibling;
+      const dot = ring.firstElementChild;
+      return { ringH: M.rect(ring).height, ringW: M.rect(ring).width, dotBottom: M.rect(dot).bottom, dotRight: M.rect(dot).right, avBottom: avatar ? M.rect(avatar).bottom : null, avRight: avatar ? M.rect(avatar).right : null };
+    });
+  }, scopeKind);
+  if (!d || !d.length) { rec(`${label}: presence dots present`, false, d ? "0 dots" : "screen not found"); return; }
+  const onRim = d.every((r) => r.avBottom != null && Math.abs(r.dotBottom - r.avBottom) <= 3 && Math.abs(r.dotRight - r.avRight) <= 3);
+  const round = d.every((r) => r.ringH <= 14 && Math.abs(r.ringH - r.ringW) <= 1);
+  rec(`${label}: presence dot on the avatar's bottom-right rim (±3px)`, onRim, `${d.length} dots; first dotBottom=${fmt(d[0].dotBottom)} avatarBottom=${fmt(d[0].avBottom)} dotRight=${fmt(d[0].dotRight)} avatarRight=${fmt(d[0].avRight)}`);
+  rec(`${label}: presence ring is a 13px circle, not a tall pill`, round, `ring=${fmt(d[0].ringW)}x${fmt(d[0].ringH)}`);
+}
+
+async function checkCareTeamDots(page) {
+  await nav(page, "team");
+  await checkPresenceDots(page, "care team 'Doctors on service'", "careteam");
+}
+
+async function checkMessagingDots(page) {
+  await nav(page, "messages");
+  // New-message picker (pencil button next to the "Messages" title)
+  await page.evaluate(() => { const h = window.__m.h2(/^Messages$/); const b = h && h.parentElement.querySelector("button"); if (b) b.click(); });
+  await sleep(400);
+  await prep(page);
+  await checkPresenceDots(page, "messages new-message picker", "picker");
+  // Fixture for the conversation list: a 1:1 thread needs to exist. If the
+  // list has none, pick the first person in the directory (opens a thread),
+  // then come back to the list.
+  const started = await page.evaluate(() => {
+    const st = window.DT.getState();
+    if ((st.conversations || []).some((c) => !c.group && !c.broadcast)) { const b = window.__m.byText("button", /^Close$/)[0]; if (b) b.click(); return false; }
+    const t = window.__m.byText("div", /^New message$/).find((x) => x.children.length === 0);
+    const ring = t && t.parentElement.parentElement.querySelector("span[style*='border: 2px solid']");
+    const btn = ring && ring.closest("button");
+    if (btn) btn.click();
+    return !!btn;
+  });
+  await sleep(600);
+  if (started) { await nav(page, "dashboard"); }
+  await nav(page, "messages");
+  await checkPresenceDots(page, "messages conversation list", "convlist");
+}
+
+// Appearance (A.CON-MIN-13 fix-up): the collapsed 1fr grid track kept the
+// children's min-content width (420px), so the workspace-name input, swatches,
+// segmented controls, nav toggles and Reset sat past the viewport.
+async function checkAppearance(page, label) {
+  await nav(page, "appearance");
+  await noOverflow(page, `${label} appearance`);
+  const m = await page.evaluate(() => {
+    const M = window.__m;
+    const g = (els) => ({ n: els.length, bad: els.filter((e) => !M.fullyVisible(e)).map((e) => (e.getAttribute("title") || e.textContent || e.tagName).trim().slice(0, 18) + rectStrIn(M.rect(e))), minH: els.length ? Math.min(...els.map((e) => M.rect(e).height)) : null });
+    function rectStrIn(r) { return `[${Math.round(r.left)}..${Math.round(r.right)}]`; }
+    const input = [...document.querySelectorAll("input")].filter((i) => i.placeholder === "DocTurn");
+    const swatches = ["Blue", "Teal", "Violet", "Pink", "Red", "Orange", "Cyan", "Slate"].map((n) => document.querySelector(`button[title='${n}']`)).filter(Boolean);
+    const segs = M.byText("button", /^(Classic|Calm|Warm|Sharp|Rounded|Soft|Expanded|Compact|Standard|Wide|Full)$/);
+    const toggles = M.byText("button", /^Visible$/);
+    const reset = M.byText("button", /^Reset to defaults$/);
+    const preview = M.byText("span", /^Live preview$/)[0];
+    const previewCard = preview ? preview.parentElement.parentElement : null;
+    return { input: g(input), swatches: g(swatches), segs: g(segs), toggles: g(toggles), reset: g(reset), preview: previewCard ? M.fullyVisible(previewCard) : null };
+  });
+  for (const [k, name, min] of [["input", "workspace-name input", 1], ["swatches", "accent swatches", 8], ["segs", "segmented controls", 11], ["toggles", "nav 'Visible' toggles", 1], ["reset", "'Reset to defaults'", 1]]) {
+    const g = m[k];
+    rec(`${label} appearance: ${name} fully visible`, g.n >= min && g.bad.length === 0, `${g.n} found${g.bad.length ? "; clipped: " + g.bad.slice(0, 4).join(" ") : ""}`);
+    rec(`${label} appearance: ${name} tap height ≥ 44`, g.n >= min && g.minH >= TAP, `minH=${fmt(g.minH)}`);
+  }
+  rec(`${label} appearance: live preview card inside the viewport`, m.preview === true, String(m.preview));
+}
+
+// Access & people strip (People.jsx AccessPeople, reached via setNav("access")):
+// the "identical strip" A.CON-SHO-50 names next to the Directory hub one.
+async function checkAccessStrip(page, label) {
+  await nav(page, "access");
+  await noOverflow(page, `${label} access & people`);
+  const t = await page.evaluate(() => {
+    const M = window.__m;
+    const roles = M.byText("button", /Roles & permissions/)[0];
+    if (!roles) return null;
+    const strip = roles.parentElement;
+    const tabs = [...strip.querySelectorAll("button")];
+    return { strip: M.rect(strip), tabs: tabs.map((b) => ({ vis: M.fullyVisible(b), h: M.rect(b).height })), vw: window.innerWidth };
+  });
+  if (!t) { rec(`${label} access & people: tab strip present`, false); return; }
+  rec(`${label} access & people: tab strip and both tabs inside the viewport`, t.strip.right <= t.vw + 0.5 && t.tabs.every((b) => b.vis), `strip=${rectStr(t.strip)}`);
+  rec(`${label} access & people: tabs single-line, tap height ≥ 44`, t.tabs.every((b) => b.h >= TAP && b.h < 60), t.tabs.map((b) => fmt(b.h)).join(","));
+}
+
 // ---- driver -----------------------------------------------------------------
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 try {
@@ -474,21 +708,34 @@ try {
     await login(page, "hospitalist", "ISPN", "chen");
     await checkHospitalistHome(page);
     await checkDirectory(page, false);
+    await checkCareTeamDots(page);
+    await checkMessagingDots(page);
+    await checkCompliance(page, "hospitalist", { clear: false });
 
     await login(page, "er_doctor", "ISPN", "er.doc");
     await checkErDoctorHome(page);
 
     await login(page, "director", "ISPN", "director");
     await checkDirectorHome(page);
+    await checkAdmissionsHeader(page, "director home");
     await checkDirectory(page, true);
     await checkBoardControls(page, "director");
+    await nav(page, "admissions");
+    await noOverflow(page, "director admissions log");
+    await checkAdmissionsHeader(page, "director admissions log");
+    await checkCompliance(page, "director");
+    await checkAppearance(page, "director");
+    await checkAccessStrip(page, "director");
 
     await login(page, "er_director", "ISPN", "er.director");
     await checkErDirectorHome(page);
     await checkBoardControls(page, "ER director");
+    await checkCompliance(page, "ER director");
+    await checkAppearance(page, "ER director");
 
     await login(page, "developer", "DOCTURN", "dev");
     await checkDeveloper(page);
+    await checkAppearance(page, "developer");
 
     rec("no uncaught page errors", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
     await ctx.close();

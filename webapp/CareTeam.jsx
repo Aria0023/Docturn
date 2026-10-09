@@ -88,7 +88,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <div style={{ position: "relative", flex: "none" }}>
               <Avatar initials={p.avatar} size={36} tint={p.working ? "emerald" : "slate"} />
-              <span style={{ position: "absolute", bottom: -1, right: -1, border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
+              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>

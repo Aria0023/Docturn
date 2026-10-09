@@ -35,12 +35,15 @@ function AdmissionsLog({ admissions, resetAt, bare, onPurge }) {
       </div>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
+        {/* The header wraps: on a phone the Clear buttons drop to their own
+            line (still right-aligned) instead of being drawn past the Card's
+            overflow:hidden edge ("Clea" at 375px, A.CON-SHO-49). */}
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8, rowGap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
           <Icon name="scroll-text" size={17} color="var(--primary)" />
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Admissions log</h3>
           <Badge variant="secondary">{log.length}</Badge>
           {onPurge ? (
-            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
               <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>
               <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients and admission history? This can't be undone.")) onPurge(0); }}>Clear all</Button>
             </span>

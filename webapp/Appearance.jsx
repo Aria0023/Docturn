@@ -16,13 +16,13 @@ const SIDEBARS = [["Expanded", "expanded", "panel-left"], ["Compact", "compact",
 
 function Seg({ options, value, onChange }) {
   return (
-    <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+    <div style={{ display: "inline-flex", flexWrap: "wrap", maxWidth: "100%", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
       {options.map((o) => {
         const [label, val, icon] = Array.isArray(o) ? o : [o, o];
         const on = value === val;
         return (
           <button key={val} onClick={() => onChange(val)}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)",
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
               background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
             {icon && <Icon name={icon} size={15} />}{label}
           </button>
@@ -32,14 +32,18 @@ function Seg({ options, value, onChange }) {
   );
 }
 
+// Label beside its control on desktop; on a phone the control goes under the
+// label at full card width, so a 200-240px control never squeezes the label to
+// a word per line or pushes the card past the viewport (A.CON-MIN-13).
 function Row({ label, sub, children }) {
+  const mobile = useIsMobile();
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "15px 0", borderBottom: "1px solid var(--border)" }}>
+    <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 10 : 16, padding: "15px 0", borderBottom: "1px solid var(--border)" }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 600 }}>{label}</div>
         {sub && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{sub}</div>}
       </div>
-      <div style={{ flex: "none" }}>{children}</div>
+      <div style={{ flex: "none", minWidth: 0, maxWidth: "100%" }}>{children}</div>
     </div>
   );
 }
@@ -55,6 +59,7 @@ function CardHead({ icon, title, sub }) {
 }
 
 function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset }) {
+  const mobile = useIsMobile();
   // build ordered, annotated nav list for the structure editor
   const items = navOrder.map((id) => master.find((m) => m.id === id)).filter(Boolean);
   const hiddenItems = master.filter((m) => navHidden.includes(m.id) && m.id !== "dashboard");
@@ -62,24 +67,27 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
   return (
     <PageWrap>
       <SettingsTabs />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: "1 1 240px", minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Appearance &amp; layout</div>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Customize branding, theme and how the workspace is structured. Changes apply instantly.</div>
         </div>
         <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onReset}>Reset to defaults</Button>
       </div>
 
+      {/* minWidth 0 on both grid children: the phone rule collapses the grid
+          to one 1fr track, which only shrinks to the viewport if its items may
+          go below their min-content width (it was 420px, A.CON-MIN-13). */}
       <div style={{ display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 16, alignItems: "start" }}>
         {/* LEFT: controls */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           <Card style={{ padding: 18 }}>
             <CardHead icon="palette" title="Brand & theme" />
             <Row label="Workspace name" sub="Shown in the sidebar and on login.">
-              <div style={{ width: 200 }}><Field icon="type" value={theme.appName} onChange={(v) => onSetTheme({ appName: v || "DocTurn" })} placeholder="DocTurn" /></div>
+              <div style={{ width: mobile ? "100%" : 200, maxWidth: "100%" }}><Field icon="type" value={theme.appName} onChange={(v) => onSetTheme({ appName: v || "DocTurn" })} placeholder="DocTurn" /></div>
             </Row>
             <Row label="Accent color" sub="Drives buttons, links and highlights.">
-              <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: 220 }}>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: mobile ? "flex-start" : "flex-end", maxWidth: mobile ? "100%" : 220 }}>
                 {ACCENTS.map(([hex, name]) => (
                   <button key={hex} title={name} onClick={() => onSetTheme({ accent: hex })}
                     style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: hex, cursor: "pointer", border: theme.accent === hex ? "2px solid var(--foreground)" : "2px solid transparent", boxShadow: "0 0 0 1px var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -120,7 +128,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                         style={{ border: "none", background: "transparent", cursor: i === items.length - 1 ? "default" : "pointer", color: i === items.length - 1 ? "var(--border)" : "var(--muted-foreground)", padding: 0, lineHeight: 0 }}><Icon name="chevron-down" size={15} /></button>
                     </div>
                     <Icon name={it.icon} size={17} color="var(--muted-foreground)" />
-                    <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>{it.label}</span>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, overflowWrap: "anywhere" }}>{it.label}</span>
                     {locked
                       ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="lock" size={12} />Home</span>
                       : <button onClick={() => onToggleNav(role, it.id)} title="Hide from navigation"
@@ -146,7 +154,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
         </div>
 
         {/* RIGHT: live preview */}
-        <div style={{ position: "sticky", top: 84 }}>
+        <div style={{ position: "sticky", top: 84, minWidth: 0 }}>
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "11px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 7 }}>
               <Icon name="eye" size={15} color="var(--muted-foreground)" />
@@ -177,7 +185,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                   <div style={{ width: "85%", height: 7, background: "var(--secondary)", borderRadius: 99, marginBottom: 6 }} />
                   <div style={{ width: "70%", height: 7, background: "var(--secondary)", borderRadius: 99 }} />
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", fontSize: 12, fontWeight: 600 }}>Primary</span>
                   <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "#fff", border: "1px solid var(--border)", color: "var(--foreground)", fontSize: 12, fontWeight: 600 }}>Secondary</span>
                   <span style={{ padding: "5px 11px", borderRadius: "var(--radius-full)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", fontSize: 11.5, fontWeight: 700, alignSelf: "center" }}>Badge</span>
