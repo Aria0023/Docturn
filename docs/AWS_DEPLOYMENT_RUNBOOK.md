@@ -478,9 +478,10 @@ These are real, findable-in-the-code limitations — not polish:
 6. **Realtime needs the socket.** While a device's WebSocket is down (no
    network, or iOS has suspended the backgrounded app) nothing new appears on
    it; push is the only wake-up. When the socket comes back the client runs one
-   catch-up (conversation list + the threads that changed + dashboard data +
-   broadcasts), so nothing is lost — but there is no delivery-latency
-   measurement on physical phones yet (docs/MOBILE.md).
+   catch-up (`GET /api/messaging/sync` — new messages, receipts and recalls
+   since its cursor, no thread re-read — plus dashboard data and broadcasts),
+   so nothing is lost — but there is no delivery-latency measurement on
+   physical phones yet (docs/MOBILE.md).
 7. **Compression on this path.** Node serves the precompiled client
    brotli/gzip-compressed (~270 KB for the shell) and deliberately does not
    compress API responses; Caddy's `encode zstd gzip` (deploy/aws/Caddyfile)

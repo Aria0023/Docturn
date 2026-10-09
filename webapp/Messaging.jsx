@@ -22,6 +22,44 @@ function fmtBytes(n) {
   return (n / 1024 / 1024).toFixed(1) + " MB";
 }
 
+// ---- unacknowledged STAT: re-alert / escalation countdown (A.CON-MIN-18) ----
+// The server's sweep re-alerts an unacknowledged STAT recipient after
+// `realertMs` and escalates to their covering provider after `escalateMs`
+// (both from GET /api/settings — the values the sweep itself applies; it runs
+// every 15 s). Each recipient's delivery row records when a step really fired
+// (realertedAt / escalatedAt), so the label never claims a step that has not
+// happened. Shown only while the org's messaging.escalation module is on.
+function fmtLeft(ms) {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+}
+function statClockText(at, rows, t, now) {
+  if (!rows.length) return null;
+  // The sweep's escalation step ran: the copy went to the recipient's covering
+  // provider when one is set (plus the SMS nudge) — the row cannot say which.
+  if (rows.every((d) => d.escalatedAt)) return "Escalated";
+  const esc = at + t.escalateMs - now;
+  const escPart = esc > 0 ? "escalates in " + fmtLeft(esc) : "escalating…";
+  if (rows.every((d) => d.realertedAt)) return "Re-alerted · " + escPart;
+  const re = at + t.realertMs - now;
+  return (re > 0 ? "Re-alert in " + fmtLeft(re) : "Re-alerting…") + " · " + escPart;
+}
+// `rows` = the unacknowledged recipient rows this viewer cares about (all of
+// them for the sender, my own for a recipient).
+function StatClock({ m, rows, timings }) {
+  const on = !(window.DT && window.DT.moduleOn) || window.DT.moduleOn("messaging.escalation");
+  const live = !!(timings && on && m.priority === "stat" && m.id != null && rows.length);
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!live) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [live]);
+  if (!live) return null;
+  const text = statClockText(m.at, rows, timings, now);
+  return text ? <span data-stat-clock title="Unacknowledged STATs are re-alerted, then escalated to the recipient's covering provider (if one is set) with an SMS nudge" style={{ color: "#B91C1C", fontWeight: 600 }}>{text}</span> : null;
+}
+
 // The compose picker rows are themselves buttons, so their "Message" cue is a
 // look-alike label, not a nested <button> (invalid HTML; iOS can route the tap
 // to either element).
@@ -328,7 +366,20 @@ function Messaging() {
     if (el) { stickRef.current = true; el.scrollTop = el.scrollHeight; }
   }, []);
   React.useLayoutEffect(() => { stickRef.current = true; pin(); }, [cid, showThread]);
-  React.useLayoutEffect(() => { pin(); }, [conv && conv.messages.length, conv && conv.typing]);
+  // "Load earlier" prepends a page: keep the reader where they were instead
+  // of jumping to the newest message (A.CON-SHO-65 paging).
+  const prependRef = React.useRef(null);
+  React.useLayoutEffect(() => {
+    const p = prependRef.current, el = threadRef.current;
+    if (p && el) { prependRef.current = null; el.scrollTop = el.scrollHeight - p.h + p.top; return; }
+    pin();
+  }, [conv && conv.messages.length, conv && conv.typing]);
+  const loadEarlier = () => {
+    if (!conv || !a.loadEarlier) return;
+    const el = threadRef.current;
+    if (el) prependRef.current = { h: el.scrollHeight, top: el.scrollTop };
+    Promise.resolve(a.loadEarlier(conv.id)).then((ok) => { if (!ok) prependRef.current = null; });
+  };
   const onThreadScroll = (e) => { const el = e.currentTarget; stickRef.current = el.scrollTop + el.clientHeight >= el.scrollHeight - 48; };
   const onLateContent = () => { if (stickRef.current) pin(); };
   React.useEffect(() => {
@@ -694,6 +745,19 @@ function Messaging() {
               <Icon name="lock" size={11} style={{ marginRight: 4, verticalAlign: "-1px" }} />Encrypted in transit · access audited
             </span>
           </div>
+          {/* Threads load a page at a time (A.CON-SHO-65): the newest page when
+              opened, older ones on request. */}
+          {conv.loaded === false && (
+            <div data-thread-loading role="status" style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)" }}>Loading conversation…</div>
+          )}
+          {conv.loaded && conv.hasEarlier && a.loadEarlier && (
+            <div style={{ textAlign: "center" }}>
+              <button type="button" data-load-earlier onClick={loadEarlier} disabled={!!conv.loadingEarlier}
+                style={{ minHeight: isMobile ? 44 : 30, padding: "0 16px", borderRadius: 99, border: "1px solid var(--border)", background: "#fff", color: "var(--primary)", fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: conv.loadingEarlier ? "default" : "pointer", opacity: conv.loadingEarlier ? 0.7 : 1 }}>
+                {conv.loadingEarlier ? "Loading…" : "Load earlier messages"}
+              </button>
+            </div>
+          )}
           {conv.messages.map((m, i) => {
             const prio = PRIO[m.priority];
             const rc = m.me ? RECEIPT[m.receipt] : null;
@@ -758,6 +822,11 @@ function Messaging() {
                 {/* Recipient: acknowledge an unacked STAT/urgent message. A full
                     44px target on phones, set apart from the footer controls
                     below it (A.CON-MIN-8). */}
+                {!m.me && m.priority === "stat" && !m.ackedByMe && m.id != null && (
+                  <div style={{ clear: "both", fontSize: 11.5, marginTop: 4 }}>
+                    <StatClock m={m} rows={(m.deliveries || []).filter((d) => d.userId === meId && !d.acknowledgedAt)} timings={st.statTimings} />
+                  </div>
+                )}
                 {!m.me && prio && !m.ackedByMe && m.id != null && (
                   <button type="button" data-ack onClick={() => a.acknowledgeMessage(conv.id, m.id)}
                     style={{ clear: "both", marginTop: isMobile ? 8 : 5, marginBottom: isMobile ? 6 : 0, display: "inline-flex", alignItems: "center", gap: 6, minHeight: isMobile ? 44 : undefined, padding: isMobile ? "0 20px" : "4px 12px", borderRadius: 99, cursor: "pointer", fontSize: isMobile ? 14 : 12, fontWeight: 700, fontFamily: "inherit", color: "#fff", background: prio.color, border: "none" }}>
@@ -790,7 +859,10 @@ function Messaging() {
                     {/* Sender: ack status for a STAT/urgent the server stored. */}
                     {m.me && prio && !m.local && (m.ackCount > 0
                       ? <span style={{ color: "var(--status-active)", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Icon name="check-check" size={12} />Acknowledged</span>
-                      : <span style={{ color: prio.color, fontWeight: 600 }}>Awaiting ack…</span>)}
+                      : <React.Fragment>
+                          <span style={{ color: prio.color, fontWeight: 600 }}>Awaiting ack…</span>
+                          <StatClock m={m} rows={(m.deliveries || []).filter((d) => !d.acknowledgedAt)} timings={st.statTimings} />
+                        </React.Fragment>)}
                     {!m.me && m.ackedByMe && prio && <span style={{ color: "var(--status-active)", fontWeight: 600 }}>✓ You acknowledged</span>}
                   </span>
                   {/* Group threads: per-recipient status, tap to expand. */}

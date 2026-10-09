@@ -301,6 +301,8 @@ CREATE TABLE IF NOT EXISTS messages (
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'routine';
 -- Forwarding provenance ({messageId, senderId, senderName, conversationId, sentAt}); NULL = original.
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from JSONB;
+-- Thread pages are keyset-paginated by id within a conversation (A.CON-SHO-65).
+CREATE INDEX IF NOT EXISTS messages_conversation_id_idx ON messages(conversation_id, id);
 
 -- Composer templates: owner_user_id NULL = org-wide, else personal.
 CREATE TABLE IF NOT EXISTS message_templates (
@@ -326,6 +328,7 @@ CREATE TABLE IF NOT EXISTS message_delivery_status (
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP;
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS realerted_at TIMESTAMP;
 ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS message_delivery_status_message_idx ON message_delivery_status(message_id);
 
 -- Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: the bytes are
 -- stored inline as base64 in the row. Production PHI requires encrypted object

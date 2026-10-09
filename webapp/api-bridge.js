@@ -142,7 +142,9 @@
   // GET /api/patient-board: requireRole(hospitalist, er_doctor, er_director, director).
   var BOARD_ROLES = { hospitalist: 1, er_doctor: 1, er_director: 1, director: 1 };
 
-  function rawApi(method, path, body) {
+  // `meta` (optional) receives response metadata: meta.hasMore from a paged
+  // thread read's X-Has-More header.
+  function rawApi(method, path, body, meta) {
     // Locked: nothing but sign-in / identity calls leave this tab (A.CON-SHO-7).
     if (lockActive() && !LOCK_ALLOWED.test(path)) return Promise.reject(lockedError());
     var headers = body ? { "Content-Type": "application/json" } : {};
@@ -153,6 +155,7 @@
       headers: (body || DEMO_TOKEN) ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     }).then(function (r) {
+      if (meta) { try { meta.hasMore = !!(r.headers && r.headers.get && r.headers.get("X-Has-More") === "1"); } catch (e) {} }
       if (r.status === 204) return null;
       return r.text().then(function (t) {
         var d = null;
@@ -199,9 +202,9 @@
 
   // API wrapper: surfaces MFA-enrolment gating and expired sessions to the UI.
   // It never re-authenticates on the caller's behalf.
-  function api(method, path, body) {
+  function api(method, path, body, meta) {
     var epoch = authEpoch; // which session identity this request belongs to
-    return rawApi(method, path, body).catch(function (e) {
+    return rawApi(method, path, body, meta).catch(function (e) {
       // The org requires MFA for privileged roles and this session hasn't
       // enrolled: the server answers everything but the enrolment routes this
       // way. Route the UI to the enrolment screen; never self-heal (a re-login
@@ -619,14 +622,24 @@
   function unreadOf(msgs) {
     return countWhere(msgs, function (m) { return !m.me && !m.local && m.id != null && m.unreadByMe && !readPosted[m.id]; });
   }
+  // A conversation's unread = my unread messages OLDER than its loaded window
+  // (counted by the server) + the unread ones inside the window.
+  function unreadFor(c, msgs) { return ((c && c.unreadEarlier) || 0) + unreadOf(msgs); }
   function byTime(x, y) { return (x.at - y.at) || ((x.id || 0) - (y.id || 0)); }
   function serverMsgs(c) { return ((c && c.messages) || []).filter(function (m) { return !m.local; }); }
-  // Kit conversation from a server conversation row and its (server) messages.
-  function convoView(c, msgs, prev, unreadOverride) {
+  function minId(msgs) { var n = null; (msgs || []).forEach(function (m) { if (m.id != null && (n === null || m.id < n)) n = m.id; }); return n; }
+  function maxId(msgs) { var n = null; (msgs || []).forEach(function (m) { if (m.id != null && (n === null || m.id > n)) n = m.id; }); return n; }
+  // Kit conversation from a server conversation row and its loaded window.
+  //   serverUnread  the server's unread count for me (sets unreadEarlier);
+  //                 omitted → keep the previous unreadEarlier.
+  //   flags         { loaded, hasEarlier } — omitted → keep the previous ones.
+  function convoView(c, msgs, prev, serverUnread, flags) {
     var others = (c.participantIds || []).filter(function (id) { return id !== meId; });
     var dirOther = others.length ? dirByUserId(others[0]) : null;
     var nm = c.name || (others.length === 1 ? (nameForUserId(others[0]) || "Conversation") : "Group conversation");
     var list = (msgs || []).slice().sort(byTime);
+    var f = flags || {};
+    var unreadEarlier = typeof serverUnread === "number" ? Math.max(0, serverUnread - unreadOf(list)) : ((prev && prev.unreadEarlier) || 0);
     return {
       id: c.id,
       name: nm,
@@ -634,7 +647,13 @@
       initials: initials(nm),
       presence: (dirOther && dirOther.working) ? "online" : "offline",
       tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
-      unread: typeof unreadOverride === "number" ? unreadOverride : unreadOf(list),
+      unread: unreadEarlier + unreadOf(list),
+      unreadEarlier: unreadEarlier,
+      // The thread itself is read only when it is opened (A.CON-SHO-65):
+      // until then `messages` holds the list's newest message (the preview).
+      loaded: f.loaded != null ? !!f.loaded : !!(prev && prev.loaded),
+      hasEarlier: f.hasEarlier != null ? !!f.hasEarlier : !!(prev && prev.hasEarlier),
+      loadingEarlier: false,
       group: c.type === "group",
       broadcast: c.type === "emergency",
       patientId: c.patientId != null ? c.patientId : null,
@@ -645,17 +664,26 @@
   }
 
   // ---- live message state (A.CON-SHO-65) ----------------------------------
-  // Realtime frames are applied to the store as they arrive; nothing re-fetches
-  // every conversation per event (each thread fetch is also a PHI-access audit
-  // row). Fetches that remain: the full sync at sign-in, the resync after the
-  // socket was down, and a debounced single-thread fetch when a frame is
-  // incomplete or refers to something this device has not loaded.
-  //   liveSeq   stamps messages applied from a frame (or a send response), so a
-  //             fetch that started before they arrived cannot drop them;
+  // What reads a thread (each read is a PHI-access audit row on the server):
+  //   - sign-in / restore: the conversation LIST only (one row) — every
+  //     thread shows its newest message and the server's unread count;
+  //   - opening a thread: its newest page (enough to cover what is unread),
+  //     then "Load earlier" one page at a time;
+  //   - an incomplete frame / an ack this device cannot place, for a thread
+  //     that is OPEN (loaded) only: that one page again, debounced.
+  // Realtime frames are applied to the store as they arrive. A socket that
+  // comes back asks GET /api/messaging/sync once — new messages since the
+  // newest id held here, receipts and recalls since the last cursor — and
+  // applies the answer; when nothing changed it carries no message content
+  // and the server writes no PHI-access row.
+  //   liveSeq   stamps messages applied from a frame / sync / send response, so
+  //             a page fetch that started before they arrived cannot drop them;
   //   recalled  ids recalled this session, so a stale snapshot cannot revive one.
+  var PAGE = 50, PAGE_MAX = 200, SYNC_ROUNDS_MAX = 10;
   var liveSeq = 0;
   var recalled = {};
   var convosLiveEpoch = -1; // authEpoch whose conversations came from the server
+  var syncCursor = null, syncEpoch = -1;
   function keepLive(prevMsgs, fetched, sinceSeq) {
     var have = {};
     fetched.forEach(function (m) { have[m.id] = true; });
@@ -663,129 +691,276 @@
     return fetched.filter(function (m) { return !recalled[m.id]; }).concat(extra).sort(byTime);
   }
   function threadPath(id) { return "/api/messaging/conversations/" + id + "/messages"; }
-
-  // Full sync: every conversation and its thread. Runs at sign-in / restore and
-  // as the fallback resync; a newer full sync supersedes an older one.
-  var fullSyncGen = 0;
-  function hydrateConversations() {
-    var gen = ++fullSyncGen, since = liveSeq, epoch = authEpoch;
-    return get("/api/messaging/conversations").then(function (convos) {
-      return Promise.all((convos || []).map(function (c) {
-        return get(threadPath(c.id))
-          .then(function (msgs) { return { c: c, msgs: (msgs || []).map(mapMessage) }; })
-          .catch(function () { return { c: c, msgs: null }; });
-      })).then(function (rows) {
-        if (gen !== fullSyncGen || epoch !== authEpoch) return; // superseded / signed out
-        convosLiveEpoch = epoch; // before the set, so its listeners see live data
-        DT.set(function (s) {
-          var prevById = {};
-          (s.conversations || []).forEach(function (c) { prevById[c.id] = c; });
-          s.conversations = rows.map(function (row) {
-            var prev = prevById[row.c.id];
-            if (!row.msgs) return convoView(row.c, serverMsgs(prev), prev, prev ? undefined : (row.c.unreadCount || 0));
-            return convoView(row.c, keepLive(prev && prev.messages, row.msgs, since), prev);
-          });
-          return s;
-        });
-      });
-    }).catch(function () { /* keep whatever's there on failure */ });
+  function findConvo(id) { return (DT.getState().conversations || []).find(function (c) { return c.id === id; }) || null; }
+  // Newest message id this device holds: every window ends at its thread's
+  // newest message, and ids are issued in creation order, so nothing at or
+  // below it can be missing from a window's range.
+  function maxSeenId() {
+    var n = 0;
+    (DT.getState().conversations || []).forEach(function (c) { var x = maxId(serverMsgs(c)); if (typeof x === "number" && x > n) n = x; });
+    return n;
   }
 
-  // Resync after the socket was down (A.CON-SHO-65 / A.CON-MIN-19): ONE list
-  // request, then a thread fetch only where something can have changed while
-  // this device was not listening — an unknown thread, a different last
-  // message, a different unread count, a group (seen-by counts), or one of my
-  // messages still awaiting reads/acks (receipts, recall). Unchanged threads
-  // are not re-read.
-  function needsRefetch(c, prev) {
-    if (!prev) return true;
-    var msgs = serverMsgs(prev);
-    var last = msgs.length ? msgs[msgs.length - 1] : null;
-    var srvLast = c.lastMessage || null;
-    if ((last && last.id) !== (srvLast && srvLast.id)) return true;
-    if ((c.unreadCount || 0) !== unreadOf(msgs)) return true;
-    if (c.type === "group") return true;
-    return msgs.some(function (m) {
-      if (!m.me) return false;
-      if (m.receipt !== "read") return true;
-      return m.priority !== "routine" && (m.deliveries || []).some(function (d) { return !d.acknowledgedAt; });
+  // The conversation list: at sign-in / restore, and when a conversation this
+  // device does not know appears. Merges into what is loaded; a newer list
+  // supersedes an older one.
+  var listGen = 0;
+  function hydrateConversations() {
+    var gen = ++listGen, since = liveSeq, epoch = authEpoch;
+    return get("/api/messaging/conversations").then(function (convos) {
+      if (gen !== listGen || epoch !== authEpoch) return;
+      convosLiveEpoch = epoch; // before the set, so its listeners see live data
+      DT.set(function (s) {
+        var prevById = {};
+        (s.conversations || []).forEach(function (c) { prevById[c.id] = c; });
+        s.conversations = (convos || []).map(function (c) {
+          var prev = prevById[c.id];
+          var preview = c.lastMessage && !recalled[c.lastMessage.id] ? [mapMessage(c.lastMessage)] : [];
+          if (!prev) return convoView(c, preview, null, c.unreadCount || 0, { loaded: false, hasEarlier: false });
+          var win = serverMsgs(prev);
+          var top = maxId(win);
+          if (preview.length && !win.some(function (m) { return m.id === preview[0].id; }) && (top === null || preview[0].id > top)) {
+            // Newer than what this window holds: show it, and re-read the
+            // thread's newest page when it is (next) on screen.
+            return convoView(c, keepLive(win, win.concat(preview), since), prev, c.unreadCount || 0, { loaded: false });
+          }
+          return convoView(c, win, prev, c.unreadCount || 0);
+        });
+        return s;
+      });
+    }).catch(function () { /* keep whatever's there on failure */ }).then(function () {
+      // First list of this sign-in: take the sync cursor (and anything sent
+      // between this list and the socket coming up).
+      if (epoch === authEpoch && convosLiveEpoch === epoch && (syncEpoch !== epoch || !syncCursor)) runSync();
     });
   }
-  function resyncConversations() {
-    var since = liveSeq, epoch = authEpoch;
-    if (convosLiveEpoch !== epoch) return hydrateConversations(); // never synced: full
-    return get("/api/messaging/conversations").then(function (convos) {
-      var have = {};
-      (DT.getState().conversations || []).forEach(function (c) { have[c.id] = c; });
-      var todo = (convos || []).filter(function (c) { return needsRefetch(c, have[c.id]); });
-      return Promise.all(todo.map(function (c) {
-        return get(threadPath(c.id))
-          .then(function (msgs) { return { id: c.id, msgs: (msgs || []).map(mapMessage) }; })
-          .catch(function () { return { id: c.id, msgs: null }; });
-      })).then(function (rows) {
-        if (epoch !== authEpoch) return;
-        var fetched = {};
-        rows.forEach(function (r) { if (r.msgs) fetched[r.id] = r.msgs; });
-        DT.set(function (s) {
-          var prevById = {};
-          (s.conversations || []).forEach(function (c) { prevById[c.id] = c; });
-          s.conversations = (convos || []).map(function (c) {
-            var prev = prevById[c.id];
-            if (fetched[c.id]) return convoView(c, keepLive(prev && prev.messages, fetched[c.id], since), prev);
-            return convoView(c, serverMsgs(prev), prev, prev ? undefined : (c.unreadCount || 0));
-          });
-          return s;
+
+  // Newest page of ONE thread — when it is opened, or to refresh an open one.
+  var pageInflight = {};
+  function fetchLatestPage(convoId) {
+    var c0 = findConvo(convoId);
+    if (!c0) return Promise.resolve();
+    if (pageInflight[convoId]) return pageInflight[convoId];
+    var since = liveSeq, epoch = authEpoch, meta = {};
+    // Enough to show everything unread (plus context), at least a page, and
+    // at least what an open thread already shows.
+    var want = Math.min(PAGE_MAX, Math.max(PAGE, (c0.unread || 0) + 10, c0.loaded ? serverMsgs(c0).length : 0));
+    var p = api("GET", threadPath(convoId) + "?limit=" + want, null, meta).then(function (rows) {
+      if (epoch !== authEpoch) return;
+      var fetched = (rows || []).map(mapMessage);
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (x) {
+          if (x.id !== convoId) return x;
+          var prevWin = serverMsgs(x);
+          var merged = keepLive(prevWin, fetched, since);
+          var hasEarlier = !!meta.hasMore;
+          // Older pages already loaded here stay when the new page overlaps
+          // what was shown (the window remains one contiguous run).
+          var oldest = minId(fetched);
+          if (x.loaded && oldest !== null && hasEarlier) {
+            var inPage = {};
+            fetched.forEach(function (m) { inPage[m.id] = true; });
+            var older = prevWin.filter(function (m) { return m.id != null && m.id < oldest && !recalled[m.id]; });
+            if (older.length && prevWin.some(function (m) { return inPage[m.id]; })) {
+              merged = older.concat(merged).sort(byTime);
+              hasEarlier = !!x.hasEarlier;
+            }
+          }
+          // Unread messages that were "earlier" and are now in the window.
+          var low = minId(prevWin);
+          var had = {};
+          prevWin.forEach(function (m) { had[m.id] = true; });
+          var surfaced = merged.filter(function (m) { return m.id != null && !had[m.id] && (low === null || m.id < low); });
+          var ue = hasEarlier ? Math.max(0, (x.unreadEarlier || 0) - unreadOf(surfaced)) : 0;
+          return Object.assign({}, x, { messages: mergeOutbox(x.id, merged), loaded: true, hasEarlier: hasEarlier, unreadEarlier: ue, unread: ue + unreadOf(merged) });
         });
+        return s;
       });
-    }).catch(function () {});
+    }).catch(function (e) {
+      if (e && (e.status === 403 || e.status === 404)) syncConversationList();
+    }).then(function () { delete pageInflight[convoId]; });
+    pageInflight[convoId] = p;
+    return p;
+  }
+  // "Load earlier": the page before the oldest message shown.
+  DT.actions.loadEarlier = function (convoId) {
+    var c = findConvo(convoId);
+    if (!c || !c.loaded || !c.hasEarlier || c.loadingEarlier) return Promise.resolve(false);
+    var oldest = minId(serverMsgs(c));
+    if (oldest === null) return Promise.resolve(false);
+    var epoch = authEpoch, meta = {};
+    var flag = function (on) {
+      DT.set(function (s) { s.conversations = (s.conversations || []).map(function (x) { return x.id === convoId ? Object.assign({}, x, { loadingEarlier: on }) : x; }); return s; });
+    };
+    flag(true);
+    return api("GET", threadPath(convoId) + "?limit=" + PAGE + "&before=" + oldest, null, meta).then(function (rows) {
+      if (epoch !== authEpoch) return false;
+      var page = (rows || []).map(mapMessage).filter(function (m) { return !recalled[m.id]; });
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).map(function (x) {
+          if (x.id !== convoId) return x;
+          var win = serverMsgs(x);
+          var have = {};
+          win.forEach(function (m) { have[m.id] = true; });
+          var add = page.filter(function (m) { return !have[m.id]; });
+          var merged = add.concat(win).sort(byTime);
+          var ue = meta.hasMore ? Math.max(0, (x.unreadEarlier || 0) - unreadOf(add)) : 0;
+          return Object.assign({}, x, { messages: mergeOutbox(x.id, merged), hasEarlier: !!meta.hasMore, loadingEarlier: false, unreadEarlier: ue, unread: ue + unreadOf(merged) });
+        });
+        return s;
+      });
+      return true;
+    }, function () {
+      if (epoch === authEpoch) flag(false);
+      return false;
+    });
+  };
+
+  // Reconnect resync (GET /api/messaging/sync). One request per established
+  // socket — repeated only while the server says there is more.
+  var syncInflight = null, syncAgain = false;
+  function runSync() {
+    if (convosLiveEpoch !== authEpoch) return Promise.resolve();
+    if (syncInflight) { syncAgain = true; return syncInflight; }
+    var epoch = authEpoch;
+    if (syncEpoch !== epoch) { syncEpoch = epoch; syncCursor = null; }
+    function round(n) {
+      var q = "?after=" + maxSeenId() + (syncCursor ? "&since=" + encodeURIComponent(syncCursor) : "");
+      return get("/api/messaging/sync" + q).then(function (r) {
+        if (epoch !== authEpoch || !r) return;
+        if (r.cursor) syncCursor = r.cursor;
+        applySync(r);
+        if (r.more && n + 1 < SYNC_ROUNDS_MAX) return round(n + 1);
+      });
+    }
+    syncInflight = round(0).catch(function () {}).then(function () {
+      syncInflight = null;
+      // Asked again meanwhile (another socket came up, or a new sign-in):
+      // run once more — runSync itself checks the current session.
+      if (syncAgain) { syncAgain = false; return runSync(); }
+    });
+    return syncInflight;
+  }
+  // One recipient's delivery row, as the server now has it, on a message.
+  function withDeliveryRow(m, row) {
+    var hit = false;
+    var dl = (m.deliveries || []).map(function (d) {
+      if (d.userId !== row.userId) return d;
+      hit = true;
+      return Object.assign({}, d, row);
+    });
+    if (!hit) dl = dl.concat([row]);
+    var receipt = m.me ? receiptFor(dl) : null;
+    var mineRow = null;
+    dl.forEach(function (d) { if (d.userId === meId) mineRow = d; });
+    return Object.assign({}, m, {
+      deliveries: dl,
+      readCount: countWhere(dl, function (d) { return !!d.readAt; }),
+      ackCount: countWhere(dl, function (d) { return !!d.acknowledgedAt; }),
+      receipt: receipt, read: receipt === "read",
+      ackedByMe: m.ackedByMe || !!(mineRow && mineRow.acknowledgedAt),
+      unreadByMe: !m.me && !!mineRow && !mineRow.readAt,
+    });
+  }
+  function applySync(r) {
+    var known = {};
+    (DT.getState().conversations || []).forEach(function (c) { known[c.id] = true; });
+    var summary = null;
+    var unknown = false;
+    if (Array.isArray(r.conversations)) {
+      summary = {};
+      r.conversations.forEach(function (x) { summary[x.id] = x; if (!known[x.id]) unknown = true; });
+    }
+    var fresh = {};
+    (r.messages || []).forEach(function (raw) {
+      if (!raw || raw.id == null || recalled[raw.id]) return;
+      if (!known[raw.conversationId]) { unknown = true; return; }
+      var m = mapMessage(raw);
+      m.liveSeq = ++liveSeq;
+      (fresh[raw.conversationId] = fresh[raw.conversationId] || []).push(m);
+    });
+    var receipts = {};
+    (r.receipts || []).forEach(function (d) { if (d && d.messageId != null) (receipts[d.conversationId] = receipts[d.conversationId] || []).push(d); });
+    var gone = {};
+    (r.recalled || []).forEach(function (x) { if (x && x.messageId != null) { recalled[x.messageId] = true; gone[x.messageId] = true; } });
+    var stale = r.complete === false;
+    var changed = unknown || stale || Object.keys(fresh).length || Object.keys(receipts).length || Object.keys(gone).length;
+    if (!changed && summary) {
+      // Nothing new: only a drifted unread count (read on another device)
+      // or a thread I left would change anything.
+      (DT.getState().conversations || []).forEach(function (c) {
+        var sum = summary[c.id];
+        if (!sum || Math.max(0, (sum.unreadCount || 0) - unreadOf(serverMsgs(c))) !== (c.unreadEarlier || 0)) changed = true;
+      });
+    }
+    if (changed) {
+      DT.set(function (s) {
+        s.conversations = (s.conversations || []).filter(function (c) { return !summary || !!summary[c.id]; }).map(function (c) {
+          var win = serverMsgs(c);
+          var add = fresh[c.id] || [];
+          var rc = receipts[c.id] || [];
+          if (add.length) {
+            var byId = {};
+            add.forEach(function (m) { byId[m.id] = m; });
+            win = win.map(function (m) { var n = byId[m.id]; if (n) { delete byId[m.id]; return n; } return m; })
+              .concat(add.filter(function (m) { return byId[m.id]; }));
+          }
+          if (rc.length) {
+            win = win.map(function (m) {
+              var mine = rc.filter(function (d) { return d.messageId === m.id; });
+              return mine.reduce(function (acc, d) {
+                return withDeliveryRow(acc, { userId: d.userId, displayName: d.displayName, deliveredAt: d.deliveredAt, readAt: d.readAt, acknowledgedAt: d.acknowledgedAt, status: d.status, realertedAt: d.realertedAt || null, escalatedAt: d.escalatedAt || null });
+              }, m);
+            });
+          }
+          win = win.filter(function (m) { return !gone[m.id]; }).sort(byTime);
+          var sum = summary && summary[c.id];
+          var ue = sum ? Math.max(0, (sum.unreadCount || 0) - unreadOf(win)) : (c.unreadEarlier || 0);
+          return Object.assign({}, c, { messages: mergeOutbox(c.id, win), unreadEarlier: ue, unread: ue + unreadOf(win), loaded: stale ? false : c.loaded });
+        });
+        return s;
+      });
+    }
+    if (unknown) syncConversationList();
+    if (stale) { var open = DT.getState().__activeConvo; if (open != null) fetchLatestPage(open); }
   }
   // A conversation this device does not know yet (a new thread, or I was added
-  // to one): one list request + that thread. Debounced so a burst is one call.
+  // to one): one list request. Debounced so a burst is one call.
   var listSyncTimer = null;
   function syncConversationList() {
     if (listSyncTimer) return;
-    listSyncTimer = setTimeout(function () { listSyncTimer = null; resyncConversations(); }, 250);
+    listSyncTimer = setTimeout(function () { listSyncTimer = null; hydrateConversations(); }, 250);
   }
-  // Re-read ONE thread (incomplete frame, an ack/read this device cannot place,
-  // a send while the socket is down). Debounced per conversation (~250 ms).
+  // Re-read the newest page of an OPEN (loaded) thread: an incomplete frame,
+  // an ack/read this device cannot place, a send while the socket is down.
+  // A thread that was never opened is not read — it is read when opened.
+  // Debounced per conversation (~250 ms).
   var threadTimers = {};
   function refreshThread(convoId) {
     if (convoId == null) return;
     clearTimeout(threadTimers[convoId]);
-    threadTimers[convoId] = setTimeout(function () { delete threadTimers[convoId]; fetchThread(convoId); }, 250);
-  }
-  function fetchThread(convoId) {
-    var known = (DT.getState().conversations || []).some(function (c) { return c.id === convoId; });
-    if (!known) { syncConversationList(); return Promise.resolve(); }
-    var since = liveSeq, epoch = authEpoch;
-    return get(threadPath(convoId)).then(function (msgs) {
-      if (epoch !== authEpoch) return;
-      var fetched = (msgs || []).map(mapMessage);
-      DT.set(function (s) {
-        s.conversations = (s.conversations || []).map(function (c) {
-          if (c.id !== convoId) return c;
-          var list = keepLive(c.messages, fetched, since);
-          return Object.assign({}, c, { messages: mergeOutbox(c.id, list), unread: unreadOf(list) });
-        });
-        return s;
-      });
-    }).catch(function (e) { if (e && (e.status === 403 || e.status === 404)) syncConversationList(); });
+    threadTimers[convoId] = setTimeout(function () {
+      delete threadTimers[convoId];
+      var c = findConvo(convoId);
+      if (!c) { syncConversationList(); return; }
+      if (c.loaded) fetchLatestPage(convoId);
+    }, 250);
   }
   // Make sure a conversation is in state (after creating / forwarding into
   // one); resolves once it is.
   function ensureConversation(convoId) {
-    if ((DT.getState().conversations || []).some(function (c) { return c.id === convoId; })) return Promise.resolve();
-    return resyncConversations();
+    if (findConvo(convoId)) return Promise.resolve();
+    return hydrateConversations();
   }
   function wsLive() { return !!(ws && ws.readyState === 1); }
 
   // MESSAGE_RECEIVED: the frame carries the message decorated like the thread
   // view — apply it directly. Unknown thread → list sync; a frame without
-  // attachments/delivery rows → re-read just that thread.
+  // attachments/delivery rows → re-read that thread if it is open.
   function applyIncoming(raw) {
     if (!raw || raw.id == null || raw.conversationId == null || recalled[raw.id]) return;
     var convoId = raw.conversationId;
-    if (!(DT.getState().conversations || []).some(function (c) { return c.id === convoId; })) { syncConversationList(); return; }
+    if (!findConvo(convoId)) { syncConversationList(); return; }
     var complete = Array.isArray(raw.attachments) && Array.isArray(raw.deliveries);
     var m = mapMessage(raw);
     m.liveSeq = ++liveSeq;
@@ -805,14 +980,14 @@
           list = list.concat([m]);
         }
         list.sort(byTime);
-        return Object.assign({}, c, { messages: mergeOutbox(c.id, list), unread: unreadOf(list) });
+        return Object.assign({}, c, { messages: mergeOutbox(c.id, list), unread: unreadFor(c, list) });
       });
       return s;
     });
     if (!complete) refreshThread(convoId);
   }
   // Patch one recipient's delivery row; returns false when no row matched (the
-  // caller then re-reads that thread).
+  // caller then re-reads that thread if it is open).
   function patchDelivery(convoId, messageIds, userId, patchRow) {
     var found = false;
     DT.set(function (s) {
@@ -821,28 +996,14 @@
         var touched = false;
         var msgs = (c.messages || []).map(function (m) {
           if (m.id == null || messageIds.indexOf(m.id) < 0) return m;
-          var hit = false;
-          var dl = (m.deliveries || []).map(function (d) {
-            if (d.userId !== userId) return d;
-            hit = true;
-            return patchRow(d);
-          });
-          if (!hit) return m;
+          var row = null;
+          (m.deliveries || []).forEach(function (d) { if (d.userId === userId) row = d; });
+          if (!row) return m;
           touched = true; found = true;
-          var receipt = m.me ? receiptFor(dl) : null;
-          var mineRow = null;
-          dl.forEach(function (d) { if (d.userId === meId) mineRow = d; });
-          return Object.assign({}, m, {
-            deliveries: dl,
-            readCount: countWhere(dl, function (d) { return !!d.readAt; }),
-            ackCount: countWhere(dl, function (d) { return !!d.acknowledgedAt; }),
-            receipt: receipt, read: receipt === "read",
-            ackedByMe: m.ackedByMe || !!(mineRow && mineRow.acknowledgedAt),
-            unreadByMe: !m.me && !!mineRow && !mineRow.readAt,
-          });
+          return withDeliveryRow(m, patchRow(row));
         });
         if (!touched) return c;
-        return Object.assign({}, c, { messages: msgs, unread: unreadOf(msgs) });
+        return Object.assign({}, c, { messages: msgs, unread: unreadFor(c, msgs) });
       });
       return s;
     });
@@ -850,7 +1011,7 @@
   }
   // MESSAGE_ACK {messageId, conversationId, userId}: that recipient acknowledged
   // (which also marks it read). The STAT sweep reuses this frame with the
-  // covering provider's id — no row here, so that thread is re-read once.
+  // covering provider's id — no row here, so an open thread is re-read once.
   function applyAck(ev) {
     var at = new Date().toISOString();
     var ok = patchDelivery(ev.conversationId, [ev.messageId], ev.userId, function (d) {
@@ -867,6 +1028,16 @@
     });
     if (!ok) refreshThread(ev.conversationId);
   }
+  // STAT_REALERT {messageId, conversationId, userId}: the sweep re-alerted that
+  // recipient (the sender's countdown moves on; A.CON-MIN-18). Nothing to fetch
+  // when the message is not loaded here.
+  function applyRealert(ev) {
+    var uid = ev.userId != null ? ev.userId : meId;
+    var at = ev.at || new Date().toISOString();
+    patchDelivery(ev.conversationId, [ev.messageId], uid, function (d) {
+      return d.realertedAt ? d : Object.assign({}, d, { realertedAt: at });
+    });
+  }
   // MESSAGE_RECALLED (A.CON-SHO-25): drop it from the thread at once — even
   // while it is open on screen — and recount unread from what remains.
   function applyRecall(ev) {
@@ -876,7 +1047,7 @@
         if (ev.conversationId != null && c.id !== ev.conversationId) return c;
         var msgs = (c.messages || []).filter(function (m) { return m.id !== ev.messageId; });
         if (msgs.length === (c.messages || []).length) return c;
-        return Object.assign({}, c, { messages: msgs, unread: unreadOf(msgs) });
+        return Object.assign({}, c, { messages: msgs, unread: unreadFor(c, msgs) });
       });
       return s;
     });
@@ -999,7 +1170,8 @@
     var sess = DT.getState().session || null;
     if (sess === outboxSession) return;
     outboxSession = sess;
-    outbox = []; readPosted = {}; recalled = {};
+    outbox = []; readPosted = {}; recalled = {}; pageInflight = {};
+    syncCursor = null; syncEpoch = -1;
     Object.keys(threadTimers).forEach(function (k) { clearTimeout(threadTimers[k]); delete threadTimers[k]; });
     if (listSyncTimer) { clearTimeout(listSyncTimer); listSyncTimer = null; }
     // An unconsumed "open this thread" request belongs to the previous identity.
@@ -1091,15 +1263,20 @@
         if (!ev || !ev.type) return;
         if (ev.type === "CONNECTION_ESTABLISHED") {
           wsAttempt = 0; wsRefusals = 0; wsPaused = false;
-          // Back after a gap: whatever was sent/read/recalled meanwhile is not
-          // replayed by the server — resync it once (A.CON-SHO-65).
-          if (wsEstablishedOnce) { resyncConversations(); rehydrate(); hydrateBroadcasts(); }
+          // Whatever was sent/read/recalled while no socket was listening is
+          // not replayed by the server: ask for it once (A.CON-SHO-65) — one
+          // PHI-free request when nothing changed. Before the first list
+          // there is nothing to compare against (that list is fresh).
+          if (convosLiveEpoch === authEpoch) runSync();
+          if (wsEstablishedOnce) { rehydrate(); hydrateBroadcasts(); }
           wsEstablishedOnce = true;
         }
         else if (ev.type === "MESSAGE_RECEIVED") applyIncoming(ev.message);
         // A STAT/urgent message was acknowledged — patch that recipient's row.
         else if (ev.type === "MESSAGE_ACK" && ev.messageId != null) applyAck(ev);
         else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) applyRecall(ev);
+        // The STAT sweep re-alerted a recipient (sent to them and the sender).
+        else if (ev.type === "STAT_REALERT" && ev.messageId != null) applyRealert(ev);
         // Someone read messages in a thread I'm in (A.CON-SHO-26).
         else if (ev.type === "MESSAGE_READ" && Array.isArray(ev.messageIds)) applyRead(ev);
         // Real typing indicator: a peer relayed typing_start/stop through the
@@ -1573,6 +1750,10 @@
       DT.set(function (s) {
         if (r.me) s.myPrefs = { dnd: !!r.me.dnd, coveringUserId: r.me.coveringUserId != null ? r.me.coveringUserId : null };
         if (r.org && typeof r.org.messageRetentionDays === "number") s.orgRetentionDays = r.org.messageRetentionDays;
+        // The STAT sweep's real schedule, for the unacknowledged-STAT
+        // countdown (A.CON-MIN-18). Absent → no countdown is shown.
+        s.statTimings = r.org && r.org.statRealertMs > 0 && r.org.statEscalateMs > 0
+          ? { realertMs: r.org.statRealertMs, escalateMs: r.org.statEscalateMs } : null;
         var dl = r.me && r.me.dashboardLayout;
         if (dl && typeof dl === "object") {
           s.dashLayout = dl.dashLayout || {};
@@ -2060,7 +2241,7 @@
     DT.set(function (s) {
       s.conversations = (s.conversations || []).map(function (c) {
         if (c.id !== id) return c;
-        var n = unreadOf(c.messages);
+        var n = unreadFor(c, c.messages);
         return n === c.unread ? c : Object.assign({}, c, { unread: n });
       });
       return s;
@@ -2074,11 +2255,15 @@
     ids.forEach(function (mid) { readPosted[mid] = true; });
     if (st0.__activeConvo !== id || (convo && convo.unread) || ids.length) {
       DT.set(function (s) {
-        s.conversations = (s.conversations || []).map(function (c) { return c.id === id ? Object.assign({}, c, { unread: unreadOf(c.messages) }) : c; });
+        s.conversations = (s.conversations || []).map(function (c) { return c.id === id ? Object.assign({}, c, { unread: unreadFor(c, c.messages) }) : c; });
         s.__activeConvo = id;
         return s;
       });
     }
+    // On screen for the first time: read its newest page now (A.CON-SHO-65).
+    // Its unread messages are marked read on the next call (the thread view
+    // calls again when they appear).
+    if (convo && convo.loaded === false) fetchLatestPage(id);
     if (ids.length) {
       api("POST", "/api/messaging/messages/mark-read", { messageIds: ids }).catch(function () {
         ids.forEach(function (mid) { delete readPosted[mid]; });

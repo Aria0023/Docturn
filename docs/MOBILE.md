@@ -45,19 +45,22 @@ the top of the screen — one tap on Android/desktop Chrome, guided steps on iOS
    → **Add**.
 3. Launch "DocTurn" from the home screen — it opens full-screen (standalone,
    no browser chrome) with the blue "D" icon.
-4. For push notifications: open the installed app, go to **Settings →
-   Notifications → Push notifications → Turn on** and allow when iOS asks.
-   The app never asks on its own — iOS only shows the prompt for a tap.
-   (iOS delivers Web Push only to apps added to the home screen, iOS 16.4 or
-   later; in a Safari tab that row explains the Add to Home Screen step
+4. For push notifications: open the installed app and tap **Turn on** on the
+   one-time "Turn on alerts for STAT messages" card at the top (or, any time,
+   **Settings → Notifications → Push notifications → Turn on**), then allow
+   when iOS asks. The app never asks on its own — iOS only shows the prompt
+   for a tap. (iOS delivers Web Push only to apps added to the home screen,
+   iOS 16.4 or later; in a Safari tab the card — once the install banner is
+   dismissed — and the Settings row explain the Add to Home Screen step
    instead.)
 
 **Android (Chrome)**
 1. Open `https://<your-host>/` in Chrome and sign in.
 2. Tap **Install** on the in-app banner, or the Chrome menu ⋮ → **Install app**
    / **Add to Home screen**.
-3. Launch from the home screen or app drawer; turn alerts on in **Settings →
-   Notifications** (allow when Chrome asks).
+3. Tap **Turn on** on the one-time "Turn on alerts for STAT messages" card
+   (works in the browser tab too), or later in **Settings → Notifications**,
+   and allow when Chrome asks.
 
 **Desktop (Chrome / Edge)** — the same **Install** banner (or the install icon
 in the address bar) installs DocTurn as a windowed app.
@@ -88,10 +91,13 @@ not optimised for it.
   `VAPID_PRIVATE_KEY`; without them a pair is generated on first boot and
   stored in the database's platform settings, so subscriptions survive
   restarts).
-- **Permission is asked only from a tap** — Settings → Notifications → Push
-  notifications → **Turn on**. Sign-in and reloads never prompt (WebKit ignores
-  a prompt without a user gesture, and an unprompted dialog is easily
-  dismissed into a permanent block). Once allowed, the app subscribes through
+- **Permission is asked only from a tap** — the one-time "Turn on alerts for
+  STAT messages" card shown after sign-in on a device that can take Web Push
+  and has not been asked yet (its **Turn on** button; dismissed, answered or
+  turned on, it does not come back on that device), or Settings →
+  Notifications → Push notifications → **Turn on**. Sign-in and reloads never
+  prompt (WebKit ignores a prompt without a user gesture, and an unprompted
+  dialog is easily dismissed into a permanent block). Once allowed, the app subscribes through
   the service worker and registers the subscription with
   `POST /api/mobile/device-tokens` (platform `webpush`); every later sign-in on
   that device re-registers it silently for whoever signed in.
@@ -112,16 +118,27 @@ not optimised for it.
 - Realtime updates while the app is open arrive over the WebSocket and are
   applied as they come (no re-fetch per event); push is the wake-up for a
   backgrounded or closed app.
+- **Threads are read when they are opened, a page at a time.** Sign-in and
+  reloads fetch the conversation LIST only (each thread's newest message and
+  the server's unread count). Opening a thread fetches its newest page
+  (`GET /api/messaging/conversations/:id/messages?limit=…`, 50 by default,
+  enough to cover what is unread, at most 200); **Load earlier messages**
+  pages back with `?before=<id>`. Every thread read is one PHI-access audit
+  row, so the log records the threads a clinician actually opened.
 - **A dropped socket reconnects and then re-syncs.** Reconnects use
   exponential backoff with jitter capped at 30 s, and retry at once when the
   browser reports it is back `online` or the app returns to the foreground.
   When the server greets the new socket (`CONNECTION_ESTABLISHED`), the client
-  makes ONE conversation-list request and re-reads only the threads that can
-  have changed (a newer last message, an unread-count mismatch, group threads,
-  threads with my unread/unacknowledged messages), plus the role's dashboard
-  data and broadcasts. So a message, assignment or broadcast that arrived
-  while the socket was down appears after the reconnect, without a manual
-  reload (measured by `scripts/realtime-e2e.mjs` scenario B). Until the
+  asks `GET /api/messaging/sync` ONCE: messages newer than the newest id it
+  holds (decorated like thread rows), receipts and recalls since its previous
+  sync cursor, and a per-thread summary of ids and counters. It re-reads no
+  thread and no list; when nothing changed the answer carries no message
+  content and the server writes no PHI-access row (when it does deliver
+  messages, the row is `conversation-sync` — a background delivery, not the
+  user opening the thread). The role's dashboard data and broadcasts are
+  re-read too. So a message, assignment or broadcast that arrived while the
+  socket was down appears after the reconnect, without a manual reload
+  (measured by `scripts/realtime-e2e.mjs`). Until the
   socket is back, nothing new appears on its own. iOS suspends a backgrounded
   web app's socket entirely; the catch-up runs when it comes to the front.
 - A socket the server closes because the session is over (password

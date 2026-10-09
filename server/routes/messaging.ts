@@ -28,7 +28,8 @@ import {
   attachmentStoreFor,
   getAttachmentStore,
 } from "../services/attachment-store.js";
-import { storage } from "../storage.js";
+import { MESSAGE_PAGE_DEFAULT, MESSAGE_PAGE_MAX, storage } from "../storage.js";
+import { parseId } from "../params.js";
 
 // Attachment mime allowlist — only these types can be uploaded. Anything else is
 // rejected (400 bad_type) so we never store arbitrary executable/unknown blobs.
@@ -100,7 +101,14 @@ function attachmentView(a: AttachmentMeta, url: string, forwarded = false) {
 
 /** A recipient's delivery row as the thread view and the live frame serve it. */
 function deliveryView(
-  d: { userId: number; deliveredAt: Date | null; readAt: Date | null; acknowledgedAt: Date | null },
+  d: {
+    userId: number;
+    deliveredAt: Date | null;
+    readAt: Date | null;
+    acknowledgedAt: Date | null;
+    realertedAt?: Date | null;
+    escalatedAt?: Date | null;
+  },
   nameById: Map<number, string>,
 ) {
   return {
@@ -109,6 +117,10 @@ function deliveryView(
     deliveredAt: d.deliveredAt,
     readAt: d.readAt,
     acknowledgedAt: d.acknowledgedAt,
+    // When the STAT sweep re-alerted / escalated this recipient (null = not
+    // yet) — the sender's countdown shows what has actually happened.
+    realertedAt: d.realertedAt ?? null,
+    escalatedAt: d.escalatedAt ?? null,
     status: d.acknowledgedAt
       ? "acknowledged"
       : d.readAt
@@ -153,6 +165,76 @@ async function liveMessageView(orgId: number, message: Message) {
           ),
       ),
   };
+}
+
+/**
+ * Messages decorated as GET /conversations/:id/messages serves them to
+ * `viewerId`: ack/read counts, acknowledgedByMe, recipient delivery rows and
+ * attachment metadata (never bytes; forwarded ones by reference). Shared by
+ * the thread route and the reconnect resync so both render identically.
+ */
+async function threadRows(orgId: number, viewerId: number, msgs: Message[]) {
+  if (msgs.length === 0) return [];
+  const ids = msgs.map((m) => m.id);
+  const [delivery, atts, users] = await Promise.all([
+    storage().listDeliveryForMessages(ids),
+    storage().listAttachmentsForMessages(orgId, ids),
+    storage().listUsers(orgId),
+  ]);
+  const byMsg: Record<number, typeof atts> = {};
+  for (const a of atts) {
+    if (a.messageId == null) continue;
+    (byMsg[a.messageId] ||= []).push(a);
+  }
+  // Forwarded messages carry attachments BY REFERENCE (ids in the provenance
+  // blob); resolve their metadata too — served through the forwarded-message
+  // fetch route so target participants can open them.
+  const refIds = Array.from(new Set(msgs.flatMap((m) => forwardedAttachmentIds(m))));
+  const refMeta = await storage().listAttachmentMetaByIds(orgId, refIds);
+  const refById = new Map(refMeta.map((a) => [a.id, a]));
+  const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+  return msgs.map((m) => {
+    const rows = delivery.filter((d) => d.messageId === m.id);
+    const recipients = rows.filter((d) => d.userId !== m.senderId);
+    const own = (byMsg[m.id] || []).map((a) =>
+      attachmentView(a, "/api/messaging/attachments/" + a.id),
+    );
+    const forwarded = forwardedAttachmentIds(m)
+      .map((aid) => refById.get(aid))
+      .filter((a): a is NonNullable<typeof a> => !!a)
+      .map((a) =>
+        attachmentView(a, "/api/messaging/messages/" + m.id + "/attachments/" + a.id, true),
+      );
+    return {
+      ...m,
+      ackCount: recipients.filter((d) => d.acknowledgedAt).length,
+      readCount: recipients.filter((d) => d.readAt).length,
+      acknowledgedByMe: rows.some((d) => d.userId === viewerId && !!d.acknowledgedAt),
+      // Per-recipient delivery state (sent → delivered → read → acknowledged)
+      // for the "Seen by N · Acked by M" disclosure in group threads.
+      deliveries: recipients.map((d) => deliveryView(d, nameById)),
+      attachments: own.concat(forwarded),
+    };
+  });
+}
+
+/** Reconnect resync limits (GET /api/messaging/sync). */
+const SYNC_MESSAGE_LIMIT = MESSAGE_PAGE_MAX;
+const SYNC_RECEIPT_LIMIT = 1000;
+const SYNC_OVERLAP_MS = 5000;
+
+/** A message-id cursor: a non-negative integer (0 = "from the beginning"). */
+function parseCursorId(v: unknown): number | null | "invalid" {
+  if (v === undefined) return null;
+  if (v === "0") return 0;
+  const n = parseId(v);
+  return n === null ? "invalid" : n;
+}
+/** A sync cursor: an ISO timestamp the server handed out. */
+function parseCursorTime(v: unknown): number | "invalid" {
+  if (typeof v !== "string" || v.length > 40) return "invalid";
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : "invalid";
 }
 
 /** Decoded byte length of a base64 string without allocating the buffer. */
@@ -720,23 +802,112 @@ export function registerMessagingRoutes(app: Express) {
     // PHI read too. One row for the whole listing — a per-thread fan-out would
     // bloat the log without telling an investigator anything more.
     await logPhiAccess(req, "conversations");
-    // Decorate with last message + unread count.
-    const out = [];
-    for (const c of convos) {
-      const msgs = await storage().listMessages(me.organizationId, c.id);
-      const delivery = await storage().listDeliveryForMessages(
-        msgs.map((m) => m.id),
-      );
-      const unread = delivery.filter(
-        (d) => d.userId === me.id && !d.readAt,
-      ).length;
-      out.push({
+    // Decorate with last message + unread count — two indexed reads for the
+    // whole list, never a whole thread (A.CON-SHO-65). The last message is a
+    // full thread row (receipts, my delivery row, attachment metadata), so a
+    // client can show it as the thread's newest message without opening it.
+    const ids = convos.map((c) => c.id);
+    const [last, unread] = await Promise.all([
+      storage().lastMessagesFor(me.organizationId, ids),
+      storage().unreadCountsFor(me.organizationId, me.id, ids),
+    ]);
+    const lastRows = await threadRows(me.organizationId, me.id, Array.from(last.values()));
+    const lastById = new Map(lastRows.map((m) => [m.conversationId, m]));
+    res.json(
+      convos.map((c) => ({
         ...conversationView(c),
-        lastMessage: msgs.at(-1) ?? null,
-        unreadCount: unread,
-      });
+        lastMessage: lastById.get(c.id) ?? null,
+        unreadCount: unread.get(c.id) ?? 0,
+      })),
+    );
+  });
+
+  // Reconnect resync for the web client (A.CON-SHO-65): what changed in the
+  // caller's conversations while its socket was down, replacing a re-read of
+  // every thread that could have changed (each a PHI-access "read" the user
+  // never made).
+  //   ?after=<messageId>  newest message id the client holds: live messages
+  //                       with a larger id come back, decorated like thread
+  //                       rows, at most SYNC_MESSAGE_LIMIT (`more` = call again
+  //                       with the last id).
+  //   ?since=<cursor>     the `cursor` of the client's previous sync: recipient
+  //                       receipts (delivered/read/acknowledged) on messages it
+  //                       already holds, and recalls, since then.
+  // Always: `cursor` for next time and a PHI-free per-thread summary (ids and
+  // counters only). A response that carries no message content writes no
+  // PHI-access row; one that does logs one row per thread it delivered, as
+  // "conversation-sync" — a background delivery, not the user opening it.
+  app.get("/api/messaging/sync", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    const after = parseCursorId(req.query.after);
+    const sinceMs = req.query.since === undefined ? null : parseCursorTime(req.query.since);
+    if (after === "invalid" || sinceMs === "invalid") {
+      return res.status(400).json({ error: "validation_error" });
     }
-    res.json(out);
+    // Taken BEFORE anything is read: a change racing this request is returned
+    // again next time rather than lost.
+    const cursor = new Date().toISOString();
+    const orgId = me.organizationId;
+    const convos = await storage().listConversationsForUser(orgId, me.id);
+    const ids = convos.map((c) => c.id);
+    const [last, unread] = await Promise.all([
+      storage().lastMessagesFor(orgId, ids),
+      storage().unreadCountsFor(orgId, me.id, ids),
+    ]);
+    const conversations = convos.map((c) => ({
+      id: c.id,
+      lastMessageId: last.get(c.id)?.id ?? null,
+      unreadCount: unread.get(c.id) ?? 0,
+    }));
+
+    let messages: Awaited<ReturnType<typeof threadRows>> = [];
+    let more = false;
+    if (after !== null) {
+      const page = await storage().listMessagesAfter(orgId, ids, after, SYNC_MESSAGE_LIMIT);
+      more = page.hasMore;
+      if (page.messages.length) {
+        const byId = new Map(convos.map((c) => [c.id, c]));
+        const delivered = Array.from(new Set(page.messages.map((m) => m.conversationId)));
+        for (const cid of delivered) {
+          await logPhiAccess(req, "conversation-sync", {
+            resourceId: cid,
+            patientId: byId.get(cid)?.patientId ?? null,
+          });
+        }
+        messages = await threadRows(orgId, me.id, page.messages);
+      }
+    }
+
+    let receipts: Array<ReturnType<typeof deliveryView> & { messageId: number; conversationId: number }> = [];
+    let recalled: Array<{ messageId: number; conversationId: number }> = [];
+    if (sinceMs !== null) {
+      // A few seconds of overlap absorbs clock skew between app instances;
+      // re-sent receipts/recalls are idempotent on the client.
+      const since = new Date(sinceMs - SYNC_OVERLAP_MS);
+      if (after !== null) {
+        const rows = await storage().listReceiptChangesSince(orgId, ids, since, after, SYNC_RECEIPT_LIMIT);
+        if (rows.length) {
+          const users = await storage().listUsers(orgId);
+          const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+          receipts = rows.map((d) => ({
+            messageId: d.messageId,
+            conversationId: d.conversationId,
+            ...deliveryView(d, nameById),
+          }));
+        }
+      }
+      recalled = await storage().listRecalledSince(orgId, ids, since, SYNC_RECEIPT_LIMIT);
+    }
+    res.json({
+      cursor,
+      conversations,
+      messages,
+      receipts,
+      recalled,
+      more,
+      // A capped receipt/recall list: the client re-reads open threads instead.
+      complete: receipts.length < SYNC_RECEIPT_LIMIT && recalled.length < SYNC_RECEIPT_LIMIT,
+    });
   });
 
   app.post("/api/messaging/conversations", requireAuth, async (req, res) => {
@@ -902,6 +1073,20 @@ export function registerMessagingRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       const id = Number(req.params.id);
+      // Paging (A.CON-SHO-65): ?limit (default 50, max 200) and ONE of
+      // ?before=<messageId> (older page) / ?after=<messageId> (newer page).
+      const limitRaw = req.query.limit;
+      let limit = MESSAGE_PAGE_DEFAULT;
+      if (limitRaw !== undefined) {
+        const n = parseId(limitRaw);
+        if (n === null) return res.status(400).json({ error: "validation_error" });
+        limit = Math.min(n, MESSAGE_PAGE_MAX);
+      }
+      const before = req.query.before === undefined ? null : parseCursorId(req.query.before);
+      const after = req.query.after === undefined ? null : parseCursorId(req.query.after);
+      if (before === "invalid" || after === "invalid" || (before !== null && after !== null)) {
+        return res.status(400).json({ error: "validation_error" });
+      }
       const convo = await storage().getConversation(me.organizationId, id);
       if (!convo) return res.status(404).json({ error: "not_found" });
       if (!convo.participantIds.includes(me.id)) {
@@ -909,68 +1094,20 @@ export function registerMessagingRoutes(app: Express) {
       }
       // This response carries full message bodies — a PHI read. Log it AFTER the
       // participant check (a rejected read discloses nothing, so it must not
-      // create a PHI-access row) and exactly once for the whole thread.
+      // create a PHI-access row) and exactly once per page.
       await logPhiAccess(req, "conversation-messages", {
         resourceId: id,
         patientId: convo.patientId ?? null,
       });
-      const msgs = await storage().listMessages(me.organizationId, id);
-      // Decorate each message with acknowledgement info so STAT senders can see
-      // it was acknowledged and recipients know if they still owe an ack.
-      const delivery = await storage().listDeliveryForMessages(
-        msgs.map((m) => m.id),
-      );
-      // Attach per-message attachment metadata (never the bytes) so the thread
-      // can render thumbnails / download chips; bytes are fetched per-attachment.
-      const atts = await storage().listAttachmentsForMessages(
-        me.organizationId,
-        msgs.map((m) => m.id),
-      );
-      const byMsg: Record<number, typeof atts> = {};
-      for (const a of atts) {
-        if (a.messageId == null) continue;
-        (byMsg[a.messageId] ||= []).push(a);
-      }
-      // Forwarded messages carry attachments BY REFERENCE (ids in the
-      // provenance blob); resolve their metadata too — served through the
-      // forwarded-message fetch route so target participants can open them.
-      const refIds = Array.from(
-        new Set(msgs.flatMap((m) => forwardedAttachmentIds(m))),
-      );
-      const refMeta = await storage().listAttachmentMetaByIds(
-        me.organizationId,
-        refIds,
-      );
-      const refById = new Map(refMeta.map((a) => [a.id, a]));
-      // Per-recipient status needs names; one roster read for the thread.
-      const users = await storage().listUsers(me.organizationId);
-      const nameById = new Map(users.map((u) => [u.id, u.displayName]));
-      const out = msgs.map((m) => {
-        const rows = delivery.filter((d) => d.messageId === m.id);
-        const recipients = rows.filter((d) => d.userId !== m.senderId);
-        const own = (byMsg[m.id] || []).map((a) =>
-          attachmentView(a, "/api/messaging/attachments/" + a.id),
-        );
-        const forwarded = forwardedAttachmentIds(m)
-          .map((aid) => refById.get(aid))
-          .filter((a): a is NonNullable<typeof a> => !!a)
-          .map((a) =>
-            attachmentView(a, "/api/messaging/messages/" + m.id + "/attachments/" + a.id, true),
-          );
-        return {
-          ...m,
-          ackCount: recipients.filter((d) => d.acknowledgedAt).length,
-          readCount: recipients.filter((d) => d.readAt).length,
-          acknowledgedByMe: rows.some(
-            (d) => d.userId === me.id && !!d.acknowledgedAt,
-          ),
-          // Per-recipient delivery state (sent → delivered → read → acknowledged)
-          // for the "Seen by N · Acked by M" disclosure in group threads.
-          deliveries: recipients.map((d) => deliveryView(d, nameById)),
-          attachments: own.concat(forwarded),
-        };
+      const page = await storage().listMessagesPage(me.organizationId, id, {
+        limit,
+        beforeId: before ?? undefined,
+        afterId: after ?? undefined,
       });
-      res.json(out);
+      // More in the paging direction (older for a newest/before page, newer for
+      // an after page) — the client's "Load earlier" / catch-up loop reads it.
+      res.setHeader("X-Has-More", page.hasMore ? "1" : "0");
+      res.json(await threadRows(me.organizationId, me.id, page.messages));
     },
   );
 

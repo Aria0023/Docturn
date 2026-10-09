@@ -7,9 +7,14 @@
  *                    GET is a PHI-access audit row), attachments included;
  *      A.CON-MIN-17  the unread count shows in document.title and on the
  *                    Messages tab, and clears when the thread is read.
- *   B  A.CON-SHO-65  a socket that was down comes back and resyncs ONCE: a
- *                    message sent meanwhile appears; untouched threads are not
- *                    re-read.
+ *   B  A.CON-SHO-65  a socket that was down comes back and asks
+ *                    GET /api/messaging/sync ONCE — no list, no thread read:
+ *                    with nothing changed it writes no PHI-access row; a
+ *                    message sent meanwhile appears from that answer.
+ *   J  A.CON-SHO-65  sign-in reads the conversation LIST only (one PHI row,
+ *                    no thread read); opening a thread reads one bounded page
+ *                    (one "conversation-messages" row); "Load earlier" pages
+ *                    back and keeps the reader's place.
  *   C  A.CON-SHO-67  password changed from another session → the server closes
  *                    this socket 1008 "session_revoked" → sign-in with the
  *                    reason, and no reconnect loop.
@@ -21,6 +26,9 @@
  *      A.CON-SHO-63  after sign-out no identity is left in localStorage (also
  *                    after further state changes and a reload) and the server
  *                    session is gone.
+ *   E2 A.CON-SHO-62 / A.CON-NEE-1  the one-time "Turn on alerts" card: shown
+ *                    after sign-in, fits 375 / 390 / 430, its tap asks inside
+ *                    the gesture, and once dismissed it stays gone.
  *   F  A.CON-SHO-62 / A.CON-SHO-68  an iPhone Safari tab (no Web Push APIs)
  *                    explains Add to Home Screen instead of "not supported";
  *                    the row fits 375 / 390 / 430 without clipping.
@@ -29,6 +37,10 @@
  *   H  A.CON-MIN-18  one locale-aware clock: dtFmt.hhmm follows the device
  *                    locale (12 h en-US, 24 h en-GB) and matches the On-call
  *                    board's toLocaleTimeString label.
+ *   K  A.CON-MIN-18  an unacknowledged STAT shows the sweep's real re-alert /
+ *                    escalation countdown (from GET /api/settings) to the
+ *                    sender and the recipient; it ticks, and it is gone once
+ *                    the recipient acknowledges.
  *
  * Usage (throwaway seeded synthetic server — scenario C provisions a user):
  *   BASE_URL=http://127.0.0.1:5080 node scripts/realtime-e2e.mjs
@@ -86,7 +98,7 @@ async function phone(width = 390, extra = {}) {
   const page = await ctx.newPage();
   page.setDefaultTimeout(15000);
   const log = { reqs: [], sockets: 0, errors: [], responses: [] };
-  page.on("request", (r) => { const u = new URL(r.url()); log.reqs.push({ method: r.method(), path: u.pathname }); });
+  page.on("request", (r) => { const u = new URL(r.url()); log.reqs.push({ method: r.method(), path: u.pathname, search: u.search }); });
   page.on("response", (r) => { const u = new URL(r.url()); if (r.status() >= 400) log.responses.push(r.status() + " " + u.pathname); });
   page.on("websocket", () => { log.sockets++; });
   page.on("console", (m) => { if (m.type() === "error") log.errors.push(m.text()); });
@@ -103,6 +115,12 @@ async function signIn(page, org, user, password = "docturn") {
   await sleep(800);
 }
 const msgGets = (log) => log.reqs.filter((r) => r.method === "GET" && r.path.startsWith("/api/messaging/"));
+// PHI-access rows the server wrote for one user (director's /api/audit view).
+const director = await session("ISPN", "director");
+async function phiFor(userId) {
+  const r = await director.call("GET", "/api/audit");
+  return { count: r.body.phiAccessCount, rows: (r.body.phiAccess || []).filter((x) => x.userId === userId) };
+}
 const findMsg = (page, text) => page.evaluate((t) => { for (const c of window.DT.getState().conversations || []) { const m = (c.messages || []).find((x) => x.text === t); if (m) return { convo: c.id, unread: c.unread, attachments: m.attachments, receipt: m.receipt }; } return null; }, text);
 
 const patel = await session("ISPN", "patel");
@@ -145,22 +163,42 @@ const tag = Date.now().toString(36);
   await ctx.close();
 }
 
-// ---- B: socket down → message sent meanwhile → reconnect resync -------------
+// ---- B: socket down → reconnect → ONE sync request ---------------------------
 {
   const { ctx, page, log } = await phone(390);
-  let n = 0; let first = null; let release; const held = new Promise((r) => { release = r; });
+  let n = 0; let current = null; let hold = null;
   await page.routeWebSocket(/\/ws(\?|$)/, async (ws) => {
     n++;
-    if (n === 1) { first = ws; ws.connectToServer(); return; }
-    if (n === 2) { await held; }
+    if (hold) await hold.p;
+    current = ws;
     ws.connectToServer();
   });
+  const drop = () => { let release; const p = new Promise((r) => { release = r; }); hold = { p, release }; current.close({ code: 4001, reason: "network drop (test)" }); return () => { const h = hold; hold = null; h.release(); }; };
   await signIn(page, "ISPN", "chen");
   const chenId = await page.evaluate(() => window.DT.getState().me.id);
   const convo = await directWith(patel, chenId);
-  const others = await page.evaluate(() => (window.DT.getState().conversations || []).length);
-  first.close({ code: 4001, reason: "network drop (test)" });
+  await sleep(500);
+
+  // B1: nothing changed while the socket was down.
+  const phi0 = await phiFor(chenId);
+  let release = drop();
   await sleep(1500); // the client has retried; the route holds the new socket
+  log.reqs.length = 0;
+  release();
+  await sleep(2500);
+  const g1 = msgGets(log);
+  const phi1 = await phiFor(chenId);
+  rec("B SHO-65: a reconnect with nothing changed costs ONE GET /api/messaging/sync — no list, no thread read", g1.length === 1 && g1[0].path === "/api/messaging/sync", g1.map((r) => r.path + r.search).join(", ") || "none");
+  // Messaging rows only: the role's dashboard data (patients, board,
+  // assignments) is deliberately re-read on reconnect — it is on screen and an
+  // assignment missed while the socket was down must appear.
+  const MSG_PHI = /^conversation/;
+  const newRows1 = phi1.rows.filter((r) => !phi0.rows.some((x) => x.id === r.id) && MSG_PHI.test(r.resource));
+  rec("B SHO-65: …and writes no messaging PHI-access row (no conversations / conversation-* row)", newRows1.length === 0, newRows1.map((r) => r.resource + ":" + r.resourceId).join(", ") || "none");
+
+  // B2: a message sent while the socket was down.
+  release = drop();
+  await sleep(1500);
   await send(patel, convo.id, "rt-B while offline " + tag);
   await sleep(500);
   const before = await findMsg(page, "rt-B while offline " + tag);
@@ -170,11 +208,69 @@ const tag = Date.now().toString(36);
   await sleep(800);
   const after = await findMsg(page, "rt-B while offline " + tag);
   rec("B SHO-65: a message sent while the socket was down appears after the reconnect", !before && !!after, `before=${!!before} after=${!!after}`);
-  const g = msgGets(log);
-  const lists = g.filter((r) => r.path === "/api/messaging/conversations").length;
-  const threads = g.filter((r) => /\/messages$/.test(r.path)).map((r) => r.path);
-  rec("B SHO-65: the resync is ONE list request + only the changed thread(s)", lists === 1 && threads.includes("/api/messaging/conversations/" + convo.id + "/messages") && threads.length <= Math.max(1, others), `list=${lists} threads=${threads.join(",")} (of ${others} conversations)`);
-  rec("B: exactly one reconnect", n === 2, `sockets=${n}`);
+  const g2 = msgGets(log);
+  rec("B SHO-65: …from the ONE sync answer (no list, no thread read)", g2.length === 1 && g2[0].path === "/api/messaging/sync", g2.map((r) => r.path + r.search).join(", "));
+  const phi2 = await phiFor(chenId);
+  const newRows2 = phi2.rows.filter((r) => !phi1.rows.some((x) => x.id === r.id) && MSG_PHI.test(r.resource));
+  rec("B SHO-65: the delivery is logged once as conversation-sync (never as the user opening the thread or a list read)", newRows2.length === 1 && newRows2[0].resource === "conversation-sync" && newRows2[0].resourceId === convo.id, newRows2.map((r) => r.resource + ":" + r.resourceId).join(", "));
+  rec("B: one reconnect per drop", n === 3, `sockets=${n}`);
+  await ctx.close();
+}
+
+// ---- J: sign-in reads the list only; a thread is read when opened -------------
+{
+  const liuS = await session("ISPN", "liu");
+  const liuId = liuS.me.id;
+  // A fresh thread each run: 80 messages from patel; liu (another device) has
+  // read the first 70.
+  const threadName = "rt-J " + tag;
+  const c = (await patel.call("POST", "/api/messaging/conversations", { type: "group", name: threadName, participantIds: [liuId] })).body;
+  const ids = [];
+  for (let i = 1; i <= 80; i++) ids.push((await send(patel, c.id, `rt-J ${tag} #${i}`)).body.id);
+  await liuS.call("POST", "/api/messaging/messages/mark-read", { messageIds: ids.slice(0, 70) });
+  const { ctx, page, log } = await phone(390);
+  const phi0 = await phiFor(liuId);
+  await signIn(page, "ISPN", "liu");
+  await sleep(1500);
+  const threadsAtSignIn = msgGets(log).filter((r) => /\/messages$/.test(r.path));
+  const phi1 = await phiFor(liuId);
+  const rows1 = phi1.rows.filter((r) => !phi0.rows.some((x) => x.id === r.id));
+  rec("J SHO-65: sign-in reads NO thread (list only)", threadsAtSignIn.length === 0, threadsAtSignIn.map((r) => r.path).join(", ") || "none");
+  rec("J SHO-65: sign-in writes ONE PHI row (the list) and no conversation-messages row", rows1.filter((r) => r.resource === "conversations").length === 1 && !rows1.some((r) => r.resource === "conversation-messages"), rows1.map((r) => r.resource + ":" + (r.resourceId ?? "")).join(", "));
+  const unread = await page.evaluate((id) => (window.DT.getState().conversations.find((x) => x.id === id) || {}).unread, c.id);
+  rec("J: the unopened thread still shows the server's unread count", unread === 10, `unread=${unread}`);
+  log.reqs.length = 0;
+  await page.evaluate(() => window.DT.actions.setNav("messages"));
+  await sleep(500);
+  await page.locator("main button", { hasText: threadName }).first().click();
+  await page.waitForSelector("[data-load-earlier]", { timeout: 10000 }).catch(() => {});
+  await sleep(800);
+  const opened = msgGets(log).filter((r) => /\/messages$/.test(r.path));
+  const shown = await page.locator("[data-message]").count();
+  rec("J SHO-65: opening the thread reads ONE bounded page", opened.length === 1 && /^\?limit=\d+$/.test(opened[0].search) && shown === 50, `${opened.map((r) => r.path + r.search).join(", ")} shown=${shown}`);
+  const phi2 = await phiFor(liuId);
+  const rows2 = phi2.rows.filter((r) => !phi1.rows.some((x) => x.id === r.id));
+  rec("J SHO-65: …logged once as conversation-messages for that thread", rows2.filter((r) => r.resource === "conversation-messages" && r.resourceId === c.id).length === 1, rows2.map((r) => r.resource + ":" + (r.resourceId ?? "")).join(", "));
+  const unreadAfter = await page.evaluate((id) => (window.DT.getState().conversations.find((x) => x.id === id) || {}).unread, c.id);
+  rec("J: on screen, its unread messages are read", unreadAfter === 0, `unread=${unreadAfter}`);
+  // Load earlier: scroll to the top, tap, the reader keeps their place.
+  const anchorText = `rt-J ${tag} #31`;
+  await page.evaluate(() => { const el = document.querySelector("[data-thread-scroll]"); el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); });
+  await sleep(200);
+  const y0 = await page.evaluate((t) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(t)); return m ? m.getBoundingClientRect().top : null; }, anchorText);
+  log.reqs.length = 0;
+  await page.locator("[data-load-earlier]").click();
+  await page.waitForFunction(() => document.querySelectorAll("[data-message]").length === 80, null, { timeout: 8000 }).catch(() => {});
+  await sleep(300);
+  const earlier = msgGets(log).filter((r) => /\/messages$/.test(r.path));
+  const y1 = await page.evaluate((t) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(t)); return m ? m.getBoundingClientRect().top : null; }, anchorText);
+  const total = await page.locator("[data-message]").count();
+  const btn = await page.locator("[data-load-earlier]").count();
+  rec("J SHO-65: Load earlier reads the page before the oldest shown (?before=) and shows all 80", earlier.length === 1 && earlier[0].search === `?limit=50&before=${ids[30]}` && total === 80 && btn === 0, `${earlier.map((r) => r.search).join(",")} total=${total} button=${btn}`);
+  rec("J: the reader keeps their place (the previously-top message does not jump)", y0 != null && y1 != null && Math.abs(y1 - y0) < 4, `top ${y0} → ${y1}`);
+  const ov = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+  rec("J: no horizontal overflow", ov <= 0, `overflow=${ov}`);
+  rec("J: no page errors", log.errors.filter((e) => !/Failed to load resource/.test(e)).length === 0, log.errors.join(" | "));
   await ctx.close();
 }
 
@@ -268,6 +364,86 @@ const tag = Date.now().toString(36);
   await ctx.close();
 }
 
+// ---- E2: the one-time "Turn on alerts" card ----------------------------------
+for (const w of [375, 390, 430]) {
+  const { ctx, page } = await phone(w);
+  await ctx.addInitScript(() => {
+    if (typeof Notification === "undefined") return;
+    const orig = Notification.requestPermission.bind(Notification);
+    Notification.requestPermission = function (cb) {
+      sessionStorage.setItem("__prompts", String(Number(sessionStorage.getItem("__prompts") || 0) + 1));
+      sessionStorage.setItem("__promptGesture", String(!!(navigator.userActivation && navigator.userActivation.isActive)));
+      return orig(cb);
+    };
+  });
+  await signIn(page, "ISPN", "wu");
+  await page.waitForSelector("[data-alerts-card]", { timeout: 5000 }).catch(() => {});
+  const m = await page.evaluate(() => {
+    const c = document.querySelector("[data-alerts-card]");
+    if (!c) return null;
+    const r = c.getBoundingClientRect();
+    const b = c.querySelector("[data-alerts-enable]"); const br = b && b.getBoundingClientRect();
+    const x = c.querySelector("[data-alerts-dismiss]"); const xr = x && x.getBoundingClientRect();
+    const header = document.querySelector("header.dt-appbar"); const hr = header && header.getBoundingClientRect();
+    return { kind: c.getAttribute("data-alerts-card"), h: Math.round(r.height), left: r.left, right: r.right, btn: br && [Math.round(br.left), Math.round(br.right), Math.round(br.height)], x: xr && [Math.round(xr.width), Math.round(xr.height), Math.round(xr.right)], vw: innerWidth, docW: document.documentElement.scrollWidth, headerTop: hr && Math.round(hr.top), cardBottom: Math.round(r.bottom), prompts: Number(sessionStorage.getItem("__prompts") || 0) };
+  });
+  rec(`E2@${w} SHO-62/NEE-1: signed in, the 'Turn on alerts for STAT messages' card is offered — and nothing prompted yet`, m && m.kind === "offer" && m.prompts === 0, JSON.stringify(m && { kind: m.kind, prompts: m.prompts }));
+  rec(`E2@${w}: the card fits — Turn on and Dismiss inside the screen, ≥44 px targets, no horizontal scroll, header below it`, !!m && m.btn[1] <= m.vw && m.btn[2] >= 44 && m.x[0] >= 44 && m.x[1] >= 44 && m.x[2] <= m.vw && m.docW <= m.vw && m.h <= 72 && m.headerTop >= m.cardBottom - 1, JSON.stringify(m));
+  if (w === 390) {
+    await page.locator("[data-alerts-enable]").click();
+    await sleep(800);
+    const p1 = await page.evaluate(() => ({ n: Number(sessionStorage.getItem("__prompts") || 0), gesture: sessionStorage.getItem("__promptGesture") }));
+    rec("E2 SHO-62: the card's Turn on asks exactly once — inside the user gesture", p1.n === 1 && p1.gesture === "true", JSON.stringify(p1));
+  } else {
+    await page.locator("[data-alerts-dismiss]").click();
+    await sleep(200);
+    const gone = (await page.locator("[data-alerts-card]").count()) === 0;
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => !!(window.DT && window.DT.getState().session), null, { timeout: 15000 });
+    await sleep(1200);
+    const back = await page.locator("[data-alerts-card]").count();
+    const prompts = await page.evaluate(() => Number(sessionStorage.getItem("__prompts") || 0));
+    rec(`E2@${w}: dismissed, the card is gone and stays gone after a reload (no prompt)`, gone && back === 0 && prompts === 0, `gone=${gone} afterReload=${back} prompts=${prompts}`);
+  }
+  await ctx.close();
+}
+
+// ---- K: unacknowledged STAT countdown -------------------------------------------
+{
+  const settings = await patel.call("GET", "/api/settings");
+  const t = settings.body.org;
+  const chenS = await session("ISPN", "chen");
+  const convo = await directWith(chenS, patel.me.id);
+  const a = await phone(390); const b = await phone(390);
+  await signIn(a.page, "ISPN", "chen");
+  await signIn(b.page, "ISPN", "patel");
+  for (const p of [a.page, b.page]) {
+    await p.evaluate((id) => { window.DT.set((s) => { s.__activeConvo = id; s.__openThread = id; return s; }); window.DT.actions.setNav("messages"); }, convo.id);
+  }
+  await sleep(1200);
+  await a.page.evaluate(([id, text]) => window.DT.actions.sendMessage(id, text, "stat"), [convo.id, "rt-K stat " + tag]);
+  const clockOf = (p) => p.evaluate((text) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(text)); const c = m && m.querySelector("[data-stat-clock]"); if (!c) return null; const r = c.getBoundingClientRect(); return { text: c.textContent, right: r.right, vw: innerWidth }; }, "rt-K stat " + tag);
+  await a.page.waitForFunction((text) => [...document.querySelectorAll("[data-message]")].some((x) => x.textContent.includes(text) && x.querySelector("[data-stat-clock]")), "rt-K stat " + tag, { timeout: 8000 }).catch(() => {});
+  await b.page.waitForFunction((text) => [...document.querySelectorAll("[data-message]")].some((x) => x.textContent.includes(text) && x.querySelector("[data-stat-clock]")), "rt-K stat " + tag, { timeout: 8000 }).catch(() => {});
+  const s1 = await clockOf(a.page), r1 = await clockOf(b.page);
+  const re = /^Re-alert in (\d+):(\d\d) · escalates in (\d+):(\d\d)$/;
+  const secs = (m, i) => Number(m[i]) * 60 + Number(m[i + 1]);
+  const m1 = s1 && re.exec(s1.text);
+  const okTimes = !!m1 && Math.abs(secs(m1, 1) - t.statRealertMs / 1000) <= 6 && Math.abs(secs(m1, 3) - t.statEscalateMs / 1000) <= 6;
+  rec("K MIN-18: the sender's unacknowledged STAT shows the sweep's re-alert / escalation countdown", t.statRealertMs > 0 && okTimes, `${s1 && s1.text} (server ${t.statRealertMs}/${t.statEscalateMs} ms)`);
+  rec("K MIN-18: the recipient sees the same countdown by their Acknowledge button, inside the screen", !!r1 && re.test(r1.text) && r1.right <= r1.vw && (await b.page.locator("[data-ack]").count()) >= 1, JSON.stringify(r1));
+  await sleep(2200);
+  const s2 = await clockOf(a.page);
+  const m2 = s2 && re.exec(s2.text);
+  rec("K MIN-18: the countdown ticks", !!m1 && !!m2 && secs(m2, 1) < secs(m1, 1), `${s1 && s1.text} → ${s2 && s2.text}`);
+  await b.page.locator("[data-ack]").last().click();
+  await a.page.waitForFunction((text) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(text)); return m && !m.querySelector("[data-stat-clock]") && /Acknowledged/.test(m.textContent); }, "rt-K stat " + tag, { timeout: 8000 }).catch(() => {});
+  const s3 = await clockOf(a.page);
+  const acked = await a.page.evaluate((text) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(text)); return !!m && /Acknowledged/.test(m.textContent); }, "rt-K stat " + tag);
+  rec("K MIN-18: acknowledged → the countdown is gone and the sender sees Acknowledged", !s3 && acked, JSON.stringify(s3));
+  await a.ctx.close(); await b.ctx.close();
+}
+
 // ---- F: iPhone Safari tab (no Web Push APIs) → Add to Home Screen wording ----
 for (const w of [375, 390, 430]) {
   const { ctx, page } = await phone(w);
@@ -283,6 +459,17 @@ for (const w of [375, 390, 430]) {
   });
   rec(`F@${w} SHO-62/68: Safari tab explains Add to Home Screen (no 'not supported', no Turn on)`, m.state === "ios-home-screen" && /Add to Home Screen/.test(m.text) && !/Not supported/.test(m.text) && !m.button, `state=${m.state} "${m.text.slice(0, 60)}…"`);
   rec(`F@${w}: the row fits — wrapped, not clipped, no horizontal page scroll`, !m.clipped && m.ws !== "nowrap" && m.left >= 0 && m.right <= m.vw + 0.5 && m.docW <= m.vw, `row ${Math.round(m.left)}..${Math.round(m.right)} of ${m.vw}, doc ${m.docW}`);
+  if (w === 390) {
+    // The alerts card defers to the install banner (same advice); once that is
+    // dismissed, the card explains Add to Home Screen — with no Turn on.
+    const card0 = await page.locator("[data-alerts-card]").count();
+    await page.locator(".dt-install-slot button[title=Dismiss]").first().click().catch(() => {});
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(() => !!(window.DT && window.DT.getState().session), null, { timeout: 15000 });
+    await sleep(1000);
+    const c = await page.evaluate(() => { const el = document.querySelector("[data-alerts-card]"); return el ? { kind: el.getAttribute("data-alerts-card"), text: el.textContent, enable: !!el.querySelector("[data-alerts-enable]"), right: el.getBoundingClientRect().right, vw: innerWidth, docW: document.documentElement.scrollWidth } : null; });
+    rec("F SHO-62/NEE-1: in a Safari tab the alerts card waits for the install banner, then explains Add to Home Screen (no Turn on)", card0 === 0 && !!c && c.kind === "ios" && /Add to Home Screen/.test(c.text) && !c.enable && c.docW <= c.vw, JSON.stringify({ before: card0, c }));
+  }
   await ctx.close();
 }
 

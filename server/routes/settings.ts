@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { z } from "zod";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { statEscalationTimings } from "../services/escalation.js";
 import { effectiveRetentionDays, RETENTION_MAX_DAYS } from "../services/retention.js";
 import { storage } from "../storage.js";
 
@@ -43,6 +44,7 @@ export function registerSettingsRoutes(app: Express) {
     // STAT SMS fallback defaults ON; the operator/developer can disable it.
     const statSmsFallback =
       (await storage().getOrgSetting(me.organizationId, "statSmsFallback")) !== false;
+    const stat = statEscalationTimings();
     const [dnd, coveringUserId, dashboardLayout] = await Promise.all([
       storage().getUserPreference(me.id, "dnd"),
       storage().getUserPreference(me.id, "coveringUserId"),
@@ -56,6 +58,11 @@ export function registerSettingsRoutes(app: Express) {
         autoReassignOnDecline,
         messageRetentionDays,
         statSmsFallback,
+        // When an unacknowledged STAT is re-alerted / escalated to the covering
+        // provider — exactly what the sweep applies (A.CON-MIN-18 countdown).
+        // Whether it runs at all is the messaging.escalation module.
+        statRealertMs: stat.realertMs,
+        statEscalateMs: stat.escalateMs,
       },
       me: {
         dnd: dnd === true,

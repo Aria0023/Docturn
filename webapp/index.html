@@ -722,7 +722,7 @@ function App() {
       <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
         <ThemeStyle theme={st.theme} />
         <SyntheticBanner on={st.syntheticData} />
-        <div className="dt-install-slot"><InstallPrompt /></div>
+        <div className="dt-install-slot"><InstallPrompt /><EnableAlertsCard /></div>
         {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
         <header className="dt-appbar" style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -792,6 +792,7 @@ function App() {
       <ThemeStyle theme={st.theme} />
       <SyntheticBanner on={st.syntheticData} />
       <InstallPrompt />
+      <EnableAlertsCard />
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
       <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>

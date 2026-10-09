@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, like, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { AuditInput } from "./audit.js";
 import type { DbType } from "./db.js";
 import { attachmentStoreFor, FS_REF_PREFIX } from "./services/attachment-store.js";
@@ -104,6 +104,19 @@ export type NewMessage = Omit<
   Message,
   "id" | "createdAt" | "deletedAt" | "forwardedFrom"
 > & { forwardedFrom?: ForwardedFrom | null };
+
+/** Thread page size: default when a caller names none, and the hard cap. */
+export const MESSAGE_PAGE_DEFAULT = 50;
+export const MESSAGE_PAGE_MAX = 200;
+export interface MessagePageOptions {
+  limit?: number;
+  beforeId?: number;
+  afterId?: number;
+}
+function clampPage(limit: number | undefined): number {
+  const n = Number.isFinite(limit) ? Math.floor(limit as number) : MESSAGE_PAGE_DEFAULT;
+  return Math.min(MESSAGE_PAGE_MAX, Math.max(1, n));
+}
 
 /** Fields a director may set on a manual compliance attestation. */
 export interface AttestationPatch {
@@ -312,7 +325,54 @@ export interface IStorage {
   listConsultsForOrg(orgId: number): Promise<PatientConsult[]>;
   countMessagesSince(orgId: number, since: Date): Promise<number>;
   listStatAckLatencies(orgId: number): Promise<number[]>;
-  listMessages(orgId: number, conversationId: number): Promise<Message[]>;
+  /**
+   * One bounded page of a thread, ascending by id (A.CON-SHO-65). Without a
+   * cursor: the newest `limit`; `beforeId`: the newest `limit` older than it;
+   * `afterId`: the oldest `limit` newer than it. `hasMore` = the server holds
+   * more in that direction. `limit` is clamped to 1..MESSAGE_PAGE_MAX.
+   */
+  listMessagesPage(
+    orgId: number,
+    conversationId: number,
+    opts?: MessagePageOptions,
+  ): Promise<{ messages: Message[]; hasMore: boolean }>;
+  /** The newest live message of each conversation (one indexed read). */
+  lastMessagesFor(orgId: number, conversationIds: number[]): Promise<Map<number, Message>>;
+  /** Per conversation: live messages whose delivery row for `userId` is unread. */
+  unreadCountsFor(
+    orgId: number,
+    userId: number,
+    conversationIds: number[],
+  ): Promise<Map<number, number>>;
+  /**
+   * Live messages with id > afterId across `conversationIds`, ascending,
+   * at most `limit` (reconnect resync).
+   */
+  listMessagesAfter(
+    orgId: number,
+    conversationIds: number[],
+    afterId: number,
+    limit: number,
+  ): Promise<{ messages: Message[]; hasMore: boolean }>;
+  /**
+   * Recipient delivery rows (never the sender's own) of live messages with
+   * id <= maxMessageId in `conversationIds` that were delivered, read or
+   * acknowledged at/after `since` — receipts a disconnected client missed.
+   */
+  listReceiptChangesSince(
+    orgId: number,
+    conversationIds: number[],
+    since: Date,
+    maxMessageId: number,
+    limit: number,
+  ): Promise<Array<MessageDeliveryStatus & { conversationId: number }>>;
+  /** Messages in `conversationIds` recalled (soft-deleted) at/after `since`. */
+  listRecalledSince(
+    orgId: number,
+    conversationIds: number[],
+    since: Date,
+    limit: number,
+  ): Promise<Array<{ messageId: number; conversationId: number }>>;
   createMessage(m: NewMessage): Promise<Message>;
   getMessage(orgId: number, id: number): Promise<Message | undefined>;
   softDeleteMessage(orgId: number, id: number): Promise<void>;
@@ -826,18 +886,133 @@ export class DatabaseStorage implements IStorage {
     const [row] = await this.db.insert(conversations).values(c).returning();
     return row!;
   }
-  async listMessages(orgId: number, conversationId: number) {
-    return this.db
+  async listMessagesPage(orgId: number, conversationId: number, opts: MessagePageOptions = {}) {
+    const limit = clampPage(opts.limit);
+    const conds = [
+      eq(messages.organizationId, orgId),
+      eq(messages.conversationId, conversationId),
+      isNull(messages.deletedAt),
+    ];
+    if (opts.afterId != null) {
+      // Forwards: the oldest `limit` newer than the cursor.
+      conds.push(gt(messages.id, opts.afterId));
+      const rows = await this.db
+        .select()
+        .from(messages)
+        .where(and(...conds))
+        .orderBy(asc(messages.id))
+        .limit(limit + 1);
+      return { messages: rows.slice(0, limit), hasMore: rows.length > limit };
+    }
+    // Backwards (or the newest page): read newest-first, return ascending.
+    if (opts.beforeId != null) conds.push(lt(messages.id, opts.beforeId));
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(...conds))
+      .orderBy(desc(messages.id))
+      .limit(limit + 1);
+    return { messages: rows.slice(0, limit).reverse(), hasMore: rows.length > limit };
+  }
+  async lastMessagesFor(orgId: number, conversationIds: number[]) {
+    const out = new Map<number, Message>();
+    if (conversationIds.length === 0) return out;
+    const rows = await this.db
+      .selectDistinctOn([messages.conversationId])
+      .from(messages)
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          inArray(messages.conversationId, conversationIds),
+          isNull(messages.deletedAt),
+        ),
+      )
+      .orderBy(messages.conversationId, desc(messages.id));
+    for (const r of rows) out.set(r.conversationId, r);
+    return out;
+  }
+  async unreadCountsFor(orgId: number, userId: number, conversationIds: number[]) {
+    const out = new Map<number, number>();
+    if (conversationIds.length === 0) return out;
+    const rows = await this.db
+      .select({ conversationId: messages.conversationId, n: sql<number>`count(*)` })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messages.id, messageDeliveryStatus.messageId))
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          inArray(messages.conversationId, conversationIds),
+          isNull(messages.deletedAt),
+          eq(messageDeliveryStatus.userId, userId),
+          isNull(messageDeliveryStatus.readAt),
+        ),
+      )
+      .groupBy(messages.conversationId);
+    for (const r of rows) out.set(r.conversationId, Number(r.n));
+    return out;
+  }
+  async listMessagesAfter(orgId: number, conversationIds: number[], afterId: number, limit: number) {
+    if (conversationIds.length === 0) return { messages: [] as Message[], hasMore: false };
+    const n = clampPage(limit);
+    const rows = await this.db
       .select()
       .from(messages)
       .where(
         and(
           eq(messages.organizationId, orgId),
-          eq(messages.conversationId, conversationId),
+          inArray(messages.conversationId, conversationIds),
           isNull(messages.deletedAt),
+          gt(messages.id, afterId),
         ),
       )
-      .orderBy(asc(messages.createdAt));
+      .orderBy(asc(messages.id))
+      .limit(n + 1);
+    return { messages: rows.slice(0, n), hasMore: rows.length > n };
+  }
+  async listReceiptChangesSince(
+    orgId: number,
+    conversationIds: number[],
+    since: Date,
+    maxMessageId: number,
+    limit: number,
+  ) {
+    if (conversationIds.length === 0) return [];
+    const rows = await this.db
+      .select({ d: messageDeliveryStatus, conversationId: messages.conversationId })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messages.id, messageDeliveryStatus.messageId))
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          inArray(messages.conversationId, conversationIds),
+          isNull(messages.deletedAt),
+          lte(messages.id, maxMessageId),
+          ne(messageDeliveryStatus.userId, messages.senderId),
+          or(
+            gte(messageDeliveryStatus.deliveredAt, since),
+            gte(messageDeliveryStatus.readAt, since),
+            gte(messageDeliveryStatus.acknowledgedAt, since),
+          ),
+        ),
+      )
+      .orderBy(asc(messageDeliveryStatus.id))
+      .limit(Math.max(1, Math.floor(limit)));
+    return rows.map((r) => ({ ...r.d, conversationId: r.conversationId }));
+  }
+  async listRecalledSince(orgId: number, conversationIds: number[], since: Date, limit: number) {
+    if (conversationIds.length === 0) return [];
+    return this.db
+      .select({ messageId: messages.id, conversationId: messages.conversationId })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          inArray(messages.conversationId, conversationIds),
+          gte(messages.deletedAt, since),
+        ),
+      )
+      .orderBy(asc(messages.id))
+      .limit(Math.max(1, Math.floor(limit)));
   }
   async createMessage(m: NewMessage) {
     const [row] = await this.db

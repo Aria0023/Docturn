@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -236,7 +237,10 @@ export const messages = pgTable("messages", {
   forwardedFrom: jsonb("forwarded_from").$type<ForwardedFrom | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   deletedAt: timestamp("deleted_at"),
-});
+}, (t) => ({
+  // Thread pages are keyset-paginated by id (A.CON-SHO-65); mirrored in server/db.ts.
+  conversationPage: index("messages_conversation_id_idx").on(t.conversationId, t.id),
+}));
 
 /** Provenance stamped on a forwarded message (see messages.forwardedFrom). */
 export interface ForwardedFrom {
@@ -263,7 +267,10 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
   // step fires exactly once): re-alert nudge, then covering-provider escalation.
   realertedAt: timestamp("realerted_at"),
   escalatedAt: timestamp("escalated_at"),
-});
+}, (t) => ({
+  // Receipts / unread counts are read per message; mirrored in server/db.ts.
+  byMessage: index("message_delivery_status_message_idx").on(t.messageId),
+}));
 
 // Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: bytes live
 // inline as base64 in `dataBase64`. Production PHI needs encrypted object storage

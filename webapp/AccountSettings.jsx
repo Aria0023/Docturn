@@ -135,6 +135,93 @@ function TwoFactorSetup({ enrolled, onDone, onCancel }) {
   );
 }
 
+// This device's Web Push state (DT.pushStatus): granted / default / denied /
+// ios-home-screen (iPhone Safari tab — push needs the Home Screen app) /
+// ios-update / unsupported.
+function dtReadPush() {
+  try { return window.DT && DT.pushStatus ? DT.pushStatus() : ((typeof Notification !== "undefined" && Notification.permission) || "unsupported"); } catch (e) { return "unsupported"; }
+}
+
+// ---- one-time "Turn on alerts" card (A.CON-SHO-62 / A.CON-NEE-1) -----------
+// The app never asks for notification permission by itself. Instead, signed in
+// on a device that CAN take Web Push but has not been asked yet, this card
+// offers it once; its button calls a.enablePush() synchronously inside the tap
+// (what WebKit requires for the prompt to appear, and what keeps Chrome from
+// auto-blocking an unprompted request). Dismissed, answered (allowed or
+// blocked) or turned on, it never shows again on this device — Settings →
+// Push notifications remains. In an iPhone/iPad Safari TAB (no Web Push until
+// DocTurn is on the Home Screen) it explains Add to Home Screen instead, once
+// the install banner (which says the same) is out of the way.
+const ALERTS_CARD_KEY = "dt_alerts_card_done";
+function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode: shows again next time */ } }
+function EnableAlertsCard() {
+  const st = useStore();
+  const a = useActions();
+  const [status, setStatus] = React.useState(dtReadPush);
+  const [busy, setBusy] = React.useState(false);
+  const [done, setDone] = React.useState(() => lsGet(ALERTS_CARD_KEY) === "1");
+  const [flash, setFlash] = React.useState(null); // short confirmation after "Turn on"
+  React.useEffect(() => {
+    // Permission can change in system settings while the app is backgrounded.
+    const on = () => { if (document.visibilityState === "visible") setStatus(dtReadPush()); };
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  React.useEffect(() => {
+    if (!flash) return undefined;
+    const t = setTimeout(() => setFlash(null), 4000);
+    return () => clearTimeout(t);
+  }, [flash]);
+  const role = st.session && st.session.role;
+  if (!role || role === "developer") return null; // platform operators get no clinical alerts
+  const finish = () => { lsSet(ALERTS_CARD_KEY, "1"); setDone(true); };
+  if (flash) {
+    return (
+      <div data-alerts-card="done" role="status" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "#ECFDF5", borderBottom: "1px solid #A7F3D0", color: "#065F46", fontSize: 13, fontWeight: 600 }}>
+        <Icon name="bell-ring" size={18} color="#065F46" />{flash}
+      </div>
+    );
+  }
+  if (done) return null;
+  const iosTab = status === "ios-home-screen" && lsGet("dt_install_dismissed") === "1";
+  if (status !== "default" && status !== "error" && !iosTab) return null;
+  const turnOn = () => {
+    if (!a.enablePush || busy) return;
+    const pending = a.enablePush(); // first thing in the tap — no await before it
+    setBusy(true);
+    Promise.resolve(pending).then((res) => {
+      const now = res || dtReadPush();
+      setStatus(now);
+      if (now === "granted") { finish(); setFlash("Alerts are on for this device."); }
+      else if (now === "denied") finish(); // answered; Settings explains how to allow it later
+    }, () => setStatus("error")).finally(() => setBusy(false));
+  };
+  const title = iosTab ? "STAT alerts need the Home Screen app" : status === "error" ? "Couldn't turn alerts on" : "Turn on STAT alerts";
+  const sub = iosTab
+    ? "Share → Add to Home Screen (iOS 16.4+), open DocTurn from there, then turn alerts on."
+    : status === "error" ? "Check your connection and try again." : "Even when DocTurn is closed.";
+  return (
+    <div data-alerts-card={iosTab ? "ios" : "offer"} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px 6px 16px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", color: "#1E3A8A" }}>
+      <Icon name="bell-ring" size={18} color="#1D4ED8" />
+      <div style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>{title}</div>
+        <div style={{ fontSize: 12, fontWeight: 500 }}>{sub}</div>
+      </div>
+      {!iosTab && (
+        <button type="button" data-alerts-enable onClick={turnOn} disabled={busy}
+          style={{ flex: "none", minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "none", background: "#1D4ED8", color: "#fff", fontWeight: 700, fontSize: 13, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-sans)", opacity: busy ? 0.7 : 1 }}>
+          {busy ? "Turning on…" : "Turn on"}
+        </button>
+      )}
+      <button type="button" data-alerts-dismiss onClick={finish} title="Dismiss" aria-label="Dismiss alerts suggestion"
+        style={{ flex: "none", width: 44, height: 44, borderRadius: "var(--radius-md)", border: "none", background: "transparent", color: "#1E3A8A", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon name="x" size={16} color="#1E3A8A" />
+      </button>
+    </div>
+  );
+}
+
 function AccountSettings({ onLock }) {
   const st = useStore();
   const a = useActions();
@@ -145,7 +232,7 @@ function AccountSettings({ onLock }) {
   // This device's Web Push state (DT.pushStatus): granted / default / denied /
   // ios-home-screen (iPhone Safari tab — push needs the Home Screen app) /
   // unsupported; "error" after a failed attempt.
-  const readPush = () => { try { return window.DT && DT.pushStatus ? DT.pushStatus() : ((typeof Notification !== "undefined" && Notification.permission) || "unsupported"); } catch (e) { return "unsupported"; } };
+  const readPush = dtReadPush;
   const [pushState, setPushState] = React.useState(readPush);
   const [pushBusy, setPushBusy] = React.useState(false);
   const [standalone] = React.useState(() => { try { return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true; } catch (e) { return false; } });
@@ -259,4 +346,4 @@ function AccountSettings({ onLock }) {
   );
 }
 
-Object.assign(window, { AccountSettings });
+Object.assign(window, { AccountSettings, EnableAlertsCard });

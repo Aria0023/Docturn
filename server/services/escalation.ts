@@ -74,6 +74,24 @@ const REALERT_MS_DEFAULT = 2 * 60_000;
 const ESCALATE_MS_DEFAULT = 5 * 60_000;
 export const ESCALATION_MODULE = "messaging.escalation";
 
+function positiveMs(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || !/^\d+$/.test(raw.trim())) return fallback;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n > 0 ? n : fallback;
+}
+/**
+ * The re-alert / escalation intervals the sweep applies: STAT_REALERT_MS /
+ * STAT_ESCALATE_MS when they are positive integers, else 2 / 5 minutes. ONE
+ * reader for the sweep and for GET /api/settings, so the client's countdown
+ * (A.CON-MIN-18) can never promise a different schedule than the server runs.
+ */
+export function statEscalationTimings(): { realertMs: number; escalateMs: number } {
+  return {
+    realertMs: positiveMs(process.env.STAT_REALERT_MS, REALERT_MS_DEFAULT),
+    escalateMs: positiveMs(process.env.STAT_ESCALATE_MS, ESCALATE_MS_DEFAULT),
+  };
+}
+
 /** The covering provider a user designated (user_preferences.coveringUserId). */
 export async function resolveCovering(
   s: IStorage,
@@ -112,8 +130,9 @@ export async function runStatEscalationSweep(
   s: IStorage,
   opts: EscalationOptions = {},
 ): Promise<EscalationSweepResult> {
-  const realertMs = opts.realertMs ?? REALERT_MS_DEFAULT;
-  const escalateMs = opts.escalateMs ?? ESCALATE_MS_DEFAULT;
+  const timings = statEscalationTimings();
+  const realertMs = opts.realertMs ?? timings.realertMs;
+  const escalateMs = opts.escalateMs ?? timings.escalateMs;
   const deps = notificationDeps();
   const now = Date.now();
   let realerted = 0;
@@ -146,10 +165,13 @@ export async function runStatEscalationSweep(
 
     // Step 1 — re-alert the original recipient.
     if (age >= realertMs && !row.realertedAt) {
-      deps.ws.sendToUsers([row.userId], {
+      // To the recipient (the nudge) and the sender (their countdown moves on,
+      // A.CON-MIN-18). Ids only; `userId` = who was re-alerted.
+      deps.ws.sendToUsers(Array.from(new Set([row.userId, row.senderId])), {
         type: "STAT_REALERT",
         messageId: row.messageId,
         conversationId: row.conversationId,
+        userId: row.userId,
       });
       await deps.push
         .send(row.userId, { title: "STAT message awaiting your acknowledgement" })
@@ -277,10 +299,10 @@ export async function runStatEscalationSweep(
 let timer: NodeJS.Timeout | null = null;
 export function startStatEscalationLoop(intervalMs = 15_000) {
   if (timer) return;
-  const realertMs = Number(process.env.STAT_REALERT_MS) || undefined;
-  const escalateMs = Number(process.env.STAT_ESCALATE_MS) || undefined;
   timer = setInterval(() => {
-    runStatEscalationSweep(storage(), { realertMs, escalateMs }).catch((err) =>
+    // Thresholds come from statEscalationTimings() (the same values
+    // GET /api/settings reports to clients).
+    runStatEscalationSweep(storage()).catch((err) =>
       console.error("[escalation] sweep failed", err),
     );
   }, intervalMs);

@@ -8,9 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
  *
  *  - A.CON-SHO-65  MESSAGE_RECEIVED / MESSAGE_ACK / MESSAGE_READ /
  *                  MESSAGE_RECALLED are applied from the frame — no request per
- *                  event (each thread GET is a PHI-access audit row); an
- *                  incomplete frame re-reads ONE thread (debounced); a socket
- *                  that comes back resyncs once, re-reading only changed threads.
+ *                  event (each thread GET is a PHI-access audit row). Sign-in
+ *                  reads the conversation LIST only; a thread is read (one
+ *                  bounded page, "Load earlier" for more) when it is opened.
+ *                  A socket that comes back asks GET /api/messaging/sync once:
+ *                  nothing changed → no list, no thread read; what changed
+ *                  (messages, receipts, recalls) is applied from that answer.
  *  - A.CON-SHO-67  close 1008 "session_revoked" → sign-in (expireSession), no
  *                  reconnect loop; other 1008 → one GET /api/user probe: 401 →
  *                  sign-in, still signed in → backoff, then pause (never sign a
@@ -60,6 +63,8 @@ interface Harness {
   w: any;
   threads: Record<number, any[]>;
   convos: any[];
+  /** What GET /api/messaging/sync reports besides new messages. */
+  sync: { receipts: any[]; recalled: any[]; n: number };
   reqs: Req[];
   sockets: any[];
   routes: Record<string, Route>;
@@ -96,15 +101,24 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
     { id: 2, type: "direct", name: null, participantIds: [CHEN.id, 13], patientId: null },
   ];
   const h: Harness = {
-    w, reqs, sockets, threads, convos,
+    w, reqs, sockets, threads, convos, sync: { receipts: [], recalled: [], n: 0 },
     routes: {},
     state: () => w.DT.getState(),
     convo: (id: number) => (w.DT.getState().conversations || []).find((c: any) => c.id === id),
     close: () => { try { w.close(); } catch { /* ignore */ } },
   };
   harnesses.push(h);
-  const listBody = () => convos.map((c) => ({ ...c, lastMessage: (threads[c.id] || []).at(-1) ?? null, unreadCount: (threads[c.id] || []).filter((m) => m.senderId !== user.id && m.deliveries.some((d: any) => d.userId === user.id && !d.readAt)).length }));
-  const respond = (req: Req): { status: number; body?: any } => {
+  const unreadIn = (msgs: any[]) => msgs.filter((m) => m.senderId !== user.id && m.deliveries.some((d: any) => d.userId === user.id && !d.readAt)).length;
+  const listBody = () => convos.map((c) => ({ ...c, lastMessage: (threads[c.id] || []).at(-1) ?? null, unreadCount: unreadIn(threads[c.id] || []) }));
+  // The server's thread paging: newest `limit` (default 50), ?before / ?after.
+  const page = (all: any[], q: URLSearchParams) => {
+    const limit = Math.min(Number(q.get("limit") || 50), 200);
+    const before = q.get("before"), after = q.get("after");
+    if (after != null) { const rest = all.filter((m) => m.id > Number(after)); return { body: rest.slice(0, limit), more: rest.length > limit }; }
+    const upto = before != null ? all.filter((m) => m.id < Number(before)) : all;
+    return { body: upto.slice(Math.max(0, upto.length - limit)), more: upto.length > limit };
+  };
+  const respond = (req: Req): { status: number; body?: any; headers?: Record<string, string> } => {
     for (const r of Object.values(h.routes)) { const out = r(req); if (out) return out; }
     const p = req.path.split("?")[0]!;
     if (p === "/api/user") return { status: 200, body: user };
@@ -116,7 +130,19 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
     if (p === "/api/push/vapid-key") return { status: 200, body: { key: "BOrLbqA4n2c6s2Fv" } };
     if (p === "/api/messaging/conversations" && req.method === "GET") return { status: 200, body: listBody() };
     const m = /^\/api\/messaging\/conversations\/(\d+)\/messages$/.exec(p);
-    if (m) return { status: 200, body: threads[Number(m[1])] ?? [] };
+    const q = new URLSearchParams(req.path.split("?")[1] || "");
+    if (m) { const pg = page(threads[Number(m[1])] ?? [], q); return { status: 200, body: pg.body, headers: { "x-has-more": pg.more ? "1" : "0" } }; }
+    if (p === "/api/messaging/sync") {
+      const mine = convos.filter((c) => c.participantIds.includes(user.id));
+      const after = q.get("after");
+      const fresh = after == null ? [] : mine.flatMap((c) => threads[c.id] || []).filter((x) => x.id > Number(after)).sort((a, b) => a.id - b.id);
+      const since = q.get("since");
+      return { status: 200, body: {
+        cursor: "cursor-" + (++h.sync.n),
+        conversations: mine.map((c) => ({ id: c.id, lastMessageId: (threads[c.id] || []).at(-1)?.id ?? null, unreadCount: unreadIn(threads[c.id] || []) })),
+        messages: fresh, receipts: since ? h.sync.receipts : [], recalled: since ? h.sync.recalled : [], more: false, complete: true,
+      } };
+    }
     if (req.method !== "GET") return { status: 204 };
     return { status: 200, body: [] };
   };
@@ -126,7 +152,8 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
     reqs.push(req);
     const r = respond(req);
     const text = r.body === undefined ? "" : JSON.stringify(r.body);
-    return Promise.resolve({ status: r.status, ok: r.status >= 200 && r.status < 300, statusText: "", text: () => Promise.resolve(text), headers: { get: () => "application/json" } });
+    const hdrs: Record<string, string> = Object.assign({ "content-type": "application/json" }, r.headers || {});
+    return Promise.resolve({ status: r.status, ok: r.status >= 200 && r.status < 300, statusText: "", text: () => Promise.resolve(text), headers: { get: (k: string) => hdrs[String(k).toLowerCase()] ?? null } });
   };
   class FakeWS {
     url: string; readyState = 0; sent: string[] = [];
@@ -160,6 +187,9 @@ async function boot(opts: { user?: any; threads?: Record<number, any[]>; convos?
   sockets[0].emit({ type: "CONNECTION_ESTABLISHED", userId: user.id });
   // Live conversations in state (the store's offline demo seed has string ids).
   await until(() => convos.length === 0 || convos.every((c) => !!h.convo(c.id)));
+  // The post-sign-in sync that hands this device its first cursor (tolerant:
+  // a client without it simply never asks).
+  await until(() => convos.length === 0 || reqs.some((r) => r.path.startsWith("/api/messaging/sync")), 1000).catch(() => {});
   await sleep(50);
   return h;
 }
@@ -215,16 +245,30 @@ describe("web client realtime (jsdom, real store.js + api-bridge.js)", () => {
     expect(h.reqs.filter((r) => r.path.startsWith("/api/messaging"))).toEqual([]);
   });
 
-  it("SHO-65: incomplete frames re-read ONE thread, once per burst; an unknown thread costs one list + that thread", async () => {
+  it("SHO-65: incomplete frames re-read ONE page of an OPEN thread, once per burst; an unopened thread costs nothing; an unknown thread costs one list", async () => {
     const h = await boot();
-    h.reqs.length = 0;
     const thin = (id: number) => { const m: any = msg(id, 1, PATEL, "covering copy " + id); delete m.attachments; delete m.deliveries; return m; };
-    h.threads[1] = h.threads[1]!.concat([msg(105, 1, PATEL, "covering copy 105"), msg(106, 1, PATEL, "covering copy 106")]);
+    // Not opened yet: the thin frame is shown, nothing is fetched (the thread
+    // is read when it is opened).
+    h.reqs.length = 0;
+    h.threads[1] = h.threads[1]!.concat([msg(105, 1, PATEL, "covering copy 105")]);
     h.sockets[0].emit({ type: "MESSAGE_RECEIVED", message: thin(105) });
-    h.sockets[0].emit({ type: "MESSAGE_RECEIVED", message: thin(106) });
-    expect(h.convo(1).messages.some((x: any) => x.id === 106)).toBe(true); // shown at once
+    expect(h.convo(1).messages.some((x: any) => x.id === 105)).toBe(true);
     await sleep(600);
-    expect(gets(h, /^\/api\/messaging\//).map((r) => r.path)).toEqual(["/api/messaging/conversations/1/messages"]);
+    expect(gets(h, /^\/api\/messaging\//)).toEqual([]);
+
+    h.w.DT.actions.openConversation(1);
+    await until(() => !!h.convo(1).loaded);
+    h.reqs.length = 0;
+    h.threads[1] = h.threads[1]!.concat([msg(106, 1, PATEL, "covering copy 106"), msg(107, 1, PATEL, "covering copy 107")]);
+    h.sockets[0].emit({ type: "MESSAGE_RECEIVED", message: thin(106) });
+    h.sockets[0].emit({ type: "MESSAGE_RECEIVED", message: thin(107) });
+    expect(h.convo(1).messages.some((x: any) => x.id === 107)).toBe(true); // shown at once
+    await sleep(600);
+    const one = gets(h, /^\/api\/messaging\//).map((r) => r.path);
+    expect(one).toHaveLength(1);
+    expect(one[0]).toMatch(/^\/api\/messaging\/conversations\/1\/messages\?limit=\d+$/);
+    expect(h.convo(1).messages.find((x: any) => x.id === 107).deliveries).toHaveLength(1); // the full row replaced the thin one
 
     h.reqs.length = 0;
     // Someone starts a new group thread with me (server state first, then the frame).
@@ -234,25 +278,166 @@ describe("web client realtime (jsdom, real store.js + api-bridge.js)", () => {
     await until(() => !!h.convo(3));
     await sleep(400);
     const paths = gets(h, /^\/api\/messaging\//).map((r) => r.path);
-    expect(paths.filter((p) => p === "/api/messaging/conversations")).toHaveLength(1);
-    expect(paths.filter((p) => /\/messages$/.test(p))).toEqual(["/api/messaging/conversations/3/messages"]);
+    expect(paths).toEqual(["/api/messaging/conversations"]); // the list carries the new message
     expect(h.convo(3)).toMatchObject({ name: "Night huddle", group: true, unread: 1 });
+    expect(h.convo(3).messages.map((x: any) => x.text)).toEqual(["hi"]);
   });
 
-  it("SHO-65: a socket that comes back resyncs once — a message sent while it was down appears; unchanged threads are not re-read", async () => {
-    const threads: Record<number, any[]> = { 1: [msg(101, 1, PATEL, "older", { read: true })], 2: [msg(201, 2, 13, "old", { read: true, recipients: [CHEN.id] })] };
-    const h = await boot({ threads });
+  it("SHO-65: sign-in reads the conversation LIST only; a thread is read (one page) when opened", async () => {
+    const threads: Record<number, any[]> = {
+      1: [msg(101, 1, PATEL, "older", { read: true }), msg(102, 1, PATEL, "newest, unread")],
+      2: [msg(201, 2, CHEN.id, "mine, read", { read: true })],
+      3: [msg(301, 3, PATEL, "group hello", { read: true, recipients: [CHEN.id, 13] })],
+    };
+    const convos = [
+      { id: 1, type: "direct", name: null, participantIds: [CHEN.id, PATEL], patientId: null },
+      { id: 2, type: "direct", name: null, participantIds: [CHEN.id, 13], patientId: null },
+      { id: 3, type: "group", name: "Huddle", participantIds: [CHEN.id, PATEL, 13], patientId: null },
+    ];
+    const h = await boot({ threads, convos });
+    const msgsGets = gets(h, /^\/api\/messaging\//).map((r) => r.path);
+    expect(msgsGets.filter((p) => p === "/api/messaging/conversations")).toHaveLength(1);
+    expect(msgsGets.filter((p) => /\/messages/.test(p))).toEqual([]); // no thread read at sign-in
+    // The list's newest message is the preview; unread comes from the server.
+    expect(h.convo(1).messages.map((x: any) => x.text)).toEqual(["newest, unread"]);
+    expect(h.convo(1).unread).toBe(1);
+    expect(h.convo(1).loaded).toBe(false);
+    expect(h.convo(3).unread).toBe(0);
+    expect(h.w.document.title).toBe("(1) DocTurn");
+
+    h.reqs.length = 0;
+    h.w.DT.actions.openConversation(1);
+    await until(() => !!h.convo(1).loaded);
+    await sleep(50);
+    expect(gets(h, /\/messages/).map((r) => r.path)).toEqual(["/api/messaging/conversations/1/messages?limit=50"]);
+    expect(h.convo(1).messages.map((x: any) => x.id)).toEqual([101, 102]);
+    expect(h.convo(1).hasEarlier).toBe(false);
+    // On screen → read: the unread one is posted once and the badge clears.
+    await until(() => h.reqs.some((r) => r.method === "POST" && r.path === "/api/messaging/messages/mark-read"));
+    expect(h.reqs.find((r) => r.path === "/api/messaging/messages/mark-read")!.body).toEqual({ messageIds: [102] });
+    expect(h.convo(1).unread).toBe(0);
+    // Opening it again reads nothing more.
+    h.reqs.length = 0;
+    h.w.DT.actions.openConversation(1);
+    await sleep(100);
+    expect(gets(h, /\/messages/)).toEqual([]);
+  });
+
+  it("SHO-65: a long thread loads its newest page (enough to cover every unread) and pages back with Load earlier", async () => {
+    const long = [] as any[];
+    for (let i = 1; i <= 130; i++) long.push(msg(1000 + i, 1, PATEL, "m" + i, { read: i <= 70 }));
+    const h = await boot({ threads: { 1: long, 2: [] } });
+    expect(h.convo(1).unread).toBe(60);
+    h.reqs.length = 0;
+    h.w.DT.actions.openConversation(1);
+    await until(() => !!h.convo(1).loaded);
+    const first = gets(h, /\/messages/).map((r) => r.path);
+    // The preview (newest) was on screen first and is already posted read:
+    // 59 unread left + 10 of context.
+    expect(first).toEqual(["/api/messaging/conversations/1/messages?limit=69"]);
+    expect(h.convo(1).messages).toHaveLength(69);
+    expect(h.convo(1).hasEarlier).toBe(true);
+    // The thread view calls again when the page lands (its messages changed):
+    // every unread one is now on screen and is posted read.
+    h.w.DT.actions.openConversation(1);
+    await until(() => h.convo(1).unread === 0);
+    const posted = h.reqs.filter((r) => r.path === "/api/messaging/messages/mark-read").flatMap((r) => r.body.messageIds);
+    expect(posted).toHaveLength(60); // the preview first, then the other 59 — each once
+    expect(new Set(posted).size).toBe(60);
+
+    h.reqs.length = 0;
+    await h.w.DT.actions.loadEarlier(1);
+    expect(gets(h, /\/messages/).map((r) => r.path)).toEqual(["/api/messaging/conversations/1/messages?limit=50&before=1062"]);
+    expect(h.convo(1).messages).toHaveLength(119);
+    expect(h.convo(1).hasEarlier).toBe(true);
+    await h.w.DT.actions.loadEarlier(1);
+    expect(h.convo(1).messages).toHaveLength(130);
+    expect(h.convo(1).messages[0].id).toBe(1001);
+    expect(h.convo(1).hasEarlier).toBe(false);
+    const ids = h.convo(1).messages.map((x: any) => x.id);
+    expect(ids).toEqual([...ids].sort((a, b) => a - b));
+  });
+
+  it("SHO-65: a socket that comes back with nothing changed costs ONE sync request — no list, no thread read (groups included)", async () => {
+    const threads: Record<number, any[]> = {
+      1: [msg(101, 1, PATEL, "older", { read: true })],
+      3: [msg(301, 3, PATEL, "group", { read: true, recipients: [CHEN.id, 13] }), msg(302, 3, CHEN.id, "mine", { read: false, recipients: [PATEL, 13] })],
+    };
+    const convos = [
+      { id: 1, type: "direct", name: null, participantIds: [CHEN.id, PATEL], patientId: null },
+      { id: 3, type: "group", name: "Huddle", participantIds: [CHEN.id, PATEL, 13], patientId: null },
+    ];
+    const h = await boot({ threads, convos });
+    h.w.DT.actions.openConversation(3);
+    await until(() => !!h.convo(3).loaded);
+    const before = JSON.stringify(h.state().conversations);
     h.sockets[0].serverClose(1006); // network drop
-    threads[1] = threads[1]!.concat([msg(107, 1, PATEL, "sent while you were offline")]); // server state moves on
-    await until(() => h.sockets.length === 2, 2500); // backoff ≤ 1 s for the first retry
+    await until(() => h.sockets.length === 2, 2500);
     h.reqs.length = 0;
     h.sockets[1].emit({ type: "CONNECTION_ESTABLISHED", userId: CHEN.id });
-    await until(() => (h.convo(1)?.messages || []).some((x: any) => x.id === 107));
-    await sleep(200);
+    await sleep(400);
     const paths = gets(h, /^\/api\/messaging\//).map((r) => r.path);
+    expect(paths).toHaveLength(1);
+    expect(paths[0]).toMatch(/^\/api\/messaging\/sync\?after=302&since=cursor-\d+$/);
+    expect(JSON.stringify(h.state().conversations)).toBe(before);
+  });
+
+  it("SHO-65: what changed while the socket was down — a new message, a receipt, a recall — is applied from the sync answer", async () => {
+    const threads: Record<number, any[]> = {
+      1: [msg(101, 1, PATEL, "will be recalled"), msg(102, 1, CHEN.id, "please call back")],
+      2: [msg(201, 2, 13, "old", { read: true, recipients: [CHEN.id] })],
+    };
+    const h = await boot({ threads });
+    h.w.DT.actions.openConversation(1);
+    await until(() => !!h.convo(1).loaded);
+    expect(h.convo(1).messages.find((x: any) => x.id === 102).receipt).toBe("delivered");
+    h.sockets[0].serverClose(1006);
+    // Server state moves on: patel recalls 101, reads 102, and posts 250
+    // (ids are issued in creation order: newer than anything held here).
+    h.threads[1] = [h.threads[1]![1], msg(250, 1, PATEL, "sent while you were offline")];
+    h.threads[1]![0].deliveries = [delivery(PATEL, true)];
+    h.sync.receipts = [{ messageId: 102, conversationId: 1, userId: PATEL, displayName: "U12", deliveredAt: iso(T0), readAt: iso(Date.now()), acknowledgedAt: null, status: "read", realertedAt: null, escalatedAt: null }];
+    h.sync.recalled = [{ messageId: 101, conversationId: 1 }];
+    await until(() => h.sockets.length === 2, 2500);
+    h.reqs.length = 0;
+    h.sockets[1].emit({ type: "CONNECTION_ESTABLISHED", userId: CHEN.id });
+    await until(() => (h.convo(1)?.messages || []).some((x: any) => x.id === 250));
+    await sleep(300);
+    const c = h.convo(1);
+    expect(c.messages.map((x: any) => x.id)).toEqual([102, 250]);
+    expect(c.messages.find((x: any) => x.id === 102).receipt).toBe("read");
+    expect(gets(h, /^\/api\/messaging\//).map((r) => r.path.split("?")[0])).toEqual(["/api/messaging/sync"]);
+    // 250 arrived while the thread is not on screen (no Messaging view here) → unread.
+    expect(c.unread).toBe(1);
+  });
+
+  it("MIN-18: STAT_REALERT marks that recipient's row re-alerted (the sender's countdown moves on) without a request", async () => {
+    const h = await boot({ threads: { 1: [msg(110, 1, CHEN.id, "STAT: call me", { priority: "stat" })], 2: [] } });
+    h.reqs.length = 0;
+    h.sockets[0].emit({ type: "STAT_REALERT", messageId: 110, conversationId: 1, userId: PATEL });
+    const row = h.convo(1).messages.find((x: any) => x.id === 110).deliveries.find((d: any) => d.userId === PATEL);
+    expect(typeof row.realertedAt).toBe("string");
+    await sleep(400);
+    expect(h.reqs.filter((r) => r.path.startsWith("/api/messaging"))).toEqual([]);
+  });
+
+  it("SHO-65: a sync naming a conversation this device does not know costs one list request; one it no longer holds is dropped", async () => {
+    const h = await boot();
+    h.sockets[0].serverClose(1006);
+    h.convos.splice(1, 1); // left conversation 2
+    h.convos.push({ id: 4, type: "direct", name: null, participantIds: [CHEN.id, 13], patientId: null }); // new while away
+    h.threads[4] = [msg(400, 4, 13, "new thread while away")];
+    await until(() => h.sockets.length === 2, 2500);
+    h.reqs.length = 0;
+    h.sockets[1].emit({ type: "CONNECTION_ESTABLISHED", userId: CHEN.id });
+    await until(() => !!h.convo(4));
+    await sleep(400);
+    const paths = gets(h, /^\/api\/messaging\//).map((r) => r.path.split("?")[0] ?? "");
     expect(paths.filter((p) => p === "/api/messaging/conversations")).toHaveLength(1);
-    expect(paths.filter((p) => /\/messages$/.test(p))).toEqual(["/api/messaging/conversations/1/messages"]);
-    expect(h.convo(1).unread).toBe(1);
+    expect(paths.filter((p) => /\/messages$/.test(p))).toEqual([]);
+    expect(h.convo(2)).toBeUndefined();
+    expect(h.convo(4)).toMatchObject({ unread: 1, loaded: false });
+    expect(h.convo(4).messages.map((x: any) => x.text)).toEqual(["new thread while away"]);
   });
 
   it("SHO-67: close 1008 session_revoked → sign-in with the reason, and no reconnect", async () => {
