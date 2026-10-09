@@ -10,8 +10,11 @@ import {
   phiAccessLogs,
   users,
 } from "@shared/schema";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { invalidateModules, setModule } from "../server/modules.js";
+import { syncAmion } from "../server/services/amion.js";
 
 const MFA_MODULE = "security.mfaRequired";
 
@@ -151,6 +154,90 @@ describe("A.CON-SHO-9 — developer cross-tenant reads are audited", () => {
     expect(new Set((own.body as Array<{ org: string }>).map((u) => u.org))).toEqual(new Set(["ISPN"]));
     expect(await ctx.storage.countAuditLogs(orgId)).toBe(ownBefore);
     expect(await ctx.storage.countAuditLogs(platformId)).toBe(platformBefore);
+  });
+
+  it("GET /api/amion/status is a cross-tenant read for a developer outside the Amion org", async () => {
+    // The Amion snapshot is the configured tenant's provider schedule (names,
+    // slots, hours, shift, secure-messaging flag). getAmionStatus lets a
+    // developer of ANY org read it, so that read is audited like
+    // /api/dev/modules/:orgId: one ids-only row in the Amion org's own trail,
+    // before the read, so its director sees the platform looked.
+    const orgId = ctx.seedResult.orgId;
+    const platformId = ctx.seedResult.platformOrgId;
+    const devId = ctx.seedResult.userIds.dev!;
+    const feed = createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(
+        [
+          "Assignment\tHours\tStaff\tDivision\tMessaging",
+          "Tarzana 1\t7a-7p\tChen, Lisa\tISP North\tSecure message to Amion app",
+          "Tarzana Night\t7p-7a\tPatel, Raj\tISP North\tNot ready to receive secure messages",
+          "",
+        ].join("\n"),
+      );
+    });
+    await new Promise<void>((r) => feed.listen(0, "127.0.0.1", () => r()));
+    const saved = { url: process.env.AMION_OCS_URL, code: process.env.AMION_ORG_CODE };
+    process.env.AMION_OCS_URL = `http://127.0.0.1:${(feed.address() as AddressInfo).port}/ocs?Lo=t`;
+    process.env.AMION_ORG_CODE = "ISPN";
+    try {
+      await syncAmion(ctx.storage);
+      const { agent: dev } = await devLogin();
+      const { agent: director } = await login(ctx.app, { username: "director" });
+
+      const tenantBefore = new Set((await audit(orgId)).map((a) => a.id));
+      const platformBefore = await ctx.storage.countAuditLogs(platformId);
+      const st = await dev.get("/api/amion/status").expect(200);
+      expect(st.body.configured).toBe(true);
+      expect(st.body.providers).toHaveLength(2); // really the tenant's schedule
+      const fresh = (await audit(orgId)).filter((a) => !tenantBefore.has(a.id));
+      expect(fresh).toHaveLength(1);
+      const row = fresh[0]!;
+      expect(row.action).toBe("dev.amion_status_read");
+      expect(row.userId).toBe(devId);
+      expect(row.organizationId).toBe(orgId);
+      expect(row.resourceType).toBe("organization");
+      expect(row.resourceId).toBe(orgId);
+      expect(row.riskLevel).toBe("low");
+      for (const [k, v] of Object.entries(row.details ?? {})) {
+        expect(typeof v === "number" || v === null, "details." + k).toBe(true);
+      }
+      expect(JSON.stringify(row.details)).not.toMatch(/Chen|Patel|Tarzana/);
+      // Filed in the tenant's trail only — the platform trail is unchanged.
+      expect(await ctx.storage.countAuditLogs(platformId)).toBe(platformBefore);
+      // The tenant's director sees it in their own audit view.
+      const trail = await director.get("/api/audit").expect(200);
+      expect((trail.body.audit as Array<{ id: number }>).some((a) => a.id === row.id)).toBe(true);
+
+      // The Amion org's own director reading their feed is not cross-tenant.
+      const ownBefore = await ctx.storage.countAuditLogs(orgId);
+      const own = await director.get("/api/amion/status").expect(200);
+      expect(own.body.providers).toHaveLength(2);
+      expect(await ctx.storage.countAuditLogs(orgId)).toBe(ownBefore);
+
+      // Feed configured for a code with no tenant: nothing is read, no row.
+      process.env.AMION_ORG_CODE = "NOPE";
+      const noneBefore = (await ctx.storage.countAuditLogs(orgId)) + (await ctx.storage.countAuditLogs(platformId));
+      const none = await dev.get("/api/amion/status").expect(200);
+      expect(none.body.configured).toBe(false);
+      expect((await ctx.storage.countAuditLogs(orgId)) + (await ctx.storage.countAuditLogs(platformId))).toBe(
+        noneBefore,
+      );
+
+      // Feed not configured at all: nothing is read, no row.
+      delete process.env.AMION_OCS_URL;
+      process.env.AMION_ORG_CODE = "ISPN";
+      const offBefore = await ctx.storage.countAuditLogs(orgId);
+      const off = await dev.get("/api/amion/status").expect(200);
+      expect(off.body.configured).toBe(false);
+      expect(await ctx.storage.countAuditLogs(orgId)).toBe(offBefore);
+    } finally {
+      feed.close();
+      if (saved.url === undefined) delete process.env.AMION_OCS_URL;
+      else process.env.AMION_OCS_URL = saved.url;
+      if (saved.code === undefined) delete process.env.AMION_ORG_CODE;
+      else process.env.AMION_ORG_CODE = saved.code;
+    }
   });
 
   it("a refused read (unknown tenant, malformed id) writes no row", async () => {

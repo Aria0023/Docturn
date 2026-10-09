@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { User } from "@shared/schema";
+import type { Organization, User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { hashPassword } from "../auth.js";
 import { isModuleEnabled } from "../modules.js";
@@ -54,6 +54,17 @@ export function amionConfig() {
 
 export function amionConfigured(): boolean {
   return !!amionConfig().url;
+}
+
+/**
+ * The tenant the live feed belongs to: the AMION_ORG_CODE org while the feed
+ * is configured, else null (no feed, or no org with that code). The one place
+ * status reads and their developer audit resolve "which tenant is this".
+ */
+export async function amionOrganization(db: DatabaseStorage): Promise<Organization | null> {
+  const cfg = amionConfig();
+  if (!cfg.url) return null;
+  return (await db.getOrganizationByCode(cfg.orgCode)) ?? null;
 }
 
 // Amion hours token → DocTurn shift type. Unknown intervals default to day.
@@ -333,6 +344,9 @@ export async function syncAmion(
 /**
  * Status for the UI. Tenant-scoped: only users of the Amion-configured org
  * (or a developer) see the feed — everyone else gets `configured: false`.
+ * A developer outside that org reading it is a CROSS-TENANT read (the
+ * tenant's provider schedule): GET /api/amion/status audits it as
+ * dev.amion_status_read in the Amion org before calling this.
  * The AMION_OCS_URL (and its token) never appears here.
  */
 export async function getAmionStatus(
@@ -346,9 +360,7 @@ export async function getAmionStatus(
     rowCount: 0,
     providers: [],
   };
-  const cfg = amionConfig();
-  if (!cfg.url) return { configured: false, ...empty };
-  const org = await db.getOrganizationByCode(cfg.orgCode);
+  const org = await amionOrganization(db);
   if (!org || (me.role !== "developer" && me.organizationId !== org.id)) {
     return { configured: false, ...empty };
   }

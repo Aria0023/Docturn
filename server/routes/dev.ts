@@ -36,8 +36,12 @@ async function swappedUserBody(u: User) {
  * the developer's own (platform) org, never with organization_id NULL, where no
  * view, archive or compliance count could ever show it. Audit details carry
  * ids and counts only. Developer reads served OUTSIDE this file follow the same
- * rule: GET /api/dev/modules/:orgId (routes/modules.ts) and a developer's
- * GET /api/accounts (routes/accounts.ts, every tenant's workforce).
+ * rule: GET /api/dev/modules/:orgId (routes/modules.ts), a developer's
+ * GET /api/accounts (routes/accounts.ts, every tenant's workforce) and a
+ * developer's GET /api/amion/status from outside the Amion org
+ * (routes/amion.ts, that tenant's provider schedule → dev.amion_status_read in
+ * the Amion org). POST /api/amion/sync-now answers with the same snapshot; its
+ * amion.sync row is filed in the Amion org naming the developer.
  */
 export function registerDevRoutes(app: Express) {
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +

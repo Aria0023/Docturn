@@ -98,7 +98,7 @@ Tier 2/3 are deal-size and staffing decisions, not quick wins.
 ## 3. HIPAA readiness — honest assessment
 
 ### Technical controls already in place
-- RBAC + tenant isolation enforced server-side; developer cross-tenant access audited
+- RBAC + tenant isolation enforced server-side; developer cross-tenant access audited, reads included (one ids-only row per request: a read of one tenant — its settings, audit trail, module switches, Amion schedule snapshot — in that tenant's trail; a cross-tenant list in the platform org)
 - Audit logs + PHI access logs; 15-min rolling sessions; bcrypt(12); MFA available (TOTP/SMS/backup codes)
 - Patients referenced by initials only; push/SMS payloads carry no PHI
 - TLS in transit (host-terminated)
