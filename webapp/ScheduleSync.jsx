@@ -8,9 +8,12 @@
                  status + "Sync now" are /api/oncall/sources + epic/sync-now.
      • Manual  — the director-maintained list on the On-call board.
    The source the on-call board reads is the server's choice
-   (PATCH /api/oncall/source). Vendors DocTurn has no connector for (QGenda,
-   Tangier, ShiftAdmin, documents, web pages, custom) can be picked to see that
-   — they import nothing, and the panel says so instead of offering a form.
+   (PATCH /api/oncall/source) and the picker offers ONLY those three. Vendors
+   DocTurn has no connector for (QGenda, Tangier / Spok, ShiftAdmin, Word / PDF
+   documents, web pages) are named as information, never as a selectable
+   "source": picking one used to change only this browser's label and the
+   dashboard badge, and "Not configured" claimed the org had no source while
+   the board read the manual list (A.CON schedule #2/#3).
    Credentials are never typed or pre-filled here. Director surface; an ER
    director sees it read-only (the server refuses their writes). */
 
@@ -34,23 +37,16 @@ function ssAgo(iso) {
   return Math.floor(s / 86400) + " d ago";
 }
 
-// On-call schedule sources. `connector: true` = the server can really read it
-// (a schedule-source adapter); the rest are listed so a hospital can see that
-// DocTurn does not import from them yet.
+// The schedule sources the SERVER has (services/schedule-sources: amion / epic /
+// manual) — the only values PATCH /api/oncall/source accepts.
 const SS_SOURCES = {
-  amion:      { label: "Amion",          connector: true,  blurb: "amion.com on-call grid (OCS feed)" },
-  epic:       { label: "Epic (FHIR)",    connector: true,  blurb: "PractitionerRole + Schedule/Slot via FHIR R4" },
-  manual:     { label: "Manual list",    connector: true,  blurb: "Director-maintained on-call slots in DocTurn" },
-  qgenda:     { label: "QGenda",         connector: false, blurb: "QGenda provider schedules" },
-  tangier:    { label: "Tangier / Spok", connector: false, blurb: "Tangier (Spok) on-call" },
-  shiftadmin: { label: "ShiftAdmin",     connector: false, blurb: "ShiftAdmin scheduling" },
-  word:       { label: "Word document",  connector: false, blurb: "A .doc/.docx schedule" },
-  pdf:        { label: "PDF document",   connector: false, blurb: "A PDF schedule" },
-  online:     { label: "Online page",    connector: false, blurb: "A published web schedule" },
-  custom:     { label: "Custom / other", connector: false, blurb: "A custom endpoint" },
-  none:       { label: "Not configured", connector: false, blurb: "No schedule source set for this organization" },
+  amion:  { label: "Amion",       module: "amion", blurb: "amion.com on-call grid (OCS feed)" },
+  epic:   { label: "Epic (FHIR)", module: "epic",  blurb: "PractitionerRole + Schedule/Slot via FHIR R4" },
+  manual: { label: "Manual list", module: null,    blurb: "Director-maintained on-call slots in DocTurn" },
 };
-const SS_SOURCE_KEYS = ["amion", "epic", "manual", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
+const SS_SOURCE_KEYS = ["amion", "epic", "manual"];
+// Named for information only: DocTurn has no connector for these.
+const SS_NO_CONNECTOR = "QGenda, Tangier / Spok, ShiftAdmin, Word or PDF documents and web pages";
 
 function ShiftChip({ shift, tint }) {
   const c = { amber: ["var(--status-pending-bg)", "var(--status-pending)"], blue: ["var(--status-active-bg)", "var(--status-active)"], slate: ["var(--status-neutral-bg)", "var(--status-neutral)"] }[tint] || ["var(--secondary)", "var(--muted-foreground)"];
@@ -92,36 +88,22 @@ function ScheduleSync({ org }) {
   const loadBoardSources = () => { if (!a.loadOnCallSources) return; Promise.resolve(a.loadOnCallSources()).then((r) => { if (r) setBoardSources(r); }).catch(() => {}); };
   React.useEffect(loadBoardSources, []);
 
-  const localKey = st.scheduleSources && st.scheduleSources[orgCode];
-  const serverKey = boardSources && boardSources.selected;
-  // The picker follows the server once it has answered; a no-connector vendor
-  // picked here (to see that DocTurn can't import it) stays shown.
-  React.useEffect(() => {
-    if (serverKey && a.setScheduleSource && (!localKey || (SS_SOURCES[localKey] && SS_SOURCES[localKey].connector && localKey !== serverKey))) {
-      a.setScheduleSource(orgCode, serverKey);
-    }
-  }, [serverKey]);
-  // A connector source always shows the SERVER's choice once loaded; only a
-  // no-connector vendor picked here overrides it (to show that it imports nothing).
-  const localIsVendorOnly = !!(localKey && SS_SOURCES[localKey] && !SS_SOURCES[localKey].connector);
-  const srcKey = localIsVendorOnly ? localKey : (serverKey || localKey || "manual");
-  const src = SS_SOURCES[srcKey] || SS_SOURCES.manual;
-  const notConfigured = srcKey === "none";
+  // The source shown is ALWAYS the server's (GET /api/oncall/sources); null
+  // until it answers — never a per-browser guess.
+  const serverKey = boardSources && SS_SOURCES[boardSources.selected] ? boardSources.selected : null;
+  const srcKey = serverKey;
+  const src = srcKey ? SS_SOURCES[srcKey] : null;
+  const modulesOn = (boardSources && boardSources.modules) || {};
+  const overridden = boardSources && boardSources.overridden;
 
   const [picking, setPicking] = React.useState(false);
   const pickSource = (key) => {
-    if (!canEdit) return;
-    const s = SS_SOURCES[key];
-    if (s && s.connector && a.setOnCallSource) {
-      // The board's source is the server's: change it there first, then show it.
-      setPicking(true);
-      Promise.resolve(a.setOnCallSource(key))
-        .then(() => { a.setScheduleSource(orgCode, key); loadBoardSources(); })
-        .catch(() => {})
-        .finally(() => setPicking(false));
-      return;
-    }
-    a.setScheduleSource(orgCode, key);
+    if (!canEdit || !SS_SOURCES[key] || key === serverKey || !a.setOnCallSource) return;
+    // The board's source is the server's: change it there, then show what it says.
+    setPicking(true);
+    Promise.resolve(a.setOnCallSource(key))
+      .then(() => loadBoardSources(), () => loadBoardSources())
+      .finally(() => setPicking(false));
   };
 
   const epicStatus = boardSources && boardSources.sources && boardSources.sources.epic;
@@ -196,7 +178,7 @@ function ScheduleSync({ org }) {
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>On-call schedule sync</h3>
-            <Badge variant="secondary">{src.label}</Badge>
+            {src && <Badge variant="secondary">{src.label}</Badge>}
             {connected && <span data-ss-connected style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {connLabel}</Badge></span>}
           </div>
           <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>
@@ -207,10 +189,13 @@ function ScheduleSync({ org }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 1 auto", minWidth: 0, flexWrap: "wrap", marginLeft: "auto" }}>
           <label htmlFor="ss-source" style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</label>
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0 }}>
-            <select id="ss-source" value={srcKey} onChange={(e) => pickSource(e.target.value)} disabled={!canEdit || picking}
+            <select id="ss-source" value={srcKey || ""} onChange={(e) => pickSource(e.target.value)} disabled={!canEdit || picking || !srcKey}
               style={{ appearance: "none", WebkitAppearance: "none", minHeight: 44, maxWidth: "100%", padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 16, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.6 }}>
-              {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}{SS_SOURCES[k].connector ? "" : " — no connector yet"}</option>)}
-              <option value="none">Not configured</option>
+              {!srcKey && <option value="">Loading…</option>}
+              {SS_SOURCE_KEYS.map((k) => {
+                const off = SS_SOURCES[k].module && modulesOn[SS_SOURCES[k].module] === false;
+                return <option key={k} value={k} disabled={off}>{SS_SOURCES[k].label}{off ? " — switched off" : ""}</option>;
+              })}
             </select>
             <Icon name="chevron-down" size={12} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
           </div>
@@ -221,18 +206,13 @@ function ScheduleSync({ org }) {
       </div>
       {!canEdit && <div data-readonly-note style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 6, fontWeight: 600 }}>Only a director can change the source or run a sync.</div>}
 
-      {notConfigured && (
-        <SSInfo icon="calendar-off">
-          <span style={{ flex: "1 1 220px", minWidth: 0 }}><b style={{ color: "var(--foreground)" }}>No schedule source for {orgLabel}.</b> Pick Amion, Epic or the Manual list above.</span>
-        </SSInfo>
+      {!srcKey && (
+        <div data-ss-loading style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 12 }}>Loading the schedule source from the server…</div>
       )}
 
-      {/* A vendor DocTurn cannot read: say so — no form, no "Connect". */}
-      {!notConfigured && !src.connector && (
-        <SSInfo icon="info" dataAttr="data-ss-no-connector">
-          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
-            <b style={{ color: "var(--foreground)" }}>DocTurn has no {src.label} connector yet</b> — nothing is imported from {src.label}, and the on-call board keeps reading {serverKey ? SS_SOURCES[serverKey].label : "its current source"}. Use <b style={{ color: "var(--foreground)" }}>Amion</b> or <b style={{ color: "var(--foreground)" }}>Epic</b> (connect them under Integrations below) or keep the on-call list by hand (<b style={{ color: "var(--foreground)" }}>Manual list</b>).
-          </span>
+      {overridden && SS_SOURCES[overridden.source] && (
+        <SSInfo icon="triangle-alert" tone="warn">
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>{SS_SOURCES[overridden.source].label} is chosen but switched off for this organization, so the on-call board reads the Manual list until it is switched back on.</span>
         </SSInfo>
       )}
 
@@ -351,6 +331,12 @@ function ScheduleSync({ org }) {
           </div>
         </div>
       )}
+
+      {/* Information, not a choice: vendors DocTurn cannot read. */}
+      <div data-ss-no-connector style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 14, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
+        <Icon name="info" size={13} style={{ marginTop: 2, flex: "none" }} />
+        <span>DocTurn imports on-call schedules from Amion and Epic only. There is no connector for {SS_NO_CONNECTOR} — keep those schedules on the Manual list.</span>
+      </div>
       </div>
     </Card>
   );

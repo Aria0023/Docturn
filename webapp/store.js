@@ -27,6 +27,16 @@
   // first seed, which ran before it loaded.
   function isLive() { try { return !!(typeof window !== "undefined" && window.DT_LIVE); } catch (e) { return false; } }
   var uid = (function () { var n = 1000; return function (p) { return (p || "id") + "_" + (++n) + "_" + Math.floor(Math.random() * 1e4); }; })();
+  // DocTurn's three shift types with the server's default names and no hours
+  // (server/services/shift-definitions.ts) — what an org that never named or
+  // timed its shifts has.
+  function defaultShifts() {
+    return [
+      { id: "day", label: "Day", start: null, end: null },
+      { id: "swing", label: "Swing", start: null, end: null },
+      { id: "night", label: "Night", start: null, end: null },
+    ];
+  }
 
   /* ---- time helpers ------------------------------------------------------
      ONE clock format for every label in the app (A.CON-MIN-18): the device
@@ -270,12 +280,14 @@
       // consultResponseAvgSec }). Null until loadCommsMetrics() fills it (the
       // live override in api-bridge.js fetches the real numbers).
       commsMetrics: null,
-      // Per-organization on-call schedule source. Every tenant keeps its
-      // schedule somewhere different — a scheduling vendor (Amion/QGenda), an
-      // uploaded Word/PDF, or a web page — so the source is modular and keyed by
-      // org code (this survives the developer org re-hydrate). Only the Amion
-      // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
-      scheduleSources: { CEDARS: "amion", ISPN: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", PINE: "none" },
+      // The org's on-call schedule source is the SERVER's (GET /api/oncall/sources:
+      // amion / epic / manual, its status and last sync). There is no
+      // browser-side per-org source map — it used to seed demo vendors
+      // (QGenda, Word, …) for any org whose code matched and kept a picked
+      // vendor on this device only (A.CON schedule #2/#3). Null until loaded;
+      // onCallSourcesError says why it could not be (e.g. module_disabled).
+      onCallSources: null,
+      onCallSourcesError: null,
       // Director-editable consult-service menu that powers the ER intake.
       consultServices: [],
       consultServicesVersion: null, // the server's catalog revision; null until loaded
@@ -294,11 +306,11 @@
         { id: "h6", name: "Dr. Omar Haddad", avatar: "OH", specialty: "Hospital Medicine", census: 6, cap: 12, working: true,  shift: "night", inRotation: true },
         { id: "h4", name: "Dr. James Liu",   avatar: "JL", specialty: "Nephrology",        census: 2, cap: 8,  working: false, shift: "night", inRotation: false },
       ],
-      shifts: [
-        { id: "day",   label: "Day call", start: "07:00", end: "15:00" },
-        { id: "swing", label: "Swing",    start: "15:00", end: "23:00" },
-        { id: "night", label: "Nights",   start: "23:00", end: "07:00" },
-      ],
+      // The org's names + published hours for Day / Swing / Night — the
+      // SERVER's (GET /api/org/config `shifts`, PATCH /api/org/shifts/:id).
+      // Until it answers: the server's own defaults, which carry NO hours
+      // (the kit's 07:00–15:00 … demo hours were shown as a real org's).
+      shifts: defaultShifts(),
       rotationCursor: 0,
 
       erPhysicians: [
@@ -338,16 +350,21 @@
         { id: uid("s"), initials: "LP", provider: "Dr. Omar Haddad", complaint: "GI bleed, melena",           consultants: ["GI"],          time: "Yesterday · 16:32", day: "Yesterday", status: "rejected" },
       ],
 
-      // Full, append-only log of every admission routed to a team. The main
-      // dashboard shows a rolling count since `admissionsResetAt`, which the
-      // hospitalist director can reset on command; this log keeps everything.
-      admissions: [
+      // Admissions log: every patient routed to a hospitalist. Live, it is the
+      // SERVER's (GET /api/admissions → rows + admissionsInfo counts, the
+      // org-wide counter reset) — never demo rows, never rows this browser
+      // appended (A.CON schedule #6/#7). The demo rows below are the offline
+      // kit's only (no api-bridge).
+      admissions: isLive() ? [] : [
         { id: uid("ad"), at: now() - 35 * 60000,    initials: "MJ", room: "402", provider: "Dr. Amir Patel",  specialty: "Cardiology",  via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 95 * 60000,    initials: "RV", room: "318", provider: "Dr. Maria Lopez", specialty: "Pulmonology", via: "Manual",      status: "sent" },
         { id: uid("ad"), at: now() - 5 * 3600000,   initials: "DK", room: "210", provider: "Dr. Sarah Chen",  specialty: "Neurology",   via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 26 * 3600000,  initials: "LP", room: "115", provider: "Dr. Omar Haddad", specialty: "GI",          via: "Manual",      status: "accepted" },
       ],
       admissionsResetAt: 0,
+      // The server's counts for the log { total, last24h, sinceReset, resetAt,
+      // resetBy, shown, error }. Null until GET /api/admissions answers.
+      admissionsInfo: null,
 
       team: [
         { id: "m1", name: "Jordan Wu, PA-C", avatar: "JW", role: "PA", specialty: "Hospital Medicine", onCall: true },
@@ -522,7 +539,7 @@
     "v", "syntheticData", "session", "me", "impersonating",
     "theme", "roleColors", "navHidden", "navOrder", "boardModules",
     "dashLayout", "statLayout", "customStats",
-    "scheduleSources", "consultHidden",
+    "consultHidden",
     "selectedOrg", "settings",
     "orgRetentionDays", "autoCleanHours", "ui",
   ];
@@ -743,6 +760,8 @@
   // The signed-in person's identity and per-user settings — reset on sign-out
   // so nothing of the previous user survives in memory either.
   var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
+    // the previous person's org schedule: its source status, shift names/hours, admissions counts
+    "onCallSources", "onCallSourcesError", "shifts", "admissionsInfo",
     // the previous person's org: its people, identity, catalog and rules
     "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
     // the previous operator's cross-tenant view (developer console)
@@ -957,16 +976,11 @@
     },
     renameShift: function (sid, label) { set(function (s) { s.shifts = s.shifts.map(function (x) { return x.id === sid ? Object.assign({}, x, { label: label }) : x; }); return s; }); },
     resetRotation: function () { set(function (s) { s.rotationCursor = 0; pushAudit(s, { action: "reset_rotation_index", resource: "rotation", risk: "low" }); s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin will start from the top." }; return s; }); },
-    // Director command: reset the dashboard's rolling 24h admissions counter.
-    // The admissions log is untouched — only the "since reset" window moves.
-    resetAdmissions24h: function () {
-      set(function (s) {
-        s.admissionsResetAt = now();
-        pushAudit(s, { action: "reset_admissions_counter", resource: "admissions (24h)", risk: "low" });
-        s.__toast = { tone: "accepted", title: "24h admissions reset", msg: "Daily count cleared. Full history stays in the admissions log." };
-        return s;
-      });
-    },
+    // The admissions counter reset is the SERVER's (api-bridge.js
+    // resetAdmissionsCount → POST /api/admissions/reset, org-wide and
+    // audited). There is no local version: it used to zero this tab's count,
+    // toast success and add a made-up audit row while the server kept
+    // counting (A.CON schedule #6).
 
     /* ER director — ER physician staffing + diversion */
     toggleErPhysician: function (id) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { working: !p.working }) : p; }); return s; }); },
@@ -1283,17 +1297,6 @@
       });
     },
 
-    /* The schedule-source PICKER's position for an org (a view preference).
-       What the on-call board really reads is the server's choice
-       (PATCH /api/oncall/source, which toasts and audits); this never claims
-       a sync or writes an audit row of its own. */
-    setScheduleSource: function (code, source) {
-      set(function (s) {
-        s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
-        return s;
-      });
-    },
-
     /* consult services — director-editable menu behind the ER intake */
     addConsultService: function (name) {
       set(function (s) {
@@ -1448,7 +1451,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

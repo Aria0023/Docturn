@@ -195,9 +195,12 @@ support. Treat it like a password.
    source, the Amion card says which one the board reads.
 
 The schedule panel only offers real connectors: Amion, Epic and the Manual
-list. QGenda, Tangier, ShiftAdmin, documents and web pages can be picked to see
-that DocTurn has **no connector** for them yet — nothing is imported from them,
-and there is no "connect" button.
+list — the sources the server has (`PATCH /api/oncall/source`). QGenda,
+Tangier, ShiftAdmin, documents and web pages are named as information only:
+DocTurn has **no connector** for them, so they are not a choice and nothing is
+kept for them in the browser. The Director dashboard's schedule panel reads the
+same server answer (`GET /api/oncall/sources`: selected source, configured,
+last sync), never a fixed "synced" label.
 
 Older setups that use `AMION_OCS_URL` + `AMION_ORG_CODE` on the server keep
 working for that one organization; a hospital's own saved link always wins.

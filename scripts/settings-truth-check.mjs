@@ -8,9 +8,10 @@
  *   B. Director (fresh storage): the header names the signed-in org as the
  *      SERVER knows it (GET /api/org/config), not the demo store's "Mayo",
  *      and is plain text, not click-to-edit.
- *   C. Schedule sync: picking a vendor DocTurn has no connector for (QGenda)
- *      shows "no connector" — no form, no "Connected", no request; no
- *      pre-filled schedule login anywhere in the page.
+ *   C. Schedule sync: a vendor DocTurn has no connector for (QGenda) is NOT a
+ *      choice — the picker offers only the server's Amion / Epic / Manual
+ *      (A.CON schedule #2) and names the rest as information; no form, no
+ *      "Connected", no request; no pre-filled schedule login anywhere.
  *   D. With a real Amion feed connected + synced: the badge says
  *      "Connected · Feed", and the header's Sync now sits inside the viewport
  *      at 375 / 390 / 430.
@@ -115,14 +116,15 @@ async function toSettings(page) {
   const panelOrg = await page.evaluate(() => (document.querySelector("[data-integrations-panel]").textContent.match(/active for (.+?)Each card/) || [])[1] || "");
   rec("B: Integrations panel and header name the same org", panelOrg.trim() === cfg.name, `panel="${panelOrg.trim()}" server="${cfg.name}"`);
 
-  // C. QGenda: no connector, no form, no request, no pre-filled login.
+  // C. QGenda: not a choice (A.CON schedule #2); named as information only;
+  // no form, no request, no pre-filled login.
   const before = apiLog.length;
-  await page.selectOption("#ss-source", "qgenda");
   await sleep(600);
-  const ss = await page.evaluate(() => { const el = document.querySelector("[data-schedule-sync]"); return { key: el.getAttribute("data-schedule-sync"), text: el.textContent, inputs: [...el.querySelectorAll("input, textarea")].length, connected: !!el.querySelector("[data-ss-connected]"), noConn: !!el.querySelector("[data-ss-no-connector]") }; });
-  const newApi = apiLog.slice(before).filter((l) => !/\/api\/(modules|session|user|settings|org\/config|integrations|oncall\/sources|amion\/status|patient-board|assignments|notifications|messaging|broadcasts|registrations|hospitalists|patients|compliance|audit|reports)/.test(l));
-  rec("C: QGenda → 'no connector' block, no form, no Connected badge", ss.key === "qgenda" && ss.noConn && ss.inputs === 0 && !ss.connected && !/Sign in & capture|Test & connect|Upload & parse|Fetch & parse/.test(ss.text), ss.text.slice(0, 140));
-  rec("C: picking QGenda sends nothing to the server", newApi.length === 0, newApi.join(", "));
+  const ss = await page.evaluate(() => { const el = document.querySelector("[data-schedule-sync]"); const sel = document.querySelector("#ss-source"); return { key: el.getAttribute("data-schedule-sync"), options: sel ? [...sel.options].map((o) => o.value) : [], text: el.textContent, inputs: [...el.querySelectorAll("input, textarea")].length, connected: !!el.querySelector("[data-ss-connected]"), noConn: !!el.querySelector("[data-ss-no-connector]") }; });
+  const srcNow = (await api("GET", "/api/oncall/sources")).json.selected;
+  const newApi = apiLog.slice(before).filter((l) => !/\/api\/(modules|session|user|settings|org\/config|org\/shifts|integrations|oncall\/sources|amion\/status|patient-board|assignments|admissions|notifications|messaging|broadcasts|registrations|hospitalists|patients|compliance|audit|reports)/.test(l));
+  rec("C: only the server's sources are choices (no QGenda); QGenda named as information; no form", JSON.stringify(ss.options) === JSON.stringify(["amion", "epic", "manual"]) && ss.key === srcNow && ss.noConn && /QGenda/.test(ss.text) && ss.inputs === 0 && !/Sign in & capture|Test & connect|Upload & parse|Fetch & parse/.test(ss.text), ss.options.join(",") + " key=" + ss.key + " server=" + srcNow);
+  rec("C: reading the schedule panel sends nothing to the server", newApi.length === 0, newApi.join(", "));
   // The page AND every script it loaded: no token is the old hard-coded
   // schedule login. Matched by SHA-256 only, so this file never carries it.
   const served = await page.evaluate(async () => {
@@ -135,7 +137,8 @@ async function toSettings(page) {
   const leaked = served.some((text) => text.split(/[^A-Za-z0-9.!_-]+/).some((tok) => tok.length >= 6 && tok.length <= 40 && OLD_LOGIN_SHA256.has(sha256(tok))));
   rec("C: no pre-filled schedule login in the page or its scripts", !leaked, `${served.length} documents scanned`);
   const board = (await api("GET", "/api/oncall/sources")).json;
-  rec("C: the board's real source is shown and unchanged", ss.text.includes("on-call board keeps reading") && board.selected !== "qgenda", `server=${board.selected}`);
+  const LABEL = { amion: "Amion", epic: "Epic (FHIR)", manual: "Manual list" };
+  rec("C: the board's real source is shown and unchanged", ss.text.includes("The on-call board reads " + LABEL[board.selected]) && ss.key === board.selected, `server=${board.selected}`);
 
   // E. Timeout out of range → snaps back to the server's value.
   const tz = page.locator('label:has-text("Assignment timeout") + div input');
@@ -189,14 +192,10 @@ for (const w of [375, 390, 430]) {
   rec(`D ${w}px: badge says "Connected · Feed" (not Capture)`, m.badge === "Connected · Feed", String(m.badge));
   rec(`D ${w}px: Sync now is inside the viewport and tappable`, !!m.btn && m.btn.left >= 0 && m.btn.right <= m.vw && m.hit, JSON.stringify(m.btn) + " vw=" + m.vw);
   rec(`D ${w}px: no horizontal overflow; live grid + banner shown`, m.doc <= m.vw && m.grid && /Live Amion feed/.test(m.banner), `doc=${m.doc} vw=${m.vw} banner=${m.banner.slice(0, 50)}`);
-  // QGenda while the Amion feed is live → never "connected".
+  // QGenda can't be picked at all while Amion is live (A.CON schedule #2).
   if (w === 390) {
-    await page.selectOption("#ss-source", "qgenda");
-    await sleep(400);
-    const q = await page.evaluate(() => { const el = document.querySelector("[data-schedule-sync]"); return { connected: !!el.querySelector("[data-ss-connected]"), grid: !!el.querySelector("[data-amion-grid]"), disconnect: /Disconnect/.test(el.textContent) }; });
-    rec("D: QGenda picked while Amion is live → no Connected badge, no grid, no Disconnect", !q.connected && !q.grid && !q.disconnect, JSON.stringify(q));
-    await page.selectOption("#ss-source", "amion");
-    await sleep(800);
+    const q = await page.evaluate(() => [...document.querySelectorAll("#ss-source option")].map((o) => o.value));
+    rec("D: no vendor without a connector is a choice while Amion is live", JSON.stringify(q) === JSON.stringify(["amion", "epic", "manual"]), q.join(","));
   }
   rec(`D ${w}px: zero page errors`, errors.length === 0, errors.slice(0, 2).join(" | "));
   await ctx.close();

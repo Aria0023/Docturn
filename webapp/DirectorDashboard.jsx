@@ -1,8 +1,17 @@
 /* DocTurn web-app UI kit — Director dashboard.
    Director controls the hospitalist group: mass-set the daily census limit (cap),
-   edit each provider's census/cap, move providers between defined shifts
-   (Day call / Swing / Nights) with editable hours, and manage the round-robin —
-   including taking a provider off rotation even while they are on shift. */
+   edit each provider's census/cap, move providers between Day / Swing / Night,
+   and manage the round-robin — including taking a provider off rotation even
+   while they are on shift.
+
+   Everything here is the SERVER's (A.CON schedule #1-#7):
+     • the on-call schedule panel reads GET /api/oncall/sources — the org's
+       selected source and its real last sync (never "Amion · 2m ago");
+     • shift names and published hours are the org's (PATCH /api/org/shifts/:id,
+       director only, audited) — reference hours: nothing switches anyone on or
+       off shift by the clock;
+     • the admissions counter and its Reset are GET /api/admissions /
+       POST /api/admissions/reset (org-wide, audited). */
 
 function Stepper({ label, value, onDec, onInc, mobile }) {
   // Phones: 40×44 buttons so the −/+ are real tap targets.
@@ -33,7 +42,77 @@ function ShiftSelect({ shifts, value, onChange, mobile }) {
   );
 }
 
-function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, onResetAdmissions, onOpenAdmissions, myHospWork, admissionsLog }) {
+// "synced 4 min ago" from a server timestamp (ISO / ms); null → null.
+function ddAgo(at) {
+  if (!at) return null;
+  const t = typeof at === "number" ? at : new Date(at).getTime();
+  if (!isFinite(t)) return null;
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + " h ago";
+  return Math.floor(s / 86400) + " d ago";
+}
+function ddClock(ms) {
+  if (!ms) return "";
+  if (window.dtFmt && window.dtFmt.stamp) return window.dtFmt.stamp(ms);
+  return new Date(ms).toLocaleString();
+}
+
+// The org's name for one shift (PATCH /api/org/shifts/:id { label }). Phones
+// get a real 44px "Rename" button and a 16px field; desktop keeps the inline
+// click-to-edit text.
+function ShiftName({ shift, onRename, mobile }) {
+  const [editing, setEditing] = React.useState(false);
+  const [v, setV] = React.useState(shift.label);
+  React.useEffect(() => { if (!editing) setV(shift.label); }, [shift.label, editing]);
+  if (!mobile) return <span data-shift-label={shift.id}><EditableText value={shift.label} onSave={(val) => onRename(shift.id, val)} size={14} weight={700} /></span>;
+  const commit = () => { setEditing(false); const t = (v || "").trim(); if (t && t !== shift.label) onRename(shift.id, t); else setV(shift.label); };
+  if (editing) {
+    return (
+      <input data-shift-label-input={shift.id} aria-label={"Name for the " + shift.id + " shift"} value={v} autoFocus maxLength={40}
+        onChange={(e) => setV(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } if (e.key === "Escape") { setV(shift.label); setEditing(false); } }}
+        style={{ height: 44, fontSize: 16, fontWeight: 700, padding: "0 10px", border: "1px solid var(--ring)", borderRadius: "var(--radius-md)", minWidth: 0, width: 180, maxWidth: "100%", fontFamily: "var(--font-sans)" }} />
+    );
+  }
+  return (
+    <span data-shift-label={shift.id} style={{ display: "inline-flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+      <span style={{ fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shift.label}</span>
+      <button type="button" onClick={() => setEditing(true)} aria-label={"Rename the " + shift.label + " shift"} title="Rename"
+        style={{ width: 44, height: 44, flex: "none", border: "none", background: "transparent", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+        <Icon name="pencil" size={14} />
+      </button>
+    </span>
+  );
+}
+
+// The org's published hours for one shift ("HH:MM", or unset). Saved on blur
+// (PATCH /api/org/shifts/:id { start | end }); a refused save puts back what
+// the server holds. Reference only — DocTurn does not switch anyone on or off
+// shift by these hours.
+function ShiftHours({ shift, onSave, mobile }) {
+  const [start, setStart] = React.useState(shift.start || "");
+  const [end, setEnd] = React.useState(shift.end || "");
+  React.useEffect(() => { setStart(shift.start || ""); }, [shift.start]);
+  React.useEffect(() => { setEnd(shift.end || ""); }, [shift.end]);
+  const commit = (key, val, reset) => {
+    if ((val || "") === (shift[key] || "")) return;
+    Promise.resolve(onSave(shift.id, { [key]: val || null })).then((ok) => { if (ok === false) reset(shift[key] || ""); });
+  };
+  const st = mobile ? { ...timeStyle, height: 44, fontSize: 16, padding: "0 8px" } : timeStyle;
+  return (
+    <div data-shift-hours={shift.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 2, flexWrap: "wrap" }}>
+      <Icon name="clock" size={13} color="var(--muted-foreground)" />
+      <input type="time" aria-label={shift.label + " start"} value={start} onChange={(e) => setStart(e.target.value)} onBlur={(e) => commit("start", e.target.value, setStart)} style={st} />
+      <span style={{ color: "var(--muted-foreground)", fontSize: 12 }}>–</span>
+      <input type="time" aria-label={shift.label + " end"} value={end} onChange={(e) => setEnd(e.target.value)} onBlur={(e) => commit("end", e.target.value, setEnd)} style={st} />
+      {!shift.start && !shift.end && <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>hours not set</span>}
+    </div>
+  );
+}
+
+function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, admissionsInfo, onResetAdmissions, onOpenAdmissions, myHospWork, admissionsLog }) {
   // Live ops report (org-scoped, server-computed): assignment latency, consult
   // response and message volume. Hydrated on login for directors; the strip's
   // comms KPIs read from it so nothing is duplicated across two sources.
@@ -85,20 +164,43 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     : p.census >= p.cap ? "At cap — skipped until a bed frees up"
     : (rrStatus.source === "server" ? "Not in the round-robin queue" : "Round-robin position unknown");
 
-  // Rolling admissions count since the director's last reset (log keeps all).
-  const admSinceReset = (admissions || []).filter((a) => a.at >= (admissionsResetAt || 0)).length;
+  // Admissions since the org's last counter reset — the SERVER's count
+  // (GET /api/admissions). "—" until it answers; the offline kit (no
+  // admissionsInfo prop) counts its own demo log.
+  const admInfo = admissionsInfo === undefined ? undefined : admissionsInfo;
+  const admSinceReset = admInfo === undefined
+    ? (admissions || []).filter((a) => a.at >= (admissionsResetAt || 0)).length
+    : (admInfo && admInfo.loaded ? admInfo.sinceReset : "—");
+  const admError = admInfo && admInfo.error;
+  const admReady = admInfo === undefined || !!(admInfo && admInfo.loaded);
+  const admResetLine = admInfo === undefined ? "Every admission routed to a team is kept in the log. Reset clears this count only."
+    : admError === "module_disabled" ? "Admission routing is switched off for this organization."
+    : !admInfo || !admInfo.loaded ? (admError ? "Couldn't load the count from the server." : "Loading the count…")
+    : (admInfo.resetAt ? "Counting since " + ddClock(admInfo.resetAt) + (admInfo.resetBy ? " (reset by " + admInfo.resetBy + ")" : "") + "." : "Never reset — this counts every admission on record.") + " Reset restarts the count for everyone at your organization; the log keeps every admission.";
 
   const handleDrop = (targetId) => { if (dragId && dragId !== targetId) onReorder(dragId, targetId); setDragId(null); setOverId(null); };
 
   const SHIFT_TINT = { day: "amber", swing: "blue", night: "slate" };
 
-  // Schedule-source badge reflects THIS org's actual source (not always Amion).
-  const dtState = (typeof window !== "undefined" && window.DT) ? window.DT.getState() : null;
-  const schedOrg = (dtState && dtState.session && dtState.session.org) || (dtState && dtState.selectedOrg) || "ISPN";
-  const schedKey = (dtState && dtState.scheduleSources && dtState.scheduleSources[schedOrg]) || "amion";
-  const SRC_LABELS = { amion: "Amion", qgenda: "QGenda", tangier: "Tangier / Spok", shiftadmin: "ShiftAdmin", word: "Word document", pdf: "PDF document", online: "Online page", custom: "Custom", none: "Not configured" };
-  const schedLabel = SRC_LABELS[schedKey] || "Amion";
-  const schedConfigured = schedKey !== "none";
+  // On-call schedule panel: the org's source as the SERVER reports it
+  // (GET /api/oncall/sources — selected source, configured, lastSyncAt,
+  // lastStatus). Re-read on mount and every minute; nothing here is a
+  // browser-side guess (A.CON schedule #1).
+  const st = useStore();
+  const act = useActions();
+  const oncallOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("oncall.board");
+  React.useEffect(() => {
+    if (!oncallOn || !act.loadOnCallSources) return undefined;
+    act.loadOnCallSources();
+    const t = setInterval(() => act.loadOnCallSources(), 60000);
+    return () => clearInterval(t);
+  }, [oncallOn]);
+  const srcInfo = st.onCallSources || null;
+  const srcErr = st.onCallSourcesError || null;
+  const SRC_NAME = { amion: "Amion", epic: "Epic (FHIR)", manual: "Manual list" };
+  const schedKey = srcInfo && srcInfo.selected;
+  const schedStatus = schedKey && srcInfo.sources ? srcInfo.sources[schedKey] : null;
+  const overridden = srcInfo && srcInfo.overridden ? srcInfo.overridden : null;
 
   // One source of truth per metric: the comms KPIs come from the ops report
   // (median/avg in minutes), not the separate commsMetrics feed, so the strip
@@ -139,15 +241,53 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   // `bare` lets a caller supply the page frame instead of PageWrap.
   const Wrap = bare ? React.Fragment : PageWrap;
 
+  // What the panel says, case by case — each line is something the server reported.
+  let schedTitle, schedBadge = null, schedLine;
+  const switchesLine = "The rotation follows the On/Off, Rotation and shift controls below — changes apply to everyone at once.";
+  if (!oncallOn) {
+    schedTitle = "On-call schedule";
+    schedLine = "The on-call board is switched off for this organization, so no schedule source is read.";
+  } else if (!srcInfo) {
+    schedTitle = "On-call schedule";
+    schedLine = srcErr ? "Couldn't load the schedule source from the server." : "Loading the schedule source…";
+  } else if (schedKey === "manual") {
+    schedTitle = "On-call schedule: Manual list";
+    const n = schedStatus ? schedStatus.rowCount : 0;
+    schedBadge = <Badge status={n ? "accepted" : "pending"} icon="circle">{n ? n + " slot" + (n === 1 ? "" : "s") + (schedStatus.lastSyncAt ? " · edited " + ddAgo(schedStatus.lastSyncAt) : "") : "No slots yet"}</Badge>;
+    schedLine = (overridden ? (SRC_NAME[overridden.source] || overridden.source) + " is switched off for this organization, so the On call board reads the manual list. " : "Directors keep the on-call list by hand on the On call board; no feed updates it. ") + switchesLine;
+  } else {
+    const name = SRC_NAME[schedKey] || schedKey;
+    const configured = !!(schedStatus && schedStatus.configured);
+    const ago = schedStatus && ddAgo(schedStatus.lastSyncAt);
+    if (!configured) {
+      schedTitle = "On-call schedule: " + name + " not connected";
+      schedBadge = <Badge status="pending" icon="circle">Not connected</Badge>;
+      schedLine = "Connect it under Settings → Integrations. Until then nothing is imported from " + name + ". " + switchesLine;
+    } else if (schedStatus.lastStatus === "error") {
+      schedTitle = "On-call schedule: " + name;
+      schedBadge = <Badge status="rejected" icon="circle">{"Last sync failed" + (ago ? " · " + ago : "")}</Badge>;
+      schedLine = (schedKey === "amion" ? "The board keeps the last good Amion pull. " : "The board keeps the last good Epic sync. ") + switchesLine;
+    } else if (!schedStatus.lastSyncAt) {
+      schedTitle = "On-call schedule: " + name;
+      schedBadge = <Badge status="pending" icon="circle">Not synced yet</Badge>;
+      schedLine = "Connected; the first sync hasn't run. " + switchesLine;
+    } else {
+      schedTitle = "On-call schedule synced from " + name;
+      schedBadge = <Badge status="accepted" icon="circle">{"Synced " + ago + " · " + schedStatus.rowCount + " slot" + (schedStatus.rowCount === 1 ? "" : "s")}</Badge>;
+      schedLine = schedKey === "amion"
+        ? "Each Amion pull puts everyone on the grid on shift with the grid's shift, so changes below last until the next pull."
+        : "Epic feeds the On call board only; it does not change who is on shift. " + switchesLine;
+    }
+  }
   const scheduleNode = (
-    /* Schedule source — rotation pool follows the synced on-call grid */
+    /* Schedule source — the server's selected source and its real sync state */
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={17} color="var(--primary)" /></span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span style={{ whiteSpace: "nowrap" }}>{schedConfigured ? "On-call schedule synced" : "On-call schedule not connected"}</span>{schedConfigured ? <Badge status="accepted" icon="circle">{schedLabel} · 2m ago</Badge> : <Badge status="pending" icon="circle">{schedLabel}</Badge>}</div>
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>The rotation pool follows {schedConfigured ? "the live on-call grid" : "this org's schedule once connected"}. Changes below apply to the live rotation for everyone until the next schedule sync.</div>
+      <div data-schedule-panel={schedKey || (srcErr ? "error" : "loading")} style={{ minWidth: 0, flex: "1 1 200px" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span data-schedule-title>{schedTitle}</span>{schedBadge && <span data-schedule-badge style={{ whiteSpace: "nowrap" }}>{schedBadge}</span>}</div>
+        <div data-schedule-line style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{schedLine}</div>
       </div>
-      <Button size="sm" variant="outline" icon="settings" onClick={onOpenSchedule}>Manage sync</Button>
+      <Button size="sm" variant="outline" icon="settings" onClick={onOpenSchedule}>Schedule settings</Button>
     </Card>
   );
 
@@ -156,12 +296,12 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DCFCE7", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="scroll-text" size={17} color="var(--status-accepted)" /></span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700 }}>Admissions since last reset: <span style={{ fontVariantNumeric: "tabular-nums" }}>{admSinceReset}</span></div>
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Every admission routed to a team is kept in the log. Reset clears this daily count only.</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700 }}>Admissions since last reset: <span data-admissions-since style={{ fontVariantNumeric: "tabular-nums" }}>{admSinceReset}</span></div>
+        <div data-admissions-reset-line style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{admResetLine}</div>
       </div>
-      <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+      <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
         {onOpenAdmissions && <Button size="sm" variant="outline" icon="scroll-text" onClick={onOpenAdmissions}>View log</Button>}
-        {onResetAdmissions && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={onResetAdmissions}>Reset 24h</Button>}
+        {onResetAdmissions && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={() => { if (admReady) onResetAdmissions(); }} style={admReady ? null : { opacity: .5 }}>Reset count</Button>}
       </div>
     </Card>
   );
@@ -224,6 +364,10 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     /* Provider management grouped by shift — each in-rotation row is also its
        rotation-order item (drag handle + position + next-up highlight). */
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div data-shift-note style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
+        <Icon name="info" size={13} style={{ marginTop: 2, flex: "none" }} />
+        <span>Shift names and hours are your organization's — saved for everyone. Hours are for reference: DocTurn doesn't switch anyone on or off shift by the clock; the On/Off switch does{schedKey === "amion" ? ", and each Amion pull" : ""}.</span>
+      </div>
       {shifts.map((shift) => {
           const group = providers.filter((p) => p.shift === shift.id);
           return (
@@ -231,13 +375,8 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
               {/* wraps on phones: label + hours + "N providers" exceed 362px otherwise (page wobble) */}
               <div style={{ display: "flex", alignItems: "center", gap: 10, rowGap: 6, marginBottom: 8, padding: "0 2px", flexWrap: "wrap" }}>
                 <Avatar initials="" size={10} tint={SHIFT_TINT[shift.id]} />
-                <EditableText value={shift.label} onSave={(val) => onRenameShift(shift.id, val)} size={14} weight={700} />
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 2, flexWrap: "wrap" }}>
-                  <Icon name="clock" size={13} color="var(--muted-foreground)" />
-                  <input type="time" value={shift.start} onChange={(e) => onUpdateShift(shift.id, { start: e.target.value })} style={timeStyle} />
-                  <span style={{ color: "var(--muted-foreground)", fontSize: 12 }}>–</span>
-                  <input type="time" value={shift.end} onChange={(e) => onUpdateShift(shift.id, { end: e.target.value })} style={timeStyle} />
-                </div>
+                <ShiftName shift={shift} onRename={onRenameShift} mobile={mobile} />
+                <ShiftHours shift={shift} onSave={onUpdateShift} mobile={mobile} />
                 <span style={{ fontSize: 12, color: "var(--muted-foreground)", marginLeft: "auto", fontWeight: 600 }}>{group.length} provider{group.length === 1 ? "" : "s"}</span>
               </div>
               <Card style={{ padding: 0, overflow: "hidden" }}>

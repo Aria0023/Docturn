@@ -20,6 +20,7 @@ import { registerMobileRoutes } from "./mobile.js";
 import { registerModuleRoutes } from "./modules.js";
 import { registerOnCallRoutes } from "./oncall.js";
 import { registerAccountRoutes } from "./accounts.js";
+import { registerAdmissionsRoutes } from "./admissions.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
@@ -35,6 +36,7 @@ export function registerRoutes(app: Express) {
   registerProviderRoutes(app);
   registerPatientRoutes(app);
   registerAssignmentRoutes(app);
+  registerAdmissionsRoutes(app);
   registerMessagingRoutes(app);
   registerMetricsRoutes(app);
   registerReportsRoutes(app);

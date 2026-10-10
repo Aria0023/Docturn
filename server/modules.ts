@@ -104,6 +104,8 @@ const bodyHasTheme = (req: Request) => {
 export const GATE_TABLE: readonly GateRule[] = [
   // Routing
   { path: /^\/api\/assignments(\/|$)/, module: "routing.assignments" },
+  // Admissions log + its org-wide counter reset (server/routes/admissions.ts).
+  { path: /^\/api\/admissions(\/|$)/, module: "routing.assignments" },
   { path: /^\/api\/consults(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/patients\/[^/]+\/consults(\/|$)/, module: "routing.consults" },
   // The consult-service catalog editor (Directory → Consult services).

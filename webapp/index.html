@@ -337,7 +337,7 @@ const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
-  admissions: ["Admissions log", "Every patient routed to a team — full history"],
+  admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
@@ -622,7 +622,7 @@ function App() {
     ? <DirectoryHub providers={sortedProviders} onMessage={message} domainRoles={dirDomain.roles} />
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
-  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
+  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};
@@ -667,9 +667,9 @@ function App() {
   // pinned on top, panels below as CustomizableDashboard widgets), so it is
   // mounted directly. The former "My hospitalist work" / "Admissions log"
   // widgets are passed in as nodes and kept as re-addable panels.
-  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")}
+  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} admissionsInfo={st.admissionsInfo} onResetAdmissions={a.resetAdmissionsCount} onOpenAdmissions={() => a.setNav("admissions")}
     myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessage={message} />}
-    admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} />} />;
+    admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={a.purgeData} />} />;
 
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
   const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;

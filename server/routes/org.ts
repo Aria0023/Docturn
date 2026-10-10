@@ -2,7 +2,13 @@ import type { Express } from "express";
 import { consultServicesArraySchema, orgConfigSchema, orgThemePatchSchema } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { broadcastRotationChange } from "../services/notifications.js";
+import { broadcastRotationChange, broadcastShiftsChange } from "../services/notifications.js";
+import {
+  getShiftDefinitions,
+  isShiftId,
+  shiftDefinitionPatchSchema,
+  updateShiftDefinition,
+} from "../services/shift-definitions.js";
 import { storage } from "../storage.js";
 import { catalogOf, CONSULT_KEY, CONSULT_REV_KEY, revOf } from "./consult-services.js";
 
@@ -13,10 +19,11 @@ export function registerOrgRoutes(app: Express) {
     if (!org) return res.status(404).json({ error: "not_found" });
     // Per-organization preferences (individualized): consult-service catalog and
     // appearance/theme live in org settings so each tenant has its own.
-    const [consultServices, consultRev, theme] = await Promise.all([
+    const [consultServices, consultRev, theme, shifts] = await Promise.all([
       storage().getOrgSetting(me.organizationId, CONSULT_KEY),
       storage().getOrgSetting(me.organizationId, CONSULT_REV_KEY),
       storage().getOrgSetting(me.organizationId, "theme"),
+      getShiftDefinitions(storage(), me.organizationId),
     ]);
     res.json({
       // The caller's own organization's identity (Settings header). Editing
@@ -33,8 +40,47 @@ export function registerOrgRoutes(app: Express) {
       // (consultServicesVersion) or it is refused as stale (409).
       consultServicesVersion: revOf(consultRev),
       theme: theme ?? null,
+      // The org's names + published hours for Day / Swing / Night
+      // (services/shift-definitions.ts) — defaults carry no hours.
+      shifts,
     });
   });
+
+  // The org's shift names and published hours (Director dashboard → Provider
+  // management). Everyone in the org reads them; a director or developer
+  // changes ONE shift at a time — validated, merged under the settings row
+  // lock, audited, announced as SHIFTS_UPDATED. They label shifts; nothing
+  // switches a provider on or off shift by these hours.
+  app.get("/api/org/shifts", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    res.json({ shifts: await getShiftDefinitions(storage(), me.organizationId) });
+  });
+
+  app.patch(
+    "/api/org/shifts/:shiftId",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = String(req.params.shiftId);
+      if (!isShiftId(id)) return res.status(404).json({ error: "not_found" });
+      const parsed = shiftDefinitionPatchSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const shifts = await updateShiftDefinition(storage(), me.organizationId, id, parsed.data, me.id);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "org.shift_update",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        // A shift name / hours — org configuration, never clinical content.
+        details: { shift: id, changed: parsed.data },
+        riskLevel: "low",
+      });
+      broadcastShiftsChange(me.organizationId);
+      res.json({ shifts });
+    },
+  );
 
   // Per-organization preferences: consult-service catalog + appearance/theme.
   // Each is stored per tenant, so editing one org never affects another.

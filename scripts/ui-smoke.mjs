@@ -361,7 +361,10 @@ rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.s
 if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
-rec("admission logged on send", (DT.getState().admissions || []).some((a) => a.initials === "ZZ"), "admissions=" + (DT.getState().admissions || []).length);
+// The ER's own sent board carries it; the Admissions log is the server's
+// (director, GET /api/admissions — checked below), never a local append.
+rec("admission on the ER's sent board after send", (DT.getState().sent || []).some((a) => a.initials === "ZZ"), "sent=" + (DT.getState().sent || []).length);
+rec("ER send appends nothing to this browser's admissions log", (DT.getState().admissions || []).length === 0, "admissions=" + (DT.getState().admissions || []).length);
 await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 const got = (DT.getState().pending || []).find((p) => p.initials === "ZZ");
 rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + JSON.stringify((DT.getState().pending || []).map((p) => p.initials)));
@@ -399,13 +402,14 @@ await demoLogin("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flus
     const provBtn = cands.find((b) => (b.textContent || "").includes(`${pick.census}/${pick.cap}`)) || cands[0];
     if (provBtn) provBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
     detail = "pick=" + pick.name + " cands=" + JSON.stringify(cands.map((b) => (b.textContent || "").slice(0, 60))) + " ";
-    const before = (DT.getState().admissions || []).length;
     const sendBtn = btnByText(/^Send assignment/);
     const disabled = sendBtn && (sendBtn.style.pointerEvents === "none" || sendBtn.disabled);
     if (sendBtn && !disabled) sendBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     await flush(); await flush();
-    const adm = (DT.getState().admissions || [])[0];
-    manualOk = (DT.getState().admissions || []).length > before && adm && adm.initials === "QX" && adm.provider === pick.name;
+    const findQx = () => (DT.getState().sent || []).find((x) => x.initials === "QX");
+    for (let i = 0; i < 20 && !(findQx() && findQx().provider === pick.name); i++) await flush();
+    const adm = findQx();
+    manualOk = !!adm && adm.provider === pick.name;
     detail += "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
   }
   rec("ER manual send routes to the chosen provider (end-to-end)", manualOk, detail);
@@ -429,8 +433,10 @@ await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
   if (imported) {
     DT.actions.sendAssignment(imported, { initials: "AM", room: "Bay 2", complaint: "Amion route test", specialty: "Cardiology" }, []);
     await flush(); await flush();
-    const adm = (DT.getState().admissions || [])[0];
-    ok = adm && adm.provider === imported.name && adm.initials === "AM";
+    const findAm = () => (DT.getState().sent || []).find((x) => x.initials === "AM");
+    for (let i = 0; i < 20 && !(findAm() && findAm().provider === imported.name); i++) await flush();
+    const adm = findAm();
+    ok = !!adm && adm.provider === imported.name;
     detail = "latest=" + JSON.stringify(adm && { p: adm.provider, i: adm.initials });
   }
   rec("ER routes an admission to an Amion-imported physician", ok, detail);
@@ -570,13 +576,21 @@ rec("no browser-only shift-type list remains", DT.getState().settings.shiftTypes
 // default assignment timeout is 15
 rec("default assignment timeout is 15 min", DT.getState().settings.timeout === 15, "timeout=" + DT.getState().settings.timeout);
 
-// director 24h admissions reset: count since reset drops to 0, log is retained
-const logBefore = (DT.getState().admissions || []).length;
-DT.actions.resetAdmissions24h();
-await flush();
-const resetAt = DT.getState().admissionsResetAt;
-const sinceReset = (DT.getState().admissions || []).filter((a) => a.at >= resetAt).length;
-rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.getState().admissions || []).length === logBefore, "since=" + sinceReset + " log=" + (DT.getState().admissions || []).length);
+// Director: the Admissions log + "Reset count" are the server's
+// (GET /api/admissions, POST /api/admissions/reset — org-wide, audited).
+await demoLogin("director", "ISPN"); await flush(); await flush();
+{
+  for (let i = 0; i < 40 && !((DT.getState().admissionsInfo || {}).loaded); i++) await flush();
+  const info0 = DT.getState().admissionsInfo || {};
+  const rows0 = (DT.getState().admissions || []).length;
+  rec("director: admissions log hydrated from the server", !!info0.loaded && rows0 === Math.min(info0.total, rows0) && (DT.getState().admissions || []).some((a) => a.initials === "ZZ"),
+    "info=" + JSON.stringify(info0) + " rows=" + rows0);
+  const ok = await DT.actions.resetAdmissionsCount();
+  await flush();
+  const info1 = DT.getState().admissionsInfo || {};
+  rec("Reset count: server resets the org's count to 0 and keeps the log", ok === true && info1.sinceReset === 0 && info1.total === info0.total && !!info1.resetAt,
+    "ok=" + ok + " info=" + JSON.stringify(info1));
+}
 
 // Customizable dashboards: reorder, remove, and re-add panels (per role).
 {
@@ -613,15 +627,13 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
   DT.actions.setBoardModule("er_director", "census", false); await flush();
 }
 
-// Per-organization schedule source: each org keeps its own, and it's settable.
+// The schedule source is the SERVER's (GET /api/oncall/sources): no seeded or
+// per-browser source map, no local setter (A.CON schedule #2/#3).
 {
-  const sources = DT.getState().scheduleSources || {};
-  const distinct = new Set(Object.values(sources)).size;
-  rec("schedule source is per-organization (distinct sources seeded)",
-    sources.MAYO && sources.STJUDE && distinct >= 2, "sources=" + JSON.stringify(sources));
-  DT.actions.setScheduleSource("ISPN", "qgenda"); await flush();
-  rec("setScheduleSource updates that org only",
-    DT.getState().scheduleSources.ISPN === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
+  rec("no browser-side schedule-source map or setter", DT.getState().scheduleSources === undefined && typeof DT.actions.setScheduleSource === "undefined");
+  const r = await DT.actions.loadOnCallSources();
+  rec("schedule source loads from the server", !!r && ["amion", "epic", "manual"].includes(r.selected) && DT.getState().onCallSources && DT.getState().onCallSources.selected === r.selected,
+    "selected=" + (r && r.selected));
 }
 
 // Triage acuity: AI suggests an ESI level from the note; it carries onto the
@@ -661,7 +673,9 @@ await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
   if (prov) {
     DT.actions.sendAssignment(prov, { initials: "AZ", room: "9", complaint: "GSW", specialty: "Cardiology", acuity: 1 }, []);
     await flush(); await flush();
-    const adm = (DT.getState().admissions || []).find((a) => a.initials === "AZ");
+    const findAz = () => (DT.getState().sent || []).find((a) => a.initials === "AZ");
+    for (let i = 0; i < 20 && !(findAz() && findAz().backendId); i++) await flush();
+    const adm = findAz();
     ok = !!adm && adm.acuity === 1;
     detail = "adm=" + JSON.stringify(adm && { i: adm.initials, a: adm.acuity });
   }

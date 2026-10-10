@@ -92,6 +92,30 @@ export function broadcastRotationChange(orgId: number) {
   }
 }
 
+/**
+ * The org's admissions counter was reset (POST /api/admissions/reset): every
+ * signed-in director re-reads GET /api/admissions. Content-free.
+ */
+export function broadcastAdmissionsChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "ADMISSIONS_UPDATED" });
+  } catch (err) {
+    console.error("[notify] admissions broadcast failed", err);
+  }
+}
+
+/**
+ * The org's shift names / hours changed (PATCH /api/org/shifts/:id): every
+ * session re-reads GET /api/org/shifts. Content-free.
+ */
+export function broadcastShiftsChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "SHIFTS_UPDATED" });
+  } catch (err) {
+    console.error("[notify] shifts broadcast failed", err);
+  }
+}
+
 /** In-memory acknowledgement state, keyed by assignment id. */
 const acked = new Set<number>();
 export function acknowledgeAssignment(assignmentId: number) {

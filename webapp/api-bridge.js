@@ -26,6 +26,11 @@
     s.devUsers = []; s.devUsersLoaded = false;
     s.notifications = []; s.platformHealth = null; s.auditCount = null;
     if (s.selectedOrg === "MAYO") s.selectedOrg = null; // the seed's demo tenant, never a real one
+    // The admissions log, its counts and the org's shift names/hours are the
+    // server's (A.CON schedule #4-#7): no demo admissions, no demo hours.
+    s.admissions = []; s.admissionsInfo = null; s.admissionsResetAt = 0;
+    s.shifts = DT.defaultShifts ? DT.defaultShifts() : s.shifts;
+    s.onCallSources = null; s.onCallSourcesError = null;
     return s;
   });
   var fmt = window.dtFmt;
@@ -514,9 +519,13 @@
       // the Director card, the ER Quick hint and the hospitalist chip all read
       // it, so none of them can name an at-cap or off-shift provider.
       extra.push(ROTATION_ROLES[role] ? get("/api/rotation/next").then(mapRotation, rotationFailure) : Promise.resolve(null));
+      // Director: the Admissions log + counter are the server's (A.CON
+      // schedule #6/#7) — re-read on every hydrate, so a new admission, a
+      // re-route or a Clear shows without a reload.
+      extra.push(role === "director" ? get("/api/admissions").catch(admissionsFailure) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
-        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8];
+        var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8], admissionsLog = e[9];
         DT.set(function (s) {
           var fresh = seq >= rosterAppliedSeq;
           if (fresh && ((hosps && users) || rotation)) rosterAppliedSeq = seq;
@@ -598,8 +607,11 @@
             s.theme = Object.assign({}, s.theme, serverTheme);
             s.themeSave = null;
             s.orgIdentity = identityOf(orgCfg);
+            // The org's shift names + published hours (server defaults: no hours).
+            if (Array.isArray(orgCfg.shifts)) s.shifts = mapShifts(orgCfg.shifts);
             prefsLoaded = true;
           }
+          if (admissionsLog && fresh) applyAdmissions(s, admissionsLog);
           return s;
         });
       });
@@ -1404,6 +1416,10 @@
         // this one): every "Next up" surface re-reads the planner
         // (A.CON-SHO-29) — never keeps naming the pre-change provider.
         else if (ev.type === "ROTATION_UPDATED") rehydrateRotationSoon();
+        // Another director reset the org's admissions count / renamed or
+        // re-timed a shift: re-read the server's (content-free frames).
+        else if (ev.type === "ADMISSIONS_UPDATED") { var rl = DT.getState().session; if (rl && rl.role === "director") DT.actions.loadAdmissions(); }
+        else if (ev.type === "SHIFTS_UPDATED") DT.actions.loadShifts();
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
           // Surface an incoming org-wide broadcast live: insert it (with its
           // real ack requirement) so the banner + card show an Acknowledge
@@ -2442,14 +2458,15 @@
   };
 
   // Clear old patients/logs (or all). hours=24 by default; 0 = everything.
-  // Backend deletes patients + their assignments/consults; local admission log
-  // is pruned to match. Also runs automatically every 24h server-side.
+  // Backend deletes patients + their assignments/consults; the admissions log
+  // follows on the re-read. Also runs automatically every 24h server-side.
   DT.actions.purgeData = function (hours) {
     var h = (hours == null) ? 24 : Number(hours);
     return api("POST", "/api/maintenance/purge", { olderThanHours: h }).then(function (r) {
       DT.set(function (s) {
-        if (h <= 0) { s.admissions = []; s.sent = []; }
-        else { var cut = Date.now() - h * 3600000; s.admissions = (s.admissions || []).filter(function (a) { return (a.at || 0) >= cut; }); }
+        // The log and its counts are re-read from the server below (hydrate →
+        // GET /api/admissions), never pruned locally (A.CON schedule #7).
+        if (h <= 0) s.sent = [];
         var n = r && r.removed != null ? r.removed : 0;
         s.__toast = { tone: "accepted", title: "Cleared", msg: n + " patient record" + (n === 1 ? "" : "s") + " removed." };
         return s;
@@ -3188,8 +3205,10 @@
     // anyone yet — the server's pick replaces "routing…" when it answers.
     DT.set(function (s) {
       s.sent = [{ id: sentId, initials: fields.initials, provider: routingLabel, complaint: fields.complaint, consultants: consults || [], acuity: fields.acuity || 3, time: "Today · " + fmt.clockLabel(), day: "Today", status: "sent" }].concat(s.sent);
-      // append to the admissions log (every admission given to a team)
-      s.admissions = [{ id: admId, at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: routingLabel, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
+      // The Admissions log is the server's (GET /api/admissions, re-read on
+      // the ASSIGNMENT_* frame this send causes). Only the offline local demo,
+      // which has no server, keeps a local row (A.CON schedule #7).
+      if (localDemoSession) s.admissions = [{ id: admId, at: Date.now(), initials: fields.initials, room: fields.room || "—", provider: routingLabel, specialty: fields.specialty || "General Medicine", acuity: fields.acuity || 3, via: mode === "round_robin" ? "Round-robin" : "Manual", status: "sent" }].concat(s.admissions || []);
       s.__toast = { tone: "sent", title: mode === "manual" ? "Sending assignment to " + provider.name + "…" : "Sending assignment…",
         msg: mode === "manual" ? "Waiting for the server to confirm." : "Round-robin is choosing the next eligible hospitalist." };
       return s;
@@ -4083,6 +4102,140 @@
   try { document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") pollModules(); }); } catch (e) {}
   // ==== modules — END =======================================================
 
+  // ==== schedule: shift names/hours + admissions log (A.CON schedule) — BEGIN ====
+  // Shift names and published hours are the ORG's (PATCH /api/org/shifts/:id,
+  // director/developer, audited); the admissions log, its counts and the
+  // counter reset are the SERVER's (GET /api/admissions, POST
+  // /api/admissions/reset). None of these is kept in this browser.
+  var SHIFT_ORDER = ["day", "swing", "night"];
+  var SHIFT_DEFAULT = { day: "Day", swing: "Swing", night: "Night" };
+  function mapShifts(list) {
+    var byId = {};
+    (list || []).forEach(function (x) { if (x && SHIFT_DEFAULT[x.id]) byId[x.id] = x; });
+    return SHIFT_ORDER.map(function (id) {
+      var x = byId[id] || {};
+      return { id: id, label: typeof x.label === "string" && x.label ? x.label : SHIFT_DEFAULT[id], start: x.start || null, end: x.end || null };
+    });
+  }
+  function admissionsFailure(e) {
+    var m = String((e && e.message) || "");
+    return { __error: m === "module_disabled" ? "module_disabled" : (isNetworkError(e) ? "offline" : (e && e.status === 403 ? "forbidden" : "unavailable")) };
+  }
+  var VIA_LABEL = { round_robin: "Round-robin", manual: "Manual" };
+  function applyAdmissions(s, r) {
+    if (!r) return s;
+    if (r.__error) {
+      // Keep what the server last said (if anything); say why it isn't fresh.
+      s.admissionsInfo = Object.assign({}, s.admissionsInfo || {}, { error: r.__error });
+      if (!s.admissionsInfo.loaded) s.admissions = [];
+      return s;
+    }
+    s.admissions = (r.rows || []).map(function (x) {
+      return {
+        id: "adm" + x.patientId, patientId: x.patientId,
+        at: new Date(x.routedAt).getTime(), lastAt: x.lastRoutedAt ? new Date(x.lastRoutedAt).getTime() : null,
+        initials: x.initials, room: x.room || "—", provider: x.provider || "—", specialty: x.specialty || "—",
+        via: VIA_LABEL[x.via] || x.via || "—", status: x.status, routings: x.routings || 1,
+      };
+    });
+    s.admissionsInfo = {
+      loaded: true, error: null,
+      total: r.total, last24h: r.last24h, sinceReset: r.sinceReset, shown: (r.rows || []).length,
+      resetAt: r.reset && r.reset.at ? new Date(r.reset.at).getTime() : null,
+      resetBy: r.reset && r.reset.by ? (r.reset.by.name || "a director") : null,
+    };
+    s.admissionsResetAt = s.admissionsInfo.resetAt || 0;
+    return s;
+  }
+  DT.actions.loadAdmissions = function () {
+    var epoch = authEpoch;
+    return get("/api/admissions").then(function (r) { return r; }, admissionsFailure).then(function (r) {
+      if (epoch !== authEpoch) return null;
+      DT.set(function (s) { return applyAdmissions(s, r); });
+      return r;
+    });
+  };
+  // "Reset count": an org-wide marker the server stores and audits; the toast
+  // follows the server's answer and the counts are the server's.
+  DT.actions.resetAdmissionsCount = function () {
+    return api("POST", "/api/admissions/reset", {}).then(function (r) {
+      DT.set(function (s) {
+        if (r) {
+          s.admissionsInfo = Object.assign({}, s.admissionsInfo || {}, {
+            loaded: true, error: null, total: r.total, last24h: r.last24h, sinceReset: r.sinceReset,
+            resetAt: r.reset && r.reset.at ? new Date(r.reset.at).getTime() : null,
+            resetBy: r.reset && r.reset.by ? (r.reset.by.name || "a director") : null,
+          });
+          s.admissionsResetAt = s.admissionsInfo.resetAt || 0;
+        }
+        var org = (s.orgIdentity && s.orgIdentity.name) || (s.session && s.session.org) || "your organization";
+        s.__toast = { tone: "accepted", title: "Admissions count reset", msg: "Counting from now for everyone at " + org + ". The log keeps every admission." };
+        return s;
+      });
+      return DT.actions.loadAdmissions().then(function () { return true; });
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      var why = isNetworkError(e) ? "No connection — nothing was reset."
+        : e && e.status === 403 ? "Only a director can reset the admissions count."
+        : m === "module_disabled" ? "Admission routing is switched off for this organization."
+        : "The server didn't reset it — try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Count not reset", msg: why }; return s; });
+      return false;
+    });
+  };
+  DT.actions.loadShifts = function () {
+    var epoch = authEpoch;
+    return get("/api/org/shifts").then(function (r) {
+      if (epoch !== authEpoch || !r || !Array.isArray(r.shifts)) return null;
+      DT.set(function (s) { s.shifts = mapShifts(r.shifts); return s; });
+      return r.shifts;
+    }).catch(function () { return null; });
+  };
+  // One shift's name / hours. Shown at once; the server's answer replaces it,
+  // a refusal puts back what the server holds and says why. Resolves true
+  // when saved.
+  function saveShift(sid, patch, what) {
+    var before = (DT.getState().shifts || []).map(function (x) { return Object.assign({}, x); });
+    DT.set(function (s) { s.shifts = (s.shifts || []).map(function (x) { return x.id === sid ? Object.assign({}, x, patch) : x; }); return s; });
+    return api("PATCH", "/api/org/shifts/" + encodeURIComponent(sid), patch).then(function (r) {
+      var list = r && Array.isArray(r.shifts) ? mapShifts(r.shifts) : null;
+      DT.set(function (s) {
+        if (list) s.shifts = list;
+        var x = (list || s.shifts || []).find(function (y) { return y.id === sid; }) || {};
+        s.__toast = { tone: "accepted", title: what === "label" ? "Shift renamed" : "Shift hours saved",
+          msg: what === "label" ? "Everyone at your organization now sees “" + x.label + "”."
+            : (x.start && x.end ? x.label + ": " + x.start + "–" + x.end + " for everyone at your organization. Hours are for reference — the On/Off switch decides who is on shift."
+              : x.label + " hours cleared for everyone at your organization.") };
+        return s;
+      });
+      return true;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      var why = isNetworkError(e) ? "No connection — nothing was saved."
+        : e && e.status === 403 ? "Only a director can change shift names and hours."
+        : m === "validation_error" ? (what === "label" ? "Use 1–40 characters." : "Enter a time as HH:MM.")
+        : "Try again.";
+      DT.set(function (s) { s.shifts = before; s.__toast = { tone: "rejected", title: "Not saved", msg: why }; return s; });
+      return false;
+    });
+  }
+  DT.actions.renameShift = function (sid, label) {
+    var v = String(label == null ? "" : label).trim();
+    if (!v || v.length > 40) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: "A shift name needs 1–40 characters." }; return s; });
+      return Promise.resolve(false);
+    }
+    return saveShift(sid, { label: v }, "label");
+  };
+  // patch: { start?: "HH:MM" | "" | null, end?: … } — empty clears the hour.
+  DT.actions.updateShift = function (sid, patch) {
+    var body = {};
+    ["start", "end"].forEach(function (k) { if (patch && patch[k] !== undefined) body[k] = patch[k] ? String(patch[k]) : null; });
+    if (!Object.keys(body).length) return Promise.resolve(false);
+    return saveShift(sid, body, "hours");
+  };
+  // ==== schedule — END ========================================================
+
   // ==== oncall / ehr: who's-on-call board + EHR deep links — BEGIN ==========
   // The board is server-merged (selected schedule source + consult services +
   // next hospitalist, DND → covering already applied). The MRN never reaches
@@ -4097,8 +4250,22 @@
       return null;
     });
   };
+  // The org's schedule source as the SERVER reports it (selected source, each
+  // source's configured / lastSyncAt / lastStatus). The Director dashboard's
+  // schedule panel and Settings → On-call schedule sync both read this —
+  // never a browser-side source map (A.CON schedule #1-#3).
   DT.actions.loadOnCallSources = function () {
-    return get("/api/oncall/sources").then(function (r) { DT.set(function (s) { s.onCallSources = r || null; return s; }); return r; }).catch(function () { return null; });
+    var epoch = authEpoch;
+    return get("/api/oncall/sources").then(function (r) {
+      if (epoch !== authEpoch) return null;
+      DT.set(function (s) { s.onCallSources = r || null; s.onCallSourcesError = null; return s; });
+      return r;
+    }).catch(function (e) {
+      if (epoch !== authEpoch) return null;
+      var m = String((e && e.message) || "");
+      DT.set(function (s) { s.onCallSourcesError = m === "module_disabled" ? "module_disabled" : (isNetworkError(e) ? "offline" : "unavailable"); return s; });
+      return null;
+    });
   };
   DT.actions.setOnCallSource = function (source) {
     return api("PATCH", "/api/oncall/source", { source: source }).then(function (r) {
