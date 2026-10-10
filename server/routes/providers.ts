@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { censusOverrideSchema, SHIFT_TYPE } from "@shared/schema";
+import { censusOverrideSchema, providerProfilePatchSchema, SHIFT_TYPE } from "@shared/schema";
 import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -250,6 +250,58 @@ export function registerProviderRoutes(app: Express) {
       });
       broadcastRotationChange(me.organizationId);
       res.json(updated);
+    },
+  );
+
+  // The Director's inline name / specialty edit on a provider row (A.CON
+  // clinical #11). The name is the account's display name (users.display_name,
+  // what every screen and thread shows); the specialty is the rotation
+  // profile's, which the routing planner reads as the patient-specialty
+  // preference — so a change re-announces the rotation. Director decision;
+  // audited (names and specialties are staff data, not PHI); org-scoped.
+  app.patch(
+    "/api/hospitalists/:id/profile",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = providerProfilePatchSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const u = await storage().getUser(me.organizationId, h.userId);
+      if (!u) return res.status(404).json({ error: "not_found" });
+      const changed: string[] = [];
+      const from: Record<string, string> = {};
+      const to: Record<string, string> = {};
+      let user = u;
+      let hospitalist = h;
+      if (parsed.data.displayName !== undefined && parsed.data.displayName !== u.displayName) {
+        user = (await storage().updateUser(u.id, { displayName: parsed.data.displayName })) ?? u;
+        changed.push("displayName");
+        from.displayName = u.displayName;
+        to.displayName = parsed.data.displayName;
+      }
+      if (parsed.data.specialty !== undefined && parsed.data.specialty !== h.specialty) {
+        hospitalist = (await storage().updateHospitalist(me.organizationId, id, { specialty: parsed.data.specialty })) ?? h;
+        changed.push("specialty");
+        from.specialty = h.specialty;
+        to.specialty = parsed.data.specialty;
+      }
+      if (changed.length) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "hospitalist.profile_update",
+          resourceType: "hospitalist",
+          resourceId: id,
+          details: { changed, from, to },
+          riskLevel: "low",
+        });
+        broadcastRotationChange(me.organizationId);
+      }
+      res.json({ hospitalist, user: { id: user.id, displayName: user.displayName } });
     },
   );
 

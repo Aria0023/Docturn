@@ -587,7 +587,7 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
 
   // Roles that also manage org people — their Directory tab folds in People,
   // Consult services and Roles as sub-tabs. A director sees (and manages)
@@ -605,7 +605,11 @@ function App() {
   const MIDLEVEL_CREDS = { PA: 1, NP: 1, RN: 1 };
   // Schedule-driven on-call by specialty (auto-rotates with the clock).
   const dirRoster = window.onCallRoster ? window.onCallRoster(st.directory) : {};
-  const midlevels = (st.directory || []).filter((d) => MIDLEVEL_CREDS[d.credential]).map((d) => ({ id: "ml" + d.id, name: d.name, avatar: d.avatar, role: d.credential }));
+  // The org's REAL PA/NP/RN accounts (every role — a PA without a rotation
+  // profile is still a person the server can alert), keyed by account id.
+  // No demo fallback (A.CON clinical #20).
+  const midlevels = Object.values(st.orgPeople || {}).filter((d) => MIDLEVEL_CREDS[d.credential] && d.active !== false).map((d) => ({ id: "ml" + d.id, userId: d.id, name: d.name, avatar: (window.dtFmt && window.dtFmt.initialsOf) ? window.dtFmt.initialsOf(d.name) : "", role: d.credential }))
+    .sort((x, y) => x.name.localeCompare(y.name));
   const consultCfg = st.consultServices || [];
   const consultServiceNames = consultCfg.length ? consultCfg.map((s) => s.name) : null;
   const consultConfig = {};
@@ -647,16 +651,16 @@ function App() {
   else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
   else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;
-  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
+  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} myProvider={st.myProvider} onAccept={a.accept} onDecline={a.decline} onMessagePatient={a.openPatientThread} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
-    { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
+    { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} report={st.erReport} reportError={st.erReportError} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
-    { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.diversion} onToggleDiversion={a.toggleDiversion} /> },
-    { id: "stats", label: "Throughput stats", icon: "activity", node: <ErStatsPanel erPhysicians={st.erPhysicians} sent={st.sent} board={st.board} avgAcceptSec={st.avgAcceptSec} /> },
-    { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel erPhysicians={st.erPhysicians} shifts={st.shifts} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} /> },
+    { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.erDiversion} error={st.erDiversionError} busy={st.erDiversionBusy} onSetDiversion={a.setDiversion} /> },
+    { id: "stats", label: "Throughput stats", icon: "activity", node: <ErStatsPanel report={st.erReport} reportError={st.erReportError} sent={st.sent} board={st.board} /> },
+    { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel roster={st.erRoster} error={st.erRosterError} shifts={st.shifts} onSetOnShift={a.setErOnShift} onSetShift={a.setErShift} onManagePeople={() => a.setNav("people")} /> },
     { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
     { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
@@ -668,7 +672,7 @@ function App() {
   // mounted directly. The former "My hospitalist work" / "Admissions log"
   // widgets are passed in as nodes and kept as re-addable panels.
   else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} admissionsInfo={st.admissionsInfo} onResetAdmissions={a.resetAdmissionsCount} onOpenAdmissions={() => a.setNav("admissions")}
-    myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessage={message} />}
+    myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessagePatient={a.openPatientThread} />}
     admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={a.purgeData} />} />;
 
   const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;

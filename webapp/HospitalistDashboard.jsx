@@ -24,7 +24,15 @@ function hhmm(at) { return (window.dtFmt && window.dtFmt.hhmm) ? window.dtFmt.hh
 // "Dr. Jordan Chen" -> "Chen"; "Jordan Wu, PA-C" -> "Wu"
 function shortName(name) { return String(name || "").split(",")[0].replace(/^Dr\.\s*/i, "").trim().split(/\s+/).slice(-1)[0] || name; }
 
-function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], providers = [], meName, rotationMode = "lowest_census", onMessage, onOpenHistory, onConsult, onConsultRespond, consultServices }) {
+// "Message" on an accepted patient opens that patient's care-team thread on
+// the server (POST /api/messaging/patient-thread — the Patient board's own
+// path), and only while the org has patient-linked threads switched on
+// (A.CON clinical #5). Read at render time.
+function patientThreadsEnabled() {
+  try { return !(window.DT && window.DT.moduleOn) || window.DT.moduleOn("messaging.patientThreads"); } catch (e) { return true; }
+}
+
+function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [], myProvider, providers = [], meName, rotationMode = "lowest_census", onMessagePatient, onOpenHistory, onConsult, onConsultRespond, consultServices }) {
   // Live comms KPIs (org-scoped, server-computed). Fetch once on mount.
   const a = useActions();
   const commsMetrics = useStore().commsMetrics;
@@ -57,12 +65,18 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
     : myPos > 0 ? "#" + (myPos + 1) + " of " + ordered.length + " · " + myPos + " ahead of you"
     : "Not eligible for the next round-robin patient";
 
+  // "Current census" is the SERVER's census for my rotation profile
+  // (GET /api/hospitalists) — the number round-robin and the director see —
+  // not a count of this shift's accepts (A.CON clinical #6).
+  const censusVal = myProvider ? myProvider.census + " / " + myProvider.cap : "—";
+  const censusSub = myProvider ? (myProvider.cap - myProvider.census > 0 ? (myProvider.cap - myProvider.census) + " under your cap" : "at your cap") : "no rotation profile";
+
   // Live-metric catalog the "+ New stat" builder offers on this dashboard.
   const cm = commsMetrics || {};
   const statMetrics = [
     { key: "pending", label: "Pending requests", value: pending.length },
     { key: "accepted", label: "Accepted this shift", value: shiftAdmits.length },
-    { key: "census", label: "Current census", value: shiftAdmits.length },
+    { key: "census", label: "Current census", value: censusVal },
     { key: "rotation_size", label: "In rotation", value: ordered.length },
     { key: "my_position", label: "My rotation position", value: myPos >= 0 ? "#" + (myPos + 1) : "—" },
     { key: "messages_7d", label: "Messages (7 days)", value: cm.messages7d != null ? cm.messages7d : "—" },
@@ -74,7 +88,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
       <CustomizableStats statKey="hospitalist:stats" metrics={statMetrics} stats={[
         { id: "pending", label: "Pending requests", value: pending.length, icon: "inbox", tint: "amber" },
         { id: "accepted", label: "Accepted this shift", value: shiftAdmits.length, icon: "check-circle-2", tint: "emerald" },
-        { id: "census", label: "Current census", value: shiftAdmits.length, icon: "users", tint: "blue" },
+        { id: "census", label: "Current census", value: censusVal, icon: "users", tint: "blue", sub: censusSub },
         ...commsStatTiles(commsMetrics),
       ]} />
   );
@@ -175,7 +189,9 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
         {shiftAdmits.map((p, i) => {
           const consultAdd = onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />;
           const time = <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{hhmm(p.at)}</span>;
-          const message = <Button variant="ghost" size="sm" icon="message-square" style={mobile ? { height: 44, marginLeft: "auto" } : null} onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>;
+          const message = onMessagePatient && p.patientId != null && patientThreadsEnabled()
+            ? <Button variant="ghost" size="sm" icon="message-square" style={mobile ? { height: 44, marginLeft: "auto" } : null} onClick={() => onMessagePatient(p.patientId)}>Message team</Button>
+            : null;
           return (
           <div key={p.id} style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -220,4 +236,4 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
   );
 }
 
-Object.assign(window, { HospitalistDashboard });
+Object.assign(window, { HospitalistDashboard, patientThreadsEnabled });

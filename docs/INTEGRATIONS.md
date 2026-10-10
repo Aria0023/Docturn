@@ -138,7 +138,11 @@ running server is actually signing with them (it says "restart" if not).
 **What it does:** reads the ER physician's free-text intake note and pre-fills
 initials, room, a one-line summary and the likely specialty. When it is off,
 DocTurn's built-in local extractor fills the form instead (nothing leaves
-DocTurn).
+DocTurn). The ER intake's **Extract fields** button always asks the server
+(`POST /api/patients/extract`), which picks the org's extractor and answers
+with `engine` (`openai` / `local`); the form then says "Extracted by OpenAI" or
+"Filled by DocTurn's keyword rules (no AI)". Fields it cannot find stay empty
+(no placeholder initials), and an empty note extracts nothing.
 
 **PHI / BAA:** intake notes **are** protected health information. They may only
 go to OpenAI after **OpenAI has signed a Business Associate Agreement with

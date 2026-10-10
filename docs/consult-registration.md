@@ -1,18 +1,27 @@
 # Consult-services registration
 
 ## Part A — DONE
-The ER intake **Consult services** roster and PA/NP **midlevel pool** are now
-driven by the live registered directory (`/api/physicians/directory`), not
-hardcoded lists:
-- On-call consultant per specialty comes from registered providers (prefers a
-  working provider); falls back to demo data for any service with nobody
-  registered.
-- The "Add PA/NP" pool comes from registered midlevels (credential PA/NP/RN —
-  added via People → "Consultant (PA/NP)").
-- So a newly registered consultant or midlevel appears **automatically**; the ER
-  can still attach them to a consult **manually**.
+The ER intake **Consult services** roster and PA/NP **midlevel pool** are
+driven by the server, never hardcoded lists (A.CON clinical #19-#23):
+- On-call consultant per specialty: the org catalog's pinned on-call
+  (Directory → Consult services), else the registered provider of that
+  specialty whose shift is active now. With nobody registered the panel says
+  "No on-call assigned" — there is no demo fallback.
+- The "Add PA / NP" pool is the org's **real, active** PA/NP/RN accounts (any
+  role — a PA without a rotation profile is included), each with its account
+  id. An org with none offers no picker.
+- Each ticked consult is sent with the admission: after `POST /api/patients` +
+  `POST /api/assignments`, one `POST /api/patients/:id/consults` per service
+  naming the team (on-call + PA/NPs, `{ name, userId? }`). The server refuses
+  a `userId` that is not an active account of the org (`400
+  unknown_consultant`).
+- Who is alerted is the server's decision: every named consultant **with an
+  account** gets a `CONSULT_REQUESTED` socket frame (ids only) and a
+  content-free push ("New consult request"); names without an account are
+  recorded, not paged. There is no per-consult "App push / Text" channel. The
+  confirmation names who was alerted, or says nobody was.
 
-Source of truth: `store.directory` (hydrated for all roles by the bridge).
+Source of truth: `store.orgPeople` / `store.directory` (hydrated by the bridge).
 
 ## Part B — DEFERRED (do once the app is fully launched)
 Self-registration via an organization code:

@@ -34,10 +34,13 @@ const reassignSchema = z.object({
 });
 
 export function registerAssignmentRoutes(app: Express) {
+  // ER intake routing — and a director's manual admission from the Patient
+  // board (A.CON clinical #14): the director becomes the patient's admitting
+  // clinician of record, exactly like an ER physician.
   app.post(
     "/api/assignments",
     requireAuth,
-    requireRole("er_doctor", "er_director", "developer"),
+    requireRole("er_doctor", "er_director", "director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "assignments");

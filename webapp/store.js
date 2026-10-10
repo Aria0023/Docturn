@@ -108,7 +108,9 @@
       var r = (a && d.working) ? 3 : d.working ? 2 : a ? 1 : 0;
       var cur = roster[d.specialty];
       if (!cur || r > cur._rank) {
-        roster[d.specialty] = { name: d.name, avatar: d.avatar, onCall: !!(d.working && a), shift: d.shift || "", _rank: r };
+        // userId: the provider's account (directory id), so a consult sent to
+        // this on-call names a real person the server can alert.
+        roster[d.specialty] = { name: d.name, avatar: d.avatar, userId: typeof d.id === "number" ? d.id : undefined, onCall: !!(d.working && a), shift: d.shift || "", _rank: r };
       }
     });
     return roster;
@@ -313,15 +315,21 @@
       shifts: defaultShifts(),
       rotationCursor: 0,
 
-      erPhysicians: [
-        { id: "e1", name: "Dr. Ruth Osei",   avatar: "RO", working: true,  shift: "day",   admitsToday: 6 },
-        { id: "e2", name: "Dr. Paul Okafor", avatar: "PO", working: true,  shift: "day",   admitsToday: 4 },
-        { id: "e3", name: "Dr. Dana Reyes",  avatar: "DR", working: true,  shift: "swing", admitsToday: 5 },
-        { id: "e4", name: "Dr. Sam Iyer",    avatar: "SI", working: false, shift: "night", admitsToday: 0 },
-      ],
-      diversion: false,
-      avgAcceptSec: 252,
-      fhir: { connected: false, lastSync: null, source: "Epic FHIR", endpoint: "fhir.mayo.org/api/r4" },
+      // ER operations (A.CON clinical #1-#3) — all the SERVER's, null until it
+      // answers, never demo rows or a constant:
+      //   erDiversion  GET /api/er/diversion  { active, since, by }
+      //   erRoster     GET /api/er/roster     { physicians, onShift, admits24h }
+      //                (the org's er_doctor accounts, on/off shift on the server)
+      //   erReport     GET /api/reports/er    { scope, assignments, admits24h }
+      // The *Error slices say why one could not be read (forbidden,
+      // module_disabled, offline, error). There is no EHR census feed: the
+      // kit's "Connect EHR (FHIR)" bar and its fabricated patients are gone.
+      erDiversion: null, erDiversionError: null,
+      erRoster: null, erRosterError: null,
+      erReport: null, erReportError: null,
+      // The signed-in provider's own rotation profile (census / cap) from
+      // GET /api/hospitalists — the hospitalist dashboard's "Current census".
+      myProvider: null,
 
       pending: [
         { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain, 2-day onset", from: "Dr. Reyes (ER)", specialty: "General Medicine", acuity: 3, via: "Round-robin", expiresAt: t0 + 272000, acceptedToday: false },
@@ -366,17 +374,11 @@
       // resetBy, shown, error }. Null until GET /api/admissions answers.
       admissionsInfo: null,
 
-      team: [
-        { id: "m1", name: "Jordan Wu, PA-C", avatar: "JW", role: "PA", specialty: "Hospital Medicine", onCall: true },
-        { id: "m2", name: "Nina Roy, NP",    avatar: "NR", role: "NP", specialty: "Cardiology",        onCall: false },
-      ],
-      candidates: [
-        { id: "c1", name: "Dr. Omar Haddad",  avatar: "OH", role: "MD", specialty: "Hospital Medicine" },
-        { id: "c2", name: "Priya Shah, NP",    avatar: "PS", role: "NP", specialty: "Pulmonology" },
-        { id: "c3", name: "Marcus Bell, PA-C", avatar: "MB", role: "PA", specialty: "General Medicine" },
-        { id: "c4", name: "Dr. Lena Ortiz",    avatar: "LO", role: "DO", specialty: "Nephrology" },
-        { id: "c5", name: "Sam Cole, RN",      avatar: "SC", role: "RN", specialty: "Telemetry" },
-      ],
+      // My care team (on-call unit) — the SERVER's (GET /api/care-team), and
+      // the org's real people to link (GET /api/care-team/candidates). Null
+      // until loaded; never demo members (A.CON clinical #4).
+      team: null,
+      candidates: [],
 
       board: [
         { id: uid("b"), initials: "RM", room: "318", dept: "MED",  issue: "Acute abdominal pain, 2-day onset", status: "admitted",
@@ -692,14 +694,16 @@
   function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (c.unread || 0); }, 0); }
   function unreadNotifs() { return state.notifications.filter(function (n) { return !n.read; }).length; }
 
-  // Patient-board modules a role sees, defaults merged with any saved overrides.
-  // ER director starts with just the working tiles (admissions/accepted); the
-  // census-table + FHIR-dependent sections stay off until the EHR is connected.
+  // Patient-board sections a role shows ON THIS DEVICE (a per-browser layout
+  // preference, PERSIST_KEYS), defaults merged with saved overrides. Every
+  // section shows the server's board; there is no EHR feed to wait for (the
+  // old "EHR / FHIR data-source bar" is gone — A.CON clinical #16).
   function boardModulesFor(role) {
     var base = (role === "er_director")
-      ? { admissions: true, accepted: true, awaiting: false, consultants: false, dataSource: false, census: false }
-      : { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
-    var ov = (state.boardModules && state.boardModules[role]) || {};
+      ? { admissions: true, accepted: true, awaiting: true, consultants: false, census: true }
+      : { admissions: true, accepted: true, awaiting: true, consultants: true, census: true };
+    var ov = Object.assign({}, (state.boardModules && state.boardModules[role]) || {});
+    delete ov.dataSource;
     return Object.assign({}, base, ov);
   }
 
@@ -762,6 +766,8 @@
   var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
     // the previous person's org schedule: its source status, shift names/hours, admissions counts
     "onCallSources", "onCallSourcesError", "shifts", "admissionsInfo",
+    // the previous person's ER operations view and care team
+    "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "myProvider", "team", "candidates",
     // the previous person's org: its people, identity, catalog and rules
     "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
     // the previous operator's cross-tenant view (developer console)
@@ -774,6 +780,9 @@
   }
 
   function kvPair(key, val) { var o = {}; o[key] = val; return o; }
+  // Actions whose effect only a DocTurn server can have say so instead of
+  // pretending (they are replaced by api-bridge.js in the web app).
+  function notConnected() { return { tone: "rejected", title: "Not connected", msg: "This needs a DocTurn server — nothing was changed." }; }
 
   /* ---- the 1-second clock: live countdowns + expiry re-routing ---------- */
   var lastTickRender = 0;
@@ -873,7 +882,7 @@
         // reflect on the board
         var bd = s.board.find(function (b) { return b.initials === p.initials; });
         if (bd) { bd.status = "admitted"; bd.attending = { name: s.me.name, avatar: s.me.avatar }; }
-        else s.board = [{ id: uid("b"), initials: p.initials, room: p.room, dept: "MED", issue: p.complaint, status: "admitted", attending: { name: s.me.name, avatar: s.me.avatar }, unit: s.team.filter(function (m) { return m.onCall; }).map(function (m) { return { avatar: m.avatar, role: m.role }; }), consultants: [], er: { name: p.from.replace(" (ER)", ""), avatar: "Er" } }].concat(s.board);
+        else s.board = [{ id: uid("b"), initials: p.initials, room: p.room, dept: "MED", issue: p.complaint, status: "admitted", attending: { name: s.me.name, avatar: s.me.avatar }, unit: (s.team || []).filter(function (m) { return m.onCall; }).map(function (m) { return { avatar: m.avatar, role: m.role }; }), consultants: [], er: { name: p.from.replace(" (ER)", ""), avatar: "Er" } }].concat(s.board);
         pushAudit(s, { action: "accept_assignment", resource: "assignment " + id, risk: "low" });
         pushPhi(s, { patient: p.initials, access: "view", fields: "initials, room, issue", purpose: "Assignment accept" });
         s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Patient " + p.initials + " added to your census." };
@@ -982,30 +991,18 @@
     // toast success and add a made-up audit row while the server kept
     // counting (A.CON schedule #6).
 
-    /* ER director — ER physician staffing + diversion */
-    toggleErPhysician: function (id) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { working: !p.working }) : p; }); return s; }); },
-    updateErPhysician: function (id, patch) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, patch) : p; }); if (patch.name != null) pushAudit(s, { action: "rename_er_physician", resource: id, risk: "low" }); return s; }); },
-    setErShift: function (id, sid) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { shift: sid }) : p; }); return s; }); },
-    addErPhysician: function (data) {
-      set(function (s) {
-        var name = data.name && data.name.trim(); if (!name) { s.__toast = { tone: "rejected", title: "Name required", msg: "Enter the physician's name." }; return s; }
-        var fmt = /^Dr\.?/i.test(name) ? name : "Dr. " + name;
-        s.erPhysicians = s.erPhysicians.concat([{ id: uid("e"), name: fmt, avatar: initialsOf(fmt), working: true, shift: data.shift || "day", admitsToday: 0 }]);
-        pushAudit(s, { action: "create_er_physician", resource: fmt, risk: "low" });
-        s.__toast = { tone: "accepted", title: "ER physician added", msg: fmt + " added to the ER roster." };
-        return s;
-      });
-    },
-    removeErPhysician: function (id) { set(function (s) { var p = s.erPhysicians.find(function (x) { return x.id === id; }); s.erPhysicians = s.erPhysicians.filter(function (x) { return x.id !== id; }); if (p) { pushAudit(s, { action: "remove_er_physician", resource: p.name, risk: "medium" }); s.__toast = { tone: "rejected", title: "Removed", msg: p.name + " removed from the ER roster." }; } return s; }); },
-    toggleDiversion: function () {
-      set(function (s) {
-        s.diversion = !s.diversion;
-        pushAudit(s, { action: s.diversion ? "declare_diversion" : "lift_diversion", resource: s.selectedOrg || "ER", risk: s.diversion ? "high" : "low" });
-        s.broadcasts = [{ id: uid("bc"), title: s.diversion ? "ER on diversion — divert incoming ambulances" : "Diversion lifted — accepting transfers", sev: s.diversion ? "critical" : "info", at: now(), acked: 0, total: s.diversion ? 18 : 0, ackReq: s.diversion }].concat(s.broadcasts);
-        s.__toast = { tone: s.diversion ? "rejected" : "accepted", title: s.diversion ? "Diversion declared" : "Diversion lifted", msg: s.diversion ? "EMS notified; broadcast sent to all providers." : "Now accepting incoming transfers." };
-        return s;
-      });
-    },
+    /* ER director — diversion, ER physician staffing and throughput are the
+       SERVER's (api-bridge.js: setDiversion, setErOnShift, setErShift →
+       /api/er/*). The kit's local versions flipped this tab only, toasted
+       "EMS notified" and kept a demo roster (A.CON clinical #1/#2); there is
+       nothing to do without a server. */
+    setDiversion: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    setErOnShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    setErShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    // The ER intake's "Extract fields" is the SERVER's extractor (the org's
+    // OpenAI integration or DocTurn's keyword rules — api-bridge.js); without
+    // a server there is nothing to call.
+    extractIntake: function () { return Promise.reject(new Error("not_connected")); },
 
     /* org + board editing */
     updateOrg: function (code, patch) {
@@ -1016,46 +1013,13 @@
         return s;
       });
     },
-    updateBoardRow: function (id, patch) { set(function (s) { s.board = s.board.map(function (b) { return b.id === id ? Object.assign({}, b, patch) : b; }); pushAudit(s, { action: "edit_admission", resource: id, risk: "low" }); return s; }); },
-    addBoardPatient: function (data) {
-      set(function (s) {
-        var init = (data.initials || "").toUpperCase().slice(0, 3); if (!init) { s.__toast = { tone: "rejected", title: "Initials required", msg: "Enter the patient's initials." }; return s; }
-        var pr = data.attending ? s.providers.find(function (p) { return p.name === data.attending; }) : null;
-        var row = { id: uid("b"), initials: init, room: data.room || "—", dept: data.dept || "MED", issue: data.issue || "—",
-          status: data.attending ? "admitted" : "pending",
-          attending: data.attending ? { name: data.attending, avatar: pr ? pr.avatar : initialsOf(data.attending) } : { name: "", avatar: "" },
-          unit: [], consultants: data.consultants || [], er: { name: data.er || actorName(s), avatar: "Er" } };
-        s.board = [row].concat(s.board);
-        pushAudit(s, { action: "create_admission", resource: "patient " + init, risk: "low" });
-        pushPhi(s, { patient: init, access: "create", fields: "initials, room, issue", purpose: "Manual admission" });
-        s.__toast = { tone: "accepted", title: "Admission added", msg: "Patient " + init + (data.attending ? " admitted to " + data.attending + "." : " queued for acceptance.") };
-        return s;
-      });
-    },
-    removeBoardPatient: function (id) {
-      set(function (s) {
-        var b = s.board.find(function (x) { return x.id === id; });
-        s.board = s.board.filter(function (x) { return x.id !== id; });
-        if (b) { pushAudit(s, { action: "remove_admission", resource: "patient " + b.initials, risk: "medium" }); s.__toast = { tone: "rejected", title: "Admission removed", msg: "Patient " + b.initials + " removed from the board." }; }
-        return s;
-      });
-    },
-    connectFhir: function () {
-      set(function (s) {
-        s.fhir = Object.assign({}, s.fhir, { connected: true, lastSync: now() });
-        // simulate a sync pulling two admissions from the EHR
-        var pull = [
-          { id: uid("b"), initials: "EHR1", room: "514", dept: "MED", issue: "Cellulitis, IV antibiotics", status: "admitted", attending: { name: "Dr. Amir Patel", avatar: "AP" }, unit: [], consultants: ["Infectious Disease"], er: { name: "Epic FHIR", avatar: "FH" }, synced: true },
-          { id: uid("b"), initials: "EHR2", room: "230", dept: "ICU", issue: "Respiratory failure, intubated", status: "observation", attending: { name: "Dr. Maria Lopez", avatar: "ML" }, unit: [{ avatar: "PS", role: "NP" }], consultants: ["Pulmonology"], er: { name: "Epic FHIR", avatar: "FH" }, synced: true },
-        ].filter(function (n) { return !s.board.some(function (b) { return b.initials === n.initials; }); });
-        s.board = pull.concat(s.board);
-        pushAudit(s, { action: "connect_fhir", resource: s.fhir.source, risk: "medium" });
-        s.__toast = { tone: "accepted", title: "Connected to " + s.fhir.source, msg: "Census is now syncing from the EHR (" + pull.length + " pulled)." };
-        return s;
-      });
-    },
-    disconnectFhir: function () { set(function (s) { s.fhir = Object.assign({}, s.fhir, { connected: false }); pushAudit(s, { action: "disconnect_fhir", resource: s.fhir.source, risk: "low" }); s.__toast = { tone: "rejected", title: "EHR disconnected", msg: "Switched to manual census entry." }; return s; }); },
-    syncFhir: function () { set(function (s) { s.fhir = Object.assign({}, s.fhir, { lastSync: now() }); s.__toast = { tone: "accepted", title: "Census synced", msg: "Pulled the latest admissions from " + s.fhir.source + "." }; return s; }); },
+    // Patient-board edits (room / issue), manual admissions and removals are
+    // the SERVER's (api-bridge.js → PATCH / POST / DELETE /api/patients). The
+    // kit's local versions changed this tab only and toasted success; the
+    // "Connect EHR (FHIR)" actions invented patients (A.CON clinical #13-#16).
+    updateBoardRow: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    addBoardPatient: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    removeBoardPatient: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
     reassignBoard: function (id, providerName) {
       set(function (s) {
         var pr = s.providers.find(function (p) { return p.name === providerName; });
@@ -1067,17 +1031,10 @@
     },
     renameMe: function (name) { set(function (s) { if (!name.trim()) return s; s.me = Object.assign({}, s.me, { name: name, avatar: initialsOf(name) }); if (s.session) s.session = Object.assign({}, s.session, { name: name }); return s; }); },
 
-    /* care team */
-    addMember: function (id) {
-      set(function (s) {
-        var c = s.candidates.find(function (x) { return x.id === id; }); if (!c) return s;
-        s.team = s.team.concat([Object.assign({}, c, { onCall: true })]);
-        s.__toast = { tone: "accepted", title: c.name + " added to your unit", msg: "They now share your requests and threads." };
-        return s;
-      });
-    },
-    removeMember: function (id) { set(function (s) { s.team = s.team.filter(function (m) { return m.id !== id; }); return s; }); },
-    toggleMemberCall: function (id) { set(function (s) { s.team = s.team.map(function (m) { return m.id === id ? Object.assign({}, m, { onCall: !m.onCall }) : m; }); return s; }); },
+    /* care team — the SERVER's (api-bridge.js → /api/care-team/members). */
+    addMember: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    removeMember: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    toggleMemberCall: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
 
     /* messaging */
     openConversation: function (id) { set(function (s) { s.conversations = s.conversations.map(function (c) { return c.id === id ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; }); },
@@ -1451,7 +1408,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

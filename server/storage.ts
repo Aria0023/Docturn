@@ -715,6 +715,49 @@ export class DatabaseStorage implements IStorage {
     const empty: PurgeResult = { patients: 0, assignments: 0, consults: 0, conversations: 0, messages: 0, attachments: 0 };
     if (!ids.length) return empty;
 
+    const { result } = await this.purgePatientRows(orgId, ids);
+    // Keep census honest: it now equals each provider's remaining accepted load.
+    const hosps = await this.listHospitalists(orgId);
+    for (const h of hosps) {
+      const accepted = await this.db
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, h.id), eq(assignments.status, "accepted")));
+      if (h.currentPatientCount !== accepted.length) {
+        await this.updateHospitalist(orgId, h.id, { currentPatientCount: accepted.length });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Remove ONE patient (the Patient board's "Remove admission") with the same
+   * single transaction as the purge — assignments, consults, patient-linked
+   * threads, their messages, delivery rows and attachment files. Census moves
+   * the way the assignment state machine moves it (services/assignments.ts):
+   * only a provider who had ACCEPTED this patient loses one; nobody else's
+   * (possibly director-set) census is recomputed. Null when the patient is not
+   * this org's.
+   */
+  async deletePatient(orgId: number, id: number): Promise<PurgeResult | null> {
+    const patient = await this.getPatient(orgId, id);
+    if (!patient) return null;
+    const { result, acceptedHospitalistIds } = await this.purgePatientRows(orgId, [id]);
+    const drop = new Map<number, number>();
+    for (const hid of acceptedHospitalistIds) drop.set(hid, (drop.get(hid) ?? 0) + 1);
+    for (const [hid, n] of drop) {
+      const h = await this.getHospitalist(orgId, hid);
+      if (h) await this.updateHospitalist(orgId, hid, { currentPatientCount: Math.max(0, h.currentPatientCount - n) });
+    }
+    return result;
+  }
+
+  /** The shared transactional delete behind purgeOldPatients and deletePatient. */
+  private async purgePatientRows(
+    orgId: number,
+    ids: number[],
+  ): Promise<{ result: PurgeResult; acceptedHospitalistIds: number[] }> {
+    const acceptedHospitalistIds: number[] = [];
     const attachmentRefs: string[] = [];
     const result = await this.db.transaction(async (tx) => {
       // Patient-linked threads and everything hanging off them, leaves first.
@@ -743,6 +786,11 @@ export class DatabaseStorage implements IStorage {
         }
         await tx.delete(conversations).where(inArray(conversations.id, convoIds));
       }
+      const accepted = await tx
+        .select({ hospitalistId: assignments.hospitalistId })
+        .from(assignments)
+        .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids), eq(assignments.status, "accepted")));
+      acceptedHospitalistIds.push(...accepted.map((a) => a.hospitalistId));
       const gone = await tx
         .delete(assignments)
         .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids)))
@@ -768,18 +816,7 @@ export class DatabaseStorage implements IStorage {
     for (const ref of attachmentRefs) {
       try { await attachmentStoreFor(ref).delete(ref); } catch { /* best effort */ }
     }
-    // Keep census honest: it now equals each provider's remaining accepted load.
-    const hosps = await this.listHospitalists(orgId);
-    for (const h of hosps) {
-      const accepted = await this.db
-        .select({ id: assignments.id })
-        .from(assignments)
-        .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, h.id), eq(assignments.status, "accepted")));
-      if (h.currentPatientCount !== accepted.length) {
-        await this.updateHospitalist(orgId, h.id, { currentPatientCount: accepted.length });
-      }
-    }
-    return result;
+    return { result, acceptedHospitalistIds };
   }
   async updatePatient(orgId: number, id: number, patch: Partial<Patient>) {
     const [row] = await this.db

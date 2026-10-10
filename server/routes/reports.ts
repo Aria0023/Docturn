@@ -78,4 +78,45 @@ export function registerReportsRoutes(app: Express) {
       });
     },
   );
+
+  // ER throughput (A.CON clinical #3) — the numbers the ER director's "Avg
+  // time-to-accept" / "Admits" tiles and the ER doctor's "My shift" tiles
+  // show, computed here instead of a constant. An ER doctor gets their OWN
+  // (assignments they routed, patients they admitted); the ER director,
+  // director and developer get the org's. Aggregates only, no patient content.
+  // Gated with the rest of /api/reports (ops.analytics).
+  app.get(
+    "/api/reports/er",
+    requireAuth,
+    requireRole("er_doctor", "er_director", "director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const mineOnly = me.role === "er_doctor";
+      const [all, patients] = await Promise.all([
+        storage().listAssignments(me.organizationId),
+        storage().listPatients(me.organizationId),
+      ]);
+      const scoped = mineOnly ? all.filter((a) => a.erDoctorId === me.id) : all;
+      const acceptLatencies = scoped
+        .filter((a) => a.status === "accepted" && a.resolvedAt)
+        .map((a) => new Date(a.resolvedAt as unknown as Date).getTime() - new Date(a.createdAt).getTime())
+        .filter((ms) => ms >= 0);
+      const since = Date.now() - 24 * 3_600_000;
+      const admits24h = patients.filter(
+        (p) => new Date(p.createdAt).getTime() >= since && (!mineOnly || p.erDoctorId === me.id),
+      ).length;
+      res.json({
+        scope: mineOnly ? "mine" : "org",
+        assignments: {
+          total: scoped.length,
+          accepted: scoped.filter((a) => a.status === "accepted").length,
+          declined: scoped.filter((a) => a.status === "rejected").length,
+          pending: scoped.filter((a) => a.status === "pending").length,
+          timeToAcceptMinAvg: toMin(avg(acceptLatencies)),
+          timeToAcceptMinMedian: toMin(median(acceptLatencies)),
+        },
+        admits24h,
+      });
+    },
+  );
 }

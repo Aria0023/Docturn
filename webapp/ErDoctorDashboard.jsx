@@ -1,51 +1,49 @@
 /* DocTurn web-app UI kit — ER physician dashboard (intake + assign + reassign).
    Routes a patient to a primary hospitalist (round-robin or manual) and can add
    one or more consult services. Recently-sent keeps a 2-day history, including
-   accepted hand-offs, and lets the ER provider reassign at any time. */
+   accepted hand-offs, and lets the ER provider reassign at any time.
 
+   Everything here is the SERVER's (A.CON clinical #3, #17-#22):
+     • "Extract fields" asks POST /api/patients/extract — the org's extractor
+       (its OpenAI integration when switched on, else DocTurn's keyword rules)
+       and says which ran; an empty note extracts nothing;
+     • each ticked consult is POST /api/patients/:id/consults after the
+       admission is routed, naming the on-call + the PA/NPs listed under it;
+       the PA/NP picker offers only the org's real PA/NP/RN accounts;
+     • who gets alerted is the server's decision (people with a DocTurn
+       account, in-app + push) — there is no per-consult paging channel;
+     • "My shift" time-to-accept is GET /api/reports/er (scope: mine). */
+
+// Generic specialty picker for an org that has not curated a consult-service
+// catalog (Directory → Consult services). Names only — nobody is implied to be
+// on call for them.
 const CONSULT_OPTIONS = ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
-
-// On-call provider per consult service (the group's current attending of record).
-const CONSULT_ROSTER = {
-  "Hospital Medicine":  { name: "Dr. Amir Patel",   avatar: "AP", onCall: true },
-  "Cardiology":         { name: "Dr. Sarah Chen",   avatar: "SC", onCall: true },
-  "GI":                 { name: "Dr. Ruth Kim",     avatar: "RK", onCall: true },
-  "Pulmonology":        { name: "Dr. Maria Lopez",  avatar: "ML", onCall: true },
-  "Nephrology":         { name: "Dr. James Liu",    avatar: "JL", onCall: false },
-  "Endocrine":          { name: "Dr. Nadia Farouk", avatar: "NF", onCall: true },
-  "Infectious Disease": { name: "Dr. Omar Haddad",  avatar: "OH", onCall: true },
-  "Neurology":          { name: "Dr. Lena Ortiz",   avatar: "LO", onCall: true },
-};
-// Midlevels (NP/PA) the ER can add onto a consult.
-const MIDLEVEL_POOL = [
-  { id: "ml1", name: "Priya Shah, NP",   avatar: "PS", role: "NP" },
-  { id: "ml2", name: "Marcus Bell, PA-C", avatar: "MB", role: "PA" },
-  { id: "ml3", name: "Jordan Wu, PA-C",   avatar: "JW", role: "PA" },
-  { id: "ml4", name: "Nina Roy, NP",      avatar: "NR", role: "NP" },
-];
-
-function ChannelPill({ on, icon, label, onClick }) {
-  return (
-    <button onClick={onClick}
-      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 11px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", transition: "all .12s", whiteSpace: "nowrap",
-        border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "var(--primary-tint, #EFF6FF)" : "#fff", color: on ? "var(--primary)" : "var(--muted-foreground)" }}>
-      <Icon name={icon} size={12} />{label}
-    </button>
-  );
-}
 
 function ConsultRowLabel({ children }) {
   return <span style={{ fontSize: 11, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".05em", width: 58, flex: "none", paddingTop: 5 }}>{children}</span>;
 }
 
-function ConsultPanel({ service, roster, pool, members, channels, onAddMember, onRemoveMember, onToggleChannel, onRemoveService }) {
+// Who the server will alert for this consult: everyone named here who has a
+// DocTurn account (in-app + content-free push). Names without an account are
+// recorded on the consult, not paged. With no names at all the server fans the
+// request out to the org's hospitalists of that specialty, if any.
+function consultAlertLine(roster, members) {
+  const named = [].concat(roster && roster.name ? [roster] : [], members || []);
+  if (!named.length) return "No one is named — DocTurn alerts the hospitalists listed under this specialty, if any; otherwise the request is only recorded.";
+  const withAcct = named.filter((m) => typeof m.userId === "number");
+  const without = named.filter((m) => typeof m.userId !== "number");
+  if (!withAcct.length) return "Recorded by name only — no one listed has a DocTurn account, so nobody is alerted. Call the service directly.";
+  return "Alerted in DocTurn: " + withAcct.map((m) => m.name).join(", ") + (without.length ? " · recorded only: " + without.map((m) => m.name).join(", ") : "");
+}
+
+function ConsultPanel({ service, roster, pool, members, onAddMember, onRemoveMember, onRemoveService }) {
   const [adding, setAdding] = React.useState(false);
+  const mobile = useIsMobile();
   const hasRoster = !!(roster && roster.name);
   const r = roster || {};
-  const addable = pool.filter((m) => !members.some((x) => x.id === m.id));
-  const noChannel = !channels.app && !channels.text;
+  const addable = (pool || []).filter((m) => !members.some((x) => x.id === m.id || (m.userId && x.userId === m.userId)));
   return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "#fff", overflow: "hidden" }}>
+    <div data-consult-panel={service} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "#fff", overflow: "hidden" }}>
       {/* header band: service + on-call provider — tinted by specialty */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: (window.specialtyColor(service) || {}).bg || "var(--secondary)", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${(window.specialtyColor(service) || {}).color || "var(--primary)"}` }}>
         <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
@@ -55,27 +53,27 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
           <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.25 }}>{service}</div>
           <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", marginTop: 1, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
             <StatusDot status={hasRoster && r.onCall ? "online" : "offline"} pulse={hasRoster && r.onCall} />
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hasRoster ? (r.name + " · " + (r.onCall ? ("on call" + (r.shift ? " · " + r.shift + " shift" : "")) : "covering provider paged")) : "No on-call assigned — set in Consult services"}</span>
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{hasRoster ? (r.name + " · " + (r.onCall ? ("on call" + (r.shift ? " · " + r.shift + " shift" : "")) : "listed on-call")) : "No on-call assigned — set in Consult services"}</span>
           </div>
         </div>
         <Avatar initials={hasRoster ? r.avatar : "—"} size={30} tint={hasRoster ? "blue" : "slate"} />
-        <button onClick={onRemoveService} title="Remove consult"
+        <button onClick={onRemoveService} title="Remove consult" aria-label={"Remove the " + service + " consult"}
           onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-          style={{ width: 26, height: 26, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="x" size={15} /></button>
+          style={{ width: mobile ? 44 : 26, height: mobile ? 44 : 26, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="x" size={15} /></button>
       </div>
 
       {/* body: two aligned labeled rows */}
       <div style={{ padding: 13, display: "flex", flexDirection: "column", gap: 11 }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <ConsultRowLabel>Unit</ConsultRowLabel>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
             {members.length === 0 && <span style={{ fontSize: 12.5, color: "var(--muted-foreground)", paddingTop: 3 }}>Provider only</span>}
             {members.map((m) => (
-              <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--secondary)", borderRadius: "var(--radius-full)", padding: "3px 8px 3px 4px" }}>
+              <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--secondary)", borderRadius: "var(--radius-full)", padding: "3px 8px 3px 4px", maxWidth: "100%" }}>
                 <Avatar initials={m.avatar} size={20} tint={(window.TEAM_ROLE[m.role] || {}).tint || "slate"} />
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{m.name.split(",")[0]}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name.split(",")[0]}</span>
                 <RolePill role={m.role} />
-                <button onClick={() => onRemoveMember(m.id)} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", color: "var(--muted-foreground)", padding: 0 }}><Icon name="x" size={12} /></button>
+                <button onClick={() => onRemoveMember(m.id)} aria-label={"Remove " + m.name} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", padding: 0, minWidth: mobile ? 44 : undefined, minHeight: mobile ? 44 : undefined }}><Icon name="x" size={12} /></button>
               </span>
             ))}
             {addable.length > 0 && (
@@ -88,26 +86,22 @@ function ConsultPanel({ service, roster, pool, members, channels, onAddMember, o
         </div>
 
         {adding && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", padding: 6, marginLeft: 68 }}>
+          <div data-midlevel-picker style={{ display: "flex", flexDirection: "column", gap: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", padding: 6, marginLeft: mobile ? 0 : 68 }}>
             {addable.map((m) => (
               <button key={m.id} onClick={() => { onAddMember(m); if (addable.length === 1) setAdding(false); }}
                 onMouseEnter={(e) => e.currentTarget.style.background = "#fff"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", textAlign: "left" }}>
                 <Avatar initials={m.avatar} size={26} tint={(window.TEAM_ROLE[m.role] || {}).tint || "slate"} />
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>{m.name}<RolePill role={m.role} /></span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>{m.name}<RolePill role={m.role} /></span>
                 <Icon name="plus" size={14} color="var(--primary)" />
               </button>
             ))}
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <ConsultRowLabel>Notify</ConsultRowLabel>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", paddingTop: 0 }}>
-            <ChannelPill on={channels.app} icon="smartphone" label="App push" onClick={() => onToggleChannel("app")} />
-            <ChannelPill on={channels.text} icon="message-square" label="Text / SMS" onClick={() => onToggleChannel("text")} />
-            {noChannel && <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "var(--status-pending)", fontWeight: 600 }}><Icon name="alert-triangle" size={12} />Won't be paged</span>}
-          </div>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <ConsultRowLabel>Alerts</ConsultRowLabel>
+          <div data-consult-alerts style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45, paddingTop: 4 }}>{consultAlertLine(roster, members)}</div>
         </div>
       </div>
     </div>
@@ -133,37 +127,38 @@ function ReassignSelect({ providers, onPick, mobile }) {
 }
 
 // My metrics — the ER director's throughput stats, but scoped to THIS physician:
-// derived from the patients this provider personally routed (s.sent). Mirrors
-// ErStatsPanel visually so the two portals feel consistent. avgAcceptSec is the
-// org figure (no per-provider clock on each routed row), labelled accordingly.
-function ErMyMetricsPanel({ sent, meName, avgAcceptSec }) {
-  const Stat = window.ErStat;
-  const dur = window.fmtDuration || ((s) => Math.round((s || 0) / 60) + "m");
+// the rows this provider routed (GET /api/assignments/sent) and the server's
+// own time-to-accept for them (GET /api/reports/er, scope "mine") — "—"
+// until it answers or when nothing was accepted yet, never a constant.
+function ErMyMetricsPanel({ sent, meName, report, reportError }) {
   const mine = sent || [];
   const today = mine.filter((s) => s.day === "Today");
   const accepted = mine.filter((s) => s.status === "accepted").length;
   const declined = mine.filter((s) => s.status === "declined" || s.status === "rejected").length;
   const pending = mine.filter((s) => s.status === "sent").length;
-  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
+  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) + "%" : "—";
+  const a = report && report.assignments;
+  const tta = a ? window.fmtMinutes(a.timeToAcceptMinAvg) : "—";
+  const ttaSub = a ? (a.timeToAcceptMinAvg == null ? "none of yours accepted yet" : "your admissions, all time") : (reportError ? window.erReadWhy(reportError) : "loading…");
   const statMetrics = [
     { key: "admits", label: "My admits today", value: today.length },
     { key: "routed_all", label: "Routed in all", value: mine.length },
-    { key: "ttaccept", label: "Avg time-to-accept", value: dur(avgAcceptSec || 0) },
-    { key: "acceptrate", label: "My acceptance rate", value: acceptRate + "%" },
+    { key: "ttaccept", label: "Avg time-to-accept", value: tta },
+    { key: "acceptrate", label: "My acceptance rate", value: acceptRate },
     { key: "accepted", label: "Accepted", value: accepted },
     { key: "declined", label: "Declined", value: declined },
     { key: "awaiting", label: "Awaiting accept", value: pending },
   ];
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 10px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 10px", flexWrap: "wrap" }}>
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>My shift</h3>
         <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{meName ? meName + " · " : ""}patients you routed</span>
       </div>
       <CustomizableStats statKey="er_doctor:stats" metrics={statMetrics} stats={[
         { id: "admits", label: "My admits today", value: today.length, icon: "clipboard-plus", tint: "blue", sub: mine.length + " routed in all" },
-        { id: "ttaccept", label: "Avg time-to-accept", value: dur(avgAcceptSec || 0), icon: "timer", tint: "amber", sub: "hospitalist response" },
-        { id: "acceptrate", label: "My acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
+        { id: "ttaccept", label: "Avg time-to-accept", value: tta, icon: "timer", tint: "amber", sub: ttaSub },
+        { id: "acceptrate", label: "My acceptance rate", value: acceptRate, icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
         { id: "awaiting", label: "Awaiting accept", value: pending, icon: "loader", tint: "slate", sub: "still routing" },
       ]} />
     </div>
@@ -184,38 +179,50 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   const cfgFor = (s) => (consultConfig && consultConfig[s]) || null;
   const rosterFor = (s) => { const c = cfgFor(s); return c ? c.onCall : null; };
   const membersFor = (s) => { const c = cfgFor(s); return (c && c.members) || []; };
-  // PA/NP/RN pool for the ER physician's quick-add: registered midlevels.
-  const pool = (midlevels && midlevels.length) ? midlevels : MIDLEVEL_POOL;
+  // PA/NP/RN pool for the ER physician's quick-add: the org's REAL PA/NP/RN
+  // accounts (each with its userId, so the server can alert them). No demo
+  // fallback: an org without such accounts offers no picker (A.CON clinical #20).
+  const pool = midlevels || [];
   // Service menu is director-curated when provided; else the built-in list.
   const allServices = (services && services.length) ? services : CONSULT_OPTIONS;
   // The picker shows everything except specialties hidden for this view.
   const serviceList = allServices.filter((s) => hidden.indexOf(s) < 0);
   const [note, setNote] = React.useState("");
-  const [extracted, setExtracted] = React.useState(false);
+  // { engine: "openai" | "local" | "external" } once the server extracted.
+  const [extracted, setExtracted] = React.useState(null);
+  const [extracting, setExtracting] = React.useState(false);
   const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
   const [mode, setMode] = React.useState("quick"); // quick | manual
   const [manual, setManual] = React.useState(""); // selected provider id (empty until chosen)
   const [consults, setConsults] = React.useState([]);
   const [consultMembers, setConsultMembers] = React.useState({});
-  const [consultChannels, setConsultChannels] = React.useState({});
-  const chOf = (s) => consultChannels[s] || { app: true, text: true };
 
+  // The SERVER's extractor (POST /api/patients/extract): the org's OpenAI
+  // integration when it is on, else DocTurn's keyword rules — the label says
+  // which. An empty note extracts nothing; fields it can't find stay empty.
+  const toast = (t) => window.DT && window.DT.actions && window.DT.actions.toast && window.DT.actions.toast(t);
   const runExtract = () => {
-    const r = window.extractIntake(note);
-    if (r.empty) {
-      setFields({ initials: "SC", room: "412", complaint: "Chest pain, SOB on exertion", specialty: "Cardiology", acuity: 2 });
-      setConsults(["Cardiology"]);
-    } else {
-      setFields({ initials: r.initials, room: r.room, complaint: r.complaint, specialty: r.specialty, acuity: r.acuity || 3 });
-      setConsults(r.consults);
-    }
-    setExtracted(true);
+    if (extracting) return;
+    const text = (note || "").trim();
+    if (!text) { toast({ tone: "rejected", title: "Nothing to extract", msg: "Type or paste the intake note first." }); return; }
+    const act = window.DT && window.DT.actions && window.DT.actions.extractIntake;
+    if (!act) return;
+    setExtracting(true);
+    Promise.resolve(act(text)).then((r) => {
+      const spec = r && r.specialty && r.specialty !== "General" ? r.specialty : "";
+      // ESI: DocTurn's keyword rules suggest one from the note; the
+      // physician confirms it (labelled as such, not as AI).
+      const acuity = window.DT && window.DT.suggestAcuity ? window.DT.suggestAcuity(text) : 3;
+      setFields({ initials: String((r && r.initials) || "").toUpperCase().slice(0, 3), room: (r && r.roomNumber) || "", complaint: (r && r.issueSummary) || "", specialty: spec, acuity: acuity });
+      setExtracted({ engine: (r && r.engine) || "local" });
+    }, (e) => {
+      toast({ tone: "rejected", title: "Couldn't extract", msg: (e && /network|fetch|connection/i.test(String(e.message))) ? "No connection — fill in the fields by hand." : "The server didn't extract anything — fill in the fields by hand." });
+    }).then(() => setExtracting(false));
   };
-  const reset = () => { setNote(""); setExtracted(false); setConsults([]); setConsultMembers({}); setConsultChannels({}); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
+  const reset = () => { setNote(""); setExtracted(null); setConsults([]); setConsultMembers({}); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
   const toggleConsult = (s) => setConsults((c) => {
     if (c.includes(s)) {
       setConsultMembers((cm) => { const n = Object.assign({}, cm); delete n[s]; return n; });
-      setConsultChannels((cc) => { const n = Object.assign({}, cc); delete n[s]; return n; });
       return c.filter((x) => x !== s);
     }
     // Pre-populate with the service's configured PA/NPs; the ER can add more.
@@ -224,7 +231,19 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   });
   const addConsultMember = (s, m) => setConsultMembers((cm) => Object.assign({}, cm, { [s]: [...(cm[s] || []), m] }));
   const removeConsultMember = (s, id) => setConsultMembers((cm) => Object.assign({}, cm, { [s]: (cm[s] || []).filter((x) => x.id !== id) }));
-  const toggleChannel = (s, ch) => setConsultChannels((cc) => Object.assign({}, cc, { [s]: Object.assign({}, chOf(s), { [ch]: !chOf(s)[ch] }) }));
+  // Who each ticked consult names on the server: its on-call + the PA/NPs
+  // shown under it (with their account ids when they have one).
+  const consultTeams = () => {
+    const out = {};
+    consults.forEach((s) => {
+      const team = [];
+      const r = rosterFor(s);
+      if (r && r.name) team.push({ name: r.name, userId: typeof r.userId === "number" ? r.userId : undefined });
+      (consultMembers[s] || []).forEach((m) => { if (m && m.name) team.push({ name: m.name, userId: typeof m.userId === "number" ? m.userId : undefined }); });
+      out[s] = team;
+    });
+    return out;
+  };
 
   // Providers may be empty on a cold load (before the rotation pool hydrates),
   // so derive defensively and never index into an empty array.
@@ -270,7 +289,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   const doSend = () => {
     if (!canSend) return;
     // The tab decides the mode — round-robin lets the SERVER pick.
-    onSend(mode === "quick" ? nextUp : manualTarget, fields, consults, mode);
+    onSend(mode === "quick" ? nextUp : manualTarget, fields, consults, mode, consultTeams());
     reset();
   };
   const sendHint = !hasPatient ? "Add patient initials & room to send."
@@ -296,20 +315,20 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
     <React.Fragment>
       <div style={{ display: "grid", gridTemplateColumns: "1.25fr 1fr", gap: 18, alignItems: "start" }}>
         {/* Intake */}
-        <Card style={{ padding: 18 }}>
+        <Card style={{ padding: 18, minWidth: 0 }}>
           <SectionTitle>New patient intake</SectionTitle>
-          <Field textarea rows={4} label="Intake note" placeholder="Paste or type free‑text notes — AI extracts structured fields…"
+          <Field textarea rows={4} label="Intake note" placeholder="Paste or type the intake note, then Extract to fill the fields below…"
             value={note} onChange={setNote} help="No real PHI — synthetic examples only (e.g. initials)." />
-          <div style={{ display: "flex", gap: 8, margin: "12px 0 4px" }}>
-            <Button variant="secondary" size="sm" icon="sparkles" onClick={runExtract}>Extract with AI</Button>
+          <div style={{ display: "flex", gap: 8, margin: "12px 0 4px", flexWrap: "wrap" }}>
+            <Button variant="secondary" size="sm" icon="sparkles" onClick={runExtract} style={extracting ? { opacity: .6, pointerEvents: "none" } : null}>{extracting ? "Extracting…" : "Extract fields"}</Button>
             {(extracted || fields.initials || fields.room || fields.complaint) && <Button variant="ghost" size="sm" icon="rotate-ccw" onClick={reset}>Clear</Button>}
           </div>
 
-          {/* Patient details — always editable; AI extract just fills them in. */}
+          {/* Patient details — always editable; Extract just fills them in. */}
           <div style={{ marginTop: 14, paddingTop: 16, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 14 }}>
             {extracted && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--status-accepted)", fontWeight: 600 }}>
-                <Icon name="sparkles" size={13} /> Extracted from note · review &amp; edit before sending
+              <div data-extracted-by={extracted.engine} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--status-accepted)", fontWeight: 600 }}>
+                <Icon name="sparkles" size={13} /> {extracted.engine === "openai" ? "Extracted by OpenAI" : extracted.engine === "local" ? "Filled by DocTurn's keyword rules (no AI)" : "Extracted on the server"} · review &amp; edit before sending
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -322,7 +341,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
             <div>
               <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, fontWeight: 500, marginBottom: 6 }}>
                 <Icon name="activity" size={14} color="var(--muted-foreground)" />Triage level (ESI)
-                {extracted && <span style={{ fontSize: 11, color: "var(--status-accepted)", fontWeight: 600 }}>· AI-suggested</span>}
+                {extracted && <span style={{ fontSize: 11, color: "var(--status-accepted)", fontWeight: 600 }}>· suggested from note keywords — confirm</span>}
               </label>
               {/* Phones: the shell's 12px legibility floor (A.CON-MIN-11) makes
                   "Resuscitation" ~92px — wider than a fifth of a phone card —
@@ -354,7 +373,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
         </Card>
 
         {/* Routing */}
-        <Card style={{ padding: 18 }}>
+        <Card style={{ padding: 18, minWidth: 0 }}>
           <SectionTitle>Route assignment</SectionTitle>
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             <button onClick={() => setMode("quick")} style={tabStyle(mode === "quick")}>
@@ -451,9 +470,9 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
                 {consults.map((s) => (
                   <ConsultPanel key={s} service={s} roster={rosterFor(s)} pool={pool}
-                    members={consultMembers[s] || []} channels={chOf(s)}
+                    members={consultMembers[s] || []}
                     onAddMember={(m) => addConsultMember(s, m)} onRemoveMember={(id) => removeConsultMember(s, id)}
-                    onToggleChannel={(ch) => toggleChannel(s, ch)} onRemoveService={() => toggleConsult(s)} />
+                    onRemoveService={() => toggleConsult(s)} />
                 ))}
               </div>
             )}

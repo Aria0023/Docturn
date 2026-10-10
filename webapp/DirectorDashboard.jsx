@@ -11,7 +11,10 @@
        director only, audited) — reference hours: nothing switches anyone on or
        off shift by the clock;
      • the admissions counter and its Reset are GET /api/admissions /
-       POST /api/admissions/reset (org-wide, audited). */
+       POST /api/admissions/reset (org-wide, audited);
+     • a provider's name and specialty are PATCH /api/hospitalists/:id/profile
+       and Remove is DELETE /api/physicians/:id — a refusal (e.g. a pending
+       admission request) is said and the row stays (A.CON clinical #11/#12). */
 
 function Stepper({ label, value, onDec, onInc, mobile }) {
   // Phones: 40×44 buttons so the −/+ are real tap targets.
@@ -434,7 +437,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                         </span>
                         <span style={{ fontSize: 11, width: 38, textAlign: "left", color: p.working ? "var(--status-accepted)" : "var(--muted-foreground)", fontWeight: 600 }}>{p.working ? "On" : "Off"}</span>
                       </button>
-                      <button onClick={() => onRemoveProvider(p.id)} title="Remove provider"
+                      <button onClick={() => { if (window.confirm("Remove " + p.name + " from the rotation? Their account stays (manage it in People).")) onRemoveProvider(p.id); }} title="Remove from rotation" aria-label={"Remove " + p.name + " from the rotation"}
                         onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
                         style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, flex: "none", marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={15} /></button>
                     </div>

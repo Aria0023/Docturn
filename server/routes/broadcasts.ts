@@ -48,6 +48,49 @@ function ackTally(
   return { ackCount: acked.size, total: recipients.size };
 }
 
+/**
+ * Store an org-wide broadcast from `sender`, announce it to every signed-in
+ * member of the org (BROADCAST_CREATED — the same frame the composer's sends
+ * produce) and audit it. Shared by POST /api/broadcasts and the ER diversion
+ * switch (server/routes/er.ts), so a diversion alert is an ordinary broadcast:
+ * in every clinician's catch-up list, with its ack requirement and tally.
+ */
+export async function sendOrgBroadcast(
+  sender: Pick<User, "id" | "organizationId" | "displayName">,
+  message: string,
+  severity: (typeof createBroadcastSchema)["_output"]["severity"],
+  extraAudit: Record<string, unknown> = {},
+) {
+  const broadcast = await storage().createBroadcast({
+    organizationId: sender.organizationId,
+    senderId: sender.id,
+    message,
+    severity,
+  });
+  const users = await storage().listUsers(sender.organizationId);
+  const total = broadcastRecipientIds(users, broadcast).size;
+  notificationDeps().ws.broadcast(sender.organizationId, {
+    type: "BROADCAST_CREATED",
+    broadcast: {
+      ...broadcast,
+      senderName: sender.displayName,
+      ackRequired: broadcastRequiresAck(broadcast.severity),
+      ackCount: 0,
+      total,
+    },
+  });
+  await appendAudit({
+    organizationId: sender.organizationId,
+    userId: sender.id,
+    action: "broadcast.create",
+    resourceType: "broadcast",
+    resourceId: broadcast.id,
+    details: { severity: broadcast.severity, recipients: total, ...extraAudit },
+    riskLevel: "medium",
+  });
+  return { broadcast, total };
+}
+
 // Emergency broadcasts with org-scoped fan-out and per-recipient acks.
 export function registerBroadcastRoutes(app: Express) {
   app.post(
@@ -58,33 +101,7 @@ export function registerBroadcastRoutes(app: Express) {
       const me = currentUser(req);
       const parsed = createBroadcastSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
-      const broadcast = await storage().createBroadcast({
-        organizationId: me.organizationId,
-        senderId: me.id,
-        message: parsed.data.message,
-        severity: parsed.data.severity,
-      });
-      const users = await storage().listUsers(me.organizationId);
-      const total = broadcastRecipientIds(users, broadcast).size;
-      notificationDeps().ws.broadcast(me.organizationId, {
-        type: "BROADCAST_CREATED",
-        broadcast: {
-          ...broadcast,
-          senderName: me.displayName,
-          ackRequired: broadcastRequiresAck(broadcast.severity),
-          ackCount: 0,
-          total,
-        },
-      });
-      await appendAudit({
-        organizationId: me.organizationId,
-        userId: me.id,
-        action: "broadcast.create",
-        resourceType: "broadcast",
-        resourceId: broadcast.id,
-        details: { severity: broadcast.severity, recipients: total },
-        riskLevel: "medium",
-      });
+      const { broadcast, total } = await sendOrgBroadcast(me, parsed.data.message, parsed.data.severity);
       res.status(201).json({ ...broadcast, total });
     },
   );

@@ -61,7 +61,15 @@
     return switched;
   }
   function dropPreviousThreads(s, switched) {
-    if (switched) { s.conversations = []; s.__activeConvo = null; s.__openThread = null; }
+    if (switched) {
+      s.conversations = []; s.__activeConvo = null; s.__openThread = null;
+      // Nor any other clinical / org slice read FOR the previous person (their
+      // board, census, admissions log, ER roster and diversion state, care
+      // team …): the new identity's hydrate reads its own. Emptied, never
+      // reset to the kit's demo seed rows.
+      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates"].forEach(function (k) { s[k] = []; });
+      ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics"].forEach(function (k) { s[k] = null; });
+    }
     return s;
   }
   var auditLoaded = false; // fetch the per-org audit trail once per context, then only while viewing Compliance
@@ -289,6 +297,7 @@
       var u = usersById[h.userId] || {};
       return {
         id: "h" + h.id,
+        userId: h.userId,
         name: u.displayName || ("Provider #" + h.id),
         avatar: initials(u.displayName || "P"),
         specialty: h.specialty,
@@ -523,9 +532,20 @@
       // schedule #6/#7) — re-read on every hydrate, so a new admission, a
       // re-route or a Clear shows without a reload.
       extra.push(role === "director" ? get("/api/admissions").catch(admissionsFailure) : Promise.resolve(null));
+      // ER operations (A.CON clinical #1-#3): the org's diversion state and ER
+      // roster for the ER director, the server-computed throughput for both
+      // ER roles. Re-read on every hydrate (ASSIGNMENT_* frames), so the
+      // admits / time-to-accept tiles follow real routing.
+      var wantsEr = role === "er_director";
+      extra.push(wantsEr ? get("/api/er/diversion").then(okRead, failedRead) : Promise.resolve(null));
+      extra.push(wantsEr ? get("/api/er/roster").then(okRead, failedRead) : Promise.resolve(null));
+      extra.push(role === "er_director" || role === "er_doctor" ? get("/api/reports/er").then(okRead, failedRead) : Promise.resolve(null));
+      // My care team (on-call unit) — the server's members (A.CON clinical #4).
+      extra.push(role === "hospitalist" || role === "director" ? get("/api/care-team").then(okRead, failedRead) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
         var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8], admissionsLog = e[9];
+        var diversion = e[10], erRoster = e[11], erReport = e[12], careTeam = e[13];
         DT.set(function (s) {
           var fresh = seq >= rosterAppliedSeq;
           if (fresh && ((hosps && users) || rotation)) rosterAppliedSeq = seq;
@@ -556,6 +576,9 @@
             });
             (candidates || []).forEach(function (c) {
               if (!people[c.userId]) people[c.userId] = { id: c.userId, name: c.displayName, credential: c.credential || "", specialty: roleLabel(c.role), working: false, role: c.role };
+              // A deactivated account still resolves its name in old threads,
+              // but is never offered as someone to alert or link.
+              people[c.userId] = Object.assign({}, people[c.userId], { active: c.active !== false });
             });
             s.orgPeople = people;
           }
@@ -612,10 +635,49 @@
             prefsLoaded = true;
           }
           if (admissionsLog && fresh) applyAdmissions(s, admissionsLog);
+          if (diversion) applyServerRead(s, "erDiversion", diversion);
+          if (erRoster) applyServerRead(s, "erRoster", erRoster);
+          if (erReport) applyServerRead(s, "erReport", erReport);
+          if (careTeam) {
+            if (careTeam.ok) s.team = mapCareTeam(careTeam.body);
+            else if (!s.team) s.team = [];
+          }
+          // The org's people a clinician may link into their unit: every
+          // ACTIVE account but me (the server keeps deactivated ones in the
+          // list only so old threads still resolve their names).
+          if (candidates) s.candidates = (candidates || []).filter(function (c) { return c.active !== false; }).map(mapCandidate);
+          // "Current census" on the hospitalist dashboard is the server's
+          // census for MY rotation profile (A.CON clinical #6).
+          if (hosps && (role === "hospitalist" || role === "director")) {
+            var myH = (hosps || []).find(function (h) { return h.userId === meId; });
+            s.myProvider = myH ? { id: "h" + myH.id, census: myH.currentPatientCount, cap: myH.patientCap } : null;
+          }
           return s;
         });
       });
     }).catch(function () { /* keep demo data on any failure */ });
+  }
+  // A role-gated read for a slice that has a "why it isn't there" twin
+  // (<key>Error): { ok, body } on success, { ok:false, why } on refusal.
+  function okRead(body) { return { ok: true, body: body }; }
+  function failedRead(e) {
+    var why = moduleRefused(e) ? "module_disabled" : (e && e.status === 403) ? "forbidden" : isNetworkError(e) ? "offline" : "error";
+    return { ok: false, why: why };
+  }
+  function applyServerRead(s, key, r) {
+    if (r.ok) { s[key] = r.body; s[key + "Error"] = null; }
+    else { s[key + "Error"] = r.why; if (r.why === "module_disabled" || r.why === "forbidden") s[key] = null; }
+  }
+  // Credential → the care-team pill (MD / DO / PA / NP / RN); anyone without
+  // one is shown by role.
+  var TEAM_CREDS = { MD: 1, DO: 1, PA: 1, NP: 1, RN: 1 };
+  function mapCareTeam(body) {
+    return ((body && body.members) || []).map(function (m) {
+      return { id: m.userId, userId: m.userId, name: m.displayName, avatar: initials(m.displayName), role: TEAM_CREDS[m.credential] ? m.credential : null, roleLabel: roleLabel(m.role), onCall: !!m.onCall, active: m.active !== false };
+    });
+  }
+  function mapCandidate(c) {
+    return { id: c.userId, userId: c.userId, name: c.displayName, avatar: initials(c.displayName), role: TEAM_CREDS[c.credential] ? c.credential : null, roleLabel: roleLabel(c.role), specialty: roleLabel(c.role) };
   }
   function rehydrate() {
     var st = DT.getState();
@@ -1420,6 +1482,16 @@
         // re-timed a shift: re-read the server's (content-free frames).
         else if (ev.type === "ADMISSIONS_UPDATED") { var rl = DT.getState().session; if (rl && rl.role === "director") DT.actions.loadAdmissions(); }
         else if (ev.type === "SHIFTS_UPDATED") DT.actions.loadShifts();
+        // ER diversion declared / lifted, or the ER roster changed, in another
+        // session: re-read the server's (content-free frames).
+        else if (ev.type === "DIVERSION_UPDATED") { var rd = DT.getState().session; if (rd && rd.role === "er_director") DT.actions.loadErDiversion(); }
+        else if (ev.type === "ER_ROSTER_UPDATED") { var rr = DT.getState().session; if (rr && rr.role === "er_director") DT.actions.loadErRoster(); }
+        // Someone asked ME for a consult (A.CON clinical #23): say so and
+        // re-read the boards that show it. The frame carries ids only.
+        else if (ev.type === "CONSULT_REQUESTED") {
+          DT.set(function (s) { s.__toast = { tone: "sent", title: "New consult request", msg: "A colleague requested you as a consultant on a patient." }; return s; });
+          rehydrate();
+        }
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
           // Surface an incoming org-wide broadcast live: insert it (with its
           // real ack requirement) so the banner + card show an Acknowledge
@@ -1804,37 +1876,79 @@
       return rehydrate();
     }).catch(function (e) { assignmentRefused(e, "accept"); });
   };
-  // Request a consult on a patient — available to hospitalists, directors and ER
-  // (the backend allows all of them). Optimistically tags the patient everywhere
-  // they appear, then re-hydrates from the server.
-  DT.actions.requestConsult = function (patientId, specialty) {
-    if (patientId == null || !specialty) return;
-    var pid = bid(patientId);
-    // Pull the named team off this org's consult-service roster (on-call + members)
-    // so the consult records WHO was called by name, not just the specialty.
+  // ---- consult requests (A.CON clinical #19/#20/#23) -----------------------
+  // A consult is ONE server call per specialty (POST /api/patients/:id/consults)
+  // naming the team: the org catalog's on-call + members for that service (by
+  // name; with the account id when there is one), plus anyone the requester
+  // added. The SERVER alerts every named consultant who has an account (in-app
+  // frame + content-free push) and records the rest by name. The confirmation
+  // follows its answer: it names who was alerted, or says plainly that nobody
+  // was — never "the consult service has been notified" before anyone was.
+  function numUserId(v) { return typeof v === "number" && v > 0 ? v : undefined; }
+  function catalogTeam(specialty) {
     var svc = (DT.getState().consultServices || []).find(function (x) { return x.name === specialty; });
-    var numId = function (v) { return typeof v === "number" && v > 0 ? v : undefined; };
     var team = [];
     if (svc) {
-      if (svc.onCall && svc.onCall.name) team.push({ name: svc.onCall.name, userId: numId(svc.onCall.userId) });
-      (svc.members || []).forEach(function (m) { if (m && m.name) team.push({ name: m.name, userId: numId(m.userId) }); });
+      if (svc.onCall && svc.onCall.name) team.push({ name: svc.onCall.name, userId: numUserId(svc.onCall.userId) });
+      (svc.members || []).forEach(function (m) { if (m && m.name) team.push({ name: m.name, userId: numUserId(m.userId) }); });
     }
-    var body = team.length ? { specialty: specialty, consultants: team } : { specialty: specialty };
-    api("POST", "/api/patients/" + pid + "/consults", body).then(rehydrate).catch(function (e) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't request consult", msg: String((e && e.message) || "Try again.") }; return s; });
+    return team;
+  }
+  function cleanTeam(team) {
+    var seen = {};
+    return (team || []).filter(function (t) {
+      if (!t || !t.name) return false;
+      var k = t.userId ? "u" + t.userId : "n" + String(t.name).toLowerCase();
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    }).map(function (t) { var o = { name: String(t.name) }; if (numUserId(t.userId)) o.userId = t.userId; return o; });
+  }
+  function postConsult(patientId, specialty, team) {
+    var body = { specialty: specialty };
+    var t = cleanTeam(team);
+    if (t.length) body.consultants = t;
+    return api("POST", "/api/patients/" + Number(patientId) + "/consults", body);
+  }
+  // What the server did: who has an account (= was alerted) among the rows it
+  // created. Rows without an account are recorded by name only.
+  function consultOutcome(created) {
+    var rows = created || [];
+    var alerted = [];
+    rows.forEach(function (c) {
+      if (c && c.consultantUserId != null && c.consultantUserId !== meId) {
+        var nm = c.consultantName || nameForUserId(c.consultantUserId) || "a consultant";
+        if (alerted.indexOf(nm) < 0) alerted.push(nm);
+      }
     });
-    DT.set(function (s) {
-      var add = function (list) {
-        return (list || []).map(function (row) {
-          if (row.patientId === patientId && (row.consultants || []).indexOf(specialty) < 0) {
-            return Object.assign({}, row, { consultants: (row.consultants || []).concat([specialty]) });
-          }
-          return row;
-        });
-      };
-      s.board = add(s.board); s.myAdmissions = add(s.myAdmissions); s.myPatients = add(s.myPatients); s.sent = add(s.sent);
-      s.__toast = { tone: "sent", title: specialty + " consult requested", msg: "The consult service has been notified." };
-      return s;
+    return { created: rows.length, alerted: alerted };
+  }
+  function consultWhy(e) {
+    var code = String((e && e.message) || "");
+    if (isNetworkError(e)) return "no connection";
+    if (moduleRefused(e)) return "consult services are switched off for your organization";
+    if (code === "unknown_consultant") return "a listed consultant isn't an active account here";
+    if (e && e.status === 403) return "your role can't request consults";
+    if (e && e.status === 404) return "that patient is no longer on the board";
+    return "the server refused it";
+  }
+  function consultToast(specialty, o) {
+    if (!o.created) return { tone: "sent", title: specialty + " consult already requested", msg: "It was requested before — nobody new was alerted." };
+    if (o.alerted.length) return { tone: "sent", title: specialty + " consult requested", msg: "Alerted in DocTurn: " + o.alerted.join(", ") + "." };
+    return { tone: "rejected", title: specialty + " consult recorded — nobody alerted", msg: "No one with a DocTurn account covers " + specialty + " here. Call the service directly." };
+  }
+  DT.actions.requestConsult = function (patientId, specialty) {
+    if (patientId == null || !specialty) return Promise.resolve(null);
+    return postConsult(bid(patientId), specialty, catalogTeam(specialty)).then(function (created) {
+      var o = consultOutcome(created);
+      DT.set(function (s) { s.__toast = consultToast(specialty, o); return s; });
+      rehydrate();
+      return o;
+    }).catch(function (e) {
+      if (moduleRefused(e)) hydrateModules();
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: specialty + " consult NOT requested", msg: "Nobody was alerted — " + consultWhy(e) + "." }; return s; });
+      rehydrate();
+      return null;
     });
   };
   // A consultant accepts/declines a consult request (status: accepted|declined).
@@ -2149,6 +2263,17 @@
     var st = DT.getState();
     var row = (st.board || []).find(function (b) { return b.id === rowId; });
     var prov = (st.providers || []).find(function (p) { return p.name === providerName; });
+    // A patient that was never routed (e.g. its routing failed when it was
+    // added): "Assign…" routes it to that provider now.
+    if (row && row.assignmentId == null && row.patientId != null && prov) {
+      return api("POST", "/api/assignments", { patientId: row.patientId, mode: "manual", hospitalistId: bid(prov.id) })
+        .then(rehydrate)
+        .then(function () { DT.set(function (s) { s.__toast = { tone: "sent", title: "Sent to " + providerName, msg: "Awaiting their accept." }; return s; }); })
+        .catch(function (e) {
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't assign", msg: isNetworkError(e) ? "No connection — nothing changed." : e && e.status === 403 ? "Your role can't route admissions." : "The server refused it." }; return s; });
+          rehydrate();
+        });
+    }
     if (!row || row.assignmentId == null || !prov) {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't reassign", msg: "This patient has no active assignment to reassign." }; return s; });
       return;
@@ -3143,7 +3268,11 @@
   // confirmation names whoever the server actually assigned (A.CON-SHO-29).
   // A programmatic call without a tab that names a provider means "send to
   // this provider" (manual); with no provider it is round-robin.
-  DT.actions.sendAssignment = function (provider, fields, consults, routeMode) {
+  // consults: the consult services ticked in the intake; consultTeams:
+  // { [service]: [{ name, userId? }] } — who the ER named for each (on-call +
+  // PA/NPs). Each consult is requested on the server once the patient exists
+  // (A.CON clinical #19); the confirmation says what each one did.
+  DT.actions.sendAssignment = function (provider, fields, consults, routeMode, consultTeams) {
     var mode = routeMode === "quick" ? "round_robin"
       : routeMode === "manual" ? "manual"
       : (provider ? "manual" : "round_robin");
@@ -3165,16 +3294,33 @@
     }
     var body = { mode: mode };
     if (mode === "manual") body.hospitalistId = bid(provider.id);
+    var wanted = (consults || []).filter(function (c, i, all) { return c && all.indexOf(c) === i; });
+    var teams = consultTeams || {};
     api("POST", "/api/patients", {
-      initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty,
+      initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty || undefined,
       acuity: fields.acuity || undefined,
     }).then(function (p) {
       body.patientId = p.id;
       return api("POST", "/api/assignments", body);
     }).then(function (a) {
       var who = (a && nameForHospitalist(a.hospitalistId)) || (mode === "manual" ? provider.name : "the next eligible hospitalist");
-      settle(who, { tone: "sent", title: "Assignment sent to " + who, msg: "Notified by push, SMS fallback." });
-      return rehydrate();
+      // The admission is routed; now each ticked consult, on the server.
+      return Promise.all(wanted.map(function (spec) {
+        var team = (teams[spec] && teams[spec].length) ? teams[spec] : catalogTeam(spec);
+        return postConsult(body.patientId, spec, team).then(function (created) {
+          return { spec: spec, ok: true, o: consultOutcome(created) };
+        }, function (e) { return { spec: spec, ok: false, why: consultWhy(e) }; });
+      })).then(function (results) {
+        var lines = results.map(function (r) {
+          return !r.ok ? r.spec + " NOT requested (" + r.why + ")"
+            : r.o.alerted.length ? r.spec + " → " + r.o.alerted.join(", ")
+            : r.spec + " recorded, nobody alerted";
+        });
+        var failed = results.some(function (r) { return !r.ok; });
+        settle(who, { tone: failed ? "rejected" : "sent", title: "Assignment sent to " + who,
+          msg: "Notified by push, SMS fallback." + (lines.length ? " Consults: " + lines.join("; ") + "." : "") });
+        return rehydrate();
+      });
     }).catch(function (e) {
       // Network failure in the LOCAL offline demo → keep the optimistic row. In
       // a real session a network failure means the admission never reached the
@@ -3403,9 +3549,63 @@
   DT.actions.dismissCredentialReveal = function () {
     DT.set(function (s) { s.__credentialReveal = null; return s; });
   };
+  // Remove a provider from the rotation (DELETE /api/physicians/:id — the
+  // rotation profile; the ACCOUNT stays, managed in People). The row leaves
+  // only when the server agrees: a refusal (409 — they hold a pending
+  // admission request) is said in words and the list is re-read
+  // (A.CON clinical #12).
   DT.actions.removeProvider = function (id) {
-    api("DELETE", "/api/physicians/" + bid(id)).then(rehydrate).catch(function () {});
-    DT.set(function (s) { s.providers = s.providers.filter(function (x) { return x.id !== id; }); return s; });
+    var p = providerById(id);
+    if (!p) return Promise.resolve(false);
+    return api("DELETE", "/api/physicians/" + bid(id)).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "sent", title: p.name + " removed from the rotation", msg: "Their account stays — manage it in People." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      var code = String((e && e.message) || "");
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: "Couldn't remove " + p.name,
+          msg: code === "has_pending_assignments" ? "They have an admission request waiting — reassign or resolve it first."
+            : isNetworkError(e) ? "No connection — nothing changed."
+            : e && e.status === 403 ? "Only a director can remove providers."
+            : e && e.status === 404 ? "That provider no longer exists — the list has been refreshed."
+            : "The server refused it — nothing changed." };
+        return s;
+      });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+  // The Director's inline name / specialty edit (A.CON clinical #11):
+  // PATCH /api/hospitalists/:id/profile — the account's display name and the
+  // rotation profile's specialty (the routing planner's preference). Shown at
+  // once, kept only when the server agrees; a refusal re-reads the list.
+  DT.actions.updateProvider = function (id, patch) {
+    var p = providerById(id);
+    if (!p || !patch) return Promise.resolve(false);
+    var body = {};
+    if (patch.name != null) body.displayName = String(patch.name).trim();
+    if (patch.specialty != null) body.specialty = String(patch.specialty).trim();
+    if (body.displayName === "" || body.specialty === "") {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: body.displayName === "" ? "A provider needs a name." : "Enter a specialty." }; return s; });
+      return Promise.resolve(false);
+    }
+    if (body.displayName === p.name) delete body.displayName;
+    if (body.specialty === p.specialty) delete body.specialty;
+    if (!Object.keys(body).length) return Promise.resolve(true);
+    return rotationWrite("save " + p.name + "'s details",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/profile", body); },
+      function () {
+        DT.set(function (s) {
+          s.providers = (s.providers || []).map(function (x) {
+            if (x.id !== id) return x;
+            var n = Object.assign({}, x);
+            if (body.displayName) { n.name = body.displayName; n.avatar = initials(body.displayName); }
+            if (body.specialty) n.specialty = body.specialty;
+            return n;
+          });
+          return s;
+        });
+      },
+      function () { DT.set(function (s) { s.__toast = { tone: "accepted", title: "Saved", msg: (body.displayName || p.name) + (body.specialty ? " · " + body.specialty : "") + " — for everyone in your organization." }; return s; }); });
   };
 
   // Import providers parsed from an external schedule (Amion) as real users.
@@ -4458,6 +4658,246 @@
     });
   };
   // ==== integrations — END ==================================================
+
+  // ==== clinical screens (A.CON clinical #1-#23) ============================
+  // Every control on the ER director / ER doctor / hospitalist / director /
+  // patient-board screens below writes to the server and shows the server's
+  // answer. A refusal says why and re-reads; nothing is kept that the server
+  // did not take.
+
+  // ---- ER diversion (#1): PUT /api/er/diversion ----------------------------
+  DT.actions.loadErDiversion = function () {
+    return get("/api/er/diversion").then(function (r) {
+      DT.set(function (s) { s.erDiversion = r; s.erDiversionError = null; return s; });
+      return r;
+    }, function (e) {
+      var why = failedRead(e).why;
+      DT.set(function (s) { s.erDiversionError = why; return s; });
+      return null;
+    });
+  };
+  var diversionBusy = false;
+  DT.actions.setDiversion = function (active) {
+    if (diversionBusy) return Promise.resolve(false);
+    diversionBusy = true;
+    DT.set(function (s) { s.erDiversionBusy = true; return s; });
+    var done = function (v) { diversionBusy = false; DT.set(function (s) { s.erDiversionBusy = false; return s; }); return v; };
+    return api("PUT", "/api/er/diversion", { active: !!active }).then(function (r) {
+      var b = r && r.broadcast;
+      DT.set(function (s) {
+        s.erDiversion = r.diversion; s.erDiversionError = null;
+        // DocTurn has no EMS integration: the toast says who WAS told — the
+        // org, through the broadcast — and that EMS was not.
+        s.__toast = active
+          ? { tone: "rejected", title: "Diversion declared",
+              msg: (b ? "Critical broadcast sent to " + b.total + " " + (b.total === 1 ? "person" : "people") + " in your organization." : "Saved for your organization, but broadcasts are switched off — nobody was alerted.") + " DocTurn does not notify EMS — tell them through your usual channel." }
+          : { tone: "accepted", title: "Diversion lifted",
+              msg: b ? "Everyone in your organization was told (" + b.total + " " + (b.total === 1 ? "person" : "people") + ")." : "Saved — broadcasts are switched off, so nobody was alerted." };
+        return s;
+      });
+      hydrateBroadcasts();
+      return done(true);
+    }, function (e) {
+      if (e && e.status === 409 && e.body && e.body.diversion) {
+        var d = e.body.diversion;
+        DT.set(function (s) { s.erDiversion = d; s.__toast = { tone: "rejected", title: d.active ? "Already on diversion" : "Already accepting patients", msg: "Someone changed it first — this is your organization's current state." }; return s; });
+        return done(false);
+      }
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: active ? "Diversion NOT declared" : "Diversion NOT lifted",
+          msg: isNetworkError(e) ? "No connection — nothing changed and nobody was alerted."
+            : e && e.status === 403 ? "Only an ER director or director can change it."
+            : "The server refused it — nothing changed." };
+        return s;
+      });
+      DT.actions.loadErDiversion();
+      return done(false);
+    });
+  };
+
+  // ---- ER physicians roster (#2): GET / PATCH /api/er/roster ----------------
+  DT.actions.loadErRoster = function () {
+    return get("/api/er/roster").then(function (r) {
+      DT.set(function (s) { s.erRoster = r; s.erRosterError = null; return s; });
+      return r;
+    }, function (e) {
+      var why = failedRead(e).why;
+      DT.set(function (s) { s.erRosterError = why; return s; });
+      return null;
+    });
+  };
+  function erRosterWrite(userId, body, what) {
+    var who = ((DT.getState().erRoster || {}).physicians || []).find(function (p) { return p.userId === userId; });
+    DT.set(function (s) {
+      if (s.erRoster && s.erRoster.physicians) {
+        var phys = s.erRoster.physicians.map(function (p) { return p.userId === userId ? Object.assign({}, p, body) : p; });
+        s.erRoster = Object.assign({}, s.erRoster, { physicians: phys, onShift: phys.filter(function (p) { return p.onShift; }).length });
+      }
+      return s;
+    });
+    return api("PATCH", "/api/er/roster/" + Number(userId), body).then(function () {
+      return DT.actions.loadErRoster().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: "Couldn't " + what + (who ? " for " + who.displayName : ""),
+          msg: isNetworkError(e) ? "No connection — nothing changed."
+            : e && e.status === 403 ? "Only an ER director or director can change the ER roster."
+            : e && e.status === 404 ? "That physician is no longer on the roster — it has been refreshed."
+            : "The server refused it — the roster shows what's actually set." };
+        return s;
+      });
+      return DT.actions.loadErRoster().then(function () { return false; });
+    });
+  }
+  DT.actions.setErOnShift = function (userId, onShift) { return erRosterWrite(userId, { onShift: !!onShift }, onShift ? "start the shift" : "end the shift"); };
+  DT.actions.setErShift = function (userId, shiftType) { return erRosterWrite(userId, { shiftType: shiftType }, "change the shift"); };
+
+  // ---- ER throughput (#3): GET /api/reports/er ------------------------------
+  DT.actions.loadErReport = function () {
+    return get("/api/reports/er").then(function (r) {
+      DT.set(function (s) { s.erReport = r; s.erReportError = null; return s; });
+      return r;
+    }, function (e) {
+      var why = failedRead(e).why;
+      DT.set(function (s) { s.erReportError = why; if (why === "module_disabled" || why === "forbidden") s.erReport = null; return s; });
+      return null;
+    });
+  };
+
+  // ---- My care team (#4): /api/care-team/members ----------------------------
+  function teamMember(userId) { return (DT.getState().team || []).find(function (m) { return m.userId === userId; }) || null; }
+  function careTeamWhy(e) {
+    var code = String((e && e.message) || "");
+    return isNetworkError(e) ? "No connection — nothing changed."
+      : code === "already_linked" ? "They're already in your unit — the list has been refreshed."
+      : code === "user_deactivated" ? "That account is deactivated."
+      : code === "self_link_forbidden" ? "You can't link yourself."
+      : e && e.status === 404 ? "That person is no longer in your organization — the list has been refreshed."
+      : "The server refused it — nothing changed.";
+  }
+  DT.actions.addMember = function (userId) {
+    var c = (DT.getState().candidates || []).find(function (x) { return x.userId === userId; });
+    var name = c ? c.name : "They";
+    return api("POST", "/api/care-team/members", { memberUserId: Number(userId) }).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: name + " added to your on-call unit", msg: "While On call they get your new assignment requests too, and can accept them." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't add " + name, msg: careTeamWhy(e) }; return s; });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+  DT.actions.removeMember = function (userId) {
+    var m = teamMember(userId);
+    var name = m ? m.name : "They";
+    return api("DELETE", "/api/care-team/members/" + Number(userId)).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "sent", title: name + " removed from your unit", msg: "They no longer get your assignment requests." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove " + name, msg: careTeamWhy(e) }; return s; });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+  DT.actions.toggleMemberCall = function (userId) {
+    var m = teamMember(userId);
+    if (!m) return Promise.resolve(false);
+    var on = !m.onCall;
+    return api("PATCH", "/api/care-team/members/" + Number(userId), { onCall: on }).then(function () {
+      DT.set(function (s) { s.__toast = { tone: on ? "accepted" : "sent", title: m.name + (on ? " is on call with you" : " is off call"), msg: on ? "They get your new assignment requests too." : "They no longer get your new assignment requests." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't change " + m.name, msg: careTeamWhy(e) }; return s; });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+
+  // ---- Patient board edits (#13-#15) ---------------------------------------
+  function boardRowById(rowId) { return (DT.getState().board || []).find(function (b) { return b.id === rowId; }) || null; }
+  function boardWhy(e) {
+    return isNetworkError(e) ? "No connection — nothing changed."
+      : e && e.status === 403 ? "Only a director or ER director can change the board."
+      : e && e.status === 404 ? "That patient is no longer on the board — it has been refreshed."
+      : e && e.status === 400 ? "That value isn't allowed (1–40 characters for a room, 1–500 for an issue)."
+      : "The server refused it — the board shows what's actually saved.";
+  }
+  // Inline room / issue (PATCH /api/patients/:id). Status is not editable:
+  // it is the patient's routing state, which the server derives.
+  DT.actions.updateBoardRow = function (rowId, patch) {
+    var row = boardRowById(rowId);
+    if (!row || row.patientId == null || !patch) return Promise.resolve(false);
+    var body = {};
+    if (patch.room != null) body.roomNumber = String(patch.room).trim();
+    if (patch.issue != null) body.issueSummary = String(patch.issue).trim();
+    if (patch.dept != null) body.department = String(patch.dept).trim();
+    if (!Object.keys(body).length) return Promise.resolve(false);
+    DT.set(function (s) {
+      s.board = (s.board || []).map(function (b) {
+        if (b.id !== rowId) return b;
+        return Object.assign({}, b, body.roomNumber != null ? { room: body.roomNumber } : {}, body.issueSummary != null ? { issue: body.issueSummary } : {}, body.department != null ? { dept: body.department } : {});
+      });
+      return s;
+    });
+    return api("PATCH", "/api/patients/" + Number(row.patientId), body).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Saved", msg: "Patient " + row.initials + " updated for everyone." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: boardWhy(e) }; return s; });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+  // "Add admission" (#14): a real patient (POST /api/patients) routed at once
+  // (POST /api/assignments) — to the chosen hospitalist, or round-robin.
+  DT.actions.addBoardPatient = function (data) {
+    var init = String((data && data.initials) || "").trim().toUpperCase();
+    if (!init) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Initials required", msg: "Enter the patient's initials." }; return s; });
+      return Promise.resolve(false);
+    }
+    var prov = data.attending ? (DT.getState().providers || []).find(function (p) { return p.name === data.attending; }) : null;
+    var patientBody = { initials: init, issueSummary: String(data.issue || "").trim() };
+    if (String(data.room || "").trim()) patientBody.roomNumber = String(data.room).trim();
+    if (data.dept) patientBody.department = data.dept;
+    var created = null;
+    return api("POST", "/api/patients", patientBody).then(function (p) {
+      created = p;
+      return api("POST", "/api/assignments", prov ? { patientId: p.id, mode: "manual", hospitalistId: bid(prov.id) } : { patientId: p.id, mode: "round_robin" });
+    }).then(function (a) {
+      var who = (a && (DT.getState().providers || []).find(function (x) { return x.id === "h" + a.hospitalistId; })) || prov;
+      DT.set(function (s) { s.__toast = { tone: "sent", title: "Admission added", msg: "Patient " + init + " sent to " + (who ? who.name : "the next eligible hospitalist") + " — awaiting their accept." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }).catch(function (e) {
+      var code = String((e && e.message) || "");
+      DT.set(function (s) {
+        s.__toast = created
+          ? { tone: "rejected", title: "Patient " + init + " added but not routed", msg: (/no.?provider|no eligible/i.test(code) ? "No eligible hospitalist is on shift." : isNetworkError(e) ? "No connection." : "The server refused the routing.") + " Use Assign… on the board to send it." }
+          : { tone: "rejected", title: "Admission NOT added", msg: boardWhy(e) };
+        return s;
+      });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+  // "Remove admission" (#15): DELETE /api/patients/:id — the patient and its
+  // assignments, consults and care-team thread, in one audited transaction.
+  DT.actions.removeBoardPatient = function (rowId) {
+    var row = boardRowById(rowId);
+    if (!row || row.patientId == null) return Promise.resolve(false);
+    return api("DELETE", "/api/patients/" + Number(row.patientId)).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "sent", title: "Patient " + row.initials + " removed", msg: "With its assignments, consults and care-team thread — for everyone." }; return s; });
+      return rehydrate().then(function () { return true; });
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Patient " + row.initials + " NOT removed", msg: boardWhy(e) }; return s; });
+      return rehydrate().then(function () { return false; });
+    });
+  };
+
+  // ---- Intake extraction (#17/#18): POST /api/patients/extract --------------
+  // The org's extractor on the server (OpenAI when the org has it on, else
+  // DocTurn's keyword rules); the answer names the engine that ran.
+  DT.actions.extractIntake = function (note) {
+    var text = String(note || "").trim();
+    if (!text) return Promise.reject(Object.assign(new Error("empty_note"), { status: 400 }));
+    return api("POST", "/api/patients/extract", { note: text });
+  };
+  // ==== clinical screens — END ===============================================
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

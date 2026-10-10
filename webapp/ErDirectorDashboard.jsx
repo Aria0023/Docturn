@@ -1,12 +1,33 @@
 /* DocTurn web-app UI kit — ER Director dashboard.
    DISTINCT from the Hospitalist Director: the ER director owns the ER side —
    intake throughput, ER-physician staffing, routing/acceptance performance,
-   and diversion status. Store-backed; metrics derive from live intake data.
+   and diversion status. Every panel is the SERVER's (A.CON clinical #1-#3):
+     • diversion: GET / PUT /api/er/diversion — org-wide, audited, broadcast
+       to everyone in the org; DocTurn has no EMS integration and says so;
+     • ER physicians: GET /api/er/roster — the org's er_doctor accounts, with
+       on/off shift and shift kept on the server (PATCH /api/er/roster/:id);
+       accounts are added / removed in People;
+     • throughput: GET /api/reports/er — "—" until the server answers, never a
+       constant.
    Spec: Eng §10.1 (ER director portal), Req FR-6 (broadcasts/diversion). */
 
+// Minutes from the server (one decimal) → "2m 36s"; null/undefined → "—".
+function fmtMinutes(min) {
+  if (min == null || !isFinite(min)) return "—";
+  const sec = Math.round(min * 60);
+  return Math.floor(sec / 60) + "m " + String(sec % 60).padStart(2, "0") + "s";
+}
 function fmtDuration(sec) {
+  if (sec == null || !isFinite(sec)) return "—";
   const m = Math.floor(sec / 60), s = sec % 60;
   return m + "m " + String(s).padStart(2, "0") + "s";
+}
+// Why a server read is missing, in words.
+function erReadWhy(err) {
+  return err === "module_disabled" ? "switched off for your organization"
+    : err === "forbidden" ? "not available to your role"
+    : err === "offline" ? "no connection"
+    : err ? "couldn't load from the server" : "loading…";
 }
 
 function ErStat({ label, value, icon, tint, sub }) {
@@ -41,106 +62,118 @@ function ErShiftSelect({ shifts, value, onChange, mobile }) {
 // ── ER director dashboard, split into self-contained panels (no PageWrap) so
 // each can be a draggable / removable / addable widget. ────────────────────
 
-function ErDiversionPanel({ diversion, onToggleDiversion }) {
+function ErDiversionPanel({ diversion, error, busy, onSetDiversion }) {
+  const loaded = !!diversion;
+  const on = !!(diversion && diversion.active);
+  const since = on && diversion.since ? (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(new Date(diversion.since).getTime()) : diversion.since) : null;
+  const toggle = () => {
+    if (!loaded || busy || !onSetDiversion) return;
+    if (!on && !window.confirm("Declare ER diversion? Everyone in your organization gets a critical broadcast. DocTurn does not notify EMS — you still tell them directly.")) return;
+    onSetDiversion(!on);
+  };
+  const tone = !loaded ? "neutral" : on ? "rejected" : "accepted";
+  const fg = { neutral: "var(--muted-foreground)", rejected: "var(--status-rejected)", accepted: "var(--status-accepted)" }[tone];
+  const bg = { neutral: "var(--secondary)", rejected: "var(--status-rejected-bg)", accepted: "var(--status-accepted-bg)" }[tone];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderRadius: "var(--radius-md)",
-      background: diversion ? "var(--status-rejected-bg)" : "var(--status-accepted-bg)", border: `1px solid ${diversion ? "var(--status-rejected)" : "var(--status-accepted)"}` }}>
-      <Icon name={diversion ? "octagon-alert" : "circle-check-big"} size={20} color={diversion ? "var(--status-rejected)" : "var(--status-accepted)"} />
+    <div data-diversion={!loaded ? (error ? "error" : "loading") : on ? "on" : "off"} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderRadius: "var(--radius-md)",
+      background: bg, border: `1px solid ${tone === "neutral" ? "var(--border)" : fg}` }}>
+      <Icon name={!loaded ? "loader" : on ? "octagon-alert" : "circle-check-big"} size={20} color={fg} />
       {/* flex-basis 200px: on a phone the button wraps under the text instead of squeezing it */}
       <div style={{ flex: "1 1 200px", minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: diversion ? "var(--status-rejected)" : "var(--status-accepted)" }}>{diversion ? "ER is on diversion" : "ER is accepting patients"}</div>
-        <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{diversion ? "Incoming ambulances are being diverted. EMS and all providers were notified." : "Normal operations — incoming transfers and walk-ins are accepted."}</div>
+        <div data-diversion-title style={{ fontSize: 14, fontWeight: 700, color: fg }}>{!loaded ? "ER diversion status" : on ? "ER is on diversion" : "ER is accepting patients"}</div>
+        <div data-diversion-line style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
+          {!loaded ? "Diversion status: " + erReadWhy(error) + "."
+            : on ? "Declared" + (diversion.by && diversion.by.name ? " by " + diversion.by.name : "") + (since ? " · " + since : "") + ". Everyone in your organization was sent a broadcast. DocTurn does not notify EMS — tell them through your usual channel."
+            : "No diversion declared for your organization."}
+        </div>
       </div>
-      <Button variant={diversion ? "default" : "outline"} size="sm" icon={diversion ? "circle-check-big" : "octagon-alert"} onClick={onToggleDiversion}>
-        {diversion ? "Lift diversion" : "Declare diversion"}
-      </Button>
+      {loaded && onSetDiversion && (
+        <Button variant={on ? "default" : "outline"} size="sm" icon={on ? "circle-check-big" : "octagon-alert"} onClick={toggle} style={busy ? { opacity: .6, pointerEvents: "none" } : null}>
+          {busy ? "Saving…" : on ? "Lift diversion" : "Declare diversion"}
+        </Button>
+      )}
     </div>
   );
 }
 
-function ErStatsPanel({ erPhysicians, sent, board, avgAcceptSec }) {
-  const admitsToday = (erPhysicians || []).reduce((a, p) => a + (p.admitsToday || 0), 0);
+// Throughput tiles: the server's numbers (GET /api/reports/er, org-wide for
+// the ER director) and the ER board rows the server sent (GET
+// /api/assignments/sent). "—" where there is nothing to compute from.
+function ErStatsPanel({ report, reportError, sent, board }) {
+  const r = report || null;
+  const a = (r && r.assignments) || null;
+  const admits = r ? r.admits24h : "—";
+  const tta = a ? fmtMinutes(a.timeToAcceptMinAvg) : "—";
   const todaySent = (sent || []).filter((s) => s.day === "Today");
   const accepted = (sent || []).filter((s) => s.status === "accepted").length;
   const declined = (sent || []).filter((s) => s.status === "declined" || s.status === "rejected").length;
-  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) : 100;
+  const acceptRate = (accepted + declined) ? Math.round((accepted / (accepted + declined)) * 100) + "%" : "—";
   const pendingER = (board || []).filter((b) => b.status === "pending").length;
+  const why = !r && reportError ? " · " + erReadWhy(reportError) : "";
   const statMetrics = [
-    { key: "admits", label: "Admits today", value: admitsToday },
+    { key: "admits", label: "Admits (24 h)", value: admits },
     { key: "routed", label: "Routed via DocTurn", value: todaySent.length },
-    { key: "ttaccept", label: "Avg time-to-accept", value: fmtDuration(avgAcceptSec) },
-    { key: "acceptrate", label: "Acceptance rate", value: acceptRate + "%" },
+    { key: "ttaccept", label: "Avg time-to-accept", value: tta },
+    { key: "acceptrate", label: "Acceptance rate", value: acceptRate },
     { key: "accepted", label: "Accepted", value: accepted },
     { key: "declined", label: "Declined", value: declined },
     { key: "pending", label: "Pending in ER", value: pendingER },
   ];
   return (
     <CustomizableStats statKey="er_director:stats" metrics={statMetrics} stats={[
-      { id: "admits", label: "Admits today", value: admitsToday, icon: "clipboard-plus", tint: "blue", sub: todaySent.length + " routed via DocTurn" },
-      { id: "ttaccept", label: "Avg time-to-accept", value: fmtDuration(avgAcceptSec), icon: "timer", tint: "amber", sub: "across hospitalist groups" },
-      { id: "acceptrate", label: "Acceptance rate", value: acceptRate + "%", icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
+      { id: "admits", label: "Admits (24 h)", value: admits, icon: "clipboard-plus", tint: "blue", sub: todaySent.length + " routed via DocTurn today" + why },
+      { id: "ttaccept", label: "Avg time-to-accept", value: tta, icon: "timer", tint: "amber", sub: a && a.timeToAcceptMinAvg == null ? "no accepted admissions yet" : "hospitalist response, all time" + why },
+      { id: "acceptrate", label: "Acceptance rate", value: acceptRate, icon: "check-check", tint: "emerald", sub: accepted + " accepted · " + declined + " declined" },
       { id: "pending", label: "Pending in ER", value: pendingER, icon: "loader", tint: "slate", sub: "awaiting hospitalist accept" },
     ]} />
   );
 }
 
-function ErRosterPanel({ erPhysicians, shifts, onToggle, onUpdate, onSetShift, onAdd, onRemove }) {
-  const [adding, setAdding] = React.useState(false);
-  const [name, setName] = React.useState("");
-  const [shift, setShift] = React.useState("day");
-  const onShift = (erPhysicians || []).filter((p) => p.working);
-  // Phone rows: identity on line 1, shift/on-off/remove on a wrapping line 2 —
-  // inline they leave the name column ~0.5px wide at 390px.
+// The org's ER physician accounts (GET /api/er/roster) — on/off shift and
+// shift saved on the server. Accounts themselves are added and removed in
+// People (onManagePeople), not here.
+function ErRosterPanel({ roster, error, shifts, onSetOnShift, onSetShift, onManagePeople }) {
   const mobile = useIsMobile();
+  const list = (roster && roster.physicians) || [];
+  const shiftOpts = (shifts && shifts.length ? shifts : (window.DT && window.DT.defaultShifts ? window.DT.defaultShifts() : []));
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
         <Icon name="ambulance" size={18} color="var(--primary)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>ER physicians</h3>
-        <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>· {onShift.length} of {erPhysicians.length} on shift</span>
-        <span style={{ marginLeft: "auto" }}><Button size="sm" variant={adding ? "secondary" : "default"} icon={adding ? "x" : "user-plus"} onClick={() => setAdding(!adding)}>{adding ? "Cancel" : "Add"}</Button></span>
+        <span data-er-roster-count style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{roster ? "· " + roster.onShift + " of " + list.length + " on shift" : "· " + erReadWhy(error)}</span>
+        {onManagePeople && <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="users" onClick={onManagePeople}>Manage in People</Button></span>}
       </div>
-
-      {adding && (
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", margin: "12px 0 6px", padding: 12, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
-          <div style={{ flex: "1 1 180px", minWidth: 0 }}><Field label="Physician name" icon="user" value={name} onChange={setName} placeholder="Dr. Jane Smith" /></div>
-          <div>
-            <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Shift</label>
-            <ErShiftSelect shifts={shifts} value={shift} onChange={setShift} mobile={mobile} />
-          </div>
-          <Button size="sm" icon="check" onClick={() => { if (name.trim()) { onAdd({ name, shift }); setName(""); setAdding(false); } }}>Add</Button>
-        </div>
-      )}
+      <div style={{ fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>Your organization's ER physician accounts. On/Off and shift are saved for everyone; add or remove physicians in People.</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12 }}>
-        {(erPhysicians || []).map((p) => {
+        {roster && list.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "6px 0" }}>No ER physician accounts yet — add them in People.</div>}
+        {list.map((p) => {
+          const avatar = (window.dtFmt && window.dtFmt.initialsOf) ? window.dtFmt.initialsOf(p.displayName) : p.displayName.slice(0, 2).toUpperCase();
           const controls = (
             <React.Fragment>
-              <ErShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} mobile={mobile} />
-              <button onClick={() => onToggle(p.id)} title={p.working ? "End shift" : "Start shift"}
+              <ErShiftSelect shifts={[{ id: "", label: "Shift not set" }].concat(shiftOpts)} value={p.shiftType || ""} onChange={(sid) => { if (sid) onSetShift(p.userId, sid); }} mobile={mobile} />
+              <button onClick={() => onSetOnShift(p.userId, !p.onShift)} title={p.onShift ? "End shift" : "Start shift"} aria-pressed={p.onShift}
                 style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 11px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
-                  border: "1px solid var(--border)", background: p.working ? "var(--status-accepted-bg)" : "#fff", color: p.working ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
-                <Icon name={p.working ? "toggle-right" : "toggle-left"} size={13} />{p.working ? "On shift" : "Off"}
+                  border: "1px solid var(--border)", background: p.onShift ? "var(--status-accepted-bg)" : "#fff", color: p.onShift ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
+                <Icon name={p.onShift ? "toggle-right" : "toggle-left"} size={13} />{p.onShift ? "On shift" : "Off"}
               </button>
-              <button onClick={() => onRemove(p.id)} title="Remove"
-                onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>
             </React.Fragment>
           );
           return (
           // Off-shift rows are marked by the slate avatar, the offline dot, the
           // "Off" state and a grey surface — not by fading the row, which took
           // its text to 2.6:1 (A.CON-SHO-53).
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: p.working ? "#fff" : "var(--secondary)" }}>
+          <div key={p.userId} data-er-physician={p.userId} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: p.onShift ? "#fff" : "var(--secondary)" }}>
             <div style={{ position: "relative", flex: "none" }}>
-              <Avatar initials={p.avatar} size={38} tint={p.working ? "blue" : "slate"} />
+              <Avatar initials={avatar} size={38} tint={p.onShift ? "blue" : "slate"} />
               {/* display:flex so the dot sits on the avatar rim, not 10px up in a line box */}
-              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} /></span>
+              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.onShift ? "online" : "offline"} /></span>
             </div>
             <div style={{ flex: "1 1 0", minWidth: 0 }}>
-              <EditableText value={p.name} onSave={(v) => onUpdate(p.id, { name: v })} size={14} weight={600} />
+              <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</div>
               <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="clipboard-plus" size={12} />{p.admitsToday} admit{p.admitsToday === 1 ? "" : "s"} today
+                <Icon name="clipboard-plus" size={12} />{p.admits24h} admit{p.admits24h === 1 ? "" : "s"} in 24 h
               </div>
             </div>
             {mobile
@@ -196,13 +229,13 @@ function ErOpsPanel({ onBroadcasts }) {
 }
 
 // Thin wrapper: all panels stacked (non-customizable use / fallback).
-function ErDirectorDashboard({ erPhysicians, shifts, sent, board, diversion, avgAcceptSec, onToggle, onUpdate, onSetShift, onAdd, onRemove, onToggleDiversion, onBroadcasts }) {
+function ErDirectorDashboard({ diversion, diversionError, diversionBusy, onSetDiversion, report, reportError, roster, rosterError, shifts, sent, board, onSetOnShift, onSetShift, onManagePeople, onBroadcasts }) {
   return (
     <PageWrap>
-      <div style={{ marginBottom: 18 }}><ErDiversionPanel diversion={diversion} onToggleDiversion={onToggleDiversion} /></div>
-      <div style={{ marginBottom: 16 }}><ErStatsPanel erPhysicians={erPhysicians} sent={sent} board={board} avgAcceptSec={avgAcceptSec} /></div>
+      <div style={{ marginBottom: 18 }}><ErDiversionPanel diversion={diversion} error={diversionError} busy={diversionBusy} onSetDiversion={onSetDiversion} /></div>
+      <div style={{ marginBottom: 16 }}><ErStatsPanel report={report} reportError={reportError} sent={sent} board={board} /></div>
       <div style={{ display: "grid", gridTemplateColumns: "1.3fr .9fr", gap: 16, alignItems: "start" }}>
-        <ErRosterPanel erPhysicians={erPhysicians} shifts={shifts} onToggle={onToggle} onUpdate={onUpdate} onSetShift={onSetShift} onAdd={onAdd} onRemove={onRemove} />
+        <ErRosterPanel roster={roster} error={rosterError} shifts={shifts} onSetOnShift={onSetOnShift} onSetShift={onSetShift} onManagePeople={onManagePeople} />
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <ErRecentIntakesPanel sent={sent} />
           <ErOpsPanel onBroadcasts={onBroadcasts} />
@@ -212,4 +245,4 @@ function ErDirectorDashboard({ erPhysicians, shifts, sent, board, diversion, avg
   );
 }
 
-Object.assign(window, { ErDirectorDashboard, ErDiversionPanel, ErStatsPanel, ErRosterPanel, ErRecentIntakesPanel, ErOpsPanel, ErStat, fmtDuration });
+Object.assign(window, { ErDirectorDashboard, ErDiversionPanel, ErStatsPanel, ErRosterPanel, ErRecentIntakesPanel, ErOpsPanel, ErStat, fmtDuration, fmtMinutes, erReadWhy });

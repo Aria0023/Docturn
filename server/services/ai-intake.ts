@@ -8,10 +8,17 @@ import { integrationFetch } from "../integrations/http.js";
  * integration.aiIntake switch (Settings → Integrations → OpenAI).
  */
 export interface ExtractedPatient {
+  /** "" when the note names nobody — never a made-up placeholder. */
   initials: string;
   roomNumber: string;
   issueSummary: string;
   specialty: string;
+  /**
+   * Which engine produced the fields: "local" = DocTurn's built-in keyword
+   * rules (no AI), "openai" = the OpenAI integration answered. The intake
+   * screen labels the fields with it (A.CON clinical #17).
+   */
+  engine?: "local" | "openai";
 }
 
 export interface AIExtractor {
@@ -58,7 +65,9 @@ export class MockAIExtractor implements AIExtractor {
         .map((w) => w[0])
         .join("");
     }
-    initials = (initials || "XX").toUpperCase().slice(0, 4);
+    // Nothing that looks like initials → nothing (the ER physician types
+    // them); a placeholder like "XX" would read as extracted from the note.
+    initials = (initials || "").toUpperCase().slice(0, 4);
 
     let specialty = "General";
     for (const [re, spec] of SPECIALTY_KEYWORDS) {
@@ -76,7 +85,7 @@ export class MockAIExtractor implements AIExtractor {
       sentenceEnd > 20 ? firstLine.slice(0, sentenceEnd) : firstLine
     ).slice(0, 160);
 
-    return { initials, roomNumber: room, issueSummary, specialty };
+    return { initials, roomNumber: room, issueSummary, specialty, engine: "local" };
   }
 }
 
@@ -116,10 +125,11 @@ export class OpenAIExtractor implements AIExtractor {
       };
       const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
       return {
-        initials: String(parsed.initials ?? "XX").toUpperCase().slice(0, 4),
+        initials: String(parsed.initials ?? "").toUpperCase().slice(0, 4),
         roomNumber: String(parsed.roomNumber ?? ""),
         issueSummary: String(parsed.issueSummary ?? note.slice(0, 80)),
         specialty: String(parsed.specialty ?? "General"),
+        engine: "openai",
       };
     } catch (err) {
       // Code only — the error text could quote the request.

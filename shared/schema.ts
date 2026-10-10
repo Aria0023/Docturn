@@ -1169,3 +1169,36 @@ export const consultMemberCreateSchema = z
 export const consultServicesArraySchema = z
   .array(z.object({ id: z.string().max(64).optional(), name: consultServiceName }).passthrough())
   .max(200);
+
+/* ── Clinical screens (A.CON clinical) ────────────────────────────────────────
+ * Bodies of the writes behind the ER director, director and patient-board
+ * controls. Free text never carries control characters (C0, DEL, C1). */
+const noControlChars = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+
+/** PUT /api/er/diversion — declare (true) or lift (false) ER diversion. */
+export const erDiversionSchema = z.object({ active: z.boolean() }).strict();
+
+/** PATCH /api/er/roster/:userId — an ER physician's on/off shift and shift. */
+export const erRosterPatchSchema = z
+  .object({ onShift: z.boolean().optional(), shiftType: z.enum(SHIFT_TYPE).optional() })
+  .strict()
+  .refine((v) => v.onShift !== undefined || v.shiftType !== undefined, { message: "at least one field is required" });
+
+/** PATCH /api/patients/:id — the board's inline room / issue / unit edits (no status: it is derived from routing). */
+export const patientPatchSchema = z
+  .object({
+    roomNumber: z.string().trim().min(1).max(40).regex(noControlChars).optional(),
+    issueSummary: z.string().trim().min(1).max(500).regex(noControlChars).optional(),
+    department: z.string().trim().min(1).max(20).regex(noControlChars).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+
+/** PATCH /api/hospitalists/:id/profile — the director's inline name / specialty edits. */
+export const providerProfilePatchSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).regex(noControlChars).optional(),
+    specialty: z.string().trim().min(1).max(80).regex(noControlChars).optional(),
+  })
+  .strict()
+  .refine((v) => v.displayName !== undefined || v.specialty !== undefined, { message: "at least one field is required" });

@@ -20,7 +20,7 @@
  *    and on short screens (375x667, Safari's 390x664), forms carry the
  *    iOS/autofill attributes, Enter submits                  (A.CON-MIN-12, A.CON-SHO-12/57)
  *  - Patient board: every select (the "Assign…" reassign included) >= 16px;
- *    the data-source banner wraps, Connect EHR on its own row (A.CON-SHO-44/51, A.CON-MIN-12)
+ *    no EHR/FHIR data-source bar (there is no census feed — A.CON clinical #16) (A.CON-SHO-44/51, A.CON-MIN-12)
  *  - deep links /messages/42 and /messages/ render the shell  (A.CON-SHO-58)
  *  - lock survives a reload, the /api/modules poll pauses while locked and
  *    resumes after a real unlock, a wrong password stays locked; the lock is
@@ -246,13 +246,11 @@ for (const creds of [CREDS, { org: "ISPN", user: "director", pass: "docturn" }])
         const b = await page.evaluate(() => {
           const sels = [...document.querySelectorAll("main select")].map((x) => parseFloat(getComputedStyle(x).fontSize));
           const ban = document.querySelector("[data-testid=data-source-banner]");
-          if (!ban) return { sels, ban: null };
-          const tr = ban.children[1].getBoundingClientRect(); const btn = ban.querySelector("button");
-          const br = btn ? btn.getBoundingClientRect() : null;
-          return { sels, ban: { wrap: getComputedStyle(ban).flexWrap, textW: Math.round(tr.width), textBottom: Math.round(tr.bottom), btnTop: br && Math.round(br.top), btnW: br && Math.round(br.width) } };
+          return { sels, ban: !!ban, fhir: /Connect EHR|synced from Epic FHIR/.test((document.querySelector("main") || document.body).textContent || "") };
         });
         check(`${tag}: every board select (Assign… included) >= 16px`, b.sels.length > 0 && b.sels.every((f) => f >= 16), JSON.stringify(b.sels));
-        check(`${tag}: data-source banner wraps, text >= 200px wide, Connect EHR on its own row`, b.ban && b.ban.wrap === "wrap" && b.ban.textW >= 200 && (b.ban.btnTop == null || (b.ban.btnTop >= b.ban.textBottom && b.ban.btnW >= 300)), JSON.stringify(b.ban));
+        // There is no EHR census feed: no data-source bar, no "Connect EHR (FHIR)" (A.CON clinical #16).
+        check(`${tag}: no EHR/FHIR data-source bar`, !b.ban && !b.fhir, JSON.stringify(b));
       }
       await shot(page, `audit-${creds.user}-${id}`);
     }

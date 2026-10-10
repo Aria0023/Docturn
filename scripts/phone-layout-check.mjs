@@ -458,25 +458,30 @@ async function checkErDirectorHome(page) {
   await checkIntakeTriage(page, "ER director");
   const m = await page.evaluate(() => {
     const M = window.__m;
-    const tog = [...document.querySelectorAll("button[title='End shift'],button[title='Start shift']")];
-    const rm = [...document.querySelectorAll("button[title='Remove']")];
-    // the roster row is the nearest ancestor that holds the editable name
-    const rowOf = (el) => { let p = el.parentElement; while (p && !p.querySelector("span[title='Click to edit']")) p = p.parentElement; return p; };
+    // The roster is the server's ER physician accounts (A.CON clinical #2):
+    // each row has the shift select and the On/Off switch; accounts are
+    // added / removed in People, so there is no per-row Remove or rename.
+    const tog = [...document.querySelectorAll("[data-er-physician] button[aria-pressed]")];
+    const rowOf = (el) => el.closest("[data-er-physician]");
     const sels = tog.map((t) => rowOf(t) && rowOf(t).querySelector("select")).filter(Boolean);
-    const names = tog.map((t) => { const row = rowOf(t); const n = row && row.querySelector("span[title='Click to edit']"); return n ? M.rect(n.parentElement).width : null; });
+    const names = tog.map((t) => { const row = rowOf(t); const n = row && row.children[1]; return n ? M.rect(n).width : null; });
     const g = (els) => ({ n: els.length, allVisible: els.every((e) => M.fullyVisible(e)), minH: els.length ? Math.min(...els.map((e) => M.rect(e).height)) : null, first: els[0] ? M.rect(els[0]) : null });
     const divBtn = M.byText("button", /diversion$/)[0];
-    return { tog: g(tog), rm: g(rm), sel: g(sels), names, diversion: divBtn ? { vis: M.fullyVisible(divBtn), r: M.rect(divBtn) } : null };
+    const people = M.byText("button", /^Manage in People$/)[0];
+    return { tog: g(tog), sel: g(sels), names, removeButtons: document.querySelectorAll("[data-er-physician] button[title='Remove']").length,
+      people: people ? { vis: M.fullyVisible(people), h: M.rect(people).height } : null,
+      diversion: divBtn ? { vis: M.fullyVisible(divBtn), r: M.rect(divBtn), h: M.rect(divBtn).height } : null };
   });
-  rec("ER director roster: rows present (fixture)", m.tog.n > 0, `${m.tog.n} rows`);
+  rec("ER director roster: rows present (server's ER physicians)", m.tog.n > 0, `${m.tog.n} rows`);
   if (m.tog.n) {
     rec("ER director roster: shift select fully visible", m.sel.allVisible, rectStr(m.sel.first));
     rec("ER director roster: on/off toggle fully visible", m.tog.allVisible, rectStr(m.tog.first));
-    rec("ER director roster: remove button fully visible", m.rm.allVisible, rectStr(m.rm.first));
-    rec("ER director roster: controls tap height ≥ 44", m.sel.minH >= TAP && m.tog.minH >= TAP && m.rm.minH >= TAP, `select=${fmt(m.sel.minH)} toggle=${fmt(m.tog.minH)} remove=${fmt(m.rm.minH)}`);
+    rec("ER director roster: no per-row Remove (accounts are managed in People)", m.removeButtons === 0, `${m.removeButtons}`);
+    rec("ER director roster: controls tap height ≥ 44", m.sel.minH >= TAP && m.tog.minH >= TAP, `select=${fmt(m.sel.minH)} toggle=${fmt(m.tog.minH)}`);
     rec("ER director roster: name column ≥ 150px", m.names.every((w) => w != null && w >= 150), `widths=${m.names.map(fmt).join(",")}`);
   }
-  if (m.diversion) rec("ER director: diversion button fully visible", m.diversion.vis, rectStr(m.diversion.r));
+  rec("ER director roster: Manage in People fully visible, ≥ 44 tall", !!(m.people && m.people.vis && m.people.h >= TAP), JSON.stringify(m.people));
+  if (m.diversion) rec("ER director: diversion button fully visible, ≥ 44 tall", m.diversion.vis && m.diversion.h >= TAP, rectStr(m.diversion.r));
   await checkRoutedBoard(page, "ER director");
 }
 
@@ -817,7 +822,9 @@ async function checkLabelsInside(page, label) {
 const OPENERS = {
   // (Roles is read-only now — DocTurn's roles are fixed — so it opens nothing.)
   director: { dashboard: ["Add provider"], access: ["Add person"] },
-  er_director: { dashboard: ["Add"], access: ["Add person"] },
+  // (The ER roster's local "Add" form is gone — ER physician accounts are
+  // added in People, A.CON clinical #2 — so the dashboard opens nothing.)
+  er_director: { access: ["Add person"] },
   developer: { dashboard: ["Add user / provider"] },
 };
 async function sweepLabels(page, role, label) {

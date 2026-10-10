@@ -613,18 +613,20 @@ await demoLogin("director", "ISPN"); await flush(); await flush();
     "orderOk=" + orderOk + " reordered=" + reordered + " removed=" + removed + " readded=" + readded + " reset=" + resetOk);
 }
 
-// ER director patient board is modular: defaults to working tiles only, the
-// census/FHIR sections stay off, and a toggle persists.
+// ER director patient board is modular (a per-device layout preference): the
+// patient list is on by default — it is the server's board, there is no EHR
+// feed to wait for and no FHIR data-source bar (A.CON clinical #16) — and a
+// toggle persists.
 {
   const def = DT.boardModules("er_director");
   const dirDef = DT.boardModules("director");
-  rec("ER director board defaults: admissions/accepted on, census/FHIR off",
-    def.admissions && def.accepted && !def.census && !def.dataSource && dirDef.census,
+  rec("ER director board defaults: admissions/accepted/list on, no FHIR bar",
+    def.admissions && def.accepted && def.census && !("dataSource" in def) && dirDef.census && !("dataSource" in dirDef),
     "er_director=" + JSON.stringify(def));
-  DT.actions.setBoardModule("er_director", "census", true);
+  DT.actions.setBoardModule("er_director", "census", false);
   await flush();
-  rec("board module toggle persists", DT.boardModules("er_director").census === true);
-  DT.actions.setBoardModule("er_director", "census", false); await flush();
+  rec("board module toggle persists", DT.boardModules("er_director").census === false);
+  DT.actions.setBoardModule("er_director", "census", true); await flush();
 }
 
 // The schedule source is the SERVER's (GET /api/oncall/sources): no seeded or
