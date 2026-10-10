@@ -217,12 +217,16 @@ function Topbar({ title, subtitle, working, onToggleWorking, right, onBell, noti
             {working ? "On shift" : "Off shift"}
           </button>
         )}
+        {/* The bell only when the caller has a real notification feed to open
+            (the live app has none — A.CON developer #23). */}
+        {onBell && (
         <button type="button" onClick={onBell} title="Notifications" aria-label={notifCount > 0 ? "Notifications (" + notifCount + " unread)" : "Notifications"}
           onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
           style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="bell" size={18} color="var(--foreground)" />
           {notifCount > 0 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{notifCount}</span>}
         </button>
+        )}
         {onLock && (
           <button type="button" onClick={onLock} title="Lock app" aria-label="Lock app"
             onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}

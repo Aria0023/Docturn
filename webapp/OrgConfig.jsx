@@ -10,7 +10,11 @@
    - Platform → Security → "Sign out all" really ends every other session
      (POST /api/dev/sessions/revoke-all).
    - Integrations are server-backed (/api/integrations); Compliance shows the
-     server's audit trail, read-only.
+     server's audit trail, read-only and read fresh when the tab opens — the
+     platform org's (GET /api/audit) or the org's
+     (GET /api/dev/organizations/:id/audit) — with the trail's TRUE size from
+     the server (never the length of a 100-row page, A.CON developer #14) and
+     never a row made up in this browser (#12).
    Removed because the server has no such thing (A.CON org-admin #11–#16):
    "enterprise defaults" that orgs inherit (there is no inheritance — new orgs
    get fixed defaults and the auto-clean sweep its own 24 h), per-role
@@ -19,7 +23,8 @@
    real per-org switches are the Feature modules on the Organizations page and
    the retention setting), the routing-only-on-call / active-only switches the
    router never read, and "Clear logs" (audit trails are kept by the server
-   and must not be clearable). */
+   and must not be clearable), and the "Open incidents" tile (nothing records
+   security incidents — A.CON developer #13). */
 
 function OCToggle({ on, onChange, label }) {
   // 44×44 tap target around the 42×24 track.
@@ -64,25 +69,28 @@ function OCNumber({ value, onChange, suffix, label, placeholder, min, max }) {
 // (server/services/expiry.ts startAutoCleanLoop).
 const AUTOCLEAN_PLATFORM_DEFAULT_H = 24;
 
-function OrgConfig({ scope, org, audit = [], incidents = [] }) {
+function OrgConfig({ scope, org }) {
   const isEnt = scope === "*";
   const [tab, setTab] = React.useState(isEnt ? "security" : "rules");
-  const [liveAudit, setLiveAudit] = React.useState(null);
+  // { rows, count } from the server, null while loading, { error } on failure.
+  const [trail, setTrail] = React.useState(null);
   const [signingOut, setSigningOut] = React.useState(false);
   const st = useStore();
   const a = useActions();
   const mobile = useIsMobile();
-  // For a specific org, pull that tenant's REAL audit trail from the backend so
-  // compliance is genuinely individualized (not the developer's platform log).
+  // The server's trail, read when the Compliance tab opens: the platform org's
+  // (operator actions filed there) or this tenant's own.
+  const orgId = org && org.id != null ? org.id : null;
   React.useEffect(() => {
-    if (tab !== "compliance" || isEnt || !org || org.id == null) return;
+    if (tab !== "compliance" || !a.loadAuditTrail) return;
+    if (!isEnt && orgId == null) return;
     let alive = true;
-    fetch("/api/dev/organizations/" + org.id + "/audit", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => { if (alive) setLiveAudit(Array.isArray(d.audit) ? d.audit : []); })
-      .catch(() => { if (alive) setLiveAudit([]); });
+    setTrail(null);
+    a.loadAuditTrail(isEnt ? null : orgId)
+      .then((d) => { if (alive) setTrail(d); })
+      .catch(() => { if (alive) setTrail({ error: true }); });
     return () => { alive = false; };
-  }, [tab, scope, org && org.id]);
+  }, [tab, scope, orgId]);
 
   const cfg = (st.orgConfigs || {})[scope] || null;
   const rules = (cfg && cfg.rules) || null;
@@ -93,15 +101,22 @@ function OrgConfig({ scope, org, audit = [], incidents = [] }) {
     ? "Operations that span every organization. Each organization's own rules are set on its own page (Organization config); per-organization feature switches are under Feature modules on the Organizations page."
     : "This organization's own settings, as the server holds them. Changes apply to this organization only.";
 
-  const scopedAudit = (!isEnt && liveAudit)
-    ? liveAudit.map((r) => ({
-        id: r.id, at: new Date(r.createdAt || Date.now()).getTime(),
-        actor: r.userId ? "User " + r.userId : "System", role: "",
-        action: r.action || "", resource: r.resourceType ? (r.resourceType + (r.resourceId != null ? " #" + r.resourceId : "")) : "",
-        org: scope, risk: r.riskLevel || "low",
-      }))
-    : (isEnt ? audit : (audit || []).filter((r) => !r.org || r.org === scope));
-  const scopedInc = isEnt ? incidents : (incidents || []).filter((r) => !r.org || r.org === scope);
+  // Actor names from the developer's cross-tenant user list when known.
+  const nameOf = {};
+  (st.devUsers || []).forEach((u) => { nameOf[u.id] = u; });
+  const trailOrg = isEnt ? ((st.platformOrg && st.platformOrg.code) || "Platform") : scope;
+  const rows = trail && trail.rows
+    ? trail.rows.map((r) => {
+        const u = r.userId != null ? nameOf[r.userId] : null;
+        return {
+          id: r.id, at: new Date(r.createdAt || 0).getTime(),
+          actor: u ? u.name : (r.userId ? "User " + r.userId : "System"), role: u ? (u.role || "") : "",
+          action: r.action || "", resource: r.resourceType ? (r.resourceType + (r.resourceId != null ? " #" + r.resourceId : "")) : "",
+          org: trailOrg, risk: r.riskLevel || "low",
+        };
+      })
+    : [];
+  const count = trail && typeof trail.count === "number" ? trail.count : null;
 
   const TABS = isEnt
     ? [["security", "Security", "lock"], ["integrations", "Integrations", "plug"], ["compliance", "Compliance", "shield-check"]]
@@ -187,25 +202,34 @@ function OrgConfig({ scope, org, audit = [], incidents = [] }) {
 
       {tab === "compliance" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div data-keep-cols="2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <StatTile label="Audit events" value={scopedAudit.length} icon="scroll-text" tint="slate" />
-            <StatTile label="Open incidents" value={scopedInc.filter((i) => !i.resolved).length} icon="alert-triangle" tint="amber" />
+          <div style={{ display: "flex" }}>
+            <StatTile label="Audit events" value={count == null ? "—" : count} icon="scroll-text" tint="slate"
+              sub={count == null ? (trail && trail.error ? "The server didn't answer." : "Loading…") : "All recorded " + (isEnt ? "in the platform organization" : "for this organization") + ", kept by the server"} />
           </div>
           <div>
             <SectionTitle>{isEnt ? "Platform audit trail" : "Audit trail · " + title}</SectionTitle>
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: -6, marginBottom: 10, lineHeight: 1.45 }}>
+              {isEnt
+                ? "Operator actions filed in the platform organization (" + trailOrg + "): cross-tenant lists, sign-ins, sign-out-all, tenant deletions. An action on one organization is filed in that organization's own trail (its Organization config → Compliance)."
+                : "Everything recorded for this organization, including every developer read and change."}
+            </div>
             <Card style={{ padding: 0, overflow: "hidden" }}>
-              {scopedAudit.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No audit activity recorded{isEnt ? "" : " for this organization"} yet.</div>}
-              {scopedAudit.slice(0, 40).map((r, i) => (
-                <div key={r.id || i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              {!trail && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Loading the server's audit trail…</div>}
+              {trail && trail.error && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--destructive)" }}>The server didn't return the audit trail. Open the tab again to retry.</div>}
+              {trail && !trail.error && rows.length === 0 && <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No audit activity recorded{isEnt ? "" : " for this organization"} yet.</div>}
+              {rows.slice(0, 40).map((r, i) => (
+                <div key={r.id || i} data-audit-id={r.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
                   <span style={{ width: 8, height: 8, borderRadius: 99, background: r.risk === "high" ? "var(--status-rejected)" : r.risk === "medium" ? "var(--status-pending)" : "var(--status-neutral)", flex: "none" }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, overflowWrap: "anywhere" }}>{String(r.action || "").replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())}{r.resource ? " — " + r.resource : ""}</div>
-                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{r.actor || "System"}{r.role ? " · " + r.role : ""}{r.org ? " · " + r.org : ""}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{r.actor || "System"}{r.role ? " · " + r.role : ""}{r.at ? " · " + (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(r.at) : new Date(r.at).toLocaleString()) : ""}</div>
                   </div>
                 </div>
               ))}
             </Card>
-            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, lineHeight: 1.45 }}>The audit trail is kept by the server and can't be cleared from here.</div>
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, lineHeight: 1.45 }}>
+              {count != null && rows.length ? "Showing the latest " + Math.min(40, rows.length) + " of " + count + ". " : ""}The audit trail is kept by the server and can't be cleared from here.
+            </div>
           </div>
         </div>
       )}

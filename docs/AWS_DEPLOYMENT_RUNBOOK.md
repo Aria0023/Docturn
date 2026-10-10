@@ -401,6 +401,13 @@ in §7:
    their next request (HIPAA workforce termination); *Restore access* reverses
    it; *Reset two-factor* clears a locked-out clinician's authenticator. Every
    one of these is audited at high risk.
+   **Another operator** is added as account type *Developer*. There is no
+   developer limited to one organization: every developer account can read
+   and change every tenant (settings, people, audit and PHI-access trail, and
+   any user's portal), so the server creates it in `DOCTURN` only — it refuses
+   a developer inside a hospital organization (`developer_platform_org_only`)
+   and a clinical account inside `DOCTURN`. Creating one is audited at high
+   risk; it gets a one-time password like everyone else.
 5. In Developer console → **Modules**, turn **`security.mfaRequired` ON** for
    the org, so directors/ER directors must enrol MFA before they get privileged
    access. Leave `messaging.voice`, `messaging.attachments` etc. as you like —

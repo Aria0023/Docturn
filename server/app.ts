@@ -30,6 +30,7 @@ import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
 import { registerNumericParams } from "./params.js";
 import { createSessionStore } from "./session-store.js";
+import { requestMetricsMiddleware } from "./services/request-metrics.js";
 import { mountWebapp, type WebappOptions } from "./webapp-static.js";
 import { toSafeUser } from "@shared/schema";
 
@@ -70,6 +71,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     app.set("trust proxy", opts.trustProxy);
   }
 
+  // Time every /api request (the developer console's measured API latency —
+  // server/services/request-metrics.ts). First, so the time includes body
+  // parsing, the session lookup and every gate.
+  app.use(requestMetricsMiddleware());
   // Security response headers (helmet CSP/HSTS/… + Permissions-Policy). The
   // instance lives in server/config.ts so the compliance monitor can probe the
   // SAME middleware for the headers it emits.

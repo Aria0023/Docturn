@@ -25,12 +25,15 @@ export function registerComplianceRoutes(app: Express) {
     requireRole(...COMPLIANCE_ROLES),
     async (req, res) => {
       const me = currentUser(req);
-      const [audit, phi, phiCount] = await Promise.all([
+      // The latest page of each trail plus each trail's TRUE size — a count
+      // tile must never show the page length (A.CON developer #12/#14).
+      const [audit, phi, phiCount, auditCount] = await Promise.all([
         storage().listAuditLogs(me.organizationId, 100),
         storage().listPhiAccess(me.organizationId, 50),
         storage().countPhiAccess(me.organizationId),
+        storage().countAuditLogs(me.organizationId),
       ]);
-      res.json({ audit, phiAccess: phi, phiAccessCount: phiCount });
+      res.json({ audit, phiAccess: phi, phiAccessCount: phiCount, auditCount });
     },
   );
 

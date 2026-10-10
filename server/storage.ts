@@ -326,6 +326,8 @@ export interface IStorage {
   listCoveringCopies(orgId: number, originalMessageId: number): Promise<Message[]>;
   listConsultsForOrg(orgId: number): Promise<PatientConsult[]>;
   countMessagesSince(orgId: number, since: Date): Promise<number>;
+  /** Assignment rows created in the org at or after `since` (developer console). */
+  countAssignmentsSince(orgId: number, since: Date): Promise<number>;
   listStatAckLatencies(orgId: number): Promise<number[]>;
   /**
    * One bounded page of a thread, ascending by id (A.CON-SHO-65). Without a
@@ -1333,6 +1335,14 @@ export class DatabaseStorage implements IStorage {
         ),
       );
     return rows.length;
+  }
+  /** Assignment rows created in the org at or after `since` (developer console). */
+  async countAssignmentsSince(orgId: number, since: Date) {
+    const [row] = await this.db
+      .select({ n: sql<number>`count(*)` })
+      .from(assignments)
+      .where(and(eq(assignments.organizationId, orgId), gte(assignments.createdAt, since)));
+    return Number(row?.n ?? 0);
   }
   /** Ack latencies (ms) for acknowledged STAT deliveries, excluding senders. */
   async listStatAckLatencies(orgId: number) {

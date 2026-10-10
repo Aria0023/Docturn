@@ -552,9 +552,10 @@ await demoLogin("developer", "ISPN"); await flush(); await flush();
 // ER/Hospitalist directors can add midlevels (PA/NP) as credentialed consultants.
 await demoLogin("developer", "ISPN"); await flush();
 {
-  await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
-  // addUser is fire-and-forget (POST, then a devUsers re-hydrate); creating the
-  // account hashes its temporary password with scrypt, so poll (≤ 3 s).
+  // The form sends the typed username (A.CON developer #21) — unique per run.
+  await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", username: "riley.np." + Date.now().toString(36), specialty: "Hospital Medicine", shift: "day" });
+  // addUser resolves once the server answered; the devUsers re-hydrate follows
+  // (creating the account hashes its temporary password with scrypt), so poll (≤ 3 s).
   const findNp = () => (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
   for (let i = 0; i < 40 && !findNp(); i++) await flush();
   const np = findNp();

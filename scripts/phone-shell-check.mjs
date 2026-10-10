@@ -173,7 +173,9 @@ for (const [w, h, inset] of [[375, 667, 34], [390, 844, 34], [430, 932, 34], [39
       check(`${tag}: icons and labels inside the bar`, m.tabs.every((t) => t.iconTop >= m.nav.top && t.labelBottom <= m.nav.bottom - inset + 1), `icon tops ${m.tabs.map((t) => t.iconTop && t.iconTop.toFixed(1)).join(",")} vs nav top ${m.nav.top}`);
       check(`${tag}: tab labels >= 12px`, m.tabs.every((t) => t.labelFs >= 12), m.tabs.map((t) => t.labelFs).join(","));
       check(`${tag}: main reserves exactly the bar height`, Math.abs(m.mainPB - m.nav.height) <= 1 && Math.abs(m.mainBottom - m.vh) <= 1, `main padding-bottom ${m.mainPB}, nav ${m.nav.height.toFixed(1)}, main bottom ${m.mainBottom.toFixed(1)}/${m.vh}`);
-      check(`${tag}: header bell/lock are 44x44`, m.headerBtns.length === 2 && m.headerBtns.every(([bw, bh]) => bw >= 44 && bh >= 44), JSON.stringify(m.headerBtns));
+      // The header holds only Lock: the notification bell is gone (the server
+      // has no notification feed — A.CON developer #23).
+      check(`${tag}: header lock is 44x44 (no bell)`, m.headerBtns.length === 1 && m.headerBtns.every(([bw, bh]) => bw >= 44 && bh >= 44), JSON.stringify(m.headerBtns));
     }
     await shot(page, `tabbar-${w}x${h}-inset${inset}`);
     // Thread composer: start a conversation with the first directory colleague

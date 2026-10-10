@@ -6,6 +6,7 @@ import {
   beginImpersonation,
   clearImpersonation,
   hashPassword,
+  isPlatformOrg,
   issueTemporaryPassword,
   mfaEnrollmentRequired,
   resolveImpersonator,
@@ -18,7 +19,16 @@ import { externalExtractorActive, getExtractor } from "../services/ai-intake.js"
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
 import { parseId } from "../params.js";
 import { broadcastRotationChange } from "../services/notifications.js";
+import {
+  apiLatencySummary,
+  assessHealth,
+  PROCESS_STARTED_AT,
+  type PoolStats,
+} from "../services/request-metrics.js";
+import { getDb, getHandle } from "../db.js";
+import { liveSocketStats } from "../ws/index.js";
 import { storage } from "../storage.js";
+import { sql } from "drizzle-orm";
 
 /**
  * The answer to a session swap (impersonate / manage-org / stop): the new
@@ -139,10 +149,14 @@ export function registerDevRoutes(app: Express) {
         riskLevel: "low",
       });
       const orgs = await storage().listOrganizations();
+      // Assignments CREATED in the last 24 h (the dashboard's
+      // "Assignments / 24h" tile sums these) — counted, never assumed.
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const withCounts = await Promise.all(
         orgs.map(async (o) => ({
           ...o,
           userCount: await storage().countOrgUsers(o.id),
+          assignments24h: await storage().countAssignmentsSince(o.id, since),
         })),
       );
       res.json(withCounts);
@@ -348,8 +362,9 @@ export function registerDevRoutes(app: Express) {
         const v = await storage().getOrgSetting(id, k);
         settings[k] = v === undefined ? null : v;
       }
-      const [audit, phi] = await Promise.all([
-        storage().listAuditLogs(id, 100),
+      // The TRUE trail size (a 100-row page length is not a count).
+      const [auditCount, phi] = await Promise.all([
+        storage().countAuditLogs(id),
         storage().countPhiAccess(id),
       ]);
       res.json({
@@ -362,7 +377,7 @@ export function registerDevRoutes(app: Express) {
           roundRobinShiftTypes: org.roundRobinShiftTypes,
         },
         settings,
-        compliance: { auditCount: audit.length, phiCount: phi },
+        compliance: { auditCount, phiCount: phi },
       });
     },
   );
@@ -439,11 +454,15 @@ export function registerDevRoutes(app: Express) {
         details: { orgId: id },
         riskLevel: "medium",
       });
-      const [audit, phi] = await Promise.all([
+      // The latest page of each trail, plus each trail's TRUE size (counted
+      // after this read's own row was written, so it includes it).
+      const [audit, phi, auditCount, phiAccessCount] = await Promise.all([
         storage().listAuditLogs(id, 100),
         storage().listPhiAccess(id, 50),
+        storage().countAuditLogs(id),
+        storage().countPhiAccess(id),
       ]);
-      res.json({ org: { code: org.code }, audit, phiAccess: phi });
+      res.json({ org: { code: org.code }, audit, phiAccess: phi, auditCount, phiAccessCount });
     },
   );
 
@@ -568,6 +587,18 @@ export function registerDevRoutes(app: Express) {
       try {
         const org = await storage().getOrganization(d.organizationId);
         if (!org) return res.status(404).json({ error: "organization_not_found" });
+        // There is no single-tenant ("local") developer: every developer
+        // passes requireRole("developer") on every /api/dev route, with no org
+        // check — cross-tenant root. So a developer account lives in the
+        // platform org, never inside a tenant where it would look scoped to
+        // it; and the platform org holds operators only (A.CON developer #1).
+        const platform = isPlatformOrg(org);
+        if (d.role === "developer" && !platform) {
+          return res.status(400).json({ error: "developer_platform_org_only" });
+        }
+        if (d.role !== "developer" && platform) {
+          return res.status(400).json({ error: "platform_org_operators_only" });
+        }
 
         // Username must be unique within the org — return a clean 409 instead of
         // letting the DB unique constraint throw (which would otherwise hang the
@@ -575,7 +606,8 @@ export function registerDevRoutes(app: Express) {
         const dup = await storage().getUserByUsername(d.organizationId, d.username);
         if (dup) return res.status(409).json({ error: "username_taken" });
 
-        // Audit the cross-tenant write before performing it.
+        // Audit the cross-tenant write before performing it. A new developer
+        // is a new cross-tenant root account: high risk.
         await appendAudit({
           organizationId: d.organizationId,
           userId: me.id,
@@ -583,7 +615,7 @@ export function registerDevRoutes(app: Express) {
           resourceType: "user",
           resourceId: null,
           details: { role: d.role, displayName: d.displayName },
-          riskLevel: "medium",
+          riskLevel: d.role === "developer" ? "high" : "medium",
         });
 
         // One-time credential: crypto-random, returned ONCE in this response for
@@ -749,6 +781,63 @@ export function registerDevRoutes(app: Express) {
         if (err) return next(err);
         beginImpersonation(req.session, me); // /api/dev/impersonate/stop returns here (bound to me's password generation)
         res.json({ ...body, orgCode: org.code, orgName: org.name });
+      });
+    },
+  );
+
+  // Developer console → System health and the instance-uptime tile (A.CON
+  // developer #15/#16): MEASURED numbers for THIS server instance — the
+  // database round trip (and pool use on real Postgres), percentiles of the
+  // real /api requests of the last 5 minutes, live authenticated WebSocket
+  // connections, process uptime. Nothing here is a constant; what cannot be
+  // measured (a socket count with no hub, a pool on embedded PGlite) is null.
+  // Carries no tenant data; filed in the operator's trail like every
+  // developer read (ids only — no details).
+  app.get(
+    "/api/dev/platform-health",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.platform_health",
+        resourceType: "platform",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
+      const h = getHandle();
+      let dbOk = true;
+      const t0 = process.hrtime.bigint();
+      try {
+        await getDb().execute(sql`SELECT 1`);
+      } catch {
+        dbOk = false;
+      }
+      const roundTripMs = Math.round((Number(process.hrtime.bigint() - t0) / 1e6) * 10) / 10;
+      const pool: PoolStats | null = h.pool
+        ? {
+            total: h.pool.totalCount,
+            idle: h.pool.idleCount,
+            waiting: h.pool.waitingCount,
+            max: Number(h.pool.options.max ?? 10),
+          }
+        : null;
+      const api = apiLatencySummary();
+      const { status, issues } = assessHealth({ dbOk, api, pool });
+      res.json({
+        status,
+        issues,
+        checkedAt: new Date().toISOString(),
+        instance: {
+          startedAt: PROCESS_STARTED_AT.toISOString(),
+          uptimeSec: Math.floor(process.uptime()),
+        },
+        database: { ok: dbOk, roundTripMs: dbOk ? roundTripMs : null, storage: h.storage, pool },
+        api,
+        websocket: liveSocketStats(),
       });
     },
   );

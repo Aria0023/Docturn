@@ -379,12 +379,34 @@ export class WsHub implements WsFanout {
     }
   }
 
+  /**
+   * Live, authenticated sockets on THIS instance right now, and how many
+   * distinct users hold them (developer console → System health).
+   */
+  stats(): { connections: number; users: number } {
+    let connections = 0;
+    for (const set of this.clients.values()) connections += set.size;
+    return { connections, users: this.clients.size };
+  }
+
   close() {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.unsubscribeRevoker();
     this.unsubscribeLock();
     this.wss.close();
+    if (liveHub === this) liveHub = null;
   }
+}
+
+/** The hub serving this process (null until attached, and after close). */
+let liveHub: WsHub | null = null;
+
+/**
+ * This instance's live socket count, or null when no hub is attached (e.g. a
+ * process serving HTTP only) — never a made-up number.
+ */
+export function liveSocketStats(): { connections: number; users: number } | null {
+  return liveHub ? liveHub.stats() : null;
 }
 
 /** Attach a WS hub to the HTTP server and route notifications through it. */
@@ -394,5 +416,6 @@ export function attachWebSocket(
 ): WsHub {
   const hub = new WsHub(server, sessionMiddleware);
   configureNotifications({ ws: hub });
+  liveHub = hub;
   return hub;
 }

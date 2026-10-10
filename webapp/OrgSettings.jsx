@@ -65,13 +65,14 @@ function OrgSettings() {
   const sessionCode = (st.session && st.session.org) || "";
   // Org codes are case-insensitive (the sign-in form keeps what was typed).
   const ident = st.orgIdentity && String(st.orgIdentity.code).toUpperCase() === sessionCode.toUpperCase() ? st.orgIdentity : null;
-  const org = isDev ? devOrg : { code: ident ? ident.code : sessionCode, name: ident ? ident.name : "", timezone: ident ? ident.timezone : "", active: true };
+  // No active/suspended state: the server has no tenant suspension (A.CON developer #19).
+  const org = (isDev ? devOrg : null) || { code: ident ? ident.code : sessionCode, name: ident ? ident.name : "", timezone: ident ? ident.timezone : "" };
 
   return (
     <PageWrap>
       <SettingsTabs />
       <div data-org-header={org.code} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
-        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: org.active ? "#DBEAFE" : "var(--status-neutral-bg)", color: org.active ? "var(--primary-ink, #1D4ED8)" : "var(--status-neutral)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(org.code || "").slice(0, 2)}</span>
+        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(org.code || "").slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
           {isDev ? (
             <React.Fragment>
@@ -91,7 +92,6 @@ function OrgSettings() {
             </React.Fragment>
           )}
         </div>
-        {!org.active && <Badge status="offline">Suspended</Badge>}
       </div>
 
       <ScheduleSync org={org} />

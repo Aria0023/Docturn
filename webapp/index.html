@@ -408,33 +408,10 @@ function RoleSwitcher({ role, onChange }) {
   );
 }
 
-function NotificationsPanel({ open, items, onClose }) {
-  if (!open) return null;
-  return (
-    <React.Fragment>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "fixed", top: "calc(58px + var(--sai-top))", right: "calc(18px + var(--sai-right))", width: 344, maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))", zIndex: 41, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
-        <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>Notifications</span>
-          <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{items.length} recent</span>
-        </div>
-        <div style={{ maxHeight: 400, overflowY: "auto" }}>
-          {items.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>You're all caught up.</div>}
-          {items.map((n, i) => (
-            <div key={n.id} style={{ display: "flex", gap: 11, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-              <span style={{ width: 32, height: 32, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={n.icon} size={16} color="var(--primary)" /></span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{n.title}</div>
-                <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{n.body}</div>
-                <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 3 }}>{dtFmt.ago(n.at)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </React.Fragment>
-  );
-}
+/* No notification bell (A.CON developer #23): the server keeps no notification
+   feed, so the kit's bell could only ever show its demo items or a false "all
+   caught up". Real alerts arrive as push notifications, the broadcast banner,
+   unread counts on Messages and the live dashboards. */
 
 /* A developer inside an impersonated / managed-org portal. The Return button is
    a server-side session swap (POST /api/dev/impersonate/stop), exempt from the
@@ -667,8 +644,8 @@ function App() {
   else if (nav === "access") screen = <AccessPeople domainRoles={dirDomain.roles} />;
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
     appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave} />;
-  else if (nav === "enterprise") screen = <OrgConfig scope="*" audit={st.audit} incidents={st.incidents} />;
-  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} audit={st.audit} incidents={st.incidents} />;
+  else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
+  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
@@ -685,7 +662,7 @@ function App() {
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
-  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
+  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
   // DirectorDashboard owns its own panel customization internally (stat strip
   // pinned on top, panels below as CustomizableDashboard widgets), so it is
   // mounted directly. The former "My hospitalist work" / "Admissions log"
@@ -727,10 +704,6 @@ function App() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</h1>
           </div>
-          <button type="button" onClick={() => a.toggleNotif()} title="Notifications" aria-label={DT.unreadNotifs() > 0 ? "Notifications (" + DT.unreadNotifs() + " unread)" : "Notifications"} style={{ position: "relative", width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-            <Icon name="bell" size={20} />
-            {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -6, right: -6, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
-          </button>
           <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
@@ -779,7 +752,6 @@ function App() {
             </div>
           </React.Fragment>
         )}
-        <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
         <Toast toast={st.__toast} />
       <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
       </div>
@@ -798,8 +770,6 @@ function App() {
         <Topbar title={topTitle} subtitle={topSub}
           working={role === "hospitalist" ? st.ui.onShift : undefined}
           onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
-          notifCount={DT.unreadNotifs()}
-          onBell={() => a.toggleNotif()}
           onLock={lockByHand}
           right={st.syntheticData !== false ? <React.Fragment>
             <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
@@ -814,7 +784,6 @@ function App() {
         <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       </div>
-      <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
       <Toast toast={st.__toast} />
       <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
     </div>

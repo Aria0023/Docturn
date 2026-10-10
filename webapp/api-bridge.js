@@ -16,6 +16,18 @@
   window.DT_LIVE = true; // disables the demo admit/auto-reroute generators
 
   var DT = window.DT;
+  // store.js seeded its first state before this file set DT_LIVE: drop the
+  // kit's demo tenants, demo staff and demo notifications from it now — before
+  // the first paint — so a live deployment never shows them, not even for the
+  // moment before the server answers (A.CON developer #23/#24). Later seeds
+  // (sign-out resets) already see DT_LIVE and start empty.
+  DT.set(function (s) {
+    s.orgs = []; s.orgsLoaded = false; s.platformOrg = null;
+    s.devUsers = []; s.devUsersLoaded = false;
+    s.notifications = []; s.platformHealth = null; s.auditCount = null;
+    if (s.selectedOrg === "MAYO") s.selectedOrg = null; // the seed's demo tenant, never a real one
+    return s;
+  });
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
   // True only once GET /api/config has answered syntheticData:true in THIS page
@@ -570,6 +582,8 @@
           if (wantsAudit && auditData) {
             var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
             s.audit = mapAudit(auditData.audit, usersById, orgCode);
+            // The trail's true size (the rows above are its latest page).
+            s.auditCount = typeof auditData.auditCount === "number" ? auditData.auditCount : null;
             s.phiLog = mapPhi(auditData.phiAccess, usersById);
             auditLoaded = true;
           }
@@ -1438,20 +1452,28 @@
     } catch (e) { scheduleReconnect(); /* WS unavailable now — retry with backoff */ }
   }
 
-  // Developer: hydrate real organizations into the kit's org shape.
+  // Developer: hydrate real organizations into the kit's org shape. Every
+  // number is the server's: users = its user count, assignments = the
+  // assignments CREATED in the last 24 h (A.CON developer #18). There is no
+  // tenant active/suspended state to show (#19).
   function hydrateOrgs() {
     return get("/api/dev/organizations").then(function (orgs) {
+      var platform = (orgs || []).find(function (o) { return String(o.code).toUpperCase() === PLATFORM_ORG; }) || null;
       var tenants = (orgs || []).filter(function (o) {
         return String(o.code).toUpperCase() !== PLATFORM_ORG; // platform org isn't a tenant
       }).map(function (o) {
         return {
           id: o.id, code: o.code, name: o.name,
           city: o.city, state: o.state, timezone: o.timezone,
-          users: o.userCount || 0, assignments: 0, active: true,
+          users: o.userCount || 0,
+          assignments: typeof o.assignments24h === "number" ? o.assignments24h : null,
         };
       });
       DT.set(function (s) {
         s.orgs = tenants;
+        s.orgsLoaded = true;
+        // Where developer accounts are created (they are platform-wide).
+        s.platformOrg = platform ? { id: platform.id, code: platform.code, name: platform.name } : null;
         if (s.orgs.length && !s.orgs.some(function (o) { return o.code === s.selectedOrg; })) {
           s.selectedOrg = s.orgs[0].code;
         }
@@ -1482,7 +1504,10 @@
           return s;
         });
       });
-    }).catch(function () {});
+    }).catch(function () {
+      // Say so instead of showing an empty platform as if it were real.
+      DT.set(function (s) { if (s.orgsLoaded !== true) s.orgsLoaded = "error"; return s; });
+    });
   }
   function orgIdForCode(code) {
     var o = (DT.getState().orgs || []).find(function (x) { return x.code === code; });
@@ -3438,13 +3463,18 @@
     if (role !== "developer") return DT.actions.loadAccounts();
     return get("/api/dev/users").then(function (users) {
       DT.set(function (s) {
+        // Every developer account is platform-wide (cross-tenant root) — the
+        // server has no single-organization developer (A.CON developer #1).
         s.devUsers = (users || []).map(function (u) {
           return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
-            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword, scope: u.role === "developer" ? "root" : "local" };
+            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword };
         });
+        s.devUsersLoaded = true;
         return s;
       });
-    }).catch(function () {});
+    }).catch(function () {
+      DT.set(function (s) { if (s.devUsersLoaded !== true) s.devUsersLoaded = "error"; return s; });
+    });
   }
   // Directory → People / Roles (director, ER director): the people of the
   // SESSION's org as the server lists them (GET /api/accounts) — never the
@@ -3536,26 +3566,56 @@
   };
   var SHIFT_MAP = { rounding: "day", swing: "swing", nocturnist: "night", day: "day", night: "night" };
 
-  // developer — cross-tenant user provisioning
+  // developer — cross-tenant user provisioning (POST /api/dev/users). What is
+  // sent is exactly what the form shows: the typed username (no e-mail — the
+  // server stores none, A.CON developer #21). A developer account is
+  // platform-wide, so it is created in the platform org — there is no
+  // "local" developer (#1). Resolves true only once the server created it.
+  var ADD_USER_WHY = {
+    developer_platform_org_only: "Developer accounts are platform-wide; they are created in the platform organization.",
+    platform_org_operators_only: "Clinical accounts belong to a hospital organization, not the platform.",
+    organization_not_found: "That organization no longer exists.",
+    forbidden: "Only the DocTurn operator can create accounts here.",
+  };
+  function addUserRefused(title, msg) {
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+    return false;
+  }
   DT.actions.addUser = function (form) {
-    var org = (DT.getState().orgs || []).find(function (o) { return o.code === form.org; });
-    if (!org) { DT.set(function (s) { s.__toast = { tone: "rejected", title: "Pick an organization", msg: "Choose a tenant first." }; return s; }); return; }
-    var uname = (form.email || form.name || "user").toLowerCase().split("@")[0].replace(/[^a-z0-9.]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 24) || ("u" + Date.now());
-    api("POST", "/api/dev/users", {
-      organizationId: org.id,
-      role: form.role,
-      displayName: form.name,
-      username: uname,
-      specialty: form.specialty || undefined,
-      credential: form.credential || undefined,
-      patientCap: form.cap ? parseInt(form.cap, 10) : undefined,
-      shiftType: SHIFT_MAP[form.shift] || "day",
-    }).then(function (u) {
+    var st = DT.getState();
+    var role = form && form.role;
+    var isDev = role === "developer";
+    var name = String((form && form.name) || "").trim();
+    var username = String((form && form.username) || "").trim().toLowerCase();
+    var org = isDev ? st.platformOrg : (st.orgs || []).find(function (o) { return o.code === form.org; });
+    if (!org) return Promise.resolve(addUserRefused(isDev ? "Platform not loaded" : "Pick an organization", isDev ? "The organization list hasn't loaded yet — try again in a moment." : "Choose a tenant first."));
+    if (!name || !/^\S{3,}$/.test(username)) return Promise.resolve(addUserRefused("Check the form", "Enter a full name and a username of at least 3 characters, without spaces."));
+    var body = { organizationId: org.id, role: role, displayName: name, username: username };
+    if (role === "hospitalist") {
+      var cap = String(form.cap == null ? "" : form.cap).trim();
+      if (cap) {
+        var n = Number(cap);
+        if (!(Number.isInteger(n) && n >= 1 && n <= 50)) return Promise.resolve(addUserRefused("Check the form", "Patient cap must be a whole number from 1 to 50."));
+        body.patientCap = n;
+      }
+      body.specialty = String(form.specialty || "").trim() || undefined;
+      body.shiftType = SHIFT_MAP[form.shift] || "day";
+      // A PA / NP is a credentialed hospitalist account.
+      if (form.credential) body.credential = form.credential;
+    }
+    var where = isDev ? "the platform" : org.code;
+    return api("POST", "/api/dev/users", body).then(function (u) {
       hydrateDevUsers(); hydrateOrgs();
-      revealCredential({ title: "User created in " + form.org, name: form.name, username: (u && u.username) || uname, temporaryPassword: u && u.temporaryPassword });
+      revealCredential({ title: isDev ? "Developer created (all organizations)" : "User created in " + org.code, name: name, username: (u && u.username) || username, temporaryPassword: u && u.temporaryPassword });
+      return true;
     }).catch(function (e) {
-      var msg = String(e && e.message) === "username_taken" ? "That username already exists in " + form.org + "." : "Check the form and try again.";
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create user", msg: msg }; return s; });
+      var m = String((e && e.message) || "");
+      var msg = isNetworkError(e) ? "No connection — no account was created."
+        : m === "username_taken" ? "That username is already taken in " + where + "."
+        : m === "validation_error" ? "Enter a full name and a username of at least 3 characters."
+        : e && e.status === 403 ? ADD_USER_WHY.forbidden
+        : (ADD_USER_WHY[m] || "The server didn't create the account. Try again.");
+      return addUserRefused("Could not create " + (name || "user"), msg);
     });
   };
   // ---- account lifecycle (director / ER director / developer) --------------
@@ -3709,6 +3769,29 @@
       });
   };
 
+  // Developer console → System health + the instance-uptime tile: the
+  // server's MEASURED numbers for the instance that answered (A.CON
+  // developer #15/#16). Nothing is shown until it answers; a failure says so.
+  DT.actions.loadPlatformHealth = function () {
+    return get("/api/dev/platform-health").then(function (h) {
+      DT.set(function (s) { s.platformHealth = Object.assign({}, h, { receivedAt: Date.now() }); return s; });
+      return h;
+    }).catch(function (e) {
+      DT.set(function (s) { s.platformHealth = { error: isNetworkError(e) ? "No connection to the server." : "The server didn't return its health." }; return s; });
+      return null;
+    });
+  };
+  // Developer console → Compliance: the server's trail, read fresh each time
+  // the tab opens — the platform org's (GET /api/audit) or one tenant's
+  // (GET /api/dev/organizations/:id/audit) — with its TRUE size, never a page
+  // length and never a locally made-up row (A.CON developer #12/#14).
+  DT.actions.loadAuditTrail = function (orgId) {
+    var path = orgId == null ? "/api/audit" : "/api/dev/organizations/" + orgId + "/audit";
+    return get(path).then(function (d) {
+      return { rows: Array.isArray(d && d.audit) ? d.audit : [], count: typeof (d && d.auditCount) === "number" ? d.auditCount : null };
+    });
+  };
+
   DT.actions.runDiagnostics = function () {
     api("GET", "/api/dev/ai-diagnostics").then(function (d) {
       DT.set(function (s) {
@@ -3725,15 +3808,20 @@
   };
 
   // developer — organization CRUD
+  // Sends exactly what the modal shows: name, code, time zone, and a city /
+  // state only when the hospital lookup supplied them (A.CON developer #22).
+  // Resolves true only once the server created the tenant.
   DT.actions.addTenant = function (form) {
-    api("POST", "/api/dev/organizations", {
+    return api("POST", "/api/dev/organizations", {
       name: form.name, code: form.code || undefined,
-      city: form.city, state: form.state, timezone: form.timezone,
+      city: form.city || undefined, state: form.state || undefined, timezone: form.timezone,
     }).then(function () {
       hydrateOrgs();
       DT.set(function (s) { s.__toast = { tone: "accepted", title: "Organization created", msg: form.name + " provisioned." }; return s; });
+      return true;
     }).catch(function (e) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create", msg: String(e.message) === "code_taken" ? "That code is already in use." : "Create failed." }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not create", msg: isNetworkError(e) ? "No connection — nothing was created." : String(e.message) === "code_taken" ? "That code is already in use." : "Create failed." }; return s; });
+      return false;
     });
   };
   // Persist org settings edits (name/code/timezone/city/state) from OrgSettings.

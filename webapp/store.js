@@ -19,6 +19,13 @@
 
   var KEY = "docturn:store:v6";
   var now = function () { return Date.now(); };
+  // A live deployment: api-bridge.js (loaded right after this file) sets
+  // window.DT_LIVE and every slice below that the server owns comes from the
+  // server. The kit's demo tenants, demo staff and demo notifications are
+  // then never seeded — not even for the first paint before the server
+  // answers (A.CON developer #23/#24). The bridge also clears them from the
+  // first seed, which ran before it loaded.
+  function isLive() { try { return !!(typeof window !== "undefined" && window.DT_LIVE); } catch (e) { return false; } }
   var uid = (function () { var n = 1000; return function (p) { return (p || "id") + "_" + (++n) + "_" + Math.floor(Math.random() * 1e4); }; })();
 
   /* ---- time helpers ------------------------------------------------------
@@ -371,14 +378,22 @@
           attending: { name: "Dr. James Liu", avatar: "JL" }, unit: [], consultants: ["Nephro"], er: { name: "Dr. Okafor", avatar: "Ok" } },
       ],
 
-      orgs: [
-        { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88,  active: true },
-        { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54,  active: true },
-        { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132, active: true },
-        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29,  active: true },
-        { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12,  active: false },
+      // Developer console. Live: empty until GET /api/dev/organizations answers
+      // (orgsLoaded true, or "error"); `assignments` is the server's count of
+      // assignments created in the last 24 h. There is no tenant
+      // active/suspended state — the server has none (A.CON developer #19).
+      orgs: isLive() ? [] : [
+        { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88 },
+        { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54 },
+        { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132 },
+        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29 },
+        { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12 },
       ],
-      selectedOrg: "MAYO",
+      orgsLoaded: !isLive(),
+      // The platform (operator) org from the same list: where developer
+      // accounts are created. Null until loaded.
+      platformOrg: null,
+      selectedOrg: isLive() ? null : "MAYO",
       // Registered org people (hydrated from /api/physicians/directory for all
       // roles). Drives the ER Consult-services roster + midlevel pool so newly
       // registered consultants/PAs/NPs appear automatically. Empty = use the
@@ -394,16 +409,22 @@
         developer:   "#3E9B6E",
         consultant:  "#2C8C92",
       },
-      devUsers: [
+      // Every developer account is platform-wide (cross-tenant root): there is
+      // no single-organization developer (A.CON developer #1). Live: empty
+      // until GET /api/dev/users answers (devUsersLoaded).
+      devUsers: isLive() ? [] : [
         { id: uid("u"), name: "Dr. Lena Ortiz", role: "hospitalist", org: "MAYO", specialty: "Nephrology" },
         { id: uid("u"), name: "Priya Shah, NP", role: "hospitalist", org: "CLEVE", specialty: "Pulmonology" },
         { id: uid("u"), name: "Karen Vance", role: "director", org: "MAYO", specialty: "" },
         { id: uid("u"), name: "Dr. Ruth Osei", role: "er_doctor", org: "STJUDE", specialty: "" },
         { id: uid("u"), name: "Dr. Paul Okafor", role: "er_director", org: "CLEVE", specialty: "" },
-        { id: uid("u"), name: "Sam Rivera", role: "developer", org: "MAYO", specialty: "", scope: "local" },
-        { id: uid("u"), name: "Alex Kim (root)", role: "developer", org: "*", specialty: "", scope: "root" },
+        { id: uid("u"), name: "Alex Kim", role: "developer", org: "DOCTURN", specialty: "" },
       ],
+      devUsersLoaded: !isLive(),
       diagnostics: null,
+      // GET /api/dev/platform-health (this server instance, measured). Null
+      // until loaded; { error } when the server didn't answer.
+      platformHealth: null,
 
       conversations: [
         { id: "cv1", name: "Dr. Sarah Chen", role: "Cardiology", initials: "SC", presence: "online", tint: "emerald", unread: 2, typing: false,
@@ -450,7 +471,10 @@
       // platform-wide "enterprise defaults" — the server has no inheritance.
       orgConfigs: {},
 
-      notifications: [
+      // The offline kit's demo notification feed. The server has no
+      // notification feed, so a live deployment has none (and the shell shows
+      // no bell) — A.CON developer #23.
+      notifications: isLive() ? [] : [
         { id: uid("n"), icon: "route", title: "New assignment routed", body: "Patient RM → you · round-robin", at: t0 - 90000, read: false },
         { id: uid("n"), icon: "message-square", title: "Dr. Sarah Chen", body: "Accepting the 412 hand-off now.", at: t0 - 120000, read: false },
         { id: uid("n"), icon: "megaphone", title: "Code stroke — Bed 4 ICU", body: "Critical broadcast · ack required", at: t0 - 480000, read: true },
@@ -459,6 +483,9 @@
       // Compliance logs start EMPTY — they fill from real activity (logins,
       // assignments, PHI access) rather than seeded demo rows.
       audit: [],
+      // The trail's TRUE size from the server (GET /api/audit auditCount) —
+      // the `audit` array is only its latest page. Null until loaded.
+      auditCount: null,
       phiLog: [],
       incidents: [],
 
@@ -687,6 +714,11 @@
 
   /* ---- audit / notify helpers ------------------------------------------- */
   function pushAudit(s, entry) {
+    // The audit trail is the SERVER's. A live session never fabricates rows
+    // locally (they used to sit next to the real ones with a made-up IP and
+    // vanish on reload — A.CON developer #12); only the offline kit keeps a
+    // local demo trail.
+    if (isLive()) return;
     var who = s.session ? actorName(s) : "System";
     var role = s.session ? s.session.role : "system";
     s.audit = [Object.assign({ id: uid("a"), at: now(), actor: who, role: role, ip: "10.2.7.40", org: s.selectedOrg || "MAYO", risk: "low" }, entry)].concat(s.audit).slice(0, 60);
@@ -712,7 +744,9 @@
   // so nothing of the previous user survives in memory either.
   var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
     // the previous person's org: its people, identity, catalog and rules
-    "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs"];
+    "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
+    // the previous operator's cross-tenant view (developer console)
+    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1091,31 +1125,33 @@
       set(function (s) {
         var code = (data.code || data.name.slice(0, 5)).toUpperCase().replace(/[^A-Z]/g, "");
         if (!data.name.trim() || !code) { s.__toast = { tone: "rejected", title: "Name & code required", msg: "Enter a hospital name and short code." }; return s; }
-        s.orgs = s.orgs.concat([{ code: code, name: data.name, timezone: data.timezone || "America/New_York", users: 1, assignments: 0, active: true }]);
+        s.orgs = s.orgs.concat([{ code: code, name: data.name, timezone: data.timezone || "America/New_York", users: 1, assignments: 0 }]);
         pushAudit(s, { action: "create_organization", resource: code, risk: "high" });
         s.__toast = { tone: "accepted", title: "Tenant created", msg: data.name + " (" + code + ") provisioned." };
         return s;
       });
     },
-    toggleTenant: function (code) { set(function (s) { s.orgs = s.orgs.map(function (o) { return o.code === code ? Object.assign({}, o, { active: !o.active }) : o; }); return s; }); },
     addUser: function (form) {
       set(function (s) {
         if (!form.name.trim()) { s.__toast = { tone: "rejected", title: "Name required", msg: "Enter the user's full name." }; return s; }
-        var isRoot = form.role === "developer" && form.scope === "root";
-        var org = isRoot ? "*" : form.org;
-        s.devUsers = [{ id: uid("u"), name: form.name, role: form.role, org: org, specialty: form.role === "hospitalist" ? form.specialty : "", scope: form.role === "developer" ? (form.scope || "local") : undefined }].concat(s.devUsers);
-        if (!isRoot) s.orgs = s.orgs.map(function (o) { return o.code === form.org ? Object.assign({}, o, { users: o.users + 1 }) : o; });
-        pushAudit(s, { action: "create_user", resource: form.name + " @ " + (isRoot ? "ALL ORGS" : form.org), risk: isRoot ? "high" : "medium" });
-        var label = ({ hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: isRoot ? "Root developer" : "Local developer" })[form.role];
-        s.__toast = { tone: "accepted", title: label + " created", msg: form.name + " added to " + (isRoot ? "all organizations" : form.org) + "." };
+        // Offline kit only (the bridge posts to the server). A developer is
+        // platform-wide, never scoped to one organization.
+        var isDev = form.role === "developer";
+        var org = isDev ? "DOCTURN" : form.org;
+        s.devUsers = [{ id: uid("u"), name: form.name, username: form.username || "", role: form.role, org: org, specialty: form.role === "hospitalist" ? form.specialty : "" }].concat(s.devUsers);
+        if (!isDev) s.orgs = s.orgs.map(function (o) { return o.code === form.org ? Object.assign({}, o, { users: o.users + 1 }) : o; });
+        pushAudit(s, { action: "create_user", resource: form.name + " @ " + org, risk: isDev ? "high" : "medium" });
+        var label = ({ hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Developer" })[form.role];
+        s.__toast = { tone: "accepted", title: label + " created", msg: form.name + " added to " + (isDev ? "the platform" : form.org) + "." };
         return s;
       });
+      return Promise.resolve(true);
     },
     removeUser: function (id) {
       set(function (s) {
         var u = s.devUsers.find(function (x) { return x.id === id; });
         s.devUsers = s.devUsers.filter(function (x) { return x.id !== id; });
-        if (u && u.org !== "*") s.orgs = s.orgs.map(function (o) { return o.code === u.org ? Object.assign({}, o, { users: Math.max(0, o.users - 1) }) : o; });
+        if (u) s.orgs = s.orgs.map(function (o) { return o.code === u.org ? Object.assign({}, o, { users: Math.max(0, o.users - 1) }) : o; });
         if (u) { pushAudit(s, { action: "remove_user", resource: u.name, risk: "medium" }); s.__toast = { tone: "rejected", title: "User removed", msg: u.name + " removed." }; }
         return s;
       });
@@ -1129,7 +1165,7 @@
         (providers || []).forEach(function (p) {
           var exists = (s.devUsers || []).some(function (u) { return u.name === p.name && u.org === orgCode; });
           if (exists) return;
-          s.devUsers = [{ id: uid("u"), name: p.name, role: "hospitalist", org: orgCode, specialty: p.group || "", scope: "local" }].concat(s.devUsers || []);
+          s.devUsers = [{ id: uid("u"), name: p.name, role: "hospitalist", org: orgCode, specialty: p.group || "" }].concat(s.devUsers || []);
           added++;
         });
         if (added) s.orgs = (s.orgs || []).map(function (o) { return o.code === orgCode ? Object.assign({}, o, { users: o.users + added }) : o; });
@@ -1140,17 +1176,15 @@
       });
       return Promise.resolve({ added: (providers || []).length, skipped: 0 });
     },
-    setRoleColor: function (role, color) { set(function (s) { s.roleColors = Object.assign({}, s.roleColors, (function () { var o = {}; o[role] = color; return o; })()); pushAudit(s, { action: "customize_role_color", resource: role, risk: "low" }); return s; }); },
+    // A per-BROWSER preference (persisted in this browser's localStorage only,
+    // PERSIST_KEYS): other devices and other people keep the default colors.
+    // Not a server action, so not an audit row (A.CON developer #20).
+    setRoleColor: function (role, color) { set(function (s) { s.roleColors = Object.assign({}, s.roleColors, (function () { var o = {}; o[role] = color; return o; })()); return s; }); },
+    // Offline kit: there is no server to check, so nothing is claimed. The
+    // bridge runs the real check (GET /api/dev/ai-diagnostics).
     runDiagnostics: function () {
       set(function (s) {
-        var insights = [
-          "STJUDE assignment expiry rate up 18% this shift — likely the delayed Twilio queue. Suggest enabling push-first fallback.",
-          "MAYO round-robin fairness within 4% across providers — no cap relief triggered in the last 24h.",
-          "CLEVE WebSocket reconnect rate normal; 0 dropped events in the last hour.",
-          "Cross-tenant isolation checks: 0 violations. 1 attempt blocked and logged (STJUDE → MAYO).",
-        ];
-        s.diagnostics = { text: insights[Math.floor(Math.random() * insights.length)], at: now() };
-        pushAudit(s, { action: "run_ai_diagnostics", resource: "platform", risk: "low" });
+        s.diagnostics = { text: "Not connected to a DocTurn server — nothing was checked.", at: now() };
         return s;
       });
     },
