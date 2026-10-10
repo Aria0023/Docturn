@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -48,7 +49,38 @@ export const SETTING_SCOPE = ["org", "user"] as const;
 export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
 export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
+/**
+ * The roles a broadcast can be addressed to (FR-6.5). A broadcast with no
+ * audience (null) goes to everyone in the org; otherwise only to the org's
+ * active accounts holding one of these roles when it is sent.
+ */
+export const BROADCAST_AUDIENCE = ["hospitalist", "er_doctor", "er_director", "director"] as const;
+export type BroadcastAudienceRole = (typeof BROADCAST_AUDIENCE)[number];
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
+
+/**
+ * Roles a stranger may REQUEST through the public self-registration form.
+ * Privileged roles (director, er_director, developer) are never
+ * self-requested: an existing director/ER director provisions them through
+ * POST /api/director/hospitalists, or the platform operator through
+ * /api/dev/users — both authenticated, audited, and with a one-time password.
+ */
+export const SELF_REGISTRABLE_ROLES = ["hospitalist", "er_doctor"] as const;
+export type SelfRegistrableRole = (typeof SELF_REGISTRABLE_ROLES)[number];
+
+/**
+ * Org code of the platform/operator tenant (seeded by server/seed.ts). It holds
+ * the cross-tenant root account and never accepts public self-registration.
+ */
+export const PLATFORM_ORG_CODE = "DOCTURN";
+/** Where an org stands on a MANUAL compliance control it must attest to. */
+export const ATTESTATION_STATUS = [
+  "met",
+  "not_met",
+  "in_progress",
+  "na",
+] as const;
+export type AttestationStatus = (typeof ATTESTATION_STATUS)[number];
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Core tables — almost every table carries organization_id (the tenant boundary).
@@ -86,12 +118,31 @@ export const users = pgTable(
     credential: text("credential", { enum: CREDENTIAL }),
     phone: text("phone"),
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
+    // Set on every provisioned / admin-reset account: the one-time credential
+    // must be replaced before anything but /api/user, /api/logout and
+    // /api/account/password works (server/auth.ts passwordChangeGate).
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    // Workforce termination (HIPAA §164.308(a)(3)(ii)(C)): a disabled account
+    // cannot sign in and its live sessions stop deserialising immediately.
+    disabledAt: timestamp("disabled_at"),
+    // Session generation marker. Every login stamps this value into the session
+    // (server/auth.ts serializeUser); a self-service change or an administrative
+    // reset moves it, so every OTHER session of the user stops deserialising and
+    // its WebSocket is closed. NULL = never changed since provisioning.
+    passwordChangedAt: timestamp("password_changed_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => ({
     usernamePerOrg: uniqueIndex("users_org_username_uniq").on(
       t.organizationId,
       t.username,
+    ),
+    // Usernames are case-insensitive (server/usernames.ts, A.CON-SHO-12/57):
+    // one account per (org, lower(username)). Mirrored in server/db.ts, which
+    // also repairs pre-existing case variants before building it.
+    usernameCiPerOrg: uniqueIndex("users_org_username_ci_uniq").on(
+      t.organizationId,
+      sql`lower(${t.username})`,
     ),
   }),
 );
@@ -110,6 +161,10 @@ export const hospitalists = pgTable("hospitalists", {
   rotationOrder: integer("rotation_order").notNull().default(0),
   working: boolean("working").notNull().default(false),
   shiftType: text("shift_type", { enum: SHIFT_TYPE }).notNull().default("day"),
+  // Director's "Rotation / Off" switch: an on-shift provider can be taken out
+  // of round-robin (never previewed, picked or cap-relieved) while staying on
+  // shift for manual assignment and on-call (services/rotation.ts routablePool).
+  inRotation: boolean("in_rotation").notNull().default(true),
 });
 
 export const patients = pgTable("patients", {
@@ -130,6 +185,10 @@ export const patients = pgTable("patients", {
     () => hospitalists.id,
   ),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // EHR identifier (MRN / CSN) for "Open in EHR" deep links. PHI: resolved
+  // server-side only (GET /api/patients/:id/ehr-link) and never included in
+  // push, SMS or WebSocket payloads.
+  ehrId: text("ehr_id"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -164,6 +223,8 @@ export const conversations = pgTable("conversations", {
   type: text("type", { enum: CONVERSATION_TYPE }).notNull().default("direct"),
   name: text("name"),
   participantIds: jsonb("participant_ids").$type<number[]>().notNull(),
+  // Patient-linked thread: the care-team conversation for one patient.
+  patientId: integer("patient_id").references(() => patients.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -179,9 +240,27 @@ export const messages = pgTable("messages", {
     .notNull()
     .references(() => users.id),
   content: text("content").notNull(),
+  // routine | urgent | stat — STAT messages demand an explicit acknowledgement
+  // (see messageDeliveryStatus.acknowledgedAt), mirroring clinical-comms tools.
+  priority: text("priority").notNull().default("routine"),
+  // Provenance of a forwarded message: where it came from and who wrote it.
+  // NULL for an original message. Ids + a display name + a timestamp only.
+  forwardedFrom: jsonb("forwarded_from").$type<ForwardedFrom | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   deletedAt: timestamp("deleted_at"),
-});
+}, (t) => ({
+  // Thread pages are keyset-paginated by id (A.CON-SHO-65); mirrored in server/db.ts.
+  conversationPage: index("messages_conversation_id_idx").on(t.conversationId, t.id),
+}));
+
+/** Provenance stamped on a forwarded message (see messages.forwardedFrom). */
+export interface ForwardedFrom {
+  messageId: number;
+  senderId: number;
+  senderName: string;
+  conversationId: number;
+  sentAt: string;
+}
 
 export const messageDeliveryStatus = pgTable("message_delivery_status", {
   id: serial("id").primaryKey(),
@@ -193,6 +272,51 @@ export const messageDeliveryStatus = pgTable("message_delivery_status", {
     .references(() => users.id),
   deliveredAt: timestamp("delivered_at"),
   readAt: timestamp("read_at"),
+  // Explicit acknowledgement (distinct from read) — required for STAT messages.
+  acknowledgedAt: timestamp("acknowledged_at"),
+  // Escalation bookkeeping for unacknowledged STATs (set by the sweep so each
+  // step fires exactly once): re-alert nudge, then covering-provider escalation.
+  realertedAt: timestamp("realerted_at"),
+  escalatedAt: timestamp("escalated_at"),
+}, (t) => ({
+  // Receipts / unread counts are read per message; mirrored in server/db.ts.
+  byMessage: index("message_delivery_status_message_idx").on(t.messageId),
+}));
+
+// Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: bytes live
+// inline as base64 in `dataBase64`. Production PHI needs encrypted object storage
+// (S3/GCS behind a BAA), AV scanning, and signed-URL fetch — not this inline store.
+export const messageAttachments = pgTable("message_attachments", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  // NULL until the attachment is linked to a message at send time.
+  messageId: integer("message_id").references(() => messages.id),
+  uploaderId: integer("uploader_id")
+    .notNull()
+    .references(() => users.id),
+  fileName: text("file_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  dataBase64: text("data_base64").notNull(),
+  // Playback length for audio (voice-message) attachments; NULL for images/docs.
+  durationMs: integer("duration_ms"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Canned messages for the composer. ownerUserId NULL = org-wide template
+// (directors/developers manage those); otherwise a personal template.
+export const messageTemplates = pgTable("message_templates", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  ownerUserId: integer("owner_user_id").references(() => users.id),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  priority: text("priority").notNull().default("routine"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 /* ── Audit, PHI access & security ──────────────────────────────────────────── */
@@ -201,6 +325,12 @@ export const auditLogs = pgTable("audit_logs", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").references(() => organizations.id),
   userId: integer("user_id").references(() => users.id),
+  // The REAL operator when `user_id` is a borrowed identity: a developer who
+  // entered an impersonated / managed-org session (server/audit.ts merges it
+  // from the request context). NULL for an ordinary session. No FK on purpose:
+  // the attribution must outlive the operator account and never block a
+  // tenant or user delete.
+  impersonatorUserId: integer("impersonator_user_id"),
   action: text("action").notNull(),
   resourceType: text("resource_type"),
   resourceId: integer("resource_id"),
@@ -214,11 +344,54 @@ export const phiAccessLogs = pgTable("phi_access_logs", {
   organizationId: integer("organization_id").references(() => organizations.id),
   userId: integer("user_id").references(() => users.id),
   resource: text("resource").notNull(),
+  // WHICH record was read. `resource` alone ("conversation-messages") cannot
+  // answer §164.528 accounting-of-disclosures or scope a breach; these two ids
+  // can. No FK on purpose: the row must outlive the record it refers to (and a
+  // tenant deletion), and it must never carry clinical content — ids only.
+  resourceId: integer("resource_id"),
+  patientId: integer("patient_id"),
+  // WHO was really at the keyboard when `user_id` is an impersonated identity
+  // (§164.528 names the person, not the borrowed login). NULL otherwise; no FK.
+  impersonatorUserId: integer("impersonator_user_id"),
   method: text("method").notNull(),
   ip: text("ip"),
   userAgent: text("user_agent"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/**
+ * Six-year compliance archive (§164.316(b)(2)(i)). Audit / PHI-access / security
+ * rows are FK-bound to organizations + users, so deleting a tenant would delete
+ * exactly the records the rule says must be retained. Before a tenant cascade
+ * we copy them here, denormalized to TEXT (org code/name, username, display
+ * name) and with NO foreign keys, so the record survives its tenant intact and
+ * still answers "who did this, to what, when". Ids/actions only — never PHI.
+ */
+export const retainedComplianceRecords = pgTable(
+  "retained_compliance_records",
+  {
+    id: serial("id").primaryKey(),
+    sourceTable: text("source_table").notNull(),
+    sourceId: integer("source_id").notNull(),
+    organizationId: integer("organization_id"),
+    organizationCode: text("organization_code"),
+    organizationName: text("organization_name"),
+    userId: integer("user_id"),
+    userUsername: text("user_username"),
+    userDisplayName: text("user_display_name"),
+    action: text("action").notNull(),
+    resourceType: text("resource_type"),
+    resourceId: integer("resource_id"),
+    patientId: integer("patient_id"),
+    method: text("method"),
+    ip: text("ip"),
+    details: jsonb("details").$type<Record<string, unknown>>(),
+    riskLevel: text("risk_level").notNull().default("low"),
+    occurredAt: timestamp("occurred_at").notNull(),
+    archivedAt: timestamp("archived_at").notNull().defaultNow(),
+    archivedReason: text("archived_reason").notNull().default("organization_deleted"),
+  },
+);
 
 export const securityIncidents = pgTable("security_incidents", {
   id: serial("id").primaryKey(),
@@ -249,6 +422,41 @@ export const orgSettings = pgTable(
     keyPerOrg: uniqueIndex("org_settings_org_key_uniq").on(
       t.organizationId,
       t.key,
+    ),
+  }),
+);
+
+/**
+ * A hospital's OWN credentials for an organization-scope integration (Amion
+ * OCS feed, Epic backend app) — see server/integrations/. Write-only from the
+ * API: the secret fields are one AES-256-GCM ciphertext (key from the
+ * INTEGRATION_KEY env, AAD = org + integration + key version, so a row cannot
+ * be replayed under another tenant). `summary` holds NON-secret display fields
+ * only (e.g. the FHIR host). `updated_by` deliberately has no foreign key so a
+ * credential row never blocks deleting a user or a tenant; the tenant cascade
+ * (storage.deleteOrganization) removes the org's rows. Mirrored in
+ * server/db.ts SCHEMA_SQL.
+ */
+export const orgIntegrationCredentials = pgTable(
+  "org_integration_credentials",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    integrationId: text("integration_id").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    authTag: text("auth_tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    summary: jsonb("summary").$type<Record<string, string>>(),
+    updatedBy: integer("updated_by"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    perOrg: uniqueIndex("org_integration_credentials_org_integration_uniq").on(
+      t.organizationId,
+      t.integrationId,
     ),
   }),
 );
@@ -314,6 +522,9 @@ export const mfaCredentials = pgTable("mfa_credentials", {
     .references(() => users.id),
   secret: text("secret").notNull(),
   activated: boolean("activated").notNull().default(false),
+  // Re-enrolment in progress: the NEW secret waits here until its first code
+  // verifies, so the live `secret` keeps protecting sign-in meanwhile.
+  pendingSecret: text("pending_secret"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -389,6 +600,19 @@ export const pendingRegistrations = pgTable("pending_registrations", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/**
+ * Self-registration requests that name an unknown org code or the platform org
+ * (server/auth.ts POST /api/register). They are dropped — never queued — but
+ * answered exactly like a real org's, so the endpoint is not an org-code
+ * oracle. Only an opaque SHA-256 key of (upper-cased org code, username) is
+ * kept, so a re-submission answers 409 request_pending like a real org's would.
+ */
+export const unroutedRegistrations = pgTable("unrouted_registrations", {
+  id: serial("id").primaryKey(),
+  requestKey: text("request_key").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const landingPageSettings = pgTable("landing_page_settings", {
   id: serial("id").primaryKey(),
   organizationId: integer("organization_id").references(() => organizations.id),
@@ -452,6 +676,13 @@ export const emergencyBroadcasts = pgTable("emergency_broadcasts", {
   severity: text("severity", { enum: BROADCAST_SEVERITY })
     .notNull()
     .default("urgent"),
+  // Who it was addressed to: null = everyone in the org, else the roles
+  // (BROADCAST_AUDIENCE) it was sent to.
+  audience: jsonb("audience").$type<BroadcastAudienceRole[] | null>(),
+  // The recipient set, frozen when it was sent (user ids). The ack tally's
+  // denominator and who may acknowledge it. NULL on rows sent before it was
+  // stored: those derive it from the roster at send time (broadcasts.ts).
+  recipientIds: jsonb("recipient_ids").$type<number[] | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -482,7 +713,7 @@ export const deviceTokens = pgTable(
       .notNull()
       .references(() => users.id),
     token: text("token").notNull(),
-    platform: text("platform", { enum: ["ios", "android", "web"] })
+    platform: text("platform", { enum: ["ios", "android", "web", "webpush", "expo"] })
       .notNull()
       .default("ios"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -501,6 +732,41 @@ export const smsHistory = pgTable("sms_history", {
   carrier: text("carrier").notNull().default("console"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/* ── Continuous compliance monitoring ──────────────────────────────────────── */
+
+/**
+ * An organization's attestation for ONE control in the compliance catalog
+ * (`server/compliance/controls.ts`). Only the controls code CANNOT verify —
+ * BAAs, risk analysis, training, drills — are attested here; the automated
+ * controls are recomputed from live system state on every read and are never
+ * stored. One row per (organization, control).
+ */
+export const complianceAttestations = pgTable(
+  "compliance_attestations",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    controlId: text("control_id").notNull(),
+    status: text("status", { enum: ATTESTATION_STATUS })
+      .notNull()
+      .default("not_met"),
+    owner: text("owner"),
+    note: text("note"),
+    evidenceUrl: text("evidence_url"),
+    attestedAt: timestamp("attested_at"),
+    reviewDue: timestamp("review_due"),
+    updatedBy: integer("updated_by").references(() => users.id),
+  },
+  (t) => ({
+    controlPerOrg: uniqueIndex("compliance_attestations_org_control_uniq").on(
+      t.organizationId,
+      t.controlId,
+    ),
+  }),
+);
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Relations
@@ -584,6 +850,7 @@ export type EmergencyBroadcast = typeof emergencyBroadcasts.$inferSelect;
 export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
 export type DeviceToken = typeof deviceTokens.$inferSelect;
 export type SmsHistory = typeof smsHistory.$inferSelect;
+export type ComplianceAttestation = typeof complianceAttestations.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -597,16 +864,30 @@ export type Assignment = typeof assignments.$inferSelect;
 export type InsertAssignment = z.infer<typeof insertAssignmentSchema>;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type MessageDeliveryStatus = typeof messageDeliveryStatus.$inferSelect;
+export type MessageAttachment = typeof messageAttachments.$inferSelect;
+export type InsertMessageAttachment = typeof messageAttachments.$inferInsert;
 export type AuditLog = typeof auditLogs.$inferSelect;
+export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
+export type RetainedComplianceRecord =
+  typeof retainedComplianceRecords.$inferSelect;
 export type OrgSetting = typeof orgSettings.$inferSelect;
+export type OrgIntegrationCredential = typeof orgIntegrationCredentials.$inferSelect;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 
 /** A user object safe to return over the API — never includes the password hash. */
 export type SafeUser = Pick<
   User,
-  "id" | "username" | "role" | "displayName" | "organizationId" | "credential"
->;
+  | "id"
+  | "username"
+  | "role"
+  | "displayName"
+  | "organizationId"
+  | "credential"
+  | "twoFactorEnabled"
+  | "mustChangePassword"
+> & { disabled: boolean };
 
 export function toSafeUser(u: User): SafeUser {
   return {
@@ -616,6 +897,11 @@ export function toSafeUser(u: User): SafeUser {
     displayName: u.displayName,
     organizationId: u.organizationId,
     credential: u.credential,
+    // Account-state flags the client needs to render truthfully: MFA badge,
+    // forced password change, and deactivation. Never the hash.
+    twoFactorEnabled: !!u.twoFactorEnabled,
+    mustChangePassword: !!u.mustChangePassword,
+    disabled: !!u.disabledAt,
   };
 }
 
@@ -627,14 +913,21 @@ export const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+/** Minimum password length, shared by self-registration and password change. */
+export const MIN_PASSWORD_LENGTH = 8;
+
 export const registerSchema = z.object({
   orgCode: z.string().min(1),
   username: z.string().min(3),
-  password: z.string().min(6),
+  // Same floor as PATCH /api/account/password (server/auth.ts
+  // isForbiddenPassword additionally refuses the demo password there and here).
+  password: z.string().min(MIN_PASSWORD_LENGTH),
   displayName: z.string().min(1),
-  // Self-selected role; a director / ER director approves. Never self-register
-  // as a developer (root). Defaults to hospitalist.
-  requestedRole: z.enum(["hospitalist", "er_doctor", "er_director", "director"]).optional(),
+  // Self-selected role; a director / ER director approves. Only clinical,
+  // non-privileged roles can be requested (SELF_REGISTRABLE_ROLES) — a
+  // director / ER director / developer account is provisioned by an existing
+  // administrator, never by a stranger with an org code. Defaults to hospitalist.
+  requestedRole: z.enum(SELF_REGISTRABLE_ROLES).optional(),
 });
 
 export const extractNoteSchema = z.object({
@@ -648,6 +941,8 @@ export const createPatientSchema = z.object({
   specialty: z.string().optional(),
   department: z.string().optional(),
   acuity: z.number().int().min(1).max(5).optional(),
+  // Optional EHR identifier (MRN/CSN) — printable characters only, no spaces.
+  ehrId: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/).optional(),
 });
 
 export const createAssignmentSchema = z.object({
@@ -662,12 +957,68 @@ export const createConversationSchema = z.object({
   participantIds: z.array(z.number().int().positive()).min(1),
 });
 
+export const MESSAGE_PRIORITY = ["routine", "urgent", "stat"] as const;
+
 export const sendMessageSchema = z.object({
   conversationId: z.number().int().positive(),
-  content: z.string().min(1),
+  // Empty allowed so a message can be attachment-only. The send route rejects a
+  // message that has NEITHER text nor attachments (400 empty_message).
+  content: z.string().default(""),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  attachmentIds: z.array(z.number().int().positive()).max(10).optional(),
+});
+
+// Base64 upload of a single attachment (see the attachments route's mime
+// allowlist + 8 MB decoded-size cap).
+export const attachmentUploadSchema = z.object({
+  fileName: z.string().min(1).max(255),
+  mimeType: z.string().min(1),
+  dataBase64: z.string().min(1),
+  // Client-measured playback length for a voice message, in milliseconds.
+  // Advisory metadata for the player chip; the server independently caps it.
+  durationMs: z.number().int().positive().max(10 * 60 * 1000).optional(),
 });
 
 export const markReadSchema = z.object({
+  messageIds: z.array(z.number().int().positive()).min(1),
+});
+
+// Forward one message. Exactly one target: an existing conversation the caller
+// is in, a set of people (a direct/group thread is created or reused), or an
+// on-call role target id from /api/messaging/on-call-targets.
+export const forwardMessageSchema = z
+  .object({
+    conversationId: z.number().int().positive().optional(),
+    participantIds: z.array(z.number().int().positive()).min(1).max(20).optional(),
+    roleTarget: z.string().min(1).max(120).optional(),
+    // Default routine; the forwarder may opt to keep the original priority.
+    keepPriority: z.boolean().default(false),
+    // Optional note prepended to the forwarded content.
+    note: z.string().max(2000).optional(),
+  })
+  .refine(
+    (v) =>
+      [v.conversationId, v.participantIds, v.roleTarget].filter((x) => x != null)
+        .length === 1,
+    { message: "exactly one target is required" },
+  );
+
+export const createTemplateSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(2000),
+  priority: z.enum(MESSAGE_PRIORITY).default("routine"),
+  // "org" (directors/developers only) or "mine" (default).
+  scope: z.enum(["org", "mine"]).default("mine"),
+});
+export const updateTemplateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(120).optional(),
+    body: z.string().trim().min(1).max(2000).optional(),
+    priority: z.enum(MESSAGE_PRIORITY).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, { message: "nothing to update" });
+
+export const acknowledgeSchema = z.object({
   messageIds: z.array(z.number().int().positive()).min(1),
 });
 
@@ -702,6 +1053,10 @@ export const censusOverrideSchema = z.object({
 export const createBroadcastSchema = z.object({
   message: z.string().min(1),
   severity: z.enum(BROADCAST_SEVERITY).default("urgent"),
+  // "all" (or absent) = everyone in the org; otherwise the roles to send to.
+  audience: z
+    .union([z.literal("all"), z.array(z.enum(BROADCAST_AUDIENCE)).min(1).max(BROADCAST_AUDIENCE.length)])
+    .default("all"),
 });
 
 export const devCreateUserSchema = z.object({
@@ -721,7 +1076,7 @@ export const devCreateUserSchema = z.object({
 
 export const deviceTokenSchema = z.object({
   token: z.string().min(1),
-  platform: z.enum(["ios", "android", "web"]).default("ios"),
+  platform: z.enum(["ios", "android", "web", "webpush", "expo"]).default("ios"),
 });
 
 export const notificationProfileSchema = z.object({
@@ -734,12 +1089,134 @@ export const notificationProfileSchema = z.object({
 });
 export type NotificationProfile = z.infer<typeof notificationProfileSchema>;
 
+/**
+ * Upsert one MANUAL compliance attestation. Only manual controls are attestable
+ * — the route rejects an id that is not in the catalog's manual set, so an org
+ * can never "attest" an automated technical control into passing.
+ */
+export const attestationUpsertSchema = z.object({
+  controlId: z.string().min(1).max(64),
+  status: z.enum(ATTESTATION_STATUS),
+  owner: z.string().max(120).optional(),
+  note: z.string().max(4000).optional(),
+  // Link to the artifact an auditor would ask for (policy PDF, signed BAA,
+  // training roster). Empty string clears it.
+  evidenceUrl: z.string().url().max(1000).or(z.literal("")).optional(),
+  // ISO date (YYYY-MM-DD) or full ISO timestamp; "" clears the review date.
+  reviewDue: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}([T ].*)?$/)
+    .or(z.literal(""))
+    .optional(),
+});
+
 export const orgConfigSchema = z
   .object({
     assignmentTimeoutMin: z.number().int().min(1).max(120).optional(),
-    roundRobinShiftTypes: z.array(z.enum(SHIFT_TYPE)).optional(),
+    // The org's ROUTABLE shift types (Settings → Shift types). Never empty — an
+    // empty set would leave no one to route an admission to — and no repeats.
+    roundRobinShiftTypes: z
+      .array(z.enum(SHIFT_TYPE))
+      .min(1)
+      .refine((a) => new Set(a).size === a.length, { message: "duplicate shift type" })
+      .optional(),
     rotationMode: z.enum(["lowest_census", "sequential"]).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "at least one field is required",
   });
+
+/* ── Org theme (Settings → Appearance) ──────────────────────────────────────
+ * PATCH /api/org/preferences { theme } is validated against this and MERGED
+ * key by key into the stored theme, so two admins changing different keys
+ * never undo each other. "Reset to defaults" writes ORG_THEME_DEFAULTS. */
+export const ORG_THEME_DEFAULTS = {
+  appName: "DocTurn",
+  accent: "#2563EB",
+  radius: 8,
+  sidebar: "expanded",
+  contentWidth: "standard",
+  palette: "classic",
+} as const;
+export const orgThemePatchSchema = z
+  .object({
+    // Shown in the sidebar; printable characters only.
+    appName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[^\u0000-\u001f\u007f]*$/)
+      .optional(),
+    accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    radius: z.number().int().min(0).max(24).optional(),
+    sidebar: z.enum(["expanded", "compact"]).optional(),
+    contentWidth: z.enum(["standard", "wide", "full"]).optional(),
+    palette: z.enum(["classic", "calm", "warm"]).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+
+/* ── Consult-service catalog (Directory → Consult services) ─────────────────
+ * Stored as org setting "consultServices" (read by the ER intake, the on-call
+ * board and on-call message addressing) with a revision counter in
+ * "consultServicesRev". Edited one item at a time (/api/org/consult-services). */
+const consultServiceName = z.string().trim().min(1).max(80);
+const consultPersonName = z.string().trim().min(1).max(120);
+export const consultOnCallSchema = z
+  .object({
+    name: consultPersonName,
+    avatar: z.string().trim().max(4).optional(),
+    userId: z.number().int().positive().optional(),
+  })
+  .strict()
+  .nullable();
+export const consultServiceCreateSchema = z.object({ name: consultServiceName }).strict();
+export const consultServicePatchSchema = z
+  .object({ name: consultServiceName.optional(), onCall: consultOnCallSchema.optional() })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+export const consultMemberCreateSchema = z
+  .object({
+    name: consultPersonName,
+    role: z.enum(["NP", "PA", "RN"]),
+    avatar: z.string().trim().max(4).optional(),
+  })
+  .strict();
+/** The legacy whole-catalog replace (PATCH /api/org/preferences { consultServices }). */
+export const consultServicesArraySchema = z
+  .array(z.object({ id: z.string().max(64).optional(), name: consultServiceName }).passthrough())
+  .max(200);
+
+/* ── Clinical screens (A.CON clinical) ────────────────────────────────────────
+ * Bodies of the writes behind the ER director, director and patient-board
+ * controls. Free text never carries control characters (C0, DEL, C1). */
+const noControlChars = /^[^\u0000-\u001f\u007f-\u009f]*$/;
+
+/** PUT /api/er/diversion — declare (true) or lift (false) ER diversion. */
+export const erDiversionSchema = z.object({ active: z.boolean() }).strict();
+
+/** PATCH /api/er/roster/:userId — an ER physician's on/off shift and shift. */
+export const erRosterPatchSchema = z
+  .object({ onShift: z.boolean().optional(), shiftType: z.enum(SHIFT_TYPE).optional() })
+  .strict()
+  .refine((v) => v.onShift !== undefined || v.shiftType !== undefined, { message: "at least one field is required" });
+
+/** PATCH /api/patients/:id — the board's inline room / issue / unit edits (no status: it is derived from routing). */
+export const patientPatchSchema = z
+  .object({
+    roomNumber: z.string().trim().min(1).max(40).regex(noControlChars).optional(),
+    issueSummary: z.string().trim().min(1).max(500).regex(noControlChars).optional(),
+    department: z.string().trim().min(1).max(20).regex(noControlChars).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+
+/** PATCH /api/hospitalists/:id/profile — the director's inline name / specialty edits. */
+export const providerProfilePatchSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).regex(noControlChars).optional(),
+    specialty: z.string().trim().min(1).max(80).regex(noControlChars).optional(),
+  })
+  .strict()
+  .refine((v) => v.displayName !== undefined || v.specialty !== undefined, { message: "at least one field is required" });

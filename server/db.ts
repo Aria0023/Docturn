@@ -13,10 +13,33 @@ import * as schema from "@shared/schema";
 
 export type DbType = ReturnType<typeof drizzlePg<typeof schema>>;
 
+/**
+ * Where the rows actually live. Spelled out because "ephemeral" alone was
+ * misleading: an on-disk PGlite store DOES survive a restart — it is simply a
+ * single-process, unencrypted dev/trial database, not a production one.
+ *
+ *  - postgres       external Postgres via DATABASE_URL (RDS etc.). Durable,
+ *                   multi-instance, encryption-at-rest is the hosting tier's.
+ *  - pglite-disk    PGlite data files under `dataDir` (PGLITE_DIR, default
+ *                   ./.pglite). Durable across restarts, single process only,
+ *                   NOT encrypted by the application — plain files on disk.
+ *  - pglite-memory  PGlite with no directory (tests). Gone when the process
+ *                   exits.
+ */
+export type DbStorageKind = "postgres" | "pglite-disk" | "pglite-memory";
+
 export interface DbHandle {
   db: DbType;
   /** Whether we are running on in-process PGlite (true) or a real Postgres pool. */
   ephemeral: boolean;
+  /** Precise description of the store (see DbStorageKind). */
+  storage: DbStorageKind;
+  /** PGlite data directory when storage === "pglite-disk". Never sent to clients. */
+  dataDir?: string;
+  /** Rows survive a process restart (postgres and pglite-disk). */
+  durable: boolean;
+  /** The pg.Pool behind a real Postgres handle (shared with the session store). */
+  pool?: pg.Pool;
   /** Push the schema. Only meaningful for PGlite; for real PG use `drizzle-kit push`. */
   ensureSchema: () => Promise<void>;
   close: () => Promise<void>;
@@ -115,8 +138,18 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
     return {
       db,
       ephemeral: false,
+      storage: "postgres",
+      durable: true,
+      pool,
       ensureSchema: async () => {
-        // Real Postgres schema is managed by `npm run db:push` (drizzle-kit).
+        // A fresh cloud Postgres (e.g. a new Render database) starts with zero
+        // tables. Apply the SAME idempotent DDL we use for PGlite so the app
+        // self-provisions on first boot instead of crashing on an empty schema.
+        // SCHEMA_SQL is standard Postgres (CREATE TABLE IF NOT EXISTS + additive
+        // ALTER … ADD COLUMN IF NOT EXISTS), so re-running it every start is a
+        // no-op once provisioned. (`drizzle-kit push` remains available for
+        // richer migrations, but is no longer required just to boot.)
+        await pool.query(SCHEMA_SQL);
       },
       close: async () => {
         await pool.end();
@@ -124,13 +157,16 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
     };
   }
 
-  // PGlite: persistent dir for the app (so `seed` and `dev` share state),
-  // in-memory for tests (isolation).
+  // PGlite: on-disk directory for the app (so `seed` and `dev` share state and
+  // data persists across restarts), in-memory for tests (isolation).
   const client = opts.pgliteDir ? new PGlite(opts.pgliteDir) : new PGlite();
   const db = drizzlePglite(client, { schema }) as unknown as DbType;
   return {
     db,
     ephemeral: true,
+    storage: opts.pgliteDir ? "pglite-disk" : "pglite-memory",
+    ...(opts.pgliteDir ? { dataDir: opts.pgliteDir } : {}),
+    durable: Boolean(opts.pgliteDir),
     ensureSchema: async () => {
       await pushSchema(client);
     },
@@ -187,9 +223,15 @@ CREATE TABLE IF NOT EXISTS users (
   credential TEXT,
   phone TEXT,
   two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  disabled_at TIMESTAMP,
+  password_changed_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_uniq ON users(organization_id, username);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS hospitalists (
   id SERIAL PRIMARY KEY,
@@ -202,6 +244,8 @@ CREATE TABLE IF NOT EXISTS hospitalists (
   working BOOLEAN NOT NULL DEFAULT FALSE,
   shift_type TEXT NOT NULL DEFAULT 'day'
 );
+-- Director's "Rotation / Off" switch (A.CON-SHO-29); additive, existing rows stay in rotation.
+ALTER TABLE hospitalists ADD COLUMN IF NOT EXISTS in_rotation BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS patients (
   id SERIAL PRIMARY KEY,
@@ -217,6 +261,8 @@ CREATE TABLE IF NOT EXISTS patients (
   assigned_hospitalist_id INTEGER REFERENCES hospitalists(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- EHR identifier (MRN/CSN) for "Open in EHR" deep links; additive + nullable.
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS ehr_id TEXT;
 
 CREATE TABLE IF NOT EXISTS assignments (
   id SERIAL PRIMARY KEY,
@@ -238,8 +284,10 @@ CREATE TABLE IF NOT EXISTS conversations (
   type TEXT NOT NULL DEFAULT 'direct',
   name TEXT,
   participant_ids JSONB NOT NULL,
+  patient_id INTEGER REFERENCES patients(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS patient_id INTEGER REFERENCES patients(id);
 
 CREATE TABLE IF NOT EXISTS messages (
   id SERIAL PRIMARY KEY,
@@ -247,8 +295,26 @@ CREATE TABLE IF NOT EXISTS messages (
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   sender_id INTEGER NOT NULL REFERENCES users(id),
   content TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMP
+);
+-- Additive columns for stores created before these fields existed (no-op on new).
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'routine';
+-- Forwarding provenance ({messageId, senderId, senderName, conversationId, sentAt}); NULL = original.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS forwarded_from JSONB;
+-- Thread pages are keyset-paginated by id within a conversation (A.CON-SHO-65).
+CREATE INDEX IF NOT EXISTS messages_conversation_id_idx ON messages(conversation_id, id);
+
+-- Composer templates: owner_user_id NULL = org-wide, else personal.
+CREATE TABLE IF NOT EXISTS message_templates (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  owner_user_id INTEGER REFERENCES users(id),
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'routine',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS message_delivery_status (
@@ -256,8 +322,33 @@ CREATE TABLE IF NOT EXISTS message_delivery_status (
   message_id INTEGER NOT NULL REFERENCES messages(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
   delivered_at TIMESTAMP,
-  read_at TIMESTAMP
+  read_at TIMESTAMP,
+  acknowledged_at TIMESTAMP,
+  realerted_at TIMESTAMP,
+  escalated_at TIMESTAMP
 );
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS realerted_at TIMESTAMP;
+ALTER TABLE message_delivery_status ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS message_delivery_status_message_idx ON message_delivery_status(message_id);
+
+-- Message attachments (images + files). SYNTHETIC-DATA PILOT ONLY: the bytes are
+-- stored inline as base64 in the row. Production PHI requires encrypted object
+-- storage (S3/GCS with a BAA), server-side AV scanning, and a signed-URL fetch
+-- path — DO NOT ship this inline-base64 store for real patient data.
+CREATE TABLE IF NOT EXISTS message_attachments (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  message_id INTEGER REFERENCES messages(id),
+  uploader_id INTEGER NOT NULL REFERENCES users(id),
+  file_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL,
+  data_base64 TEXT NOT NULL,
+  duration_ms INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+ALTER TABLE message_attachments ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,
@@ -276,11 +367,48 @@ CREATE TABLE IF NOT EXISTS phi_access_logs (
   organization_id INTEGER REFERENCES organizations(id),
   user_id INTEGER REFERENCES users(id),
   resource TEXT NOT NULL,
+  resource_id INTEGER,
+  patient_id INTEGER,
   method TEXT NOT NULL,
   ip TEXT,
   user_agent TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- WHICH record was read (accounting of disclosures / breach scoping). Additive
+-- and nullable so stores written before these columns existed keep their rows.
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS resource_id INTEGER;
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS patient_id INTEGER;
+-- The real operator behind an impersonated / managed-org session (NULL for an
+-- ordinary session; no FK so it outlives the operator account).
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS impersonator_user_id INTEGER;
+ALTER TABLE phi_access_logs ADD COLUMN IF NOT EXISTS impersonator_user_id INTEGER;
+
+-- Six-year compliance archive: audit / PHI-access / security rows copied out of
+-- a tenant before it is deleted, denormalized and WITHOUT foreign keys so they
+-- survive the cascade. Ids + actions only, never clinical content.
+CREATE TABLE IF NOT EXISTS retained_compliance_records (
+  id SERIAL PRIMARY KEY,
+  source_table TEXT NOT NULL,
+  source_id INTEGER NOT NULL,
+  organization_id INTEGER,
+  organization_code TEXT,
+  organization_name TEXT,
+  user_id INTEGER,
+  user_username TEXT,
+  user_display_name TEXT,
+  action TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id INTEGER,
+  patient_id INTEGER,
+  method TEXT,
+  ip TEXT,
+  details JSONB,
+  risk_level TEXT NOT NULL DEFAULT 'low',
+  occurred_at TIMESTAMP NOT NULL,
+  archived_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  archived_reason TEXT NOT NULL DEFAULT 'organization_deleted'
+);
+CREATE INDEX IF NOT EXISTS retained_compliance_org_idx ON retained_compliance_records(organization_id);
 
 CREATE TABLE IF NOT EXISTS security_incidents (
   id SERIAL PRIMARY KEY,
@@ -302,6 +430,25 @@ CREATE TABLE IF NOT EXISTS org_settings (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_settings_org_key_uniq ON org_settings(organization_id, key);
+
+-- A hospital's own credentials for an organization-scope integration (Amion,
+-- Epic). Secrets are ONE AES-256-GCM ciphertext (key: INTEGRATION_KEY env);
+-- summary = non-secret display fields only. updated_by has no FK on purpose
+-- (never blocks a user/tenant delete). Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS org_integration_credentials (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  integration_id TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  summary JSONB,
+  updated_by INTEGER,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_integration_credentials_org_integration_uniq
+  ON org_integration_credentials(organization_id, integration_id);
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   id SERIAL PRIMARY KEY,
@@ -337,8 +484,10 @@ CREATE TABLE IF NOT EXISTS mfa_credentials (
   user_id INTEGER NOT NULL REFERENCES users(id),
   secret TEXT NOT NULL,
   activated BOOLEAN NOT NULL DEFAULT FALSE,
+  pending_secret TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE mfa_credentials ADD COLUMN IF NOT EXISTS pending_secret TEXT;
 
 CREATE TABLE IF NOT EXISTS mfa_backup_codes (
   id SERIAL PRIMARY KEY,
@@ -377,6 +526,80 @@ CREATE TABLE IF NOT EXISTS pending_registrations (
   display_name TEXT NOT NULL,
   requested_role TEXT NOT NULL DEFAULT 'hospitalist',
   status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+-- At most ONE pending request per (org, username): /api/register answers 409
+-- request_pending on a re-submission and this index closes the race between
+-- concurrent submissions. Databases written before the index existed may hold
+-- duplicates; keep the newest pending row (it carries the credential the
+-- requester typed most recently) and retire the older ones first, so the
+-- CREATE UNIQUE INDEX below can never fail the boot.
+UPDATE pending_registrations p SET status = 'rejected'
+  WHERE p.status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM pending_registrations q
+       WHERE q.organization_id = p.organization_id
+         AND q.username = p.username
+         AND q.status = 'pending'
+         AND q.id > p.id
+    );
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_pending_uniq
+  ON pending_registrations(organization_id, username) WHERE status = 'pending';
+
+-- Usernames are case- and surrounding-whitespace-insensitive (A.CON-SHO-12/57,
+-- server/usernames.ts): stored trimmed, unique per (org, lower(username)).
+-- A database written before that rule may hold variants of one name in one
+-- org ("chen" + "Chen", "lopez" + "lopez "), every one of them able to sign
+-- in. Repair before the index is built: the OLDEST account keeps the name;
+-- every later variant is deactivated (its sessions stop resolving at once)
+-- and renamed out of the way ("Chen~variant-30"), with a medium-risk audit
+-- row naming it, so an administrator can review, reset or remove it. Then
+-- surrounding whitespace is stripped from every stored name. Idempotent.
+WITH ranked AS (
+  SELECT id, row_number() OVER (
+           PARTITION BY organization_id,
+                        lower(regexp_replace(username, '^[[:space:]]+|[[:space:]]+$', '', 'g'))
+           ORDER BY id) AS rn
+    FROM users
+), blocked AS (
+  UPDATE users u
+     SET disabled_at = COALESCE(u.disabled_at, NOW()),
+         username = regexp_replace(u.username, '^[[:space:]]+|[[:space:]]+$', '', 'g') || '~variant-' || u.id
+    FROM ranked r
+   WHERE r.id = u.id AND r.rn > 1
+  RETURNING u.id, u.organization_id, u.username
+)
+INSERT INTO audit_logs (organization_id, user_id, action, resource_type, resource_id, details, risk_level)
+SELECT organization_id, NULL, 'user.username_variant_blocked', 'user', id,
+       jsonb_build_object('renamedTo', username, 'reason', 'case_or_whitespace_variant_of_an_older_account'),
+       'medium'
+  FROM blocked;
+UPDATE users SET username = regexp_replace(username, '^[[:space:]]+|[[:space:]]+$', '', 'g')
+ WHERE username ~ '^[[:space:]]|[[:space:]]$';
+CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_ci_uniq ON users(organization_id, lower(username));
+-- The same rule for the approval queue: one PENDING request per normalised
+-- name (the newest wins, as above), stored trimmed.
+UPDATE pending_registrations p SET status = 'rejected'
+  WHERE p.status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM pending_registrations q
+       WHERE q.organization_id = p.organization_id
+         AND lower(btrim(q.username)) = lower(btrim(p.username))
+         AND q.status = 'pending'
+         AND q.id > p.id
+    );
+UPDATE pending_registrations SET username = btrim(username)
+ WHERE status = 'pending' AND username <> btrim(username);
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_org_username_ci_pending_uniq
+  ON pending_registrations(organization_id, lower(username)) WHERE status = 'pending';
+
+-- Requests naming an unknown org code or the platform org: dropped, but
+-- answered like a real org's (201, then 409 on a re-submission) so POST
+-- /api/register is not an org-code oracle. Only an opaque SHA-256 key of
+-- (upper(org code), username) is stored — no code, name or credential.
+CREATE TABLE IF NOT EXISTS unrouted_registrations (
+  id SERIAL PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -430,6 +653,11 @@ CREATE TABLE IF NOT EXISTS emergency_broadcasts (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- A.CON comms-account #10: who a broadcast was addressed to (NULL = everyone)
+-- and the recipient set frozen at send time.
+ALTER TABLE emergency_broadcasts ADD COLUMN IF NOT EXISTS audience JSONB;
+ALTER TABLE emergency_broadcasts ADD COLUMN IF NOT EXISTS recipient_ids JSONB;
+
 CREATE TABLE IF NOT EXISTS broadcast_acknowledgments (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
@@ -457,4 +685,21 @@ CREATE TABLE IF NOT EXISTS sms_history (
   carrier TEXT NOT NULL DEFAULT 'console',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Continuous compliance monitor: an org's attestation for ONE manual control.
+-- Automated controls are recomputed from live state on every read and are never
+-- persisted here (a stored "pass" could go stale and mislead an auditor).
+CREATE TABLE IF NOT EXISTS compliance_attestations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  control_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'not_met',
+  owner TEXT,
+  note TEXT,
+  evidence_url TEXT,
+  attested_at TIMESTAMP,
+  review_due TIMESTAMP,
+  updated_by INTEGER REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS compliance_attestations_org_control_uniq ON compliance_attestations(organization_id, control_id);
 `;

@@ -1,23 +1,85 @@
-# Render Blueprint — one public URL for the DocTurn demo.
-# In Render: New → Blueprint → pick this repo/branch. It builds and starts a
-# free web service. The app self-seeds an in-process database on first boot,
-# so there are no secrets or external database to configure for the demo.
+# Render Blueprint — one public URL for DocTurn, backed by a PERSISTENT database.
+# In Render: New → Blueprint → pick this repo/branch. It provisions a managed
+# Postgres and a web service wired to it, so accounts, messages and attachments
+# survive restarts and redeploys (a real multi-person test, not a throwaway demo).
+# The app applies its own schema on first boot and self-seeds the demo org, so
+# there is nothing to run by hand.
 #
-# Demo logins (org code ISPN, password "docturn"): chen / er.doc / director /
-# er.director ; developer is user "dev" on org code DOCTURN (the app picks the
-# right org automatically when you choose a role on the sign-in screen).
+# Demo logins (org code ISPN, password "docturn"): chen / patel / lopez / liu /
+# wu (hospitalists), er.doc, director, er.director. The developer console user
+# "dev" (org code DOCTURN) exists here ONLY if PLATFORM_ADMIN_PASSWORD is set in
+# the Render dashboard (see below). Real testers can also self-register from
+# the sign-in screen; a director approves them.
+#
+# Network: NODE_ENV=production makes the app bind 127.0.0.1 and trust only a
+# loopback proxy by default (the AWS/Caddy topology). Render connects over its
+# private network, hence HOST=0.0.0.0 and TRUST_PROXY=uniquelocal below. Check
+# after a deploy: https://<service>.onrender.com/api/health → "secure":true
+# (false means X-Forwarded-Proto is not trusted and every sign-in is refused
+# with insecure_transport).
+databases:
+  - name: docturn-db
+    plan: free
+    databaseName: docturn
+    user: docturn
+
 services:
   - type: web
     name: docturn-demo
     runtime: node
     plan: free
     branch: claude/sleepy-davinci-kmin7n
-    buildCommand: npm install
-    startCommand: npm run serve
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
-      # Loosen the auth rate limiter for a shared demo (role switching logs in).
-      - key: RATE_LIMIT
-        value: "off"
-      # No DATABASE_URL → in-process PGlite, auto-seeded on boot (demo only).
+      # Render reaches the process over its private network, not via a proxy on
+      # the same host, so bind all interfaces (production defaults to 127.0.0.1
+      # for the Caddy-on-the-same-host AWS topology).
+      - key: HOST
+        value: 0.0.0.0
+      # Render's load balancer connects from private (RFC 1918) addresses and
+      # sets X-Forwarded-For / X-Forwarded-Proto. Trusting that range lets the
+      # app see the real client IP (rate limiting) and that the request was
+      # HTTPS (the Secure session cookie; without it sign-in is refused with
+      # insecure_transport).
+      - key: TRUST_PROXY
+        value: uniquelocal
+      # Auth rate limiting stays ON (50 login attempts / 15 min / IP) — it is the
+      # brute-force / credential-stuffing control (§164.308(a)(5)(ii)(C)). It was
+      # previously disabled for demo role-switching; with real accounts in a
+      # multi-person test that is a genuine security gap, and the compliance
+      # monitor reports it as a FAIL. The limit is generous enough for role
+      # switching; raise AUTH_RATE_LIMIT in server/config.ts if a shared-NAT
+      # site legitimately trips it — do not turn the limiter off.
+      - key: SESSION_SECRET
+        generateValue: true
+      # Encryption key for each hospital's own integration credentials (Amion
+      # OCS feed, Epic backend app) saved in Settings → Integrations — AES-256-GCM
+      # at rest, key derived with HKDF-SHA256 from this value. Render generates
+      # a random value once and keeps it across deploys. Without it, saving
+      # hospital credentials is disabled (never stored in plaintext). Do not
+      # rotate it casually: saved credentials then read as "can't be decrypted"
+      # until a director re-enters them.
+      - key: INTEGRATION_KEY
+        generateValue: true
+      # Platform integrations are connected by adding their variables in the
+      # Render dashboard → Environment (never here — secrets must not live in
+      # git). See docs/INTEGRATIONS.md:
+      #   Twilio SMS   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER
+      #   Push         VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT
+      #   OpenAI       OPENAI_API_KEY + AI_EXTERNAL_PHI_OK=true ONLY after a
+      #                signed BAA with OpenAI (this demo holds synthetic data only)
+      # The cross-tenant operator account `dev` (developer console) is NOT
+      # provisioned on this deployment by design: it can read every tenant, so
+      # the app refuses to create it without an explicitly configured secret.
+      # To enable it, set PLATFORM_ADMIN_PASSWORD (12+ chars) in the Render
+      # dashboard — never here, where it would live in git. Clinical demo
+      # accounts are unaffected and need no configuration.
+      # Persistent Postgres — the app creates its schema + seeds on first boot.
+      # Data now survives restarts/redeploys (unlike the old in-process PGlite).
+      - key: DATABASE_URL
+        fromDatabase:
+          name: docturn-db
+          property: connectionString

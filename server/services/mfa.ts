@@ -1,7 +1,8 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import speakeasy from "speakeasy";
 import { storage } from "../storage.js";
-import { smsFor } from "./sms.js";
+import { isSmsUnavailable, smsFor } from "./sms.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 import { getNotificationProfile } from "../config.js";
 
 /**
@@ -42,14 +43,33 @@ export function generateBackupCodes(n = 10): string[] {
 // build persists to sms_verification_codes; this keeps dev/test secret-free.)
 const otps = new Map<number, { code: string; expires: number; attempts: number }>();
 
-export async function sendSmsOtp(userId: number): Promise<string | null> {
+export type SmsOtpResult =
+  | { sent: true }
+  | { sent: false; reason: "no_phone" | "sms_unavailable" };
+
+/**
+ * Generate and text a one-time code for a pending login. The code itself never
+ * leaves this module except inside the SMS body: callers learn only whether a
+ * text went out. When the carrier cannot deliver (production without
+ * credentials) nothing is armed and the caller gets `sms_unavailable`, so the
+ * UI can never tell the user a text is on its way when none was sent.
+ */
+export async function sendSmsOtp(userId: number): Promise<SmsOtpResult> {
   const user = await storage().getUserById(userId);
-  if (!user?.phone) return null;
-  const code = String(randomInt(100000, 999999));
-  otps.set(userId, { code, expires: Date.now() + 5 * 60_000, attempts: 0 });
+  if (!user?.phone) return { sent: false, reason: "no_phone" };
+  // The org switched SMS off (Settings → Integrations): no text, nothing armed.
+  if (!(await smsAllowedForOrg(user.organizationId))) return { sent: false, reason: "sms_unavailable" };
   const profile = await getNotificationProfile(user.organizationId);
   const sms = smsFor(profile.smsCarrier);
-  await sms.send(user.phone, `Your DocTurn verification code is ${code}`);
+  const code = String(randomInt(100000, 999999));
+  try {
+    await sms.send(user.phone, `Your DocTurn verification code is ${code}`);
+  } catch (err) {
+    if (isSmsUnavailable(err)) return { sent: false, reason: "sms_unavailable" };
+    throw err;
+  }
+  // Arm the code only once the carrier accepted the message.
+  otps.set(userId, { code, expires: Date.now() + 5 * 60_000, attempts: 0 });
   await storage().appendSmsHistory({
     organizationId: user.organizationId,
     userId,
@@ -57,7 +77,7 @@ export async function sendSmsOtp(userId: number): Promise<string | null> {
     body: "DocTurn verification code",
     carrier: sms.carrier,
   });
-  return code;
+  return { sent: true };
 }
 
 export function verifySmsOtp(userId: number, code: string): boolean {

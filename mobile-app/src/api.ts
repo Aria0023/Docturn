@@ -26,6 +26,42 @@ export interface MobileAssignment {
   expiresAt: string;
 }
 
+export interface MobileMessage {
+  id: number;
+  conversationId: number;
+  senderId: number;
+  content: string;
+  createdAt: string;
+  deletedAt?: string | null;
+  /** Recipients who have read it (server delivery rows). 0 = recallable. */
+  readCount?: number;
+  ackCount?: number;
+}
+
+export interface MobileConversation {
+  id: number;
+  type: "direct" | "group" | "broadcast";
+  name: string | null;
+  participantIds: number[];
+  lastMessage: MobileMessage | null;
+  unreadCount: number;
+}
+
+export interface MobileProvider {
+  id: number;
+  userId: number;
+  displayName: string;
+  credential: string | null;
+  specialty: string | null;
+  working: boolean;
+  shiftType: string | null;
+}
+
+export interface AppConfig {
+  syntheticData: boolean;
+  appName: string;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -61,4 +97,47 @@ export const ApiClient = {
   reject: (id: number) => request("PATCH", `/api/assignments/${id}/reject`),
   registerDeviceToken: (token: string, platform: string) =>
     request("POST", "/api/mobile/device-tokens", { token, platform }),
+
+  // Public config (synthetic-data banner). No auth.
+  config: () => request<AppConfig>("GET", "/api/config"),
+
+  // Secure messaging — same endpoints the web app uses, so web and mobile
+  // interoperate on one backend.
+  conversations: () =>
+    request<MobileConversation[]>("GET", "/api/messaging/conversations"),
+  messages: (conversationId: number) =>
+    request<MobileMessage[]>(
+      "GET",
+      `/api/messaging/conversations/${conversationId}/messages`,
+    ),
+  sendMessage: (conversationId: number, content: string) =>
+    request<MobileMessage>("POST", "/api/messaging/send", {
+      conversationId,
+      content,
+    }),
+  // Recall (unsend) my own message while nobody has read it. The server
+  // enforces the unread-only rule (409 already_read) and sends
+  // MESSAGE_RECALLED to every participant.
+  recallMessage: (messageId: number) =>
+    request<void>("DELETE", `/api/messaging/messages/${messageId}`),
+  // This org's module switches (e.g. messaging.recall), so the screen only
+  // offers what the server will allow.
+  modules: () =>
+    request<{ modules: Record<string, boolean> }>("GET", "/api/modules"),
+  markRead: (messageIds: number[]) =>
+    messageIds.length
+      ? request<void>("POST", "/api/messaging/messages/mark-read", { messageIds })
+      : Promise.resolve(),
+  createConversation: (
+    participantIds: number[],
+    type: "direct" | "group" = "direct",
+    name?: string,
+  ) =>
+    request<MobileConversation>("POST", "/api/messaging/conversations", {
+      participantIds,
+      type,
+      ...(name ? { name } : {}),
+    }),
+  directory: () =>
+    request<MobileProvider[]>("GET", "/api/physicians/directory"),
 };

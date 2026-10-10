@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { addCareTeamMemberSchema, toggleOnCallSchema } from "@shared/schema";
+import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -7,7 +8,12 @@ import { storage } from "../storage.js";
 /**
  * Care-team on-call units. A clinician owns a unit and links members; each
  * membership has an on-call flag the owner toggles per shift. Used by the
- * assignment fan-out (attending + on-call members) and the patient board.
+ * assignment fan-out (attending + on-call members: each gets the request and
+ * may accept it), on-call role messaging and the patient board.
+ *
+ * Changing a unit changes who is paged for the owner's admissions, so each
+ * link / unlink / on-call toggle is audited. Only ACTIVE accounts of the
+ * caller's org can be linked (A.CON clinical #4).
  */
 export function registerCareTeamRoutes(app: Express) {
   app.get("/api/care-team", requireAuth, async (req, res) => {
@@ -26,6 +32,8 @@ export function registerCareTeamRoutes(app: Express) {
           userId: m.memberUserId,
           displayName: u?.displayName ?? "Unknown",
           credential: u?.credential ?? null,
+          role: u?.role ?? null,
+          active: !!u && !u.disabledAt,
           onCall: m.onCall,
         };
       }),
@@ -48,6 +56,9 @@ export function registerCareTeamRoutes(app: Express) {
           displayName: u.displayName,
           credential: u.credential,
           role: u.role,
+          // Kept for name resolution (an old thread still names a
+          // deactivated colleague); a deactivated account cannot be linked.
+          active: !u.disabledAt,
         })),
     );
   });
@@ -65,6 +76,7 @@ export function registerCareTeamRoutes(app: Express) {
       parsed.data.memberUserId,
     );
     if (!member) return res.status(404).json({ error: "not_found" });
+    if (member.disabledAt) return res.status(409).json({ error: "user_deactivated" });
     const existing = await storage().getCareTeamMember(
       me.organizationId,
       me.id,
@@ -77,6 +89,15 @@ export function registerCareTeamRoutes(app: Express) {
       ownerUserId: me.id,
       memberUserId: parsed.data.memberUserId,
       onCall: true,
+    });
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "care_team.link",
+      resourceType: "user",
+      resourceId: parsed.data.memberUserId,
+      details: { onCall: true },
+      riskLevel: "low",
     });
     notificationDeps().ws.sendToUsers([me.id, parsed.data.memberUserId], {
       type: "CARE_TEAM_UPDATED",
@@ -99,6 +120,15 @@ export function registerCareTeamRoutes(app: Express) {
         { onCall: parsed.data.onCall },
       );
       if (!updated) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "care_team.on_call",
+        resourceType: "user",
+        resourceId: memberUserId,
+        details: { onCall: parsed.data.onCall },
+        riskLevel: "low",
+      });
       notificationDeps().ws.sendToUsers([me.id, memberUserId], {
         type: "CARE_TEAM_UPDATED",
       });
@@ -112,11 +142,23 @@ export function registerCareTeamRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       const memberUserId = Number(req.params.memberUserId);
+      const existing = await storage().getCareTeamMember(me.organizationId, me.id, memberUserId);
       await storage().deleteCareTeamMember(
         me.organizationId,
         me.id,
         memberUserId,
       );
+      if (existing) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "care_team.unlink",
+          resourceType: "user",
+          resourceId: memberUserId,
+          details: {},
+          riskLevel: "low",
+        });
+      }
       notificationDeps().ws.sendToUsers([me.id, memberUserId], {
         type: "CARE_TEAM_UPDATED",
       });

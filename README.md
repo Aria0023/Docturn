@@ -28,7 +28,8 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | M7 | React web client (login, role dashboards, messaging, directory, settings) | ✅ |
 | M8 | Hardening: Helmet, tiered rate limiting, error shape, audit, reduced-motion | ✅ |
 | M9 | Full MFA: TOTP enroll/verify, single-use backup codes, SMS OTP, 202 gate | ✅ |
-| M10 | Live integration factories (OpenAI/Twilio+carriers/FCM) — env-gated, stubbed | ✅ |
+| M10 | Live integration factories (OpenAI/Twilio+carriers/Web Push+Expo) — env-gated, stubbed | ✅ |
+| I1 | Real Settings → Integrations: live status, server-enforced per-org switches, real connection tests, encrypted per-hospital Amion/Epic credentials ([`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md)) | ✅ |
 | M11 | Registration approval queue + developer console + CMS | ✅ |
 | M12 | Departments/beds/equipment + metrics; emergency broadcasts + acks | ✅ |
 | M13 | Mobile API + Expo app skeleton (`mobile-app/`) | ✅ |
@@ -38,41 +39,90 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | C3 | Adaptive suggestions (analyze → propose with evidence → human accept) | ✅ |
 | v2 | Care-team on-call units + fan-out/accept-lock, patient board, consults, census override, dev provisioning | ✅ |
 
-The full build plan is implemented. The design system and high-fidelity UI kits live in
-[`design/`](design/).
+The design system and high-fidelity UI kits live in [`design/`](design/). What is safe and what
+is still missing is tracked honestly in [`SECURITY.md`](SECURITY.md) and
+[`docs/AWS_DEPLOYMENT_RUNBOOK.md`](docs/AWS_DEPLOYMENT_RUNBOOK.md) §15.
 
-`npm test` is green (37 tests: auth, assignment state machine, messaging, realtime WebSocket, MFA,
-notification escalation, and the v2/platform features).
+### Tests
 
-## Web client
+The suite is not summarised by a count here (a hardcoded number drifted once and would again);
+run it to see the current total.
 
-A React 18 + Vite + Tailwind SPA in [`client/`](client/), wired to the API with TanStack Query
-(query keys = endpoint paths) and a `WebSocketProvider` that invalidates queries on realtime events.
-Routing is `wouter`; theme tokens map to `design/colors_and_type.css`. Screens: login, role-aware
-dashboards (hospitalist accept/decline + on-shift toggle, ER intake with AI extraction + routing,
-director provider/rotation controls + emergency broadcast), the v2 **patient board**, messaging with
-read receipts, directory, a developer **console**, and settings (2FA enrollment, care-team
-management, adaptive suggestions, feature flags). A live broadcast banner acknowledges org-wide
-alerts over WebSocket.
+- `npm test` — the Vitest + Supertest suite in [`tests/`](tests/): one file per surface (auth,
+  sessions, registration, MFA, accounts, assignments + rotation, messaging, receipts, recall,
+  attachments + voice, realtime WebSocket, notifications/escalation, push + device tokens, on-call,
+  SMS, compliance + retention, metrics, modules, platform/developer audit, HTTP platform hardening,
+  web-client static serving, production-dependency advisories), plus the real web client
+  (`webapp/store.js` + `api-bridge.js`) driven in jsdom for realtime and offline sign-in behaviour.
+  Each file gets its own in-process database. Must be green before a merge.
+- Live-server checks (start a throwaway synthetic server first, e.g.
+  `RATE_LIMIT=off SYNTHETIC_DATA=true npx tsx server/index.ts`); each exits non-zero on any failed
+  check, so each can gate a release:
+  - `npm run test:ui` — the real web client in jsdom: signs in as every role and clicks every
+    button on every screen (never the sign-out / lock / role-switch controls, matched by text,
+    `aria-label` or `title`; a sweep that finds itself signed out or locked fails), then drives the
+    core flows end to end.
+  - `npm run test:rt` — two concurrent users, two WebSockets, cross-user realtime handoffs.
+  - `npm run test:e2e` — real Chromium: an iPhone-sized session against desktop sessions on one
+    backend (messaging both ways, STAT acknowledge, admission accept, broadcast, role targets,
+    DND, typed credentials). Needs a Chromium (`CHROME_PATH`, `/opt/pw-browsers/chromium`, or
+    Playwright's own download); its final screenshot goes to `OUT_DIR` (default
+    `<tmp>/docturn-interop`), and only `UPDATE_DOCS=1` rewrites `docs/mobile/interop-phone-final.png`.
+  - `npm run test:login`, `npm run test:offline` (service-worker offline shell, dev and bundle
+    modes, starts its own server), `scripts/realtime-e2e.mjs`, `scripts/csp-check.mjs` and the
+    `scripts/phone-*-check.mjs` layout checks (real Chromium, iPhone profiles), and
+    `scripts/integrations-panel-check.mjs` (Settings → Integrations against the server: statuses,
+    switch round-trip, test result, write-only credentials, phone layout, CSP; needs `INTEGRATION_KEY`),
+    and `scripts/settings-truth-check.mjs` (the Settings screen never shows what the server is not
+    doing: ER director read-only, server org identity, no fake schedule "Connect", Set up sheet
+    states, developer overview; see the script header for the env it needs).
+- CI (`.github/workflows/ci.yml`) runs typecheck + `npm test`, the `test:ui` / `test:rt` smokes, the
+  build, and a production-dependency audit that fails on any high/critical advisory.
+
+## Web client (one app for desktop and phone)
+
+The UI the server serves at `/` is [`webapp/`](webapp/): React 18 screens (`.jsx`), a local store
+(`store.js`) and `api-bridge.js`, which wires every store action to the live REST API and the
+`/ws` WebSocket. It is responsive and installable — on a phone it *is* the mobile app (a PWA with a
+manifest, service worker, home-screen icons and Web Push); see [`docs/MOBILE.md`](docs/MOBILE.md).
+
+It runs in two modes ([`server/webapp-static.ts`](server/webapp-static.ts)):
+
+- **dev** (default outside production): the `.jsx` files are compiled in the browser by the
+  vendored Babel, with development React — edit a file, reload. About 5.7 MB of files (45), sent
+  brotli/gzip-compressed (≈ 1.1 MB on the wire).
+- **bundle** (`NODE_ENV=production`, or `WEBAPP_BUNDLE=on`, when a fresh build exists):
+  `npm run build:webapp` (part of `npm run build`) precompiles every script into content-hashed,
+  precompressed files with production React — about 1.5 MB raw / 270 KB brotli for the shell — and
+  its CSP drops `'unsafe-inline'` from `script-src`. A stale or partial build is refused and the
+  server falls back to dev mode with a warning.
+
+Only the static client is compressed by Node; API responses are not. React, Babel and Lucide are
+vendored, so nothing loads from a CDN.
 
 ```bash
-npm run dev            # API on :3000
-npm run dev:client     # Vite dev server on :5173, proxying /api + /ws to :3000
-# or, single-origin: build the SPA and let Express serve it
-npm run build:client && npm run dev   # open http://localhost:3000
+npm run dev                                   # API + web client on :3000 (dev mode)
+npm run build:webapp && WEBAPP_BUNDLE=on npm run dev   # try the precompiled bundle locally
+npm run build && NODE_ENV=production npm start         # production (behind TLS — the session
+                                              # cookie is Secure; see the AWS runbook)
 ```
 
-## Mobile app
+[`client/`](client/) holds an older React + Vite + Tailwind SPA. The server serves it only if
+`webapp/` is missing; `npm run build` still builds it.
 
-An Expo / React Native app in [`mobile-app/`](mobile-app/) shares the backend through a typed
-`ApiClient`: bottom-tab navigation, login (QR org onboarding via the public `/api/mobile/org/:code`),
-a realtime pending-assignment queue over a native WebSocket, and FCM/APNs device-token registration.
-See [`mobile-app/README.md`](mobile-app/README.md).
+## Mobile
+
+There is no separate phone product: install the web app from the browser (see
+[`docs/MOBILE.md`](docs/MOBILE.md)). [`mobile-app/`](mobile-app/) is an Expo / React Native
+**skeleton**, not a shipped client (typed API client, reconnecting WebSocket, login / text-only
+messages with live recall and read receipts / assignments / profile screens) kept for a possible
+native wrapper; the backend's `/api/mobile/*` routes and device-token storage already exist for it.
 
 ## Architecture
 
-A single TypeScript (ESM) monolith: Express hosts the REST API, talks to PostgreSQL through Drizzle,
-and (M6 onward) will host the WebSocket server and serve the compiled React SPA. Key principles,
+A single TypeScript (ESM) monolith: Express hosts the REST API and the `/ws` WebSocket server,
+serves the web client, and talks to PostgreSQL (or in-process PGlite) through Drizzle. The
+load-bearing decisions are written up in [`ARCHITECTURE.md`](ARCHITECTURE.md). Key principles,
 enforced in code:
 
 - **Tenant isolation first.** Every storage method takes `organizationId` as its first argument and
@@ -82,55 +132,76 @@ enforced in code:
 - **Server-authoritative state.** Assignment routing, expiry, and roles are computed on the server,
   never trusted from the client.
 - **Integrations behind interfaces** with local stubs (AI extractor, push, SMS, WS fan-out), so the
-  app runs and tests with **zero secrets**.
-- **One source of truth for types** — Drizzle tables + Zod schemas in `shared/schema.ts`, imported
-  by both server and (future) client.
+  app runs and tests with **zero secrets**. `server/integrations/` is the registry the Settings →
+  Integrations panel reads: status from live config, per-org switches (modules), real connection
+  tests through one injectable, time-bounded fetch, and AES-256-GCM per-hospital credentials
+  (`INTEGRATION_KEY`). How to connect each one: [`docs/INTEGRATIONS.md`](docs/INTEGRATIONS.md).
+- **One source of truth for types** — Drizzle tables + Zod schemas in `shared/schema.ts`; the
+  idempotent DDL in `server/db.ts` (`SCHEMA_SQL`) mirrors it and is applied on every boot.
 
 ### No-secrets database
 
 The default database is **in-process [PGlite](https://pglite.dev)** (a full Postgres in WASM), so
-the app boots and tests run with no external services. Set `DATABASE_URL` to use a real Postgres
-(via `pg.Pool`); the schema and queries are identical. The dev/seed PGlite database persists to
-`./.pglite`; tests use an isolated in-memory instance per file.
+the app boots and tests run with no external services. It persists on disk in `./.pglite` (or
+`PGLITE_DIR`) — data survives restarts, the files are **not** encrypted, and it is a
+single-process dev/trial store, not for production or real PHI. Set `DATABASE_URL` to use a real
+Postgres (via `pg.Pool`); the schema and queries are identical, the app applies its schema on
+first boot, and sessions then live in Postgres too (`connect-pg-simple`, table `session`) instead
+of in memory. `GET /api/health` reports which store is in use
+(`{"persistent", "storage", "durable", "secure"}`). Tests use an isolated in-memory instance per
+file.
 
 ## Running
 
 ```bash
 npm install
-npm run seed     # populate the dev database (org MERCY, one user per role)
-npm run dev      # start the API (default :3000)
+npm run dev      # start the API + web client (default :3000); an empty database self-seeds
 npm test         # run the Vitest + Supertest suite
 npm run typecheck
+npm run seed     # optional: (re)seed the dev database explicitly
 ```
 
-No `.env` is required. To use a real Postgres, copy `.env.example` to `.env` and set `DATABASE_URL`
-+ `SESSION_SECRET`, then `npm run db:push`.
+No `.env` is required. To use a real Postgres, set `DATABASE_URL` + `SESSION_SECRET` (see
+`.env.example`); the schema is applied on boot. Production deployment: see
+[`docs/AWS_DEPLOYMENT_RUNBOOK.md`](docs/AWS_DEPLOYMENT_RUNBOOK.md) (Caddy on the same host; the
+server binds `127.0.0.1` in production unless `HOST` is set) or `render.yaml`.
 
-### Seed accounts (dev password: `docturn`, org code `MERCY`)
+### Seed accounts (synthetic-data mode only; password `docturn`, or `DEMO_PASSWORD`)
 
-| Username | Role | Notes |
-|---|---|---|
-| `director` | director | provider/org admin |
-| `er.doc` | er_doctor | patient intake + assignment |
-| `chen` | hospitalist | Cardiology, census 3/12, working |
-| `patel` | hospitalist | General, census 5/12, working |
-| `lopez` | hospitalist | Pulmonology, census 7/10, working |
-| `liu` | hospitalist | Neurology, census 2/8, off shift |
+Seeded only while `SYNTHETIC_DATA` is not `false`. Organization code **`ISPN`**:
+
+| Username | Role |
+|---|---|
+| `director` | director (hospitalist director) |
+| `er.director` | er_director |
+| `er.doc` | er_doctor |
+| `chen`, `patel`, `lopez`, `liu`, `wu` | hospitalist |
+
+The cross-tenant operator `dev` lives on organization code **`DOCTURN`**. Locally it uses the demo
+password; in production or real-PHI mode it exists only when `PLATFORM_ADMIN_PASSWORD` (12+
+characters) is set. Two further isolated demo tenants (`HOSP`, `ER`) each have a `director`.
 
 ## Project layout
 
 ```
 shared/schema.ts      # Drizzle tables + enums + Zod schemas + inferred types
 server/
-  db.ts               # Drizzle client (PGlite default, pg when DATABASE_URL set)
+  db.ts               # Drizzle client (PGlite default, pg when DATABASE_URL set) + SCHEMA_SQL
   storage.ts          # IStorage interface + tenant-scoped DatabaseStorage
   auth.ts  rbac.ts    # Passport local + scrypt; requireAuth/requireRole/assertSameOrg
   audit.ts            # audit logs, PHI access logs, security incidents
-  app.ts  index.ts    # Express app factory + bootstrap
+  app.ts  index.ts    # Express app factory + bootstrap (HOST / TRUST_PROXY / PORT)
+  config.ts           # session, CSP/helmet, proxy trust, rate limits (read by compliance checks)
+  webapp-static.ts    # serves webapp/ (dev or precompiled bundle), compression, sw.js
   seed.ts             # deterministic seed (shared with tests)
-  services/           # rotation, assignments (state machine), expiry, ai-intake, notifications
-  routes/             # health, auth, providers, patients, assignments, messaging, org, settings
-tests/                # Vitest + Supertest: auth, assignments, messaging
+  services/           # rotation, assignments, expiry, escalation, retention, push, sms, attachments
+  routes/             # one module per API surface
+  ws/                 # WebSocket server (tenant-scoped fan-out, presence)
+  compliance/         # continuous control checks + evidence
+webapp/               # the web client / PWA (see docs/MOBILE.md)
+tests/                # Vitest + Supertest (+ jsdom client tests)
+scripts/              # build-webapp, live-server smokes, Chromium checks
+deploy/aws/           # bootstrap, systemd unit, Caddyfile, SSM env, update script
 design/               # full design-system handoff + UI kits the client is built from
 ```
 
@@ -142,5 +213,17 @@ design/               # full design-system handoff + UI kits the client is built
   provider exists (preferring a different provider than the one who just declined), and zero when
   none do.
 - `rotation.selectNext` never returns a provider from another org, never one at/over cap unless cap
-  relief raised every working provider's cap, and prefers the lowest census.
+  relief raised the cap of every working provider in the round-robin shift set (relief never touches
+  off-shift providers, and a lone provider is re-offered a rerouted patient without any relief), and
+  prefers the lowest census. `previewNext` ("Next up") applies the same eligibility, and the web
+  client's "Next up" surfaces (Director card, ER Quick hint, hospitalist position chip) read it from
+  `GET /api/rotation/next` instead of guessing locally; the ER Quick tab sends `round_robin` without a
+  `hospitalistId` and its confirmation names the provider the server actually assigned. Every write
+  that moves "Next up" (cursor reset, on/off shift, caps, census, rotation order, the Director's
+  Rotation/Off switch — `PATCH /api/hospitalists/:id/rotation` — and shift selector —
+  `PATCH /api/hospitalists/:id/shift` — roster and rotation config) broadcasts a content-free
+  `ROTATION_UPDATED` to that org's open sessions, which re-read the preview; the Director's row
+  numbers are the planner's own pick order. A provider taken off rotation stays on shift but is never
+  previewed, picked or cap-relieved. Bulk on/off shift and "Apply to all" caps are
+  `PATCH /api/hospitalists/working-status` and `PATCH /api/physicians/capacity`.
 - Messaging never delivers a message to a non-participant.

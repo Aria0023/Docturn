@@ -1,13 +1,24 @@
+import { aiIntakeAllowedForOrg } from "../integrations/gates.js";
+import { integrationFetch } from "../integrations/http.js";
+
 /**
  * AI patient-intake extraction. Like every external integration it sits behind
- * an interface with a deterministic local stub (default, no secrets); a live
- * OpenAI implementation is selected by env in M10.
+ * an interface with a deterministic local stub (default, no secrets); the live
+ * OpenAI implementation is selected by env (aiIntakeEnv) AND, per org, by the
+ * integration.aiIntake switch (Settings → Integrations → OpenAI).
  */
 export interface ExtractedPatient {
+  /** "" when the note names nobody — never a made-up placeholder. */
   initials: string;
   roomNumber: string;
   issueSummary: string;
   specialty: string;
+  /**
+   * Which engine produced the fields: "local" = DocTurn's built-in keyword
+   * rules (no AI), "openai" = the OpenAI integration answered. The intake
+   * screen labels the fields with it (A.CON clinical #17).
+   */
+  engine?: "local" | "openai";
 }
 
 export interface AIExtractor {
@@ -54,7 +65,9 @@ export class MockAIExtractor implements AIExtractor {
         .map((w) => w[0])
         .join("");
     }
-    initials = (initials || "XX").toUpperCase().slice(0, 4);
+    // Nothing that looks like initials → nothing (the ER physician types
+    // them); a placeholder like "XX" would read as extracted from the note.
+    initials = (initials || "").toUpperCase().slice(0, 4);
 
     let specialty = "General";
     for (const [re, spec] of SPECIALTY_KEYWORDS) {
@@ -72,7 +85,7 @@ export class MockAIExtractor implements AIExtractor {
       sentenceEnd > 20 ? firstLine.slice(0, sentenceEnd) : firstLine
     ).slice(0, 160);
 
-    return { initials, roomNumber: room, issueSummary, specialty };
+    return { initials, roomNumber: room, issueSummary, specialty, engine: "local" };
   }
 }
 
@@ -84,7 +97,10 @@ export class OpenAIExtractor implements AIExtractor {
   private fallback = new MockAIExtractor();
   async extract(note: string): Promise<ExtractedPatient> {
     try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      // Bounded like every integration call (one ≤ 10 s deadline over headers
+      // AND body, body ≤ 5 MB and already buffered); a slow or stalled vendor
+      // falls back to the local extractor instead of hanging the ER intake form.
+      const res = await integrationFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -103,34 +119,81 @@ export class OpenAIExtractor implements AIExtractor {
           ],
         }),
       });
+      if (!res.ok) throw new Error(`openai_http_${res.status}`);
       const data = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
       };
       const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
       return {
-        initials: String(parsed.initials ?? "XX").toUpperCase().slice(0, 4),
+        initials: String(parsed.initials ?? "").toUpperCase().slice(0, 4),
         roomNumber: String(parsed.roomNumber ?? ""),
         issueSummary: String(parsed.issueSummary ?? note.slice(0, 80)),
         specialty: String(parsed.specialty ?? "General"),
+        engine: "openai",
       };
     } catch (err) {
-      console.error("[ai] extraction failed; falling back to mock", err);
+      // Code only — the error text could quote the request.
+      const code = err instanceof Error && /^[a-z_0-9]+$/.test(err.message) ? err.message : (err as { code?: string })?.code ?? "error";
+      console.error("[ai] extraction failed; falling back to the local extractor:", code);
       return this.fallback.extract(note);
     }
   }
 }
 
+/**
+ * The platform's AI configuration, read live from env. The single definition
+ * getExtractor() and the integration registry (server/integrations) share.
+ */
+export function aiIntakeEnv(env: NodeJS.ProcessEnv = process.env) {
+  const hasKey = !!env.OPENAI_API_KEY;
+  const phiOk = env.AI_EXTERNAL_PHI_OK === "true";
+  const stubForced = env.USE_STUB_AI === "true";
+  return { hasKey, phiOk, stubForced, external: hasKey && phiOk && !stubForced };
+}
+
 let _extractor: AIExtractor | null = null;
 export function getExtractor(): AIExtractor {
   if (_extractor) return _extractor;
-  // Live only when a key is present AND the stub isn't forced (CI sets nothing).
-  if (process.env.OPENAI_API_KEY && process.env.USE_STUB_AI !== "true") {
+  // SAFETY: the external extractor sends the intake note (PHI) to a third-party
+  // LLM. That is only lawful under a signed BAA with a HIPAA-eligible endpoint.
+  // So it is OFF unless BOTH a key is present AND the operator has explicitly
+  // acknowledged the BAA via AI_EXTERNAL_PHI_OK=true. Default = local extractor,
+  // which never leaves the server. Setting a key alone no longer leaks PHI.
+  const cfg = aiIntakeEnv();
+  const externalOk = cfg.phiOk;
+  if (cfg.external) {
+    console.warn(
+      "[ai] EXTERNAL AI ENABLED — intake notes (PHI) will be sent to the configured LLM endpoint. " +
+        "Confirm a BAA is in place and the endpoint is HIPAA-eligible.",
+    );
     _extractor = new OpenAIExtractor();
   } else {
+    if (process.env.OPENAI_API_KEY && !externalOk) {
+      console.warn(
+        "[ai] OPENAI_API_KEY is set but AI_EXTERNAL_PHI_OK!=true — using the LOCAL extractor; " +
+          "no PHI leaves the server.",
+      );
+    }
     _extractor = new MockAIExtractor();
   }
   return _extractor;
 }
 export function setExtractor(e: AIExtractor) {
   _extractor = e;
+}
+
+const localExtractor = new MockAIExtractor();
+
+/**
+ * The extractor for ONE org's intake notes: the platform extractor while the
+ * org's integration.aiIntake switch is on, else the local one — a director
+ * who switches OpenAI off keeps every note inside DocTurn.
+ */
+export async function extractorForOrg(orgId: number): Promise<AIExtractor> {
+  return (await aiIntakeAllowedForOrg(orgId)) ? getExtractor() : localExtractor;
+}
+
+/** True when this process sends intake notes to the external LLM (any org with the switch on). */
+export function externalExtractorActive(): boolean {
+  return getExtractor() instanceof OpenAIExtractor;
 }

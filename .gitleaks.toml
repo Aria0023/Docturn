@@ -1,0 +1,33 @@
+# Gitleaks config for DocTurn CI secret scanning.
+# Extends the default ruleset, then allowlists values/paths that are intentionally
+# in the repo and are NOT real credentials (demo/test fixtures, generated assets).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "DocTurn non-secret fixtures and generated files"
+paths = [
+  '''node_modules/''',
+  '''dist/''',
+  '''client/dist/''',
+  '''\.pglite/''',
+  '''package-lock\.json''',
+  '''.*\.(png|jpg|jpeg|svg|ico|webmanifest|lock)$''',
+  '''design/''',            # delivered design kits / handoff assets
+]
+regexes = [
+  # The shared DEMO password used only for seeded demo accounts (documented in
+  # TRIAL.md). Real accounts set their own password via /api/account/password.
+  '''docturn''',
+  # Session/co-author trailers written into commit messages & docs by tooling.
+  '''claude\.ai/code/session_[A-Za-z0-9]+''',
+  '''noreply@anthropic\.com''',
+]
+# Common placeholder tokens that trip entropy rules but carry no secret.
+stopwords = [
+  "example",
+  "changeme",
+  "placeholder",
+  "your-",
+  "dev-secret",
+]

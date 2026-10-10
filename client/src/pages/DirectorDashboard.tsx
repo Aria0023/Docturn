@@ -28,7 +28,7 @@ export function DirectorDashboard() {
   const { data: patients = [] } = useQuery<Patient[]>({ queryKey: ["/api/patients"] });
   const [broadcastMsg, setBroadcastMsg] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [np, setNp] = useState({ username: "", displayName: "", specialty: "General" });
+  const [np, setNp] = useState({ username: "", displayName: "", specialty: "General", role: "hospitalist" });
 
   const userById = new Map(users.map((u) => [u.id, u]));
   const patientById = new Map(patients.map((p) => [p.id, p]));
@@ -54,12 +54,12 @@ export function DirectorDashboard() {
         username: np.username,
         password: "docturn",
         displayName: np.displayName,
-        specialty: np.specialty,
-        role: "hospitalist",
+        role: np.role,
+        ...(np.role === "hospitalist" ? { specialty: np.specialty } : {}),
       }),
     onSuccess: () => {
       setShowAdd(false);
-      setNp({ username: "", displayName: "", specialty: "General" });
+      setNp({ username: "", displayName: "", specialty: "General", role: "hospitalist" });
       qc.invalidateQueries({ queryKey: ["/api/hospitalists"] });
       qc.invalidateQueries({ queryKey: ["/api/users"] });
     },
@@ -132,7 +132,19 @@ export function DirectorDashboard() {
         <Card style={{ padding: 16, marginBottom: 12, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 140 }}><Field label="Username" value={np.username} onChange={(v) => setNp({ ...np, username: v })} /></div>
           <div style={{ flex: 1, minWidth: 140 }}><Field label="Display name" value={np.displayName} onChange={(v) => setNp({ ...np, displayName: v })} /></div>
-          <div style={{ flex: 1, minWidth: 140 }}><Field label="Specialty" value={np.specialty} onChange={(v) => setNp({ ...np, specialty: v })} /></div>
+          <div style={{ flex: 1, minWidth: 140, display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ fontSize: 12.5, fontWeight: 500, color: "var(--muted-foreground)" }}>Role</label>
+            <select value={np.role} onChange={(e) => setNp({ ...np, role: e.target.value })}
+              style={{ height: 40, borderRadius: "var(--radius-md)", border: "1px solid var(--input)", padding: "0 12px", fontSize: 14, background: "#fff" }}>
+              <option value="hospitalist">Hospitalist</option>
+              <option value="er_doctor">ER Doctor</option>
+              <option value="er_director">ER Director</option>
+              <option value="director">Director</option>
+            </select>
+          </div>
+          {np.role === "hospitalist" && (
+            <div style={{ flex: 1, minWidth: 140 }}><Field label="Specialty" value={np.specialty} onChange={(v) => setNp({ ...np, specialty: v })} /></div>
+          )}
           <Button disabled={!np.username || !np.displayName || addProvider.isPending} onClick={() => addProvider.mutate()}>Create</Button>
         </Card>
       )}

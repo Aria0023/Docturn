@@ -11,10 +11,18 @@ typed `ApiClient`.
 - **`src/realtime.ts`** — native WebSocket to `/ws` with the session cookie and
   exponential-backoff reconnect.
 - **`App.tsx`** — bottom-tab navigation; gates on `GET /api/user`.
-- **Screens** — Login (org code + credentials; QR org onboarding resolves the
-  code via the public `/api/mobile/org/:code`), Assignments (realtime pending
-  queue with accept/decline), Profile (registers an FCM/APNs device token, sign
-  out).
+- **Screens** — Login (org code + credentials; a QR code only pre-fills the
+  org code — `/api/mobile/org/:code` is members-only and answers for the
+  caller's own org, so it is no org-code oracle), Messages (text-only
+  conversations / thread / new on `/api/messaging/*`; an open thread applies
+  `MESSAGE_RECALLED` and `MESSAGE_READ` live, marks read only in the
+  foreground, and offers Recall on your own unread messages when the org's
+  `messaging.recall` module is on), Assignments (realtime pending queue with
+  accept/decline), Profile (device-token registration, sign out). `App.tsx`
+  also registers an Expo push token at sign-in.
+- **`src/threadEvents.ts`** — the pure frame → thread-state helpers the
+  Messages screen uses; the root test suite runs them against the real
+  server's frames (`tests/mobile-thread-events.test.ts`).
 
 ## Run
 

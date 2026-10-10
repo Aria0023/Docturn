@@ -1,3 +1,7 @@
+// MUST be the first import: patches Express so a rejected promise from any
+// async handler reaches the JSON error middleware instead of hanging the
+// request. See server/async-errors.ts.
+import "./async-errors.js";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -5,20 +9,47 @@ import { fileURLToPath } from "node:url";
 import express, { type Express, type NextFunction, type Request, type RequestHandler, type Response } from "express";
 import session from "express-session";
 import passport from "passport";
-import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import createMemoryStore from "memorystore";
-import { configurePassport, verifyPassword } from "./auth.js";
+import { actorContextMiddleware } from "./audit.js";
+import { authenticateCredentials, configurePassport } from "./auth.js";
+import {
+  ACCOUNT_RATE_LIMIT,
+  AUTH_RATE_LIMIT,
+  GENERAL_RATE_LIMIT,
+  RATE_LIMIT_RESPONSE,
+  SESSION_POLICY,
+  clientIpKey,
+  securityHeaders,
+  sessionCookieOptions,
+  setRateLimitState,
+} from "./config.js";
+import { getHandle } from "./db.js";
+import { loggableError, pgErrorCode } from "./log-safe.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
-import { storage } from "./storage.js";
+import { moduleGate } from "./modules.js";
+import { registerNumericParams } from "./params.js";
+import { createSessionStore } from "./session-store.js";
+import { requestMetricsMiddleware } from "./services/request-metrics.js";
+import { mountWebapp, type WebappOptions } from "./webapp-static.js";
 import { toSafeUser } from "@shared/schema";
 
 export interface CreateAppOptions {
   sessionSecret?: string;
   /** When false (tests), disable rate limiting for determinism. */
   rateLimiting?: boolean;
-  trustProxy?: boolean;
+  /**
+   * Express `trust proxy` value. `true` means "loopback" (a reverse proxy on
+   * this host); a string is an address list / keyword list; a number is the
+   * legacy (spoofable) hop count. See resolveTrustProxy() in server/config.ts.
+   */
+  trustProxy?: boolean | string | number;
+  /**
+   * How the web client is served (server/webapp-static.ts): the precompiled
+   * bundle from `npm run build:webapp`, or the no-build kit with in-browser
+   * Babel. Default "auto": the bundle in production when a fresh build exists.
+   */
+  webapp?: WebappOptions;
 }
 
 /**
@@ -32,41 +63,72 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
   const isProd = process.env.NODE_ENV === "production";
 
-  if (opts.trustProxy) app.set("trust proxy", 1);
+  // Forwarded headers (client IP for rate limiting + audit rows, X-Forwarded-
+  // Proto for the Secure-cookie decision) are believed only from the trusted
+  // proxy peer(s) — never from a hop count, which any direct client satisfies.
+  if (opts.trustProxy === true) app.set("trust proxy", "loopback");
+  else if (typeof opts.trustProxy === "string" || typeof opts.trustProxy === "number") {
+    app.set("trust proxy", opts.trustProxy);
+  }
 
-  app.use(
-    helmet({
-      contentSecurityPolicy: false, // SPA served separately; relax for dev.
-    }),
-  );
-  app.use(express.json({ limit: "1mb" }));
+  // Time every /api request (the developer console's measured API latency —
+  // server/services/request-metrics.ts). First, so the time includes body
+  // parsing, the session lookup and every gate.
+  app.use(requestMetricsMiddleware());
+  // Security response headers (helmet CSP/HSTS/… + Permissions-Policy). The
+  // instance lives in server/config.ts so the compliance monitor can probe the
+  // SAME middleware for the headers it emits.
+  app.use(securityHeaders);
+  // Global JSON body parser (1 MB). The attachment-upload route needs a larger
+  // limit for base64 file bodies, so it is excluded here and mounts its OWN
+  // express.json({ limit: "12mb" }) — otherwise this 1 MB cap would reject the
+  // upload before the route-level parser could run.
+  const globalJson = express.json({ limit: "1mb" });
+  app.use((req, res, next) => {
+    if (req.method === "POST" && req.path === "/api/messaging/attachments") {
+      return next();
+    }
+    return globalJson(req, res, next);
+  });
+  // A NUL character can never be stored (Postgres `text`/`jsonb` reject it) and
+  // has no legitimate use in this API, so a request carrying one — anywhere in
+  // the JSON body (values or keys, any depth), the path or the query string —
+  // is a 400 validation_error BEFORE any handler runs, instead of a half-done
+  // write that dies in the database as a 500. (The attachment upload parses its
+  // own body later; a NUL there is caught by the SQLSTATE mapping in
+  // classifyError below.)
+  app.use((req, _res, next) => {
+    if (/%00/.test(req.originalUrl) || hasNul(req.query) || hasNul(req.body)) {
+      return next(Object.assign(new Error("NUL character in request input"), { status: 400, type: "input.nul_byte" }));
+    }
+    next();
+  });
 
-  // Session store: real Postgres uses connect-pg-simple; otherwise in-memory.
-  const MemoryStore = createMemoryStore(session);
-  const store = new MemoryStore({ checkPeriod: 86_400_000 });
+  // Session store: real Postgres (DATABASE_URL) → connect-pg-simple on the
+  // app's own pg.Pool, so sessions survive restarts and are shared between
+  // instances; PGlite → in-memory. The choice is recorded for the compliance
+  // monitor (getSessionStoreState) so it can report the real posture.
+  const { store } = createSessionStore({
+    databaseUrl: process.env.DATABASE_URL,
+    pool: process.env.DATABASE_URL ? getHandle().pool : undefined,
+  });
 
   const secret =
     opts.sessionSecret ??
     process.env.SESSION_SECRET ??
     randomBytes(32).toString("hex");
 
+  // Cookie/session posture comes from SESSION_POLICY (server/config.ts) — the
+  // same values the `session-timeout` / `session-cookie-flags` controls read.
+  const cookie = sessionCookieOptions();
   const sessionMiddleware: RequestHandler = session({
-    name: "docturn.sid",
+    name: SESSION_POLICY.name,
     secret,
     resave: false,
     saveUninitialized: false,
     store,
-    rolling: true, // 15-minute rolling, inactivity expiry.
-    cookie: {
-      httpOnly: true,
-      // "lax" (not "strict") so the session cookie reliably sticks when the app
-      // is reached from another device / through a tunnel (strict can drop the
-      // cookie in some navigation contexts, e.g. mobile Safari). Still safe: the
-      // API is same-origin and CSRF surface is minimal for this app.
-      sameSite: "lax",
-      secure: isProd,
-      maxAge: 15 * 60 * 1000,
-    },
+    rolling: SESSION_POLICY.rolling, // maxAge behaves as INACTIVITY expiry.
+    cookie,
   });
   app.locals.sessionMiddleware = sessionMiddleware;
 
@@ -79,23 +141,43 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // identity without colliding on the shared session cookie. Additive — a
   // request with no token is unaffected.
   app.use(demoTokenAuth());
+  // Request-scoped actor context: who is REALLY acting when the session is an
+  // impersonated / managed-org one (server/routes/dev.ts records the developer
+  // in req.session.impersonatorId). appendAudit()/logPhiAccess() merge it into
+  // every audit + PHI-access row written during the request, so no route has
+  // to know. After session/passport so the session is resolved; before the
+  // routes so every handler runs inside the context.
+  app.use(actorContextMiddleware());
+  // Feature-module gate: per-org on/off switches enforced centrally (one table
+  // in server/modules.ts) so route files stay untouched. After session/passport
+  // so currentUser(req) is populated; before registerRoutes so it wins.
+  app.use(moduleGate());
 
   // Mint a demo token from valid demo credentials. Non-production only; the
   // 3-up demo console (/demo) calls this once per pane, then loads the real app
   // in an iframe with ?token=<t>. Requires the demo password, like normal login.
   if (!isProd) {
     app.post("/api/demo/login", async (req, res) => {
+      // Demo tokens are a synthetic-data affordance: refuse when the operator
+      // has deliberately switched the instance to real-PHI mode.
+      if (process.env.SYNTHETIC_DATA === "false") {
+        return res.status(403).json({ error: "demo_disabled" });
+      }
       const { orgCode, username, password } = (req.body ?? {}) as {
         orgCode?: string; username?: string; password?: string;
       };
       try {
-        const org = await storage().getOrganizationByCode(String(orgCode ?? ""));
-        if (!org) return res.status(401).json({ error: "invalid_org" });
-        const user = await storage().getUserByUsername(org.id, String(username ?? ""));
-        if (!user || !(await verifyPassword(String(password ?? ""), user.passwordHash))) {
-          return res.status(401).json({ error: "invalid_credentials" });
-        }
-        res.json({ token: issueDemoToken(user.id), user: toSafeUser(user) });
+        // The same constant-cost check as POST /api/login: one generic 401 for
+        // an unknown org, an unknown user, a wrong password or a deactivated
+        // account. The token is bound to the password generation just
+        // verified, so a later password change or reset ends it.
+        const user = await authenticateCredentials(
+          String(orgCode ?? ""),
+          String(username ?? ""),
+          String(password ?? ""),
+        );
+        if (!user) return res.status(401).json({ error: "invalid_credentials" });
+        res.json({ token: issueDemoToken(user), user: toSafeUser(user) });
       } catch {
         res.status(500).json({ error: "demo_login_failed" });
       }
@@ -103,34 +185,124 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   }
 
   // Rate limiting is on by default; set RATE_LIMIT=off to disable (useful for
-  // local dev, the headless UI smoke test, and load testing).
-  if (opts.rateLimiting !== false && process.env.RATE_LIMIT !== "off") {
-    // Tiered limits: stricter on auth, looser on general traffic.
-    // Disable the X-Forwarded-For validation: behind a dev tunnel the proxy hop
-    // count can differ from `trust proxy`, and a failed validation otherwise
-    // throws and 500s the request (breaking login from a phone). We still get
-    // correct client IPs via `trust proxy`; this just stops the hard failure.
+  // local dev, the headless UI smoke test, and load testing). Whatever we decide
+  // here is RECORDED so the `auth-rate-limit` control reports the limiters this
+  // process actually mounted — not what an env var implies.
+  const rateLimitDisabledByOption = opts.rateLimiting === false;
+  const rateLimitDisabledByEnv = process.env.RATE_LIMIT === "off";
+  const rateLimitEnabled = !rateLimitDisabledByOption && !rateLimitDisabledByEnv;
+  setRateLimitState({
+    enabled: rateLimitEnabled,
+    reason: rateLimitEnabled
+      ? "enabled"
+      : rateLimitDisabledByEnv
+        ? "disabled_by_env"
+        : "disabled_by_app_option",
+  });
+  if (rateLimitEnabled) {
+    // Tiered limits: stricter on auth, looser on general traffic. Every limiter
+    // keys on clientIpKey(): the address Express resolved under the `trust
+    // proxy` ADDRESS LIST above, so an X-Forwarded-For sent by anything other
+    // than the trusted proxy peer is ignored and cannot pick its own bucket.
+    // (The library's own X-Forwarded-For validation is bypassed by supplying a
+    // keyGenerator, so there is nothing left to throw and 500 a login.)
+    const common = {
+      standardHeaders: true as const,
+      legacyHeaders: false,
+      message: RATE_LIMIT_RESPONSE,
+      keyGenerator: clientIpKey,
+    };
     const authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000,
-      max: 50,
+      ...AUTH_RATE_LIMIT,
+      ...common,
+      // Count only FAILED auth attempts (status >= 400). The control we need is
+      // brute-force / credential-stuffing protection (§164.308(a)(5)(ii)(C)),
+      // and that is entirely about wrong guesses — a successful sign-in is not
+      // an attack. Counting successes too meant ordinary use burned the budget:
+      // every role switch costs 1 (or 2, since a miss retries the role's home
+      // org), and a whole demo room behind one hospital NAT shares a single IP,
+      // so a legitimate session could lock everyone out mid-demo.
+      skipSuccessfulRequests: true,
+    });
+    // Per-ACCOUNT failure budget: the per-IP limiter alone is defeated by a
+    // guesser that spreads attempts over many addresses, so the same failed
+    // password attempts are ALSO counted against the targeted org+username.
+    // Keyed on what the client SENT (lower-cased), so it reveals nothing about
+    // whether that account exists, and failures only — a correct password is
+    // never counted, so ordinary use is unaffected.
+    const accountLimiter = rateLimit({
+      ...ACCOUNT_RATE_LIMIT,
       standardHeaders: true,
       legacyHeaders: false,
-      validate: { xForwardedForHeader: false },
+      message: RATE_LIMIT_RESPONSE,
+      skipSuccessfulRequests: true,
+      // A body without both fields is a validation error, not a guess.
+      skip: (req) => !loginAccountKey(req),
+      keyGenerator: (req) => loginAccountKey(req) ?? "acct:none",
     });
     const generalLimiter = rateLimit({
-      windowMs: 60 * 1000,
-      max: 300,
-      standardHeaders: true,
-      legacyHeaders: false,
-      validate: { xForwardedForHeader: false },
+      ...GENERAL_RATE_LIMIT,
+      ...common,
     });
     app.use("/api/login", authLimiter);
+    app.post("/api/login", accountLimiter);
     app.use("/api/register", authLimiter);
     app.use("/api/2fa", authLimiter);
     app.use("/api", generalLimiter);
   }
 
+  // A session can only be established over a transport that will carry the
+  // cookie back. When the cookie is configured Secure (production) and this
+  // request is NOT seen as HTTPS — no TLS on the socket and no X-Forwarded-Proto
+  // from a trusted proxy — the browser would silently drop the Set-Cookie and
+  // the user would see a 200 followed by an unexplained "logged out". Refuse
+  // clearly instead, so the operator fixes TLS termination / TRUST_PROXY.
+  // Gated on the CONFIGURED flag, not on NODE_ENV, so dev over http still works.
+  const requireSecureTransport: RequestHandler = (req, res, next) => {
+    if (cookie.secure && !req.secure) {
+      warnInsecureLoginOnce();
+      return res.status(400).json({ error: "insecure_transport" });
+    }
+    next();
+  };
+  app.post(["/api/login", "/api/2fa/complete-login"], requireSecureTransport);
+
+  // Every numeric `:id`-style parameter is validated here, once, before any
+  // route runs: malformed → 404 JSON instead of NaN reaching the database.
+  registerNumericParams(app);
+
   registerRoutes(app);
+
+  // Unknown API / WS paths answer with the SAME JSON shape every real route
+  // uses, instead of Express's default HTML 404 page. (/ws upgrades never reach
+  // Express — the WebSocket server owns them — so this only sees plain HTTP.)
+  app.all(/^\/(api|ws)(\/|$)/, (_req, res) => {
+    res.status(404).json({ error: "not_found" });
+  });
+
+  // Unified mobile: the installable PWA IS the full, responsive web app served
+  // at "/" (manifest + service worker live in webapp/). The old slim /m kit is
+  // retired.
+  //
+  // Old /m installs registered a service worker at /m/sw.js that CACHES the
+  // retired slim app and intercepts /m navigations (so a plain redirect never
+  // reaches them). Serve a self-destructing SW there: on activate it clears all
+  // caches, unregisters itself, and reloads open windows into the unified app.
+  // This heals stale devices on their next visit. Must precede the redirect.
+  app.get("/m/sw.js", (_req, res) => {
+    res.type("application/javascript").set("Cache-Control", "no-cache");
+    res.send(
+      'self.addEventListener("install",function(){self.skipWaiting();});\n' +
+        'self.addEventListener("activate",function(e){e.waitUntil((async function(){' +
+        'try{var k=await caches.keys();await Promise.all(k.map(function(x){return caches.delete(x);}));}catch(_){}' +
+        'try{await self.registration.unregister();}catch(_){}' +
+        'try{var cs=await self.clients.matchAll({type:"window"});cs.forEach(function(c){try{c.navigate("/");}catch(_){}});}catch(_){}' +
+        "})());});\n",
+    );
+  });
+  // Redirect /m and any /m/* to "/" so existing links, bookmarks, and home-screen
+  // installs land on the unified app. Registered BEFORE the SPA catch-all.
+  app.get(/^\/m(\/.*)?$/, (_req, res) => res.redirect(302, "/"));
 
   // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
   // from design/ui_kits/web-app (its own components, store.js, tokens, assets).
@@ -151,35 +323,165 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     fileURLToPath(new URL("../client/dist", import.meta.url)),
     join(process.cwd(), "client/dist"),
   ];
-  const uiDir = candidates.find((d) => existsSync(d)) || wiredKit;
+  const uiDir = opts.webapp?.dir ?? (candidates.find((d) => existsSync(d)) || wiredKit);
   if (existsSync(uiDir)) {
-    // No-cache for the kit: it's plain <script> files with no content hashing,
-    // so a browser that caches api-bridge.js/*.jsx would keep running stale
-    // client code after a pull. Always revalidate (dev tool; assets are local).
-    app.use(
-      express.static(uiDir, {
-        etag: true,
-        lastModified: true,
-        setHeaders: (res) => {
-          res.setHeader("Cache-Control", "no-cache, must-revalidate");
-        },
-      }),
-    );
-    // Convenience alias for the side-by-side demo console (served from demo.html
-    // by express.static; without this the SPA fallback below would shadow it).
-    app.get("/demo", (_req, res) => res.redirect("/demo.html"));
-    app.get(/^(?!\/api|\/ws).*/, (_req, res) => {
-      res.setHeader("Cache-Control", "no-cache, must-revalidate");
-      res.sendFile(join(uiDir, "index.html"));
-    });
+    // The shell, /sw.js (carrying the shell's full precache list), compressed
+    // static files, cache headers and the SPA fallback, in bundle mode (the
+    // precompiled build) or dev mode (in-browser Babel). The shell document and
+    // every unhashed file stay `no-cache, must-revalidate` (a browser must never
+    // keep running stale client code after a deploy); only content-hashed build
+    // files are long-lived/immutable. See server/webapp-static.ts.
+    mountWebapp(app, uiDir, opts.webapp);
   }
 
-  // Consistent error shape.
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-    console.error("[error]", err);
+  // Consistent error shape. Honours the 4xx status body-parser / http-errors
+  // already set (malformed JSON → 400, oversized body → 413, …) instead of
+  // flattening everything to 500.
+  //
+  // What reaches the log:
+  //  - 4xx: the classification only ({status, type}) — no message, no body
+  //    (body-parser's `err.body` and JSON.parse's message both quote input).
+  //  - 5xx: loggableError() (server/log-safe.ts) — a rebuild from an allow-list:
+  //    name, scrubbed message, stack frames, SQLSTATE/condition, table/
+  //    constraint names, the parameterised SQL and the param COUNT. Never the
+  //    bound params, a Postgres `detail`/`where`/`hint`, a quoted value, or a
+  //    request body — a failed insert of a patient must not put the patient
+  //    in the log.
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const { status, type, name } = classifyError(err);
+    if (status >= 500) {
+      console.error("[error]", req.method, req.path, loggableError(err));
+    } else {
+      console.warn("[warn]", req.method, req.path, { status, type: type ?? name });
+    }
     if (res.headersSent) return;
-    res.status(500).json({ error: "internal_error" });
+    res.status(status).json({ error: errorCode(status, type) });
   });
 
   return app;
+}
+
+/* ── helpers ──────────────────────────────────────────────────────────────── */
+
+let warnedInsecureLogin = false;
+function warnInsecureLoginOnce() {
+  if (warnedInsecureLogin) return;
+  warnedInsecureLogin = true;
+  console.warn(
+    "[auth] login refused over a non-HTTPS request while the session cookie is Secure " +
+      "(insecure_transport). Check TLS termination, TRUST_PROXY and the proxy's X-Forwarded-Proto header.",
+  );
+}
+
+/** org+username the client sent on POST /api/login, lower-cased; null if absent. */
+function loginAccountKey(req: Request): string | null {
+  const body = (req.body ?? {}) as { orgCode?: unknown; username?: unknown };
+  const org = typeof body.orgCode === "string" ? body.orgCode.trim().toLowerCase() : "";
+  const user = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
+  if (!org || !user) return null;
+  return `acct:${org.slice(0, 64)}:${user.slice(0, 128)}`;
+}
+
+interface ErrorClass {
+  status: number;
+  /** body-parser / http-errors `type` (e.g. "entity.parse.failed"), if any. */
+  type?: string;
+  name: string;
+}
+
+/**
+ * SQLSTATEs Postgres raises for a character it cannot store: 22021 (a NUL /
+ * invalid byte in a text parameter) and 22P05 (`\u0000` in jsonb). The only
+ * source is client input that slipped past the up-front NUL guard (e.g. a
+ * route with its own body parser, like the attachment upload), so it is the
+ * client's 400, not a server fault.
+ */
+const PG_INPUT_ENCODING_CODES = new Set(["22021", "22P05"]);
+
+function classifyError(err: unknown): ErrorClass {
+  const pgCode = pgErrorCode(err);
+  if (pgCode && PG_INPUT_ENCODING_CODES.has(pgCode)) {
+    return { status: 400, type: "input.untranslatable_character", name: "DatabaseError" };
+  }
+  const e = (err && typeof err === "object" ? err : {}) as {
+    status?: unknown;
+    statusCode?: unknown;
+    type?: unknown;
+    name?: unknown;
+  };
+  const raw =
+    typeof e.status === "number"
+      ? e.status
+      : typeof e.statusCode === "number"
+        ? e.statusCode
+        : 500;
+  const status = raw >= 400 && raw < 500 ? raw : 500;
+  return {
+    status,
+    ...(typeof e.type === "string" ? { type: e.type } : {}),
+    name: typeof e.name === "string" ? e.name : "Error",
+  };
+}
+
+function errorCode(status: number, type?: string): string {
+  switch (type) {
+    case "input.nul_byte":
+    case "input.untranslatable_character":
+      return "validation_error";
+    case "entity.parse.failed":
+      return "invalid_json";
+    case "entity.too.large":
+      return "payload_too_large";
+    case "encoding.unsupported":
+    case "charset.unsupported":
+      return "unsupported_media_type";
+    case "request.aborted":
+      return "request_aborted";
+  }
+  switch (status) {
+    case 400:
+      return "bad_request";
+    case 401:
+      return "unauthorized";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 413:
+      return "payload_too_large";
+    case 415:
+      return "unsupported_media_type";
+    case 429:
+      return "rate_limited";
+    default:
+      return status >= 500 ? "internal_error" : "request_error";
+  }
+}
+
+/**
+ * True when a parsed body / query object holds a NUL character in any string
+ * value or key, at any depth. Iterative (no recursion limit to trip) and
+ * bounded by the node count a 1 MB body can produce.
+ */
+function hasNul(root: unknown): boolean {
+  const pending: unknown[] = [root];
+  let objects = 0;
+  while (pending.length) {
+    const v = pending.pop();
+    if (typeof v === "string") {
+      if (v.includes("\u0000")) return true;
+      continue;
+    }
+    if (!v || typeof v !== "object") continue;
+    if (++objects > 200_000) return false;
+    if (Array.isArray(v)) {
+      for (const x of v) pending.push(x);
+      continue;
+    }
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (k.includes("\u0000")) return true;
+      pending.push(x);
+    }
+  }
+  return false;
 }

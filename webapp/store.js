@@ -19,13 +19,64 @@
 
   var KEY = "docturn:store:v6";
   var now = function () { return Date.now(); };
+  // A live deployment: api-bridge.js (loaded right after this file) sets
+  // window.DT_LIVE and every slice below that the server owns comes from the
+  // server. The kit's demo tenants, demo staff and demo notifications are
+  // then never seeded — not even for the first paint before the server
+  // answers (A.CON developer #23/#24). The bridge also clears them from the
+  // first seed, which ran before it loaded.
+  function isLive() { try { return !!(typeof window !== "undefined" && window.DT_LIVE); } catch (e) { return false; } }
   var uid = (function () { var n = 1000; return function (p) { return (p || "id") + "_" + (++n) + "_" + Math.floor(Math.random() * 1e4); }; })();
+  // DocTurn's three shift types with the server's default names and no hours
+  // (server/services/shift-definitions.ts) — what an org that never named or
+  // timed its shifts has.
+  function defaultShifts() {
+    return [
+      { id: "day", label: "Day", start: null, end: null },
+      { id: "swing", label: "Swing", start: null, end: null },
+      { id: "night", label: "Night", start: null, end: null },
+    ];
+  }
 
-  /* ---- time helpers ------------------------------------------------------ */
+  /* ---- time helpers ------------------------------------------------------
+     ONE clock format for every label in the app (A.CON-MIN-18): the device
+     locale's own hour cycle via Intl.DateTimeFormat — "3:04 PM" on a 12-hour
+     device, "15:04" on a 24-hour one — instead of a hard-coded 24-hour HH:MM
+     next to locale 12-hour labels. Formatters are built once (they are costly)
+     and the fallback is only for an engine without Intl. */
+  var FMT = {};
+  function intlFmt(key, opts) {
+    if (FMT[key] === undefined) {
+      try { FMT[key] = new Intl.DateTimeFormat(undefined, opts); } catch (e) { FMT[key] = null; }
+    }
+    return FMT[key];
+  }
+  function pad2(n) { return String(n).padStart(2, "0"); }
   function hhmm(ts) {
     var d = (ts == null) ? new Date() : new Date(ts);
-    return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    var f = intlFmt("hm", { hour: "numeric", minute: "2-digit" });
+    return f ? f.format(d) : pad2(d.getHours()) + ":" + pad2(d.getMinutes());
   }
+  /** Same clock with seconds (audit trails). */
+  function hhmmss(ts) {
+    var d = (ts == null) ? new Date() : new Date(ts);
+    var f = intlFmt("hms", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    return f ? f.format(d) : pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+  }
+  /** "Today" / "Yesterday" / a locale short date ("Oct 6", "6 Oct"; + year when not this year). */
+  function sameDay(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+  function dayLabel(ts) {
+    var d = (ts == null) ? new Date() : new Date(ts);
+    var today = new Date();
+    var yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1); // calendar day, DST-safe
+    if (sameDay(d, today)) return "Today";
+    if (sameDay(d, yesterday)) return "Yesterday";
+    var sameYear = d.getFullYear() === today.getFullYear();
+    var f = sameYear ? intlFmt("md", { month: "short", day: "numeric" }) : intlFmt("ymd", { year: "numeric", month: "short", day: "numeric" });
+    return f ? f.format(d) : d.toDateString();
+  }
+  /** Day + clock ("Today · 3:04 PM", "Oct 6 · 3:04 PM"). */
+  function stamp(ts) { return dayLabel(ts) + " · " + hhmm(ts); }
   function clockLabel() { return hhmm(); }
 
   /* ---- shift-time helpers ------------------------------------------------
@@ -57,7 +108,9 @@
       var r = (a && d.working) ? 3 : d.working ? 2 : a ? 1 : 0;
       var cur = roster[d.specialty];
       if (!cur || r > cur._rank) {
-        roster[d.specialty] = { name: d.name, avatar: d.avatar, onCall: !!(d.working && a), shift: d.shift || "", _rank: r };
+        // userId: the provider's account (directory id), so a consult sent to
+        // this on-call names a real person the server can alert.
+        roster[d.specialty] = { name: d.name, avatar: d.avatar, userId: typeof d.id === "number" ? d.id : undefined, onCall: !!(d.working && a), shift: d.shift || "", _rank: r };
       }
     });
     return roster;
@@ -185,30 +238,24 @@
     { initials: "TS", room: "210", complaint: "Acute pancreatitis", specialty: "GI", from: "Dr. Osei (ER)" },
   ];
 
-  // Default consult-service menu (directors edit these; the ER intake's
-  // multi-select + quick PA/NP add render from this list). onCall null = use the
-  // live registered roster for that specialty.
-  function defaultConsultServices() {
-    // Each service = a consultant specialty with an on-call attending (onCall)
-    // and its own PA/NP midlevels (members). onCall null = derive from the live
-    // registered roster for that specialty; members [] = none assigned yet.
-    return [
-      { id: "cs_hm",    name: "Hospital Medicine",  onCall: null, members: [] },
-      { id: "cs_card",  name: "Cardiology",         onCall: null, members: [] },
-      { id: "cs_gi",    name: "GI",                 onCall: null, members: [] },
-      { id: "cs_pulm",  name: "Pulmonology",        onCall: null, members: [] },
-      { id: "cs_neph",  name: "Nephrology",         onCall: null, members: [] },
-      { id: "cs_endo",  name: "Endocrine",          onCall: null, members: [] },
-      { id: "cs_id",    name: "Infectious Disease", onCall: null, members: [] },
-      { id: "cs_neuro", name: "Neurology",          onCall: null, members: [] },
-    ];
-  }
+  // The consult-service catalog is the ORGANIZATION's (server: org setting
+  // "consultServices", Directory → Consult services). There is no client-side
+  // default list: an org that has not curated one has none, and the ER intake
+  // shows its own generic specialty picker.
 
   /* ---- seed (initial) state --------------------------------------------- */
   function seed() {
     var t0 = now();
     return {
-      v: 10,
+      // v11: persistence became a non-PHI allowlist — any v10 blob (a full
+      // state dump, clinical slices included) is discarded rather than loaded.
+      v: 11,
+      // Test-only by default until an operator deliberately turns it off for a
+      // compliant real-PHI deployment (server: SYNTHETIC_DATA=false).
+      syntheticData: true,
+      // Personal availability: do-not-disturb + designated covering provider
+      // (server-backed; DND without covering makes on-call roles unreachable).
+      myPrefs: { dnd: false, coveringUserId: null },
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
       navHidden: {},
       navOrder: {},
@@ -221,19 +268,39 @@
       // Drives the customizable ER / ER-director dashboards (drag to reorder,
       // remove, re-add). Empty = default order, nothing hidden.
       dashLayout: {},
-      // Per-organization on-call schedule source. Every tenant keeps its
-      // schedule somewhere different — a scheduling vendor (Amion/QGenda), an
-      // uploaded Word/PDF, or a web page — so the source is modular and keyed by
-      // org code (this survives the developer org re-hydrate). Only the Amion
-      // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
-      scheduleSources: { CEDARS: "amion", ISPN: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", PINE: "none" },
+      // Per-key stat-tile layout: { order: [statId…], hidden: [statId…] }, keyed
+      // by an arbitrary string (e.g. "hospitalist:stats"). Same mechanism as
+      // dashLayout but for individual KPI tiles — show/hide, drag-reorder, reset.
+      statLayout: {},
+      // Per-key user-created stat tiles: { [key]: [{ id, label, source,
+      // metricKey, manualValue, icon, tint }] }. Users build their own KPI
+      // boxes in the CustomizableStats edit mode — either mirroring a live
+      // metric from the dashboard's catalog (source:"metric") or showing a
+      // typed value (source:"manual"). Auto-persists like every other state key.
+      customStats: {},
+      // Server-computed comms KPIs ({ messages7d, statAckAvgSec,
+      // consultResponseAvgSec }). Null until loadCommsMetrics() fills it (the
+      // live override in api-bridge.js fetches the real numbers).
+      commsMetrics: null,
+      // The org's on-call schedule source is the SERVER's (GET /api/oncall/sources:
+      // amion / epic / manual, its status and last sync). There is no
+      // browser-side per-org source map — it used to seed demo vendors
+      // (QGenda, Word, …) for any org whose code matched and kept a picked
+      // vendor on this device only (A.CON schedule #2/#3). Null until loaded;
+      // onCallSourcesError says why it could not be (e.g. module_disabled).
+      onCallSources: null,
+      onCallSourcesError: null,
       // Director-editable consult-service menu that powers the ER intake.
-      consultServices: defaultConsultServices(),
+      consultServices: [],
+      consultServicesVersion: null, // the server's catalog revision; null until loaded
       consultHidden: [], // specialty names hidden from the ER route-assignment picker
       session: null, // { role, org, user, name }
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
-      ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
+      // (No local "on shift" flag: a hospitalist's On shift is their rotation
+      // profile on the server — myProvider.working — A.CON comms-account #1.)
+      ui: { nav: "dashboard", notifOpen: false, realtime: true },
       me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
+      rotation: null, // server "Next up" (GET /api/rotation/next); see nextUp()
 
       providers: [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -243,22 +310,28 @@
         { id: "h6", name: "Dr. Omar Haddad", avatar: "OH", specialty: "Hospital Medicine", census: 6, cap: 12, working: true,  shift: "night", inRotation: true },
         { id: "h4", name: "Dr. James Liu",   avatar: "JL", specialty: "Nephrology",        census: 2, cap: 8,  working: false, shift: "night", inRotation: false },
       ],
-      shifts: [
-        { id: "day",   label: "Day call", start: "07:00", end: "15:00" },
-        { id: "swing", label: "Swing",    start: "15:00", end: "23:00" },
-        { id: "night", label: "Nights",   start: "23:00", end: "07:00" },
-      ],
+      // The org's names + published hours for Day / Swing / Night — the
+      // SERVER's (GET /api/org/config `shifts`, PATCH /api/org/shifts/:id).
+      // Until it answers: the server's own defaults, which carry NO hours
+      // (the kit's 07:00–15:00 … demo hours were shown as a real org's).
+      shifts: defaultShifts(),
       rotationCursor: 0,
 
-      erPhysicians: [
-        { id: "e1", name: "Dr. Ruth Osei",   avatar: "RO", working: true,  shift: "day",   admitsToday: 6 },
-        { id: "e2", name: "Dr. Paul Okafor", avatar: "PO", working: true,  shift: "day",   admitsToday: 4 },
-        { id: "e3", name: "Dr. Dana Reyes",  avatar: "DR", working: true,  shift: "swing", admitsToday: 5 },
-        { id: "e4", name: "Dr. Sam Iyer",    avatar: "SI", working: false, shift: "night", admitsToday: 0 },
-      ],
-      diversion: false,
-      avgAcceptSec: 252,
-      fhir: { connected: false, lastSync: null, source: "Epic FHIR", endpoint: "fhir.mayo.org/api/r4" },
+      // ER operations (A.CON clinical #1-#3) — all the SERVER's, null until it
+      // answers, never demo rows or a constant:
+      //   erDiversion  GET /api/er/diversion  { active, since, by }
+      //   erRoster     GET /api/er/roster     { physicians, onShift, admits24h }
+      //                (the org's er_doctor accounts, on/off shift on the server)
+      //   erReport     GET /api/reports/er    { scope, assignments, admits24h }
+      // The *Error slices say why one could not be read (forbidden,
+      // module_disabled, offline, error). There is no EHR census feed: the
+      // kit's "Connect EHR (FHIR)" bar and its fabricated patients are gone.
+      erDiversion: null, erDiversionError: null,
+      erRoster: null, erRosterError: null,
+      erReport: null, erReportError: null,
+      // The signed-in provider's own rotation profile (census / cap) from
+      // GET /api/hospitalists — the hospitalist dashboard's "Current census".
+      myProvider: null,
 
       pending: [
         { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain, 2-day onset", from: "Dr. Reyes (ER)", specialty: "General Medicine", acuity: 3, via: "Round-robin", expiresAt: t0 + 272000, acceptedToday: false },
@@ -287,28 +360,27 @@
         { id: uid("s"), initials: "LP", provider: "Dr. Omar Haddad", complaint: "GI bleed, melena",           consultants: ["GI"],          time: "Yesterday · 16:32", day: "Yesterday", status: "rejected" },
       ],
 
-      // Full, append-only log of every admission routed to a team. The main
-      // dashboard shows a rolling count since `admissionsResetAt`, which the
-      // hospitalist director can reset on command; this log keeps everything.
-      admissions: [
+      // Admissions log: every patient routed to a hospitalist. Live, it is the
+      // SERVER's (GET /api/admissions → rows + admissionsInfo counts, the
+      // org-wide counter reset) — never demo rows, never rows this browser
+      // appended (A.CON schedule #6/#7). The demo rows below are the offline
+      // kit's only (no api-bridge).
+      admissions: isLive() ? [] : [
         { id: uid("ad"), at: now() - 35 * 60000,    initials: "MJ", room: "402", provider: "Dr. Amir Patel",  specialty: "Cardiology",  via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 95 * 60000,    initials: "RV", room: "318", provider: "Dr. Maria Lopez", specialty: "Pulmonology", via: "Manual",      status: "sent" },
         { id: uid("ad"), at: now() - 5 * 3600000,   initials: "DK", room: "210", provider: "Dr. Sarah Chen",  specialty: "Neurology",   via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 26 * 3600000,  initials: "LP", room: "115", provider: "Dr. Omar Haddad", specialty: "GI",          via: "Manual",      status: "accepted" },
       ],
       admissionsResetAt: 0,
+      // The server's counts for the log { total, last24h, sinceReset, resetAt,
+      // resetBy, shown, error }. Null until GET /api/admissions answers.
+      admissionsInfo: null,
 
-      team: [
-        { id: "m1", name: "Jordan Wu, PA-C", avatar: "JW", role: "PA", specialty: "Hospital Medicine", onCall: true },
-        { id: "m2", name: "Nina Roy, NP",    avatar: "NR", role: "NP", specialty: "Cardiology",        onCall: false },
-      ],
-      candidates: [
-        { id: "c1", name: "Dr. Omar Haddad",  avatar: "OH", role: "MD", specialty: "Hospital Medicine" },
-        { id: "c2", name: "Priya Shah, NP",    avatar: "PS", role: "NP", specialty: "Pulmonology" },
-        { id: "c3", name: "Marcus Bell, PA-C", avatar: "MB", role: "PA", specialty: "General Medicine" },
-        { id: "c4", name: "Dr. Lena Ortiz",    avatar: "LO", role: "DO", specialty: "Nephrology" },
-        { id: "c5", name: "Sam Cole, RN",      avatar: "SC", role: "RN", specialty: "Telemetry" },
-      ],
+      // My care team (on-call unit) — the SERVER's (GET /api/care-team), and
+      // the org's real people to link (GET /api/care-team/candidates). Null
+      // until loaded; never demo members (A.CON clinical #4).
+      team: null,
+      candidates: [],
 
       board: [
         { id: uid("b"), initials: "RM", room: "318", dept: "MED",  issue: "Acute abdominal pain, 2-day onset", status: "admitted",
@@ -327,14 +399,22 @@
           attending: { name: "Dr. James Liu", avatar: "JL" }, unit: [], consultants: ["Nephro"], er: { name: "Dr. Okafor", avatar: "Ok" } },
       ],
 
-      orgs: [
-        { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88,  active: true },
-        { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54,  active: true },
-        { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132, active: true },
-        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29,  active: true },
-        { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12,  active: false },
+      // Developer console. Live: empty until GET /api/dev/organizations answers
+      // (orgsLoaded true, or "error"); `assignments` is the server's count of
+      // assignments created in the last 24 h. There is no tenant
+      // active/suspended state — the server has none (A.CON developer #19).
+      orgs: isLive() ? [] : [
+        { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88 },
+        { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54 },
+        { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132 },
+        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29 },
+        { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12 },
       ],
-      selectedOrg: "MAYO",
+      orgsLoaded: !isLive(),
+      // The platform (operator) org from the same list: where developer
+      // accounts are created. Null until loaded.
+      platformOrg: null,
+      selectedOrg: isLive() ? null : "MAYO",
       // Registered org people (hydrated from /api/physicians/directory for all
       // roles). Drives the ER Consult-services roster + midlevel pool so newly
       // registered consultants/PAs/NPs appear automatically. Empty = use the
@@ -350,18 +430,26 @@
         developer:   "#3E9B6E",
         consultant:  "#2C8C92",
       },
-      devUsers: [
+      // Every developer account is platform-wide (cross-tenant root): there is
+      // no single-organization developer (A.CON developer #1). Live: empty
+      // until GET /api/dev/users answers (devUsersLoaded).
+      devUsers: isLive() ? [] : [
         { id: uid("u"), name: "Dr. Lena Ortiz", role: "hospitalist", org: "MAYO", specialty: "Nephrology" },
         { id: uid("u"), name: "Priya Shah, NP", role: "hospitalist", org: "CLEVE", specialty: "Pulmonology" },
         { id: uid("u"), name: "Karen Vance", role: "director", org: "MAYO", specialty: "" },
         { id: uid("u"), name: "Dr. Ruth Osei", role: "er_doctor", org: "STJUDE", specialty: "" },
         { id: uid("u"), name: "Dr. Paul Okafor", role: "er_director", org: "CLEVE", specialty: "" },
-        { id: uid("u"), name: "Sam Rivera", role: "developer", org: "MAYO", specialty: "", scope: "local" },
-        { id: uid("u"), name: "Alex Kim (root)", role: "developer", org: "*", specialty: "", scope: "root" },
+        { id: uid("u"), name: "Alex Kim", role: "developer", org: "DOCTURN", specialty: "" },
       ],
+      devUsersLoaded: !isLive(),
       diagnostics: null,
+      // GET /api/dev/platform-health (this server instance, measured). Null
+      // until loaded; { error } when the server didn't answer.
+      platformHealth: null,
 
-      conversations: [
+      // The offline kit's demo threads and broadcasts; a live deployment starts
+      // with none (the server's lists replace them) — never demo rows.
+      conversations: isLive() ? [] : [
         { id: "cv1", name: "Dr. Sarah Chen", role: "Cardiology", initials: "SC", presence: "online", tint: "emerald", unread: 2, typing: false,
           messages: [
             { me: false, text: "Got the round-robin assignment for patient SC, room 412.", at: t0 - 200000 },
@@ -376,97 +464,137 @@
           messages: [{ me: false, text: "Mass casualty drill at 14:00.", at: t0 - 10800000 }] },
       ],
 
-      broadcasts: [
+      broadcasts: isLive() ? [] : [
         { id: uid("bc"), title: "Code stroke — Bed 4 ICU", sev: "critical", at: t0 - 480000, acked: 11, total: 14, ackReq: true },
         { id: uid("bc"), title: "Diversion lifted — accepting transfers", sev: "info", at: t0 - 3600000, acked: 0, total: 0, ackReq: false },
         { id: uid("bc"), title: "Mass casualty drill at 15:00", sev: "warning", at: t0 - 10800000, acked: 22, total: 24, ackReq: true },
       ],
 
-      settings: { timeout: 15, autoReassign: true, onCallOnly: false, activeOnly: true,
-        flags: { sms: true, push: true, ai: true, broadcasts: true, amion: false },
-        shiftTypes: [
-          { id: "rounding",   name: "Rounding",   time: "07:00–19:00", color: "var(--status-active)" },
-          { id: "swing",      name: "Swing",      time: "13:00–23:00", color: "var(--status-pending)" },
-          { id: "nocturnist", name: "Nocturnist", time: "19:00–07:00", color: "var(--status-neutral)" },
-        ],
-        integrations: { twilio: true, firebase: true, openai: true, amion: false } },
+      // Integrations (Twilio / push / OpenAI / Amion / Epic) and their per-org
+      // switches are NOT client state: Settings → Integrations reads and writes
+      // them on the server (/api/integrations). The old local `flags` /
+      // `integrations` booleans claimed effects nothing enforced and are gone.
+      // Shift types are the org's routable set on the server
+      // (organizations.round_robin_shift_types → orgIdentity.roundRobinShiftTypes),
+      // not a local list.
+      settings: { timeout: 15, autoReassign: true },
 
-      roles: [
-        { id: "r_super", name: "Super Admin", desc: "Full platform access across all tenants and portals.", system: true,
-          portals: ["hospitalist", "hosp_director", "er_physician", "er_director", "admin", "developer"],
-          perms: ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "system_settings"],
-          features: ["ai_chatbot", "portal_customization"], users: 3 },
-        { id: "r_hospdir", name: "Hospitalist Director", desc: "Runs the hospitalist group — rotation, staff and census.", system: true,
-          portals: ["hospitalist", "hosp_director"],
-          perms: ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff"],
-          features: ["ai_chatbot", "portal_customization"], users: 4 },
-        { id: "r_hosp", name: "Hospitalist", desc: "Accepts hand-offs and manages their own census.", system: true,
-          portals: ["hospitalist"], perms: ["view_census", "manage_assignments"], features: ["ai_chatbot"], users: 38 },
-        { id: "r_erdir", name: "ER Director", desc: "Oversees ER intake and routing performance.", system: false,
-          portals: ["er_physician", "er_director"], perms: ["view_census", "assign_patients", "view_reports"], features: ["ai_chatbot"], users: 2 },
-        { id: "r_er", name: "ER Physician", desc: "Admits patients and routes them to hospitalists.", system: false,
-          portals: ["er_physician"], perms: ["view_census", "assign_patients"], features: ["ai_chatbot"], users: 21 },
-        { id: "r_tech", name: "Technician", desc: "Read-only census visibility for floor support.", system: false,
-          portals: ["hospitalist"], perms: ["view_census"], features: [], users: 12 },
-      ],
+      // The signed-in org as the server reports it (GET /api/org/config): name,
+      // code, time zone, routable shift types. Null until loaded.
+      orgIdentity: null,
+      // People an administrator manages (GET /api/accounts) for the session's
+      // org — null until loaded, never demo rows. Roles are DocTurn's fixed
+      // roles (server/rbac.ts); there is no custom-role list.
+      accounts: null,
+      accountsOrg: null,
+      accountsError: null,
 
-      // Enterprise (platform-wide) defaults every organization inherits unless it
-      // overrides a value. The developer edits these on "Enterprise defaults"; an
-      // org's detail page can override any rule or permission individually.
-      enterprise: {
-        rules: { timeout: 15, autoReassign: false, autoCleanHours: 24, rotationMode: "lowest_census", onCallOnly: false, activeOnly: true },
-        // Platform-wide controls the operator manages centrally (modeled on
-        // enterprise clinical-comms admin consoles, e.g. TigerConnect/PerfectServe):
-        // mobile-app management, secure-messaging policy, access/security, integrations.
-        platform: {
-          mobile: { ios: true, android: true, minVersion: "3.2.0", forceUpdate: false, mdm: false, biometric: true },
-          messaging: { retentionDays: 90, recall: true, readReceipts: true, attachments: true, priority: true },
-          security: { sso: false, enforce2fa: true, sessionTimeoutMin: 15, autoLock: true },
-          integrations: { sms: true, push: true, fhir: false, paging: false },
-        },
-        permissions: {
-          hospitalist: ["view_census", "manage_assignments", "request_consult", "message"],
-          er_doctor:   ["view_census", "assign_patients", "request_consult", "message"],
-          er_director: ["view_census", "assign_patients", "view_reports", "manage_staff", "approve_users", "message"],
-          director:    ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "approve_users", "request_consult", "message"],
-          developer:   ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "system_settings", "approve_users", "request_consult", "message"],
-        },
-      },
-      // Sparse per-organization overrides keyed by org code. Only customized keys
-      // are present; everything else inherits from `enterprise`.
+      // Developer console: each tenant's REAL rule values, keyed by org code,
+      // loaded from GET /api/dev/organizations/:id/settings. There are no
+      // platform-wide "enterprise defaults" — the server has no inheritance.
       orgConfigs: {},
 
-      notifications: [
+      // The offline kit's demo notification feed. The server has no
+      // notification feed, so a live deployment has none (and the shell shows
+      // no bell) — A.CON developer #23.
+      notifications: isLive() ? [] : [
         { id: uid("n"), icon: "route", title: "New assignment routed", body: "Patient RM → you · round-robin", at: t0 - 90000, read: false },
         { id: uid("n"), icon: "message-square", title: "Dr. Sarah Chen", body: "Accepting the 412 hand-off now.", at: t0 - 120000, read: false },
         { id: uid("n"), icon: "megaphone", title: "Code stroke — Bed 4 ICU", body: "Critical broadcast · ack required", at: t0 - 480000, read: true },
       ],
 
-      // Compliance logs start EMPTY — they fill from real activity (logins,
-      // assignments, PHI access) rather than seeded demo rows.
+      // Compliance logs start EMPTY — they fill from the server's trail
+      // (GET /api/audit, or /api/audit/mine for a clinician), never demo rows.
+      // There is no security-incident feed or "system log" on the server, so
+      // the client keeps none (A.CON comms-account #4/#6).
       audit: [],
+      // The trails' TRUE sizes from the server (auditCount / phiAccessCount)
+      // — the arrays are only their latest page. Null until loaded.
+      auditCount: null,
       phiLog: [],
-      incidents: [],
+      phiAccessCount: null,
+      // "org" (the compliance roles) or "mine" (everyone else's own trail).
+      auditScope: null,
+      auditError: null,
+      // Who in my org holds a live realtime socket ({ live, online: {id:true} }),
+      // or null while unknown (no socket) — never shift status.
+      presence: null,
 
       lastAdmitAt: t0,
     };
   }
 
   /* ---- persistence ------------------------------------------------------- */
+  /* PHI NEVER TOUCHES localStorage.
+     The store used to serialize the ENTIRE state object, which meant server
+     PHI — conversation message bodies, the patient board, the hospitalist
+     census, admissions, pending assignments, the ER sent board — sat readable
+     in a shared workstation's browser storage, and survived logout.
+
+     Persistence is now an explicit ALLOWLIST of non-clinical UI/session
+     preferences. Everything not listed here stays in memory only and is
+     re-fetched from the server after sign-in (api-bridge restores the session
+     from the server cookie on load and re-hydrates every clinical slice).
+
+     Deliberately NOT persisted (PHI or PHI-adjacent):
+       conversations (message bodies) · board · myPatients · myAdmissions ·
+       pending · sent · admissions · broadcasts (clinical broadcast text) ·
+       notifications (bodies quote patient initials + rooms) ·
+       audit / phiLog / incidents (compliance trail — server is authoritative)
+     Also not persisted (server-owned rosters, cheap to refetch): providers,
+     directory, orgPeople, candidates, team, devUsers, orgs, registrations.
+     Nor personal settings: `myPrefs` (DND, covering provider, away message)
+     is re-read from the server on every sign-in / restore.
+     `session` and `me` are kept only WHILE signed in (a reload shows the lock
+     screen / restores with the right name): sign-out resets both to their
+     signed-out values before the snapshot is purged, so nothing written after
+     a sign-out carries the previous clinician's identity (A.CON-SHO-63). */
+  var PERSIST_KEYS = [
+    "v", "syntheticData", "session", "me", "impersonating",
+    "theme", "roleColors", "navHidden", "navOrder", "boardModules",
+    "dashLayout", "statLayout", "customStats",
+    "consultHidden",
+    "selectedOrg", "settings",
+    "orgRetentionDays", "autoCleanHours", "ui",
+  ];
+  // Identity is written only while someone is signed in.
+  var SIGNED_IN_ONLY = { me: 1, impersonating: 1 };
+  function persistable(s) {
+    var out = {};
+    PERSIST_KEYS.forEach(function (k) {
+      if (s[k] === undefined) return;
+      if (SIGNED_IN_ONLY[k] && !s.session) return;
+      out[k] = s[k];
+    });
+    return out;
+  }
   function load() {
     try {
       var raw = localStorage.getItem(KEY);
       if (!raw) return null;
-      var s = JSON.parse(raw);
-      if (!s || s.v !== 10) return null;
-      // Per-org / enterprise config (added v10) — backfill so older saves don't
-      // crash the developer settings pages.
-      if (!s.enterprise) s.enterprise = seed().enterprise;
-      if (!s.enterprise.platform) s.enterprise.platform = seed().enterprise.platform;
-      if (!s.orgConfigs) s.orgConfigs = {};
+      var saved = JSON.parse(raw);
+      if (!saved || saved.v !== 11) return null;
+      // Rebuild from a fresh seed and lay ONLY the allowlisted preferences over
+      // it — a save written by an older build could still contain clinical
+      // slices, and this drops them on the floor instead of rehydrating them.
+      var s = seed();
+      PERSIST_KEYS.forEach(function (k) { if (saved[k] !== undefined) s[k] = saved[k]; });
+      // Drop the retired local-only integration booleans an older build saved
+      // (they claimed "Connected" for things nothing enforced).
+      if (s.settings) {
+        s.settings = Object.assign({}, s.settings);
+        delete s.settings.flags; delete s.settings.integrations;
+        delete s.settings.onCallOnly; delete s.settings.activeOnly;
+        // Retired local shift-type list (the org's routable shifts are the server's).
+        delete s.settings.shiftTypes;
+      }
+      if (!s.myPrefs) s.myPrefs = { dnd: false, coveringUserId: null };
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
+      // Retired device-local "on shift" flag (it is the server's rotation
+      // profile now — A.CON comms-account #1).
+      delete s.ui.onShift;
       // Migrate role colors to the softer palette unless the user customized
       // them (only replace values still set to the old saturated defaults).
       var OLD_ROLE = { hospitalist: "#2563EB", er_doctor: "#D97706", er_director: "#DC2626", director: "#7C3AED", developer: "#0F766E", consultant: "#0891B2" };
@@ -475,8 +603,6 @@
       Object.keys(NEW_ROLE).forEach(function (k) {
         if (!s.roleColors[k] || s.roleColors[k] === OLD_ROLE[k]) s.roleColors[k] = NEW_ROLE[k];
       });
-      if (!s.consultServices || !s.consultServices.length) s.consultServices = defaultConsultServices();
-      else s.consultServices = s.consultServices.map(function (x) { return x.members ? x : Object.assign({}, x, { members: [] }); });
       return s;
     } catch (e) { return null; }
   }
@@ -487,10 +613,19 @@
 
   // Debounced persistence: batch write-heavy flows (e.g. typing, the 1s clock)
   // into one localStorage write at most every 250ms; flush on unload so nothing
-  // is lost on refresh.
+  // is lost on refresh. Only `persistable(state)` is ever written — see
+  // PERSIST_KEYS above.
   var persistTimer = null;
-  function persistNow() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function persistNow() { try { localStorage.setItem(KEY, JSON.stringify(persistable(state))); } catch (e) {} }
   function persist() { if (persistTimer) return; persistTimer = setTimeout(function () { persistTimer = null; persistNow(); }, 250); }
+  /** Drop the persisted snapshot entirely (logout / lock). */
+  function purgePersisted() {
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+    try { localStorage.removeItem(KEY); } catch (e) {}
+  }
+  // Rewrite the key immediately on boot so a blob left by an older build (which
+  // persisted everything, PHI included) is replaced before anything can read it.
+  persistNow();
   if (typeof window !== "undefined" && window.addEventListener) {
     window.addEventListener("beforeunload", function () { if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; } persistNow(); });
   }
@@ -515,22 +650,75 @@
   function rotationList() {
     return state.providers.filter(function (p) { return p.working && p.inRotation; });
   }
+  // ---- round-robin "Next up" (A.CON-SHO-29) ------------------------------
+  // In a live session the ONLY source is the server's routing planner
+  // (GET /api/rotation/next, written to state.rotation by api-bridge.js): it
+  // applies the routable shift set (org.roundRobinShiftTypes), census < cap,
+  // simulated cap relief and the sequential cursor — exactly what the next
+  // round-robin admission will do. The local rules below run only when no
+  // server has ever answered (the offline demo); they apply the same
+  // eligibility so even the demo never names an at-cap / off-shift provider.
+  // state.rotation:
+  //   null                                   no server answer (offline demo)
+  //   { source: "server", nextId, order, capRelief, mode, shiftTypes }
+  //   { source: "loading" }                  live session, preview not back yet
+  //   { source: "unavailable" | "disabled" } live session, server gave no answer
+  var DEFAULT_RR_SHIFTS = ["day", "night"];
+  function localRotationQueue() {
+    var shifts = DEFAULT_RR_SHIFTS;
+    var pool = rotationList().filter(function (p) { return shifts.indexOf(p.shift) >= 0; });
+    var elig = pool.filter(function (p) { return p.census < p.cap; });
+    // Cap relief: nobody routable has capacity → every routable cap goes +1.
+    if (!elig.length) elig = pool.filter(function (p) { return p.census < p.cap + 1; });
+    var mode = (state.settings && state.settings.rotationMode) || "lowest_census";
+    if (mode === "sequential") return elig.slice();
+    return elig.slice().sort(function (a, b) { return a.census - b.census; });
+  }
+  function byKitId(id) { return state.providers.find(function (p) { return p.id === id; }) || null; }
+  /** Eligible providers in pick order (next first). Empty when nobody can take the next patient. */
+  function rotationQueue() {
+    var r = state.rotation;
+    if (!r) return localRotationQueue();
+    if (r.source !== "server") return [];
+    return (r.order || []).map(byKitId).filter(Boolean);
+  }
+  /** The provider the next round-robin admission goes to, or null (nobody / unknown). */
   function nextUp() {
-    var r = rotationList();
-    if (!r.length) return null;
-    return r.slice().sort(function (a, b) { return a.census - b.census; })[0];
+    var r = state.rotation;
+    if (!r) return localRotationQueue()[0] || null;
+    if (r.source !== "server" || !r.nextId) return null;
+    return byKitId(r.nextId);
+  }
+  /** What the UI may say about rotation: whose word it is, cap relief, mode. */
+  function rotationStatus() {
+    var r = state.rotation;
+    if (!r) {
+      var q = localRotationQueue();
+      var anyFree = q.some(function (p) { return p.census < p.cap; });
+      return { source: "local", capRelief: q.length > 0 && !anyFree, mode: (state.settings && state.settings.rotationMode) || "lowest_census" };
+    }
+    return { source: r.source, capRelief: !!r.capRelief, mode: r.mode || (state.settings && state.settings.rotationMode) || "lowest_census", shiftTypes: r.shiftTypes || null };
+  }
+  // Specialty-aware preview for the ER intake: the server applies the
+  // patient's specialty preference exactly like the real pick. api-bridge.js
+  // replaces this in a live session; offline it is the local queue's head.
+  function previewRotation(specialty) {
+    var nx = nextUp();
+    return Promise.resolve({ source: state.rotation ? state.rotation.source : "local", next: nx, capRelief: rotationStatus().capRelief, specialty: specialty || "" });
   }
   function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (c.unread || 0); }, 0); }
   function unreadNotifs() { return state.notifications.filter(function (n) { return !n.read; }).length; }
 
-  // Patient-board modules a role sees, defaults merged with any saved overrides.
-  // ER director starts with just the working tiles (admissions/accepted); the
-  // census-table + FHIR-dependent sections stay off until the EHR is connected.
+  // Patient-board sections a role shows ON THIS DEVICE (a per-browser layout
+  // preference, PERSIST_KEYS), defaults merged with saved overrides. Every
+  // section shows the server's board; there is no EHR feed to wait for (the
+  // old "EHR / FHIR data-source bar" is gone — A.CON clinical #16).
   function boardModulesFor(role) {
     var base = (role === "er_director")
-      ? { admissions: true, accepted: true, awaiting: false, consultants: false, dataSource: false, census: false }
-      : { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
-    var ov = (state.boardModules && state.boardModules[role]) || {};
+      ? { admissions: true, accepted: true, awaiting: true, consultants: false, census: true }
+      : { admissions: true, accepted: true, awaiting: true, consultants: true, census: true };
+    var ov = Object.assign({}, (state.boardModules && state.boardModules[role]) || {});
+    delete ov.dataSource;
     return Object.assign({}, base, ov);
   }
 
@@ -544,8 +732,29 @@
     return { order: order, hidden: hidden };
   }
 
+  // Same resolution as dashLayoutFor, but for individual stat tiles keyed by an
+  // arbitrary string (e.g. "hospitalist:stats"): honor the saved order, append
+  // any newly-added tiles, and report which are hidden.
+  function statLayoutFor(key, allIds) {
+    var saved = (state.statLayout && state.statLayout[key]) || {};
+    var hidden = (saved.hidden || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    var order = (saved.order || []).filter(function (id) { return allIds.indexOf(id) >= 0; });
+    allIds.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
+    return { order: order, hidden: hidden };
+  }
+
+  // User-created custom stat tiles for a given key (empty array when none).
+  function customStatsFor(key) {
+    return (state.customStats && state.customStats[key]) || [];
+  }
+
   /* ---- audit / notify helpers ------------------------------------------- */
   function pushAudit(s, entry) {
+    // The audit trail is the SERVER's. A live session never fabricates rows
+    // locally (they used to sit next to the real ones with a made-up IP and
+    // vanish on reload — A.CON developer #12); only the offline kit keeps a
+    // local demo trail.
+    if (isLive()) return;
     var who = s.session ? actorName(s) : "System";
     var role = s.session ? s.session.role : "system";
     s.audit = [Object.assign({ id: uid("a"), at: now(), actor: who, role: role, ip: "10.2.7.40", org: s.selectedOrg || "MAYO", risk: "low" }, entry)].concat(s.audit).slice(0, 60);
@@ -558,34 +767,39 @@
   }
   function actorName(s) { return (s.session && s.session.name) || s.me.name; }
 
-  /* ---- enterprise / per-org config helpers ------------------------------- */
+  // Clinical (or PHI-quoting) slices that must not outlive a session. Reset to
+  // FRESH SEED values rather than empty arrays so the offline/demo fallback
+  // still has something to render if the backend is unreachable at next login;
+  // a real login overwrites them from the server.
+  var PHI_SLICES = [
+    "conversations", "board", "myPatients", "myAdmissions", "pending",
+    "sent", "admissions", "broadcasts", "notifications",
+    "audit", "phiLog",
+  ];
+  // The signed-in person's identity and per-user settings — reset on sign-out
+  // so nothing of the previous user survives in memory either.
+  var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
+    // the previous person's org schedule: its source status, shift names/hours, admissions counts
+    "onCallSources", "onCallSourcesError", "shifts", "admissionsInfo",
+    // the previous person's ER operations view and care team
+    "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "myProvider", "team", "candidates",
+    // the previous person's org: its people, identity, catalog and rules
+    "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
+    // the previous operator's cross-tenant view (developer console)
+    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount",
+    // the previous person's trail sizes and their org's live presence
+    "phiAccessCount", "auditScope", "auditError", "presence"];
+  function clearPhiSlices(s) {
+    var fresh = seed();
+    PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
+    s.__activeConvo = null;
+    return s;
+  }
+
   function kvPair(key, val) { var o = {}; o[key] = val; return o; }
-  function togglePerm(list, perm, on) {
-    var arr = (list || []).slice();
-    var i = arr.indexOf(perm);
-    if (on && i < 0) arr.push(perm);
-    if (!on && i >= 0) arr.splice(i, 1);
-    return arr;
-  }
-  // Effective config for an org code (or "*" for enterprise itself): enterprise
-  // defaults merged with that org's sparse overrides, plus which keys are
-  // overridden so the UI can show "inherited" vs "custom".
-  function orgEffectiveConfig(code) {
-    var ent = state.enterprise || { rules: {}, permissions: {} };
-    if (!code || code === "*") {
-      return { rules: Object.assign({}, ent.rules), permissions: Object.assign({}, ent.permissions), overridden: { rules: [], permissions: [] }, scope: "*" };
-    }
-    var ov = (state.orgConfigs || {})[code] || {};
-    var rules = Object.assign({}, ent.rules, ov.rules || {});
-    var perms = {};
-    Object.keys(ent.permissions || {}).forEach(function (r) {
-      perms[r] = (ov.permissions && ov.permissions[r]) ? ov.permissions[r].slice() : (ent.permissions[r] || []).slice();
-    });
-    return {
-      rules: rules, permissions: perms, scope: code,
-      overridden: { rules: Object.keys(ov.rules || {}), permissions: Object.keys(ov.permissions || {}) },
-    };
-  }
+  // Actions whose effect only a DocTurn server can have say so instead of
+  // pretending (they are replaced by api-bridge.js in the web app).
+  function notConnected() { return { tone: "rejected", title: "Not connected", msg: "This needs a DocTurn server — nothing was changed." }; }
 
   /* ---- the 1-second clock: live countdowns + expiry re-routing ---------- */
   var lastTickRender = 0;
@@ -646,12 +860,33 @@
         return s;
       });
     },
-    logout: function () { set(function (s) { pushAudit(s, { action: "logout", resource: "session", risk: "low" }); s.session = null; s.ui.notifOpen = false; return s; }); },
+    // Logout clears the in-memory clinical slices, the signed-out person's
+    // identity and personal settings, AND the persisted snapshot, so a shared
+    // workstation keeps nothing readable — or attributable — after the user
+    // walks away (A.CON-SHO-63). The next sign-in re-reads all of it from the
+    // server (and the next user never inherits — or saves over their own
+    // server copy — the previous user's dashboard layout).
+    logout: function () {
+      set(function (s) {
+        pushAudit(s, { action: "logout", resource: "session", risk: "low" });
+        var fresh = seed();
+        s.session = null; s.impersonating = null; s.ui.notifOpen = false;
+        PERSONAL_SLICES.forEach(function (k) { s[k] = fresh[k]; });
+        s.rotation = null; // the next sign-in asks its own org's server
+        return clearPhiSlices(s);
+      });
+      // Last word: whatever the set above scheduled is cancelled and the key
+      // removed. (Anything set() later writes only the non-identity allowlist.)
+      purgePersisted();
+    },
+    /** Screen lock: same PHI hygiene as logout, but keeps the session. */
+    lock: function () { purgePersisted(); },
     setNav: function (nav) { set(function (s) { s.ui.nav = nav; s.ui.notifOpen = false; return s; }); },
     setRole: function (role) { set(function (s) { s.session = Object.assign({}, s.session, { role: role }); s.ui.nav = "dashboard"; s.ui.notifOpen = false; return s; }); },
     toggleNotif: function (open) { set(function (s) { s.ui.notifOpen = open == null ? !s.ui.notifOpen : open; if (s.ui.notifOpen) s.notifications = s.notifications.map(function (n) { return Object.assign({}, n, { read: true }); }); return s; }); },
     toggleRealtime: function (on) { set(function (s) { s.ui.realtime = on == null ? !s.ui.realtime : on; return s; }); },
-    toggleOnShift: function () { set(function (s) { s.ui.onShift = !s.ui.onShift; return s; }); },
+    // On shift is the rotation profile on the server (api-bridge.js).
+    toggleOnShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
     markNotifRead: function (id) { set(function (s) { s.notifications = s.notifications.map(function (n) { return n.id === id ? Object.assign({}, n, { read: true }) : n; }); return s; }); },
 
     /* hospitalist */
@@ -665,7 +900,7 @@
         // reflect on the board
         var bd = s.board.find(function (b) { return b.initials === p.initials; });
         if (bd) { bd.status = "admitted"; bd.attending = { name: s.me.name, avatar: s.me.avatar }; }
-        else s.board = [{ id: uid("b"), initials: p.initials, room: p.room, dept: "MED", issue: p.complaint, status: "admitted", attending: { name: s.me.name, avatar: s.me.avatar }, unit: s.team.filter(function (m) { return m.onCall; }).map(function (m) { return { avatar: m.avatar, role: m.role }; }), consultants: [], er: { name: p.from.replace(" (ER)", ""), avatar: "Er" } }].concat(s.board);
+        else s.board = [{ id: uid("b"), initials: p.initials, room: p.room, dept: "MED", issue: p.complaint, status: "admitted", attending: { name: s.me.name, avatar: s.me.avatar }, unit: (s.team || []).filter(function (m) { return m.onCall; }).map(function (m) { return { avatar: m.avatar, role: m.role }; }), consultants: [], er: { name: p.from.replace(" (ER)", ""), avatar: "Er" } }].concat(s.board);
         pushAudit(s, { action: "accept_assignment", resource: "assignment " + id, risk: "low" });
         pushPhi(s, { patient: p.initials, access: "view", fields: "initials, room, issue", purpose: "Assignment accept" });
         s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Patient " + p.initials + " added to your census." };
@@ -683,14 +918,22 @@
     },
 
     /* ER */
-    sendAssignment: function (provider, fields, consults) {
+    // routeMode: "quick" (round-robin) | "manual" — the ER intake tab, never
+    // inferred from who the provider happens to be (A.CON-SHO-29).
+    sendAssignment: function (provider, fields, consults, routeMode) {
+      var manualPick = routeMode === "manual" || (routeMode !== "quick" && !!provider);
+      if (!manualPick) provider = nextUp();
+      if (!provider) {
+        set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't send assignment", msg: "No eligible hospitalist is on shift to receive this." }; return s; });
+        return;
+      }
       set(function (s) {
         var acuity = fields.acuity || 3;
         var entry = { id: uid("s"), initials: fields.initials, provider: provider.name, complaint: fields.complaint, consultants: consults || [], acuity: acuity, time: "Today · " + clockLabel(), day: "Today", status: "sent" };
         s.sent = [entry].concat(s.sent);
         // create a board row (routing) + a pending request for the receiving hospitalist view
         s.board = [{ id: uid("b"), initials: fields.initials, room: fields.room || "—", dept: "MED", issue: fields.complaint || "—", acuity: acuity, status: "pending", attending: { name: "", avatar: "" }, unit: [], consultants: consults || [], er: { name: s.me.name, avatar: "Er" } }].concat(s.board);
-        var via = provider.id === (nextUp() || {}).id ? "Round-robin" : "Manual";
+        var via = manualPick ? "Manual" : "Round-robin";
         s.pending = s.pending.concat([{ id: uid("a"), initials: fields.initials, room: fields.room || "—", complaint: fields.complaint || "—", from: "You (ER)", specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, expiresAt: now() + s.settings.timeout * 60000 }]);
         // append to the admissions log (every admission given to a team)
         s.admissions = [{ id: uid("ad"), at: now(), initials: fields.initials, room: fields.room || "—", provider: provider.name, specialty: fields.specialty || "General Medicine", acuity: acuity, via: via, status: "sent" }].concat(s.admissions || []);
@@ -760,41 +1003,24 @@
     },
     renameShift: function (sid, label) { set(function (s) { s.shifts = s.shifts.map(function (x) { return x.id === sid ? Object.assign({}, x, { label: label }) : x; }); return s; }); },
     resetRotation: function () { set(function (s) { s.rotationCursor = 0; pushAudit(s, { action: "reset_rotation_index", resource: "rotation", risk: "low" }); s.__toast = { tone: "accepted", title: "Rotation index reset", msg: "Round-robin will start from the top." }; return s; }); },
-    // Director command: reset the dashboard's rolling 24h admissions counter.
-    // The admissions log is untouched — only the "since reset" window moves.
-    resetAdmissions24h: function () {
-      set(function (s) {
-        s.admissionsResetAt = now();
-        pushAudit(s, { action: "reset_admissions_counter", resource: "admissions (24h)", risk: "low" });
-        s.__toast = { tone: "accepted", title: "24h admissions reset", msg: "Daily count cleared. Full history stays in the admissions log." };
-        return s;
-      });
-    },
+    // The admissions counter reset is the SERVER's (api-bridge.js
+    // resetAdmissionsCount → POST /api/admissions/reset, org-wide and
+    // audited). There is no local version: it used to zero this tab's count,
+    // toast success and add a made-up audit row while the server kept
+    // counting (A.CON schedule #6).
 
-    /* ER director — ER physician staffing + diversion */
-    toggleErPhysician: function (id) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { working: !p.working }) : p; }); return s; }); },
-    updateErPhysician: function (id, patch) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, patch) : p; }); if (patch.name != null) pushAudit(s, { action: "rename_er_physician", resource: id, risk: "low" }); return s; }); },
-    setErShift: function (id, sid) { set(function (s) { s.erPhysicians = s.erPhysicians.map(function (p) { return p.id === id ? Object.assign({}, p, { shift: sid }) : p; }); return s; }); },
-    addErPhysician: function (data) {
-      set(function (s) {
-        var name = data.name && data.name.trim(); if (!name) { s.__toast = { tone: "rejected", title: "Name required", msg: "Enter the physician's name." }; return s; }
-        var fmt = /^Dr\.?/i.test(name) ? name : "Dr. " + name;
-        s.erPhysicians = s.erPhysicians.concat([{ id: uid("e"), name: fmt, avatar: initialsOf(fmt), working: true, shift: data.shift || "day", admitsToday: 0 }]);
-        pushAudit(s, { action: "create_er_physician", resource: fmt, risk: "low" });
-        s.__toast = { tone: "accepted", title: "ER physician added", msg: fmt + " added to the ER roster." };
-        return s;
-      });
-    },
-    removeErPhysician: function (id) { set(function (s) { var p = s.erPhysicians.find(function (x) { return x.id === id; }); s.erPhysicians = s.erPhysicians.filter(function (x) { return x.id !== id; }); if (p) { pushAudit(s, { action: "remove_er_physician", resource: p.name, risk: "medium" }); s.__toast = { tone: "rejected", title: "Removed", msg: p.name + " removed from the ER roster." }; } return s; }); },
-    toggleDiversion: function () {
-      set(function (s) {
-        s.diversion = !s.diversion;
-        pushAudit(s, { action: s.diversion ? "declare_diversion" : "lift_diversion", resource: s.selectedOrg || "ER", risk: s.diversion ? "high" : "low" });
-        s.broadcasts = [{ id: uid("bc"), title: s.diversion ? "ER on diversion — divert incoming ambulances" : "Diversion lifted — accepting transfers", sev: s.diversion ? "critical" : "info", at: now(), acked: 0, total: s.diversion ? 18 : 0, ackReq: s.diversion }].concat(s.broadcasts);
-        s.__toast = { tone: s.diversion ? "rejected" : "accepted", title: s.diversion ? "Diversion declared" : "Diversion lifted", msg: s.diversion ? "EMS notified; broadcast sent to all providers." : "Now accepting incoming transfers." };
-        return s;
-      });
-    },
+    /* ER director — diversion, ER physician staffing and throughput are the
+       SERVER's (api-bridge.js: setDiversion, setErOnShift, setErShift →
+       /api/er/*). The kit's local versions flipped this tab only, toasted
+       "EMS notified" and kept a demo roster (A.CON clinical #1/#2); there is
+       nothing to do without a server. */
+    setDiversion: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    setErOnShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    setErShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    // The ER intake's "Extract fields" is the SERVER's extractor (the org's
+    // OpenAI integration or DocTurn's keyword rules — api-bridge.js); without
+    // a server there is nothing to call.
+    extractIntake: function () { return Promise.reject(new Error("not_connected")); },
 
     /* org + board editing */
     updateOrg: function (code, patch) {
@@ -805,48 +1031,13 @@
         return s;
       });
     },
-    updateShiftType: function (id, patch) { set(function (s) { s.settings = Object.assign({}, s.settings, { shiftTypes: s.settings.shiftTypes.map(function (x) { return x.id === id ? Object.assign({}, x, patch) : x; }) }); return s; }); },
-    removeShiftType: function (id) { set(function (s) { s.settings = Object.assign({}, s.settings, { shiftTypes: s.settings.shiftTypes.filter(function (x) { return x.id !== id; }) }); return s; }); },
-    updateBoardRow: function (id, patch) { set(function (s) { s.board = s.board.map(function (b) { return b.id === id ? Object.assign({}, b, patch) : b; }); pushAudit(s, { action: "edit_admission", resource: id, risk: "low" }); return s; }); },
-    addBoardPatient: function (data) {
-      set(function (s) {
-        var init = (data.initials || "").toUpperCase().slice(0, 3); if (!init) { s.__toast = { tone: "rejected", title: "Initials required", msg: "Enter the patient's initials." }; return s; }
-        var pr = data.attending ? s.providers.find(function (p) { return p.name === data.attending; }) : null;
-        var row = { id: uid("b"), initials: init, room: data.room || "—", dept: data.dept || "MED", issue: data.issue || "—",
-          status: data.attending ? "admitted" : "pending",
-          attending: data.attending ? { name: data.attending, avatar: pr ? pr.avatar : initialsOf(data.attending) } : { name: "", avatar: "" },
-          unit: [], consultants: data.consultants || [], er: { name: data.er || actorName(s), avatar: "Er" } };
-        s.board = [row].concat(s.board);
-        pushAudit(s, { action: "create_admission", resource: "patient " + init, risk: "low" });
-        pushPhi(s, { patient: init, access: "create", fields: "initials, room, issue", purpose: "Manual admission" });
-        s.__toast = { tone: "accepted", title: "Admission added", msg: "Patient " + init + (data.attending ? " admitted to " + data.attending + "." : " queued for acceptance.") };
-        return s;
-      });
-    },
-    removeBoardPatient: function (id) {
-      set(function (s) {
-        var b = s.board.find(function (x) { return x.id === id; });
-        s.board = s.board.filter(function (x) { return x.id !== id; });
-        if (b) { pushAudit(s, { action: "remove_admission", resource: "patient " + b.initials, risk: "medium" }); s.__toast = { tone: "rejected", title: "Admission removed", msg: "Patient " + b.initials + " removed from the board." }; }
-        return s;
-      });
-    },
-    connectFhir: function () {
-      set(function (s) {
-        s.fhir = Object.assign({}, s.fhir, { connected: true, lastSync: now() });
-        // simulate a sync pulling two admissions from the EHR
-        var pull = [
-          { id: uid("b"), initials: "EHR1", room: "514", dept: "MED", issue: "Cellulitis, IV antibiotics", status: "admitted", attending: { name: "Dr. Amir Patel", avatar: "AP" }, unit: [], consultants: ["Infectious Disease"], er: { name: "Epic FHIR", avatar: "FH" }, synced: true },
-          { id: uid("b"), initials: "EHR2", room: "230", dept: "ICU", issue: "Respiratory failure, intubated", status: "observation", attending: { name: "Dr. Maria Lopez", avatar: "ML" }, unit: [{ avatar: "PS", role: "NP" }], consultants: ["Pulmonology"], er: { name: "Epic FHIR", avatar: "FH" }, synced: true },
-        ].filter(function (n) { return !s.board.some(function (b) { return b.initials === n.initials; }); });
-        s.board = pull.concat(s.board);
-        pushAudit(s, { action: "connect_fhir", resource: s.fhir.source, risk: "medium" });
-        s.__toast = { tone: "accepted", title: "Connected to " + s.fhir.source, msg: "Census is now syncing from the EHR (" + pull.length + " pulled)." };
-        return s;
-      });
-    },
-    disconnectFhir: function () { set(function (s) { s.fhir = Object.assign({}, s.fhir, { connected: false }); pushAudit(s, { action: "disconnect_fhir", resource: s.fhir.source, risk: "low" }); s.__toast = { tone: "rejected", title: "EHR disconnected", msg: "Switched to manual census entry." }; return s; }); },
-    syncFhir: function () { set(function (s) { s.fhir = Object.assign({}, s.fhir, { lastSync: now() }); s.__toast = { tone: "accepted", title: "Census synced", msg: "Pulled the latest admissions from " + s.fhir.source + "." }; return s; }); },
+    // Patient-board edits (room / issue), manual admissions and removals are
+    // the SERVER's (api-bridge.js → PATCH / POST / DELETE /api/patients). The
+    // kit's local versions changed this tab only and toasted success; the
+    // "Connect EHR (FHIR)" actions invented patients (A.CON clinical #13-#16).
+    updateBoardRow: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    addBoardPatient: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    removeBoardPatient: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
     reassignBoard: function (id, providerName) {
       set(function (s) {
         var pr = s.providers.find(function (p) { return p.name === providerName; });
@@ -856,19 +1047,13 @@
         return s;
       });
     },
-    renameMe: function (name) { set(function (s) { if (!name.trim()) return s; s.me = Object.assign({}, s.me, { name: name, avatar: initialsOf(name) }); if (s.session) s.session = Object.assign({}, s.session, { name: name }); return s; }); },
+    // (No self-rename: a clinician's display name is identity data the org
+    // manages — People / the director's provider edit — A.CON comms-account #2.)
 
-    /* care team */
-    addMember: function (id) {
-      set(function (s) {
-        var c = s.candidates.find(function (x) { return x.id === id; }); if (!c) return s;
-        s.team = s.team.concat([Object.assign({}, c, { onCall: true })]);
-        s.__toast = { tone: "accepted", title: c.name + " added to your unit", msg: "They now share your requests and threads." };
-        return s;
-      });
-    },
-    removeMember: function (id) { set(function (s) { s.team = s.team.filter(function (m) { return m.id !== id; }); return s; }); },
-    toggleMemberCall: function (id) { set(function (s) { s.team = s.team.map(function (m) { return m.id === id ? Object.assign({}, m, { onCall: !m.onCall }) : m; }); return s; }); },
+    /* care team — the SERVER's (api-bridge.js → /api/care-team/members). */
+    addMember: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    removeMember: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
+    toggleMemberCall: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
 
     /* messaging */
     openConversation: function (id) { set(function (s) { s.conversations = s.conversations.map(function (c) { return c.id === id ? Object.assign({}, c, { unread: 0 }) : c; }); s.__activeConvo = id; return s; }); },
@@ -882,22 +1067,10 @@
         pushAudit(s, { action: "send_message", resource: "conversation " + id, risk: "low" });
         return s;
       });
-      // simulated reply + typing
-      var convo = state.conversations.find(function (c) { return c.id === id; });
-      if (convo && !convo.broadcast) {
-        set(function (s) { s.conversations = s.conversations.map(function (c) { return c.id === id ? Object.assign({}, c, { typing: true }) : c; }); return s; });
-        setTimeout(function () {
-          set(function (s) {
-            s.conversations = s.conversations.map(function (c) {
-              if (c.id !== id) return c;
-              s2reply = REPLIES[Math.floor(Math.random() * REPLIES.length)];
-              return Object.assign({}, c, { typing: false, messages: c.messages.concat([{ me: false, text: s2reply, at: now(), read: false }]) });
-            });
-            return s;
-          });
-        }, 1800 + Math.random() * 1400);
-      }
     },
+    // Typing indicators are REAL (relayed peer-to-peer over the live WebSocket by
+    // the api bridge). This local fallback is a no-op so demo mode never fakes one.
+    setTyping: function () {},
     startConversation: function (participant) {
       set(function (s) {
         var existing = s.conversations.find(function (c) { return c.name === participant.name; });
@@ -909,16 +1082,26 @@
       });
     },
 
-    /* broadcasts */
-    sendBroadcast: function (data) {
+    // On-call / role addressing (backend-backed via api-bridge). Local fallback:
+    // no resolvable roster, so return an empty set and start a plainly-named
+    // local thread if asked.
+    listOnCallTargets: function () { set(function (s) { s.onCallTargets = []; return s; }); return Promise.resolve([]); },
+    startRoleConversation: function (target) {
+      if (!target) return;
       set(function (s) {
-        var total = data.ackReq ? (10 + Math.floor(Math.random() * 14)) : 0;
-        s.broadcasts = [{ id: uid("bc"), title: data.title || "(untitled broadcast)", sev: data.severity, at: now(), acked: 0, total: total, ackReq: data.ackReq }].concat(s.broadcasts);
-        pushAudit(s, { action: "send_broadcast", resource: data.title || "broadcast", risk: data.severity === "emergency" || data.severity === "critical" ? "high" : "low" });
-        s.__toast = { tone: "sent", title: "Broadcast sent", msg: (data.audience.length) + " audience group(s) notified" + (data.ackReq ? " · ack required" : "") + "." };
+        var existing = s.conversations.find(function (c) { return c.name === target.label; });
+        if (existing) { s.__activeConvo = existing.id; s.conversations = s.conversations.map(function (c) { return c.id === existing.id ? Object.assign({}, c, { unread: 0 }) : c; }); return s; }
+        var id = uid("cv");
+        s.conversations = [{ id: id, name: target.label, role: "On-call role", initials: initialsOf(target.label), presence: "online", tint: "blue", unread: 0, typing: false, messages: [] }].concat(s.conversations);
+        s.__activeConvo = id;
         return s;
       });
     },
+
+    /* broadcasts */
+    // Broadcasts are the server's (api-bridge.js → POST /api/broadcasts): the
+    // offline kit cannot alert anyone, and says so instead of inventing a tally.
+    sendBroadcast: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
 
     /* developer */
     selectOrg: function (code) { set(function (s) { s.selectedOrg = code; return s; }); },
@@ -926,31 +1109,33 @@
       set(function (s) {
         var code = (data.code || data.name.slice(0, 5)).toUpperCase().replace(/[^A-Z]/g, "");
         if (!data.name.trim() || !code) { s.__toast = { tone: "rejected", title: "Name & code required", msg: "Enter a hospital name and short code." }; return s; }
-        s.orgs = s.orgs.concat([{ code: code, name: data.name, timezone: data.timezone || "America/New_York", users: 1, assignments: 0, active: true }]);
+        s.orgs = s.orgs.concat([{ code: code, name: data.name, timezone: data.timezone || "America/New_York", users: 1, assignments: 0 }]);
         pushAudit(s, { action: "create_organization", resource: code, risk: "high" });
         s.__toast = { tone: "accepted", title: "Tenant created", msg: data.name + " (" + code + ") provisioned." };
         return s;
       });
     },
-    toggleTenant: function (code) { set(function (s) { s.orgs = s.orgs.map(function (o) { return o.code === code ? Object.assign({}, o, { active: !o.active }) : o; }); return s; }); },
     addUser: function (form) {
       set(function (s) {
         if (!form.name.trim()) { s.__toast = { tone: "rejected", title: "Name required", msg: "Enter the user's full name." }; return s; }
-        var isRoot = form.role === "developer" && form.scope === "root";
-        var org = isRoot ? "*" : form.org;
-        s.devUsers = [{ id: uid("u"), name: form.name, role: form.role, org: org, specialty: form.role === "hospitalist" ? form.specialty : "", scope: form.role === "developer" ? (form.scope || "local") : undefined }].concat(s.devUsers);
-        if (!isRoot) s.orgs = s.orgs.map(function (o) { return o.code === form.org ? Object.assign({}, o, { users: o.users + 1 }) : o; });
-        pushAudit(s, { action: "create_user", resource: form.name + " @ " + (isRoot ? "ALL ORGS" : form.org), risk: isRoot ? "high" : "medium" });
-        var label = ({ hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: isRoot ? "Root developer" : "Local developer" })[form.role];
-        s.__toast = { tone: "accepted", title: label + " created", msg: form.name + " added to " + (isRoot ? "all organizations" : form.org) + "." };
+        // Offline kit only (the bridge posts to the server). A developer is
+        // platform-wide, never scoped to one organization.
+        var isDev = form.role === "developer";
+        var org = isDev ? "DOCTURN" : form.org;
+        s.devUsers = [{ id: uid("u"), name: form.name, username: form.username || "", role: form.role, org: org, specialty: form.role === "hospitalist" ? form.specialty : "" }].concat(s.devUsers);
+        if (!isDev) s.orgs = s.orgs.map(function (o) { return o.code === form.org ? Object.assign({}, o, { users: o.users + 1 }) : o; });
+        pushAudit(s, { action: "create_user", resource: form.name + " @ " + org, risk: isDev ? "high" : "medium" });
+        var label = ({ hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Developer" })[form.role];
+        s.__toast = { tone: "accepted", title: label + " created", msg: form.name + " added to " + (isDev ? "the platform" : form.org) + "." };
         return s;
       });
+      return Promise.resolve(true);
     },
     removeUser: function (id) {
       set(function (s) {
         var u = s.devUsers.find(function (x) { return x.id === id; });
         s.devUsers = s.devUsers.filter(function (x) { return x.id !== id; });
-        if (u && u.org !== "*") s.orgs = s.orgs.map(function (o) { return o.code === u.org ? Object.assign({}, o, { users: Math.max(0, o.users - 1) }) : o; });
+        if (u) s.orgs = s.orgs.map(function (o) { return o.code === u.org ? Object.assign({}, o, { users: Math.max(0, o.users - 1) }) : o; });
         if (u) { pushAudit(s, { action: "remove_user", resource: u.name, risk: "medium" }); s.__toast = { tone: "rejected", title: "User removed", msg: u.name + " removed." }; }
         return s;
       });
@@ -964,7 +1149,7 @@
         (providers || []).forEach(function (p) {
           var exists = (s.devUsers || []).some(function (u) { return u.name === p.name && u.org === orgCode; });
           if (exists) return;
-          s.devUsers = [{ id: uid("u"), name: p.name, role: "hospitalist", org: orgCode, specialty: p.group || "", scope: "local" }].concat(s.devUsers || []);
+          s.devUsers = [{ id: uid("u"), name: p.name, role: "hospitalist", org: orgCode, specialty: p.group || "" }].concat(s.devUsers || []);
           added++;
         });
         if (added) s.orgs = (s.orgs || []).map(function (o) { return o.code === orgCode ? Object.assign({}, o, { users: o.users + added }) : o; });
@@ -975,17 +1160,15 @@
       });
       return Promise.resolve({ added: (providers || []).length, skipped: 0 });
     },
-    setRoleColor: function (role, color) { set(function (s) { s.roleColors = Object.assign({}, s.roleColors, (function () { var o = {}; o[role] = color; return o; })()); pushAudit(s, { action: "customize_role_color", resource: role, risk: "low" }); return s; }); },
+    // A per-BROWSER preference (persisted in this browser's localStorage only,
+    // PERSIST_KEYS): other devices and other people keep the default colors.
+    // Not a server action, so not an audit row (A.CON developer #20).
+    setRoleColor: function (role, color) { set(function (s) { s.roleColors = Object.assign({}, s.roleColors, (function () { var o = {}; o[role] = color; return o; })()); return s; }); },
+    // Offline kit: there is no server to check, so nothing is claimed. The
+    // bridge runs the real check (GET /api/dev/ai-diagnostics).
     runDiagnostics: function () {
       set(function (s) {
-        var insights = [
-          "STJUDE assignment expiry rate up 18% this shift — likely the delayed Twilio queue. Suggest enabling push-first fallback.",
-          "MAYO round-robin fairness within 4% across providers — no cap relief triggered in the last 24h.",
-          "CLEVE WebSocket reconnect rate normal; 0 dropped events in the last hour.",
-          "Cross-tenant isolation checks: 0 violations. 1 attempt blocked and logged (STJUDE → MAYO).",
-        ];
-        s.diagnostics = { text: insights[Math.floor(Math.random() * insights.length)], at: now() };
-        pushAudit(s, { action: "run_ai_diagnostics", resource: "platform", risk: "low" });
+        s.diagnostics = { text: "Not connected to a DocTurn server — nothing was checked.", at: now() };
         return s;
       });
     },
@@ -1018,22 +1201,68 @@
       });
     },
 
+    /* stat-tile layout — per key: reorder, remove, re-add individual KPI tiles */
+    setStatOrder: function (key, order) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        cur.order = order.slice();
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+    toggleStat: function (key, id) {
+      set(function (s) {
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        var hidden = (cur.hidden || []).slice();
+        var i = hidden.indexOf(id);
+        if (i >= 0) hidden.splice(i, 1); else hidden.push(id);
+        cur.hidden = hidden;
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+    resetStatLayout: function (key) {
+      set(function (s) {
+        var n = Object.assign({}, s.statLayout); delete n[key];
+        s.statLayout = n;
+        return s;
+      });
+    },
+
+    /* user-created custom stat tiles — per key: build / delete a bespoke KPI box.
+       def = { label, source, metricKey, manualValue, icon, tint }. Ids are stable
+       ("custom:"…) so they flow through statLayout order/hidden like any tile. */
+    addCustomStat: function (key, def) {
+      set(function (s) {
+        var entry = Object.assign({ id: "custom:" + uid("cs") }, def);
+        var list = ((s.customStats && s.customStats[key]) || []).concat([entry]);
+        s.customStats = Object.assign({}, s.customStats, (function () { var o = {}; o[key] = list; return o; })());
+        return s;
+      });
+    },
+    removeCustomStat: function (key, id) {
+      set(function (s) {
+        var list = ((s.customStats && s.customStats[key]) || []).filter(function (e) { return e.id !== id; });
+        s.customStats = Object.assign({}, s.customStats, (function () { var o = {}; o[key] = list; return o; })());
+        // Scrub the deleted id from any saved layout so no dangling refs remain.
+        var cur = Object.assign({}, (s.statLayout && s.statLayout[key]) || {});
+        if (cur.order) cur.order = cur.order.filter(function (x) { return x !== id; });
+        if (cur.hidden) cur.hidden = cur.hidden.filter(function (x) { return x !== id; });
+        s.statLayout = Object.assign({}, s.statLayout, (function () { var o = {}; o[key] = cur; return o; })());
+        return s;
+      });
+    },
+
+    /* comms KPIs — no-op in the pure-demo store; api-bridge.js overrides this to
+       fetch real numbers from /api/metrics/comms. Defined so callers never throw. */
+    loadCommsMetrics: function () {},
+
     /* patient-board modules — per role, toggle a section on/off */
     setBoardModule: function (role, key, on) {
       set(function (s) {
         var cur = Object.assign({}, (s.boardModules && s.boardModules[role]) || {});
         cur[key] = on;
         s.boardModules = Object.assign({}, s.boardModules, (function () { var o = {}; o[role] = cur; return o; })());
-        return s;
-      });
-    },
-
-    /* per-organization on-call schedule source (Amion / QGenda / custom / …) */
-    setScheduleSource: function (code, source) {
-      set(function (s) {
-        s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
-        pushAudit(s, { action: "set_schedule_source", resource: code + " → " + source, risk: "low" });
-        s.__toast = { tone: "accepted", title: "Schedule source updated", msg: code + " now syncs via " + source + "." };
         return s;
       });
     },
@@ -1102,108 +1331,30 @@
     /* org settings */
     setSetting: function (key, val) { set(function (s) { s.settings = Object.assign({}, s.settings, (function () { var o = {}; o[key] = val; return o; })()); return s; }); },
 
-    /* enterprise defaults + per-organization overrides (developer console) */
-    setEnterpriseRule: function (key, val) {
-      set(function (s) {
-        var ent = Object.assign({}, s.enterprise);
-        ent.rules = Object.assign({}, ent.rules, kvPair(key, val));
-        s.enterprise = ent;
-        pushAudit(s, { action: "enterprise_rule_set", resource: key, risk: "medium" });
-        return s;
-      });
-    },
-    setEnterprisePlatform: function (section, key, val) {
-      set(function (s) {
-        var ent = Object.assign({}, s.enterprise);
-        var plat = Object.assign({}, ent.platform);
-        plat[section] = Object.assign({}, plat[section], kvPair(key, val));
-        ent.platform = plat; s.enterprise = ent;
-        pushAudit(s, { action: "enterprise_platform_set", resource: section + "." + key, risk: "medium" });
-        return s;
-      });
-    },
+    /* developer console: a tenant's rule values (local copy of the server's;
+       api-bridge.js writes them to /api/dev/organizations/:id and rolls back
+       on a refusal) */
     setOrgRule: function (code, key, val) {
       set(function (s) {
         var cfgs = Object.assign({}, s.orgConfigs);
         var c = Object.assign({}, cfgs[code]);
         c.rules = Object.assign({}, c.rules, kvPair(key, val));
         cfgs[code] = c; s.orgConfigs = cfgs;
-        pushAudit(s, { action: "org_rule_set", resource: code + "." + key, risk: "medium" });
         return s;
       });
     },
-    resetOrgRule: function (code, key) {
-      set(function (s) {
-        var cfgs = Object.assign({}, s.orgConfigs);
-        var c = Object.assign({}, cfgs[code]);
-        var r = Object.assign({}, c.rules); delete r[key]; c.rules = r;
-        cfgs[code] = c; s.orgConfigs = cfgs;
-        pushAudit(s, { action: "org_rule_reset", resource: code + "." + key, risk: "low" });
-        return s;
-      });
-    },
-    setRolePerm: function (scope, role, perm, on) {
-      set(function (s) {
-        if (scope === "*") {
-          var ent = Object.assign({}, s.enterprise);
-          var p = Object.assign({}, ent.permissions);
-          p[role] = togglePerm(p[role] || [], perm, on);
-          ent.permissions = p; s.enterprise = ent;
-        } else {
-          var cfgs = Object.assign({}, s.orgConfigs);
-          var c = Object.assign({}, cfgs[scope]);
-          var pp = Object.assign({}, c.permissions || {});
-          var base = ((s.enterprise.permissions || {})[role] || []).slice();
-          pp[role] = togglePerm(pp[role] || base, perm, on);
-          c.permissions = pp; cfgs[scope] = c; s.orgConfigs = cfgs;
-        }
-        pushAudit(s, { action: "permission_set", resource: (scope === "*" ? "enterprise" : scope) + "." + role + "." + perm, risk: "medium" });
-        return s;
-      });
-    },
-    resetOrgPerms: function (code, role) {
-      set(function (s) {
-        var cfgs = Object.assign({}, s.orgConfigs);
-        var c = Object.assign({}, cfgs[code]);
-        var pp = Object.assign({}, c.permissions || {}); delete pp[role]; c.permissions = pp;
-        cfgs[code] = c; s.orgConfigs = cfgs;
-        return s;
-      });
-    },
-    toggleFlag: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { flags: Object.assign({}, s.settings.flags, (function () { var o = {}; o[key] = !s.settings.flags[key]; return o; })()) }); pushAudit(s, { action: "toggle_feature_flag", resource: key, risk: "low" }); return s; }); },
-    toggleIntegration: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { integrations: Object.assign({}, s.settings.integrations, (function () { var o = {}; o[key] = !s.settings.integrations[key]; return o; })()) }); pushAudit(s, { action: "toggle_integration", resource: key, risk: "medium" }); s.__toast = { tone: "accepted", title: (s.settings.integrations[key] ? "Connected" : "Disconnected"), msg: key + " integration updated." }; return s; }); },
-    addShiftType: function () {
-      set(function (s) {
-        var n = s.settings.shiftTypes.length + 1;
-        s.settings.shiftTypes = s.settings.shiftTypes.concat([{ id: uid("st"), name: "Custom shift " + n, time: "08:00–20:00", color: "var(--primary)" }]);
-        return s;
-      });
-    },
-    // Agentically add shift types detected from an external schedule (Amion):
-    // any time interval the schedule uses that the org doesn't already have
-    // becomes a shift type. Returns count added. Dedupes by time range.
-    importShiftTypes: function (types) {
-      var added = 0;
-      set(function (s) {
-        var have = {};
-        s.settings.shiftTypes.forEach(function (x) { have[x.time] = true; have[(x.name || "").toLowerCase()] = true; });
-        var fresh = (types || []).filter(function (t) {
-          if (have[t.time] || have[(t.name || "").toLowerCase()]) return false;
-          have[t.time] = true; have[(t.name || "").toLowerCase()] = true; added++;
-          return true;
-        }).map(function (t) {
-          return { id: uid("st"), name: t.name, time: t.time, color: t.color || "var(--primary)" };
-        });
-        s.settings.shiftTypes = s.settings.shiftTypes.concat(fresh);
-        s.__toast = added
-          ? { tone: "accepted", title: "Added " + added + " shift type(s)", msg: "Detected from the schedule's time intervals." }
-          : { tone: "rejected", title: "No new shift types", msg: "All detected intervals already exist." };
-        return s;
-      });
-      return Promise.resolve({ added: added });
-    },
-    resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
-    clearComplianceLogs: function () { set(function (s) { s.audit = []; s.phiLog = []; s.incidents = []; return s; }); },
+
+    /* continuous compliance monitor — real implementations live in
+       api-bridge.js (they hit /api/compliance/*). The prototype has no way to
+       measure the running system, so the defaults return nothing rather than a
+       fabricated all-green report. */
+    loadComplianceStatus: function () { return Promise.resolve(null); },
+    saveAttestation: function () { return Promise.resolve(null); },
+    exportEvidence: function () { return Promise.resolve(null); },
+    /* policy starter pack — same story: the drafts are rendered server-side
+       against the real organization, so the prototype has none. */
+    loadPolicyTemplates: function () { return Promise.resolve([]); },
+    loadPolicy: function () { return Promise.resolve(null); },
     // Show/hide a specialty in the ER route-assignment consult picker (does NOT
     // delete the director-managed consult service + roster).
     toggleConsultHidden: function (name) {
@@ -1220,34 +1371,6 @@
     /* toast lifecycle */
     toast: function (t) { set(function (s) { s.__toast = t; return s; }); },
     clearToast: function () { set(function (s) { s.__toast = null; return s; }); },
-
-    /* role management */
-    createRole: function (data) {
-      set(function (s) {
-        if (!data.name || !data.name.trim()) { s.__toast = { tone: "rejected", title: "Role name required", msg: "Give the role a name." }; return s; }
-        s.roles = s.roles.concat([{ id: uid("r"), name: data.name.trim(), desc: (data.desc || "").trim(), system: false,
-          portals: data.portals || [], perms: data.perms || [], features: data.features || [], users: 0 }]);
-        pushAudit(s, { action: "create_role", resource: data.name.trim(), risk: "medium" });
-        s.__toast = { tone: "accepted", title: "Role created", msg: data.name.trim() + " is ready to assign." };
-        return s;
-      });
-    },
-    updateRole: function (id, patch) {
-      set(function (s) {
-        s.roles = s.roles.map(function (r) { return r.id === id ? Object.assign({}, r, patch) : r; });
-        pushAudit(s, { action: "update_role", resource: id, risk: "medium" });
-        return s;
-      });
-    },
-    deleteRole: function (id) {
-      set(function (s) {
-        var r = s.roles.find(function (x) { return x.id === id; });
-        if (r && r.system) { s.__toast = { tone: "rejected", title: "Protected role", msg: "Built-in roles can't be deleted." }; return s; }
-        s.roles = s.roles.filter(function (x) { return x.id !== id; });
-        if (r) { pushAudit(s, { action: "delete_role", resource: r.name, risk: "high" }); s.__toast = { tone: "rejected", title: "Role deleted", msg: r.name + " removed." }; }
-        return s;
-      });
-    },
 
     /* appearance & layout customization */
     setTheme: function (patch) { set(function (s) { s.theme = Object.assign({}, s.theme, patch); pushAudit(s, { action: "update_appearance", resource: Object.keys(patch).join(","), risk: "low" }); return s; }); },
@@ -1273,7 +1396,7 @@
     },
     resetLayout: function (role) {
       set(function (s) {
-        s.theme = { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" };
+        s.theme = { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard", palette: "classic" };
         s.navHidden = Object.assign({}, s.navHidden, (function () { var o = {}; o[role] = []; return o; })());
         s.navOrder = Object.assign({}, s.navOrder, (function () { var o = {}; o[role] = null; return o; })());
         s.__toast = { tone: "accepted", title: "Layout reset", msg: "Appearance and navigation restored to defaults." };
@@ -1284,12 +1407,6 @@
     /* danger zone */
     resetAll: function () { state = seed(); persist(); emit(); },
   };
-
-  var REPLIES = [
-    "Copy — on it.", "Thanks for the heads up.", "Accepting now.", "Give me 5 minutes.",
-    "Got it, will round shortly.", "Understood. I'll update the chart.", "On my way up.",
-  ];
-  var s2reply;
 
   /* ---- React hooks ------------------------------------------------------- */
   function useStore() {
@@ -1303,11 +1420,11 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
-  window.dtFmt = { mmss: mmss, ago: ago, hhmm: hhmm, clockLabel: clockLabel, initialsOf: initialsOf };
+  window.dtFmt = { mmss: mmss, ago: ago, hhmm: hhmm, hhmmss: hhmmss, dayLabel: dayLabel, stamp: stamp, clockLabel: clockLabel, initialsOf: initialsOf };
   window.extractIntake = extractIntake;
   window.shiftActiveNow = shiftActiveNow;
   window.SHIFT_WINDOWS = SHIFT_WINDOWS;

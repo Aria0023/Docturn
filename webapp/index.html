@@ -2,34 +2,182 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Every asset below is root-absolute and the base is the origin root, so a
+     deep link such as /messages/42 or a trailing-slash path (which the SPA
+     fallback answers with this document) loads the same shell instead of
+     requesting /messages/tokens.css and failing nosniff (A.CON-SHO-58). -->
+<base href="/">
 <title>DocTurn — Clinical Web App (Extended UI Kit)</title>
-<link rel="stylesheet" href="tokens.css">
+<!-- PWA: the full web app is installable to a phone home screen and push-capable. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563EB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="DocTurn">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+    });
+  }
+  // Capture the install prompt as early as possible — browsers fire
+  // beforeinstallprompt before React mounts, so stash it for the InstallPrompt
+  // banner to use when the user taps "Install".
+  window.__dtInstallEvent = null;
+  window.addEventListener("beforeinstallprompt", function (e) {
+    e.preventDefault();
+    window.__dtInstallEvent = e;
+    window.dispatchEvent(new Event("dt-installable"));
+  });
+  // App lock flag (A.CON-SHO-7). The lock itself is the SERVER's (POST
+  // /api/session/lock: every data route then answers 423 and GET /api/user
+  // says locked, so deleting this flag and reloading still lands on the lock
+  // screen). This flag is the browser's copy — plus the non-PHI identity the
+  // lock screen needs to re-authenticate (org code, username, display name,
+  // role) — under its OWN key: DT.purgePersisted() drops the store snapshot on
+  // lock and leaves this intact, and every tab of this browser sees the same
+  // locked state (localStorage; sessionStorage if that is unavailable). It is
+  // cleared only by a successful server re-authentication or by signing out.
+  // While it is set, api-bridge.js sends nothing but sign-in / identity calls
+  // (no hydrate, no socket, no poll), so a locked tab cannot renew the session.
+  window.__dtLock = (function () {
+    var KEY = "docturn.lock";
+    function stores() {
+      var out = [];
+      try { if (window.localStorage) out.push(window.localStorage); } catch (e) {}
+      try { if (window.sessionStorage) out.push(window.sessionStorage); } catch (e) {}
+      return out;
+    }
+    function read() {
+      var raw = null;
+      stores().some(function (s) { try { raw = s.getItem(KEY); } catch (e) { raw = null; } return !!raw; });
+      if (!raw) return null;
+      try { var v = JSON.parse(raw); return (v && v.locked && v.org && v.user) ? v : null; } catch (e) { return null; }
+    }
+    return {
+      KEY: KEY,
+      read: read,
+      isLocked: function () { return !!read(); },
+      set: function (identity) {
+        if (!identity || !identity.org || !identity.user) return false;
+        var v = JSON.stringify({ locked: true, at: Date.now(), org: identity.org, user: identity.user, name: identity.name || null, role: identity.role || null });
+        return stores().some(function (s) { try { s.setItem(KEY, v); return true; } catch (e) { return false; } });
+      },
+      clear: function () { stores().forEach(function (s) { try { s.removeItem(KEY); } catch (e) {} }); },
+    };
+  })();
+</script>
+<link rel="stylesheet" href="/tokens.css">
 <style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  /* Safe-area insets (notch / home indicator / landscape ears) as variables:
+     one source of truth for both shells, and a test stylesheet can override
+     them to simulate a Face-ID iPhone (A.CON-SHO-42/45/46/60, A.CON-NEE-2). */
+  :root {
+    --sai-top: env(safe-area-inset-top, 0px);
+    --sai-right: env(safe-area-inset-right, 0px);
+    --sai-bottom: env(safe-area-inset-bottom, 0px);
+    --sai-left: env(safe-area-inset-left, 0px);
+  }
+  /* iOS polish (A.CON-MIN-16): no grey UA tap flash on controls, no rubber-band
+     over-scroll of the whole document behind the fixed shells, no automatic
+     text inflation when the phone rotates. */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; overscroll-behavior: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   body { font-family: var(--font-sans); color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  /* Controls act on the first tap: no 300 ms double-tap-zoom wait. */
+  button, [role="button"], a, label, select, input, textarea { touch-action: manipulation; }
   :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-thumb { background: hsl(214 25% 86%); border-radius: 99px; border: 2px solid #fff; }
   @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
+  @keyframes dt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
+  /* Mobile shell height: 100vh for engines without dvh (iOS < 15.4), 100dvh
+     where supported so Safari's collapsing toolbar never leaves a gap. An
+     inline style object cannot hold two values for one property, hence a class. */
+  .dt-mobile-shell { height: 100vh; height: 100dvh; }
+  /* Demo-only topbar controls hide on narrow desktop windows (A.CON-MIN-10). */
+  @media (max-width: 1000px) { .dt-hide-narrow { display: none !important; } }
   /* Phone: collapse the kit's inline multi-column grids to a single column so
-     dashboards/forms stack instead of overflowing. */
+     dashboards/forms stack instead of overflowing. Grids that must keep their
+     columns (the login role picker, A.CON-MIN-12) opt out with data-keep-cols. */
   @media (max-width: 760px) {
-    div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+    div[style*="grid-template-columns"]:not([data-keep-cols]) { grid-template-columns: 1fr !important; }
+    div[data-keep-cols="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
     img, svg, table { max-width: 100%; }
+  }
+  /* Phones and other touch devices ------------------------------------------ */
+  @media (max-width: 760px), ((hover: none) and (pointer: coarse)) {
+    /* iOS Safari zooms the page when a focused control's font is under 16px and
+       the zoom sticks in the installed PWA. A stylesheet !important beats the
+       kit's inline React styles, so this one rule covers every current and
+       future control (A.CON-SHO-12/44/51/57). The viewport meta deliberately
+       keeps user scaling (no maximum-scale=1). */
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]),
+    select, textarea { font-size: 16px !important; }
+    /* The kit's Field wrapper (components.jsx) grows from 40px to a 44pt row. */
+    .dt-field { height: auto !important; min-height: 44px; }
+    /* Legibility floor: no UI text under 12px on a phone (A.CON-MIN-11). The
+       kit sets sizes inline (React serialises fontSize: 10.5 as
+       "font-size: 10.5px"), so match those attribute values and floor them —
+       this reaches every screen, not just the shell. Wrapped in :where() so
+       the floor has ZERO specificity: its !important still beats the inline
+       size, but every more specific !important rule wins over it — above all
+       the 16px rule for form controls, which a bare `select`/`textarea`
+       selector (0,0,1) used to lose to an attribute selector (0,1,0), leaving
+       e.g. the Patient board's "Assign…" select at 12px and iOS zooming on
+       focus (A.CON-SHO-44/51). */
+    :where([style*="font-size: 5px"], [style*="font-size: 5."], [style*="font-size: 6px"], [style*="font-size: 6."],
+    [style*="font-size: 7px"], [style*="font-size: 7."], [style*="font-size: 8px"], [style*="font-size: 8."],
+    [style*="font-size: 9px"], [style*="font-size: 9."], [style*="font-size: 10px"], [style*="font-size: 10."],
+    [style*="font-size: 11px"], [style*="font-size: 11."]) { font-size: 12px !important; }
+  }
+  /* Landscape phone (A.CON-MIN-10 fix-up). The mobile shell is kept in
+     landscape, where the height is 375–430px: a compact tab bar (44px row,
+     icon beside label — the iOS landscape tab bar), a slimmer top bar and test
+     banner everywhere, and with a conversation OPEN (its composer is on
+     screen) the thread takes the whole height like a pushed view in iOS
+     Messages: no app top bar, no install nudge, no tab bar — the thread's own
+     header has Back (to the list, where the tab bar returns). The composer
+     then sits on the home-indicator inset and the message list keeps a usable
+     height. */
+  @media (max-height: 500px) and (orientation: landscape) {
+    .dt-mobile-shell { --dt-tabbar-h: 44px; }
+    .dt-mobile-shell .dt-tab { flex-direction: row !important; gap: 6px !important; }
+    .dt-mobile-shell > header.dt-appbar { height: 48px !important; }
+    .dt-synthetic-banner { padding-top: 2px !important; padding-bottom: 2px !important; }
+    .dt-mobile-shell:has([data-composer]) > header.dt-appbar,
+    .dt-mobile-shell:has([data-composer]) > .dt-install-slot,
+    .dt-mobile-shell:has([data-composer]) > nav.dt-tabbar { display: none !important; }
+    .dt-mobile-shell:has([data-composer]) > main { padding-bottom: var(--sai-bottom) !important; }
+  }
+  @media (hover: none) and (pointer: coarse) {
+    /* 44×44 CSS px minimum tap target for every control (Apple HIG, WCAG
+       2.5.5) — min-* wins over the kit's inline width/height (A.CON-SHO-52). */
+    button, [role="button"], select,
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="hidden"]) { min-height: 44px; }
+    button, [role="button"] { min-width: 44px; }
+    input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; }
   }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
-     behind hospital/corporate firewalls that block unpkg). -->
-<script src="assets/vendor/react.js"></script>
-<script src="assets/vendor/react-dom.js"></script>
-<script src="assets/vendor/babel.min.js"></script>
-<script src="assets/vendor/lucide.min.js"></script>
-<script src="store.js"></script>
-<script src="api-bridge.js"></script>
+     behind hospital/corporate firewalls that block unpkg).
+     This document is the DEVELOPMENT shell (development React + in-browser
+     Babel). `npm run build:webapp` (scripts/build-webapp.mjs) turns it into
+     webapp/dist/index.html: the inline script above and the scripts below are
+     bundled in order with production React, every text/babel script is
+     precompiled, and nothing inline is left. Production serves that build and
+     refuses a stale one (server/webapp-static.ts), so edit THIS file. -->
+<script src="/assets/vendor/react.js"></script>
+<script src="/assets/vendor/react-dom.js"></script>
+<script src="/assets/vendor/babel.min.js"></script>
+<script src="/assets/vendor/lucide.min.js"></script>
+<script src="/store.js"></script>
+<script src="/api-bridge.js"></script>
 </head>
 <body>
 <template id="__bundler_thumbnail">
@@ -40,35 +188,43 @@
 </template>
 <div id="root"></div>
 
-<script type="text/babel" src="components.jsx"></script>
-<script type="text/babel" src="LoginScreen.jsx"></script>
-<script type="text/babel" src="LockScreen.jsx"></script>
-<script type="text/babel" src="AppShell.jsx"></script>
-<script type="text/babel" src="HospitalistDashboard.jsx"></script>
-<script type="text/babel" src="HospitalistWork.jsx"></script>
-<script type="text/babel" src="HospitalistHistory.jsx"></script>
-<script type="text/babel" src="ErDoctorDashboard.jsx"></script>
-<script type="text/babel" src="DirectorDashboard.jsx"></script>
-<script type="text/babel" src="AdmissionsLog.jsx"></script>
-<script type="text/babel" src="ErDirectorDashboard.jsx"></script>
-<script type="text/babel" src="CustomizableDashboard.jsx"></script>
-<script type="text/babel" src="ConsultServices.jsx"></script>
-<script type="text/babel" src="RegistrationApprovals.jsx"></script>
-<script type="text/babel" src="Messaging.jsx"></script>
-<script type="text/babel" src="Directory.jsx"></script>
-<script type="text/babel" src="CareTeam.jsx"></script>
-<script type="text/babel" src="PatientBoard.jsx"></script>
-<script type="text/babel" src="DeveloperDashboard.jsx"></script>
-<script type="text/babel" src="OrgConfig.jsx"></script>
-<script type="text/babel" src="ComplianceOverview.jsx"></script>
-<script type="text/babel" src="SupportDirectory.jsx"></script>
-<script type="text/babel" src="Compliance.jsx"></script>
-<script type="text/babel" src="Broadcasts.jsx"></script>
-<script type="text/babel" src="ScheduleSync.jsx"></script>
-<script type="text/babel" src="OrgSettings.jsx"></script>
-<script type="text/babel" src="RoleManagement.jsx"></script>
-<script type="text/babel" src="People.jsx"></script>
-<script type="text/babel" src="Appearance.jsx"></script>
+<script type="text/babel" src="/components.jsx"></script>
+<script type="text/babel" src="/InstallPrompt.jsx"></script>
+<script type="text/babel" src="/CustomizableStats.jsx"></script>
+<script type="text/babel" src="/LoginScreen.jsx"></script>
+<script type="text/babel" src="/LockScreen.jsx"></script>
+<script type="text/babel" src="/MfaScreen.jsx"></script>
+<script type="text/babel" src="/ChangePasswordScreen.jsx"></script>
+<script type="text/babel" src="/AppShell.jsx"></script>
+<script type="text/babel" src="/HospitalistDashboard.jsx"></script>
+<script type="text/babel" src="/HospitalistWork.jsx"></script>
+<script type="text/babel" src="/HospitalistHistory.jsx"></script>
+<script type="text/babel" src="/ErDoctorDashboard.jsx"></script>
+<script type="text/babel" src="/DirectorDashboard.jsx"></script>
+<script type="text/babel" src="/AdmissionsLog.jsx"></script>
+<script type="text/babel" src="/ErDirectorDashboard.jsx"></script>
+<script type="text/babel" src="/CustomizableDashboard.jsx"></script>
+<script type="text/babel" src="/ConsultServices.jsx"></script>
+<script type="text/babel" src="/RegistrationApprovals.jsx"></script>
+<script type="text/babel" src="/Messaging.jsx"></script>
+<script type="text/babel" src="/Directory.jsx"></script>
+<script type="text/babel" src="/CareTeam.jsx"></script>
+<script type="text/babel" src="/PatientBoard.jsx"></script>
+<script type="text/babel" src="/DeveloperDashboard.jsx"></script>
+<script type="text/babel" src="/OrgConfig.jsx"></script>
+<script type="text/babel" src="/ComplianceOverview.jsx"></script>
+<script type="text/babel" src="/SupportDirectory.jsx"></script>
+<script type="text/babel" src="/Compliance.jsx"></script>
+<script type="text/babel" src="/ComplianceMonitor.jsx"></script>
+<script type="text/babel" src="/Broadcasts.jsx"></script>
+<script type="text/babel" src="/ScheduleSync.jsx"></script>
+<script type="text/babel" src="/OnCallBoard.jsx"></script>
+<script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/Integrations.jsx"></script>
+<script type="text/babel" src="/OrgSettings.jsx"></script>
+<script type="text/babel" src="/RoleManagement.jsx"></script>
+<script type="text/babel" src="/People.jsx"></script>
+<script type="text/babel" src="/Appearance.jsx"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect } = React;
@@ -114,79 +270,119 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   director: [
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
-    { id: "roles",      label: "Role management", icon: "shield-half" },
+    { id: "roles",      label: "Roles", icon: "shield-half" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
+    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
     { id: "settings",   label: "Settings",   icon: "settings" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
+    { id: "account",    label: "My settings", icon: "user" },
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
-    { id: "enterprise", label: "Enterprise defaults", icon: "globe" },
+    { id: "enterprise", label: "Platform", icon: "globe" },
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "appearance", label: "Appearance",      icon: "palette" },
+    { id: "account",    label: "My settings",     icon: "user" },
   ],
 };
+
+// Nav item → feature module (shared/modules.ts). An item whose module is OFF for
+// the signed-in org is hidden; the server enforces the same switch (404).
+const NAV_MODULE = {
+  consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
+  admissions: "routing.assignments", history: "routing.assignments",
+  resources: "ops.resources", appearance: "platform.appearance",
+};
+const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.DT.moduleOn(NAV_MODULE[it.id]);
 
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
-  admissions: ["Admissions log", "Every patient routed to a team — full history"],
+  admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
-  compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  compliance: ["Audit & compliance", "The organization's HIPAA audit trail and PHI-access log, from the server"],
+  account:    ["Settings", "Your profile, availability, notifications and security"],
+  "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
-  roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
-  consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
-  people:     ["People", "Manage everyone in your organization, grouped by role"],
-  access:     ["Access & people", "Manage your organization's people and the roles that govern their access"],
-  appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
-  settings:   ["Organization settings", "Rotation rules, feature flags and integrations"],
-  enterprise: ["Enterprise defaults", "Platform-wide rules and permissions every tenant inherits"],
+  oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
+  roles:      ["Roles", "DocTurn's fixed roles and who holds them in your organization"],
+  consult:    ["Consult services", "The services ER physicians can request — saved for your organization"],
+  people:     ["People", "Your organization's accounts, as the server holds them"],
+  access:     ["Access & people", "Your organization's people and the fixed roles that govern their access"],
+  appearance: ["Appearance & layout", "Your organization's branding and theme, and this device's navigation"],
+  settings:   ["Organization settings", "Rotation rules, retention and integrations"],
+  enterprise: ["Platform", "Operations that span every organization"],
   users:      ["Users by organization", "Support directory — every user grouped by tenant"],
 };
 
+// Toasts are informational only (no buttons), so the fixed wrapper takes NO
+// pointer events: a tap anywhere under it reaches the app. While the
+// broadcast banner (api-bridge.js, #dt-broadcast-banner) is up, the toast is
+// placed below it so it never covers the banner's Acknowledge button either
+// (A.CON-SHO-2). Re-measured after every render, so a banner that appears
+// while a toast is showing pushes it down too.
+function bannerBottom() {
+  const b = document.getElementById("dt-broadcast-banner");
+  if (!b || b.style.display === "none") return null;
+  const r = b.getBoundingClientRect();
+  return r.height > 0 ? Math.ceil(r.bottom) : null;
+}
 function Toast({ toast }) {
+  const [below, setBelow] = React.useState(null);
+  React.useLayoutEffect(() => {
+    if (!toast) return;
+    const next = bannerBottom();
+    if (next !== below) setBelow(next);
+  });
   if (!toast) return null;
   const tone = toast.tone || "accepted";
   const ic = { accepted: "check-circle-2", sent: "send", rejected: "alert-triangle" }[tone] || "check-circle-2";
   const fg = { accepted: "var(--status-accepted)", sent: "var(--status-active)", rejected: "var(--destructive)" }[tone];
   return (
-    <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50, animation: "dt-toast-in .25s ease" }}>
+    <div role="status" data-toast style={{ position: "fixed", top: below != null ? below + 8 : "calc(18px + var(--sai-top))", right: "calc(18px + var(--sai-right))", zIndex: 50, pointerEvents: "none", animation: "dt-toast-in .25s ease", maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))" }}>
       <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
         <Icon name={ic} size={18} color={fg} style={{ marginTop: 1 }} />
         <div>
@@ -201,9 +397,9 @@ function Toast({ toast }) {
 function RoleSwitcher({ role, onChange }) {
   const roles = [["hospitalist", "Hospitalist"], ["er_doctor", "ER physician"], ["er_director", "ER director"], ["director", "Hosp. director"], ["developer", "Developer"]];
   return (
-    <div style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+    <div role="group" aria-label="Demo as role" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)", width: "max-content" }}>
       {roles.map(([id, label]) => (
-        <button key={id} onClick={() => onChange(id)}
+        <button key={id} type="button" onClick={() => onChange(id)} aria-pressed={role === id}
           style={{ padding: "6px 11px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
             background: role === id ? "#fff" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
             boxShadow: role === id ? "var(--shadow-sm)" : "none" }}>{label}</button>
@@ -212,31 +408,56 @@ function RoleSwitcher({ role, onChange }) {
   );
 }
 
-function NotificationsPanel({ open, items, onClose }) {
-  if (!open) return null;
+/* No notification bell (A.CON developer #23): the server keeps no notification
+   feed, so the kit's bell could only ever show its demo items or a false "all
+   caught up". Real alerts arrive as push notifications, the broadcast banner,
+   unread counts on Messages and the live dashboards. */
+
+/* A developer inside an impersonated / managed-org portal. The Return button is
+   a server-side session swap (POST /api/dev/impersonate/stop), exempt from the
+   borrowed account's password / MFA gates, so it works on every screen. */
+function ImpersonationBanner({ imp, onReturn }) {
+  if (!imp) return null;
   return (
-    <React.Fragment>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "fixed", top: 58, right: 18, width: 344, zIndex: 41, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
-        <div style={{ padding: "13px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>Notifications</span>
-          <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{items.length} recent</span>
-        </div>
-        <div style={{ maxHeight: 400, overflowY: "auto" }}>
-          {items.length === 0 && <div style={{ padding: 30, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>You're all caught up.</div>}
-          {items.map((n, i) => (
-            <div key={n.id} style={{ display: "flex", gap: 11, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-              <span style={{ width: 32, height: 32, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={n.icon} size={16} color="var(--primary)" /></span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{n.title}</div>
-                <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{n.body}</div>
-                <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 3 }}>{dtFmt.ago(n.at)}</div>
-              </div>
-            </div>
-          ))}
+    <div data-testid="impersonation-banner" style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: imp.managing ? "#1E3A5F" : "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
+      <Icon name={imp.managing ? "building-2" : "eye"} size={16} color="#FDBA74" />
+      <span style={{ fontSize: 13, fontWeight: 600 }}>
+        {imp.managing
+          ? "Managing " + imp.name + " (" + imp.org + ") — full per-organization portal"
+          : "Root access — viewing " + imp.name + "'s portal (" + String(imp.role || "").replace(/_/g, " ") + " · " + imp.org + ")"}
+      </span>
+      <span style={{ fontSize: 12, color: "#FED7AA" }}>{imp.managing ? "Every change applies to this organization only. Actions are audited." : "You're seeing exactly what this user sees. Actions are audited."}</span>
+      <button type="button" onClick={onReturn} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
+    </div>
+  );
+}
+
+/* The borrowed account is still held by its own gate — a one-time password not
+   yet replaced, or two-factor enrolment its org requires. Those steps belong to
+   the account's owner, so the developer is NOT shown the enrolment / change
+   forms (the enrolment screen would start a TOTP setup on the owner's account
+   the moment it mounted); they see why the portal is closed and the way back. */
+function ImpersonationGateHold({ imp, gate, me, onReturn, onSignOut }) {
+  const mobile = useIsMobile();
+  const who = (me && me.name) || imp.name || "This account";
+  const why = gate === "mfa"
+    ? who + " hasn't enrolled the two-factor authentication this organization requires for their role yet."
+    : who + " still has the one-time password the account was created or reset with, and hasn't chosen their own yet.";
+  return (
+    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
+      <ImpersonationBanner imp={imp} onReturn={onReturn} />
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "20px 16px" : 28 }}>
+        <div data-testid="impersonation-gate-hold" style={{ width: "100%", maxWidth: 440, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 20px" : "30px 28px", textAlign: "center" }}>
+          <span style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name={gate === "mfa" ? "shield-check" : "key-round"} size={20} color="var(--primary)" /></span>
+          <h1 style={{ fontSize: 19, fontWeight: 700, margin: "16px 0 8px" }}>{gate === "mfa" ? "Two-factor enrolment pending" : "Password change pending"}</h1>
+          <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: "0 0 18px", lineHeight: 1.55 }}>
+            {why} The portal opens once they do it themselves when they sign in. Nothing here is available until then.
+          </p>
+          <Button full size="lg" icon="arrow-left" onClick={onReturn}>Return to developer</Button>
+          <button type="button" onClick={onSignOut} style={{ marginTop: 10, border: "none", background: "transparent", color: "var(--muted-foreground)", fontSize: 12.5, cursor: "pointer", fontFamily: "var(--font-sans)", padding: 6 }}>Sign out instead</button>
         </div>
       </div>
-    </React.Fragment>
+    </div>
   );
 }
 
@@ -245,31 +466,113 @@ function App() {
   const a = useActions();
   const role = st.session && st.session.role;
   const nav = st.ui.nav;
-  const [locked, setLocked] = React.useState(false);
+  // App lock (A.CON-SHO-7). The source of truth is the storage flag written by
+  // window.__dtLock (see <head>): it survives F5 and is shared by every tab, so
+  // a reload can never bypass the lock. React state mirrors it.
+  const lockApi = window.__dtLock || null;
+  const [lockFlag, setLockFlag] = React.useState(() => (lockApi ? lockApi.read() : null));
+  const locked = !!lockFlag;
+  const navBeforeLock = React.useRef(null);
+  // `idleMs`: how long the user had already been idle (the idle timer passes
+  // 15 min; a tap on Lock passes 0). The server back-dates its lock by it, so
+  // the idle lock ends the server session outright (automatic logoff).
+  const lockNow = React.useCallback((idleMs) => {
+    const s = DT.getState();
+    const sess = s && s.session;
+    if (!sess || !sess.org || !sess.user) return;
+    navBeforeLock.current = s.ui && s.ui.nav;
+    // Locking also drops the persisted snapshot — a locked workstation must not
+    // leave anything readable in localStorage for someone with devtools.
+    try { DT.purgePersisted(); } catch (e) {}
+    const identity = { org: sess.org, user: sess.user, name: sess.name, role: sess.role };
+    if (lockApi) lockApi.set(identity);
+    setLockFlag((lockApi && lockApi.read()) || Object.assign({ locked: true }, identity));
+    try { a.toggleNotif(false); } catch (e) {}
+    // Lock the SERVER session (423 on every data route, sockets closed). The
+    // flag above is set first, so nothing else leaves this tab meanwhile.
+    try { if (a.lockSession) a.lockSession(typeof idleMs === "number" ? idleMs : 0); } catch (e) {}
+  }, []);
+  const lockByHand = React.useCallback(() => lockNow(0), [lockNow]);
+  // Unlock = a successful server re-authentication (LockScreen → DT.actions.login),
+  // which also re-hydrates every clinical slice. Put the user back where they were.
+  const unlocked = React.useCallback(() => {
+    if (lockApi) lockApi.clear();
+    setLockFlag(null);
+    const back = navBeforeLock.current; navBeforeLock.current = null;
+    if (back) { try { a.setNav(back); } catch (e) {} }
+  }, []);
+  const signedOutFromLock = React.useCallback(() => { if (lockApi) lockApi.clear(); setLockFlag(null); navBeforeLock.current = null; }, []);
+  // Another tab of this browser locked or unlocked: follow it. On an unlock
+  // elsewhere, that tab's re-authentication may have replaced the session
+  // cookie while this tab's socket and data went stale → re-establish them.
+  React.useEffect(() => {
+    if (!lockApi) return;
+    const onStorage = (e) => {
+      if (e.key !== null && e.key !== lockApi.KEY) return;
+      const v = lockApi.read();
+      setLockFlag(v);
+      if (!v && e.oldValue && a.rehydrate) { try { a.rehydrate(); } catch (err) {} }
+    };
+    // api-bridge engaged the lock because the SERVER said so (a 423, a 4423
+    // socket close, or GET /api/session reporting the session locked).
+    const onServerLock = () => setLockFlag(lockApi.read());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("dt-lock-change", onServerLock);
+    return () => { window.removeEventListener("storage", onStorage); window.removeEventListener("dt-lock-change", onServerLock); };
+  }, []);
   const isMobile = useIsMobile();
   const [drawer, setDrawer] = React.useState(false);
   React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
 
   // Idle auto-lock (HIPAA). Resets on any interaction; locks after 15 min idle.
+  // Not armed while already locked.
   React.useEffect(() => {
-    if (!role) return;
+    if (!role || locked) return;
     let timer;
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => setLocked(true), 15 * 60 * 1000); };
+    const IDLE_MS = 15 * 60 * 1000;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => lockNow(IDLE_MS), IDLE_MS); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
     return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, arm)); };
-  }, [role]);
+  }, [role, locked]);
 
   useEffect(() => {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }
   }, [st.__toast]);
 
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><LoginScreen onLogin={(r, org, user) => a.login(r, org, user)} appName={st.theme.appName} /></React.Fragment>;
+  // Locked: render ONLY the lock screen — no shell and no screens (their polling
+  // effects unmount, api-bridge pauses its own poll), nothing readable in the
+  // DOM behind an overlay. Shown even before the session restore completes
+  // after a reload: the identity comes from the flag, and unlocking is a real
+  // POST /api/login that re-establishes the session and re-fetches everything.
+  if (locked) {
+    const sess = st.session || {};
+    const identity = { org: lockFlag.org || sess.org, user: lockFlag.user || sess.user, name: lockFlag.name || sess.name || "", role: lockFlag.role || sess.role || role };
+    const me = st.me || (identity.name ? { name: identity.name, avatar: identity.name.replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase(), role: identity.role } : null);
+    return <React.Fragment><ThemeStyle theme={st.theme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
+  }
+  // Second factor at sign-in for an enrolled account: the server holds the
+  // login (202) until the code arrives, so there is no session yet.
+  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
+  // A developer inside a portal whose account is held by its own gate: show
+  // why, with the way back (A.CON-SHO-38) — never the owner's enrolment /
+  // change forms.
+  // The toast is rendered here too: a failed Return ("Couldn't leave portal")
+  // must be visible on this screen, not only inside the shell.
+  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
+  // The org requires MFA for this privileged role and the user hasn't enrolled:
+  // the server 403s every other route, so hold the whole app (no navigation)
+  // on the enrolment screen until /api/user says the block has lifted.
+  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
+  // A provisioned / admin-reset account still holds its one-time password: the
+  // server 403s every other route, so hold the app on the change screen.
+  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
-  const master = NAV[role];
+  const master = NAV[role].filter(navModuleOn);
   const hidden = st.navHidden[role] || [];
   const order = st.navOrder[role];
   let composed = master.filter((it) => it.id === "dashboard" || !hidden.includes(it.id));
@@ -284,13 +587,15 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
 
-  // Roles that also manage org people/roles — their Directory tab folds in the
-  // Access & people surfaces (People + Roles & permissions) as sub-tabs.
+  // Roles that also manage org people — their Directory tab folds in People,
+  // Consult services and Roles as sub-tabs. A director sees (and manages)
+  // every clinical account; an ER director the ER staff (server rule:
+  // server/routes/accounts.ts).
   const dirDomain = (role === "er_director")
-    ? { roles: ["er_doctor", "er_director", "consultant"], portals: ["er_physician", "er_director"] }
-    : { roles: ["hospitalist", "director", "consultant"], portals: ["hospitalist", "hosp_director"] };
+    ? { roles: ["er_doctor", "er_director"] }
+    : { roles: ["hospitalist", "consultant", "er_doctor", "er_director", "director"] };
   const canManagePeople = role === "director" || role === "er_director";
 
   // ER Consult services come from the director-curated menu. Each service's
@@ -300,7 +605,11 @@ function App() {
   const MIDLEVEL_CREDS = { PA: 1, NP: 1, RN: 1 };
   // Schedule-driven on-call by specialty (auto-rotates with the clock).
   const dirRoster = window.onCallRoster ? window.onCallRoster(st.directory) : {};
-  const midlevels = (st.directory || []).filter((d) => MIDLEVEL_CREDS[d.credential]).map((d) => ({ id: "ml" + d.id, name: d.name, avatar: d.avatar, role: d.credential }));
+  // The org's REAL PA/NP/RN accounts (every role — a PA without a rotation
+  // profile is still a person the server can alert), keyed by account id.
+  // No demo fallback (A.CON clinical #20).
+  const midlevels = Object.values(st.orgPeople || {}).filter((d) => MIDLEVEL_CREDS[d.credential] && d.active !== false).map((d) => ({ id: "ml" + d.id, userId: d.id, name: d.name, avatar: (window.dtFmt && window.dtFmt.initialsOf) ? window.dtFmt.initialsOf(d.name) : "", role: d.credential }))
+    .sort((x, y) => x.name.localeCompare(y.name));
   const consultCfg = st.consultServices || [];
   const consultServiceNames = consultCfg.length ? consultCfg.map((s) => s.name) : null;
   const consultConfig = {};
@@ -314,10 +623,10 @@ function App() {
   let screen;
   if (nav === "messages") screen = <Messaging />;
   else if (nav === "directory") screen = canManagePeople
-    ? <DirectoryHub providers={sortedProviders} onMessage={message} scopeOrg={st.selectedOrg} domainRoles={dirDomain.roles} domainPortals={dirDomain.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />
+    ? <DirectoryHub providers={sortedProviders} onMessage={message} domainRoles={dirDomain.roles} />
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
-  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
+  else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};
@@ -326,120 +635,163 @@ function App() {
     screen = <CareTeam me={st.me} team={st.team} candidates={st.candidates} onAdd={a.addMember} onRemove={a.removeMember} onToggleCall={a.toggleMemberCall} providers={st.providers} consultants={consultantsList} onMessage={message} />;
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
+  else if (nav === "account") screen = <AccountSettings onLock={lockByHand} />;
+  else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
-  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
+  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} auditCount={st.auditCount} phiCount={st.phiAccessCount} scope={st.auditScope || (role === "director" || role === "er_director" ? "org" : "mine")} error={st.auditError} onLoad={a.loadComplianceTrail} onExport={a.exportAuditTrail} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
-  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
+  else if (nav === "roles") screen = <RoleManagement />;
   else if (nav === "consult") screen = <ConsultServices />;
+  else if (nav === "oncall") screen = <OnCallBoard />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
-  else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
-  else if (nav === "access") {
-    const dom = role === "er_director"
-      ? { roles: ["er_doctor", "er_director", "consultant"], portals: ["er_physician", "er_director"] }
-      : { roles: ["hospitalist", "director", "consultant"], portals: ["hospitalist", "hosp_director"] };
-    screen = <AccessPeople scopeOrg={st.selectedOrg} domainRoles={dom.roles} domainPortals={dom.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
-  }
-  else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
-  else if (nav === "enterprise") screen = <OrgConfig scope="*" audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
-  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
+  else if (nav === "people") screen = <PeopleManager domainRoles={dirDomain.roles} />;
+  else if (nav === "access") screen = <AccessPeople domainRoles={dirDomain.roles} />;
+  else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
+    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave} />;
+  else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
+  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;
-  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
+  else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} myProvider={st.myProvider} onAccept={a.accept} onDecline={a.decline} onMessagePatient={a.openPatientThread} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
-    { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
+    { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} report={st.erReport} reportError={st.erReportError} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[
-    { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.diversion} onToggleDiversion={a.toggleDiversion} /> },
-    { id: "stats", label: "Throughput stats", icon: "activity", node: <ErStatsPanel erPhysicians={st.erPhysicians} sent={st.sent} board={st.board} avgAcceptSec={st.avgAcceptSec} /> },
-    { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel erPhysicians={st.erPhysicians} shifts={st.shifts} onToggle={a.toggleErPhysician} onUpdate={a.updateErPhysician} onSetShift={a.setErShift} onAdd={a.addErPhysician} onRemove={a.removeErPhysician} /> },
+    { id: "diversion", label: "Diversion status", icon: "octagon-alert", node: <ErDiversionPanel diversion={st.erDiversion} error={st.erDiversionError} busy={st.erDiversionBusy} onSetDiversion={a.setDiversion} /> },
+    { id: "stats", label: "Throughput stats", icon: "activity", node: <ErStatsPanel report={st.erReport} reportError={st.erReportError} sent={st.sent} board={st.board} /> },
+    { id: "roster", label: "ER physicians roster", icon: "ambulance", node: <ErRosterPanel roster={st.erRoster} error={st.erRosterError} shifts={st.shifts} onSetOnShift={a.setErOnShift} onSetShift={a.setErShift} onManagePeople={() => a.setNav("people")} /> },
     { id: "recent", label: "Recent intakes", icon: "history", node: <ErRecentIntakesPanel sent={st.sent} /> },
     { id: "ops", label: "ER operations", icon: "megaphone", node: <ErOpsPanel onBroadcasts={() => a.setNav("broadcasts")} /> },
     { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
-  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} audit={st.audit} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onToggleTenant={a.toggleTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
-  else screen = <CustomizableDashboard role="director" widgets={[
-    { id: "rotation", label: "Rotation & roster", icon: "users-round", node: <DirectorDashboard bare providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} onResetAdmissions={a.resetAdmissions24h} onOpenAdmissions={() => a.setNav("admissions")} /> },
-    { id: "myhosp", label: "My hospitalist work", icon: "stethoscope", node: <HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessage={message} /> },
-    { id: "admissions", label: "Admissions log", icon: "scroll-text", node: <AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={a.purgeData} /> },
-  ]} />;
+  else if (role === "developer") screen = <DeveloperDashboard organizations={st.orgs} devUsers={st.devUsers} roleColors={st.roleColors} diagnostics={st.diagnostics} onSelectOrg={(o) => { a.selectOrg(o.code); a.setNav("settings"); }} onManageOrg={(o) => a.manageOrg(o)} onAddUser={a.addUser} onRemoveUser={a.removeUser} onSetRoleColor={a.setRoleColor} onAddTenant={a.addTenant} onDeleteTenant={a.deleteTenant} onDiagnostics={a.runDiagnostics} onImpersonate={a.impersonate} />;
+  // DirectorDashboard owns its own panel customization internally (stat strip
+  // pinned on top, panels below as CustomizableDashboard widgets), so it is
+  // mounted directly. The former "My hospitalist work" / "Admissions log"
+  // widgets are passed in as nodes and kept as re-addable panels.
+  else screen = <DirectorDashboard providers={st.providers} shifts={st.shifts} settings={st.settings} onToggleWorking={a.toggleWorking} onAdjustCensus={a.adjustCensus} onAdjustCap={a.adjustCap} onBulkWorking={a.bulkWorking} onReorder={a.reorderProviders} onToggleRotation={a.toggleRotation} onSetAllCap={a.setAllCap} onUpdateShift={a.updateShift} onSetShift={a.setShiftFor} onAddProvider={a.addProvider} onResetRotation={a.resetRotation} onSetTimeout={(v) => a.setSetting("timeout", v)} onToggleAutoReassign={() => a.setSetting("autoReassign", !st.settings.autoReassign)} onUpdateProvider={a.updateProvider} onRemoveProvider={a.removeProvider} onRenameShift={a.renameShift} onOpenSchedule={() => a.setNav("settings")} admissions={st.admissions} admissionsResetAt={st.admissionsResetAt} admissionsInfo={st.admissionsInfo} onResetAdmissions={a.resetAdmissionsCount} onOpenAdmissions={() => a.setNav("admissions")}
+    myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessagePatient={a.openPatientThread} />}
+    admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={a.purgeData} />} />;
 
-  const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
-  const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
+  // A clinician's Compliance screen is their OWN trail (GET /api/audit/mine).
+  const ownTrail = nav === "compliance" && (role === "hospitalist" || role === "er_doctor");
+  const topTitle = ownTrail ? "My audit trail" : TOP[nav] ? TOP[nav][0] : meta.title;
+  const topSub   = ownTrail ? "What you did and which records you opened, from the server" : TOP[nav] ? TOP[nav][1] : meta.subtitle;
 
-  const impersonationBanner = st.impersonating && (
-    <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 18px", background: st.impersonating.managing ? "#1E3A5F" : "#7C2D12", color: "#fff", flexWrap: "wrap" }}>
-      <Icon name={st.impersonating.managing ? "building-2" : "eye"} size={16} color="#FDBA74" />
-      <span style={{ fontSize: 13, fontWeight: 600 }}>
-        {st.impersonating.managing
-          ? "Managing " + st.impersonating.name + " (" + st.impersonating.org + ") — full per-organization portal"
-          : "Root access — viewing " + st.impersonating.name + "'s portal (" + st.impersonating.role.replace(/_/g, " ") + " · " + st.impersonating.org + ")"}
-      </span>
-      <span style={{ fontSize: 12, color: "#FED7AA" }}>{st.impersonating.managing ? "Every change applies to this organization only. Actions are audited." : "You're seeing exactly what this user sees. Actions are audited."}</span>
-      <button onClick={() => a.stopImpersonating()} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.4)", background: "transparent", color: "#fff", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}><Icon name="arrow-left" size={13} />Return to developer</button>
-    </div>
-  );
+  const impersonationBanner = <ImpersonationBanner imp={st.impersonating} onReturn={() => a.stopImpersonating()} />;
 
   if (isMobile) {
+    // Bottom tab bar (TigerConnect/native style): the primary destinations as
+    // icon tabs, plus "More" for everything else + the role switcher & sign-out
+    // (which live in the drawer). Messages is always promoted so it's one tap.
+    const MOBILE_PRIMARY = ["dashboard", "messages", "board", "directory"];
+    const MOBILE_LABEL = { dashboard: "Home", messages: "Messages", board: "Board", directory: "Directory" };
+    const primaryTabs = MOBILE_PRIMARY.map((id) => navItems.find((n) => n.id === id)).filter(Boolean).slice(0, 4);
+    const primaryIds = primaryTabs.map((t) => t.id);
+    const moreActive = !primaryIds.includes(nav);
+    const msgUnread = (st.conversations || []).some((c) => c.unread > 0);
+    // Tab bar geometry (A.CON-SHO-42/45/46/60): the bar's 58px tab row sits
+    // ABOVE the home-indicator inset, so under the global border-box sizing its
+    // height must be 58px + inset (not 58px with the inset as padding, which
+    // squashed the tabs to 23px on Face-ID iPhones). `main` reserves exactly
+    // the same amount so nothing hides behind the bar and no dead band appears
+    // above it (the thread composer therefore adds NO inset of its own).
+    // --dt-tabbar-h: 58px row, 44px on a landscape phone (stylesheet above).
+    const TABBAR_TOTAL = "calc(var(--dt-tabbar-h, 58px) + var(--sai-bottom))";
     return (
-      <div style={{ minHeight: "100vh", background: "var(--secondary)", display: "flex", flexDirection: "column" }}>
+      <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
         <ThemeStyle theme={st.theme} />
-        {/* mobile top bar */}
-        <header style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, padding: "0 12px" }}>
-          <button onClick={() => setDrawer(true)} title="Menu" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="menu" size={20} /></button>
+        <SyntheticBanner on={st.syntheticData} />
+        <div className="dt-install-slot"><InstallPrompt /><EnableAlertsCard /></div>
+        {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
+        <header className="dt-appbar" style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</div>
+            <h1 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</h1>
           </div>
-          <button onClick={() => a.toggleNotif()} title="Notifications" style={{ position: "relative", width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-            <Icon name="bell" size={18} />
-            {DT.unreadNotifs() > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 17, height: 17, padding: "0 4px", borderRadius: 99, background: "var(--destructive)", color: "#fff", fontSize: 10.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>{DT.unreadNotifs()}</span>}
-          </button>
-          <button onClick={() => setLocked(true)} title="Lock" style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={17} /></button>
+          <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+
+        {/* Bottom tab bar: full-bleed background, content inset by the side
+            safe areas in landscape (A.CON-NEE-2), tab row above the home indicator. */}
+        <nav aria-label="Primary" className="dt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
+          {primaryTabs.map((t) => {
+            const on = nav === t.id;
+            return (
+              <button key={t.id} type="button" className="dt-tab" onClick={() => a.setNav(t.id)} aria-current={on ? "page" : undefined}
+                style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative", padding: 0 }}>
+                <div style={{ position: "relative" }}>
+                  <Icon name={t.icon} size={22} />
+                  {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid #fff" }} />}
+                </div>
+                <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>{MOBILE_LABEL[t.id] || t.label}</span>
+              </button>
+            );
+          })}
+          <button type="button" className="dt-tab" onClick={() => setDrawer(true)} aria-label="More" aria-expanded={drawer}
+            style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: moreActive ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", padding: 0 }}>
+            <Icon name="menu" size={22} />
+            <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>More</span>
+          </button>
+        </nav>
 
         {/* slide-out nav drawer */}
         {drawer && (
           <React.Fragment>
             <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(15,23,42,.45)" }} />
-            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: 264, maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column" }}>
+            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: "calc(264px + var(--sai-left))", maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingBottom: "var(--sai-bottom)" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-                <Sidebar role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
+                <Sidebar fill role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} compact={false} appName={st.theme.appName} />
               </div>
+              {st.syntheticData !== false && (
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12, color: "var(--muted-foreground)" }}>
+                  <Icon name="smartphone" size={14} color="var(--primary)" />Install this app: your browser's "Add to Home Screen".
+                </div>
               </div>
+              )}
             </div>
           </React.Fragment>
         )}
-        <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
         <Toast toast={st.__toast} />
-        {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+      <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
       </div>
     );
   }
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--secondary)" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
       <ThemeStyle theme={st.theme} />
-      <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
+      <SyntheticBanner on={st.syntheticData} />
+      <InstallPrompt />
+      <EnableAlertsCard />
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+      <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Topbar title={topTitle} subtitle={topSub}
-          working={role === "hospitalist" ? st.ui.onShift : undefined}
-          onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
-          notifCount={DT.unreadNotifs()}
-          onBell={() => a.toggleNotif()}
-          onLock={() => setLocked(true)}
-          right={<RoleSwitcher role={role} onChange={a.setRole} />} />
+          working={role === "hospitalist" && st.myProvider ? !!st.myProvider.working : undefined}
+          onToggleWorking={role === "hospitalist" && nav === "dashboard" && st.myProvider && !st.myProviderSaving ? a.toggleOnShift : undefined}
+          onLock={lockByHand}
+          right={st.syntheticData !== false ? <React.Fragment>
+            <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
+              title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
+            </button>
+            {/* The demo role switcher scrolls inside its slot instead of pushing the page wider (A.CON-MIN-10). */}
+            <div style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}><RoleSwitcher role={role} onChange={a.setRole} /></div>
+          </React.Fragment> : null} />
         {impersonationBanner}
-        <main style={{ flex: 1, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
-      <NotificationsPanel open={st.ui.notifOpen} items={st.notifications} onClose={() => a.toggleNotif(false)} />
+      </div>
       <Toast toast={st.__toast} />
-      {locked && <LockScreen me={st.me} appName={st.theme.appName} onUnlock={() => setLocked(false)} />}
+      <CredentialReveal />{/* one-time password modal after provisioning / reset (admins only) */}
     </div>
   );
 }

@@ -4,7 +4,7 @@
    also seeing patients. Opt-in: a director starts taking patients with one tap,
    which gives them a rotation profile so admissions can route to them. */
 
-function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, onConsultRespond, consultServices, onMessage }) {
+function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, onConsultRespond, consultServices, onMessagePatient }) {
   const [busy, setBusy] = React.useState(false);
   const incoming = pending || [];
   const since = (function () { const d = new Date(); d.setHours(7, 0, 0, 0); if (Date.now() < d.getTime()) d.setDate(d.getDate() - 1); return d.getTime(); })();
@@ -61,7 +61,8 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
                   </div>
                 </div>
                 {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
-                <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
+                {/* The patient's care-team thread on the server (A.CON clinical #5). */}
+                {onMessagePatient && p.patientId != null && window.patientThreadsEnabled && window.patientThreadsEnabled() && <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessagePatient(p.patientId)}>Message team</Button>}
               </div>
               {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
             </div>

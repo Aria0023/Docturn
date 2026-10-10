@@ -90,7 +90,7 @@ non-public routes require a session; privileged routes additionally assert role 
 ## Health & mobile
 
 | `GET /api/health` | public | `{ ok:true, db:'up' }` |
-| `GET /api/mobile/org/:code` | public | **safe fields only** (id, name, code, timezone) |
+| `GET /api/mobile/org/:code` | auth | the caller's OWN org only, **safe fields only** (id, name, code, timezone); any other code → 404 (not an org-code oracle) |
 | `GET /api/mobile/assignments` | auth | compact payload (initials, room, specialty) |
 | `POST /api/mobile/device-tokens` · `DELETE …/:token` | auth | FCM token register/deregister |
 

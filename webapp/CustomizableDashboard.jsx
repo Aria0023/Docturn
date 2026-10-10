@@ -3,9 +3,12 @@
    drag to reorder, remove, and re-add them. Layout persists per role in the
    store (dashLayout). Each widget is { id, label, icon, node } — the node is a
    plain panel WITHOUT its own PageWrap (this component supplies the page frame).
-   Used by the ER physician and ER director dashboards. */
+   Used by the ER physician and ER director dashboards. When `bare` is set the
+   page frame (PageWrap) is skipped so a caller can supply its own — the Hosp
+   director dashboard does this to keep its stat strip above the panels inside a
+   single page frame. */
 
-function CustomizableDashboard({ role, widgets }) {
+function CustomizableDashboard({ role, widgets, bare }) {
   const a = useActions();
   useStore(); // subscribe so layout changes re-render
   const allIds = widgets.map((w) => w.id);
@@ -33,8 +36,9 @@ function CustomizableDashboard({ role, widgets }) {
     setDragId(null); setOverId(null);
   }
 
+  const Wrap = bare ? React.Fragment : PageWrap;
   return (
-    <PageWrap>
+    <Wrap>
       {/* toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
         {editing && (
@@ -105,7 +109,7 @@ function CustomizableDashboard({ role, widgets }) {
           </div>
         );
       })}
-    </PageWrap>
+    </Wrap>
   );
 }
 
