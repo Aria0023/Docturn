@@ -653,6 +653,11 @@ CREATE TABLE IF NOT EXISTS emergency_broadcasts (
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- A.CON comms-account #10: who a broadcast was addressed to (NULL = everyone)
+-- and the recipient set frozen at send time.
+ALTER TABLE emergency_broadcasts ADD COLUMN IF NOT EXISTS audience JSONB;
+ALTER TABLE emergency_broadcasts ADD COLUMN IF NOT EXISTS recipient_ids JSONB;
+
 CREATE TABLE IF NOT EXISTS broadcast_acknowledgments (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),

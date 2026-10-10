@@ -23,7 +23,7 @@ function useIsMobile(bp) {
 // `fill`: inside the phone drawer the sidebar fills its scroll container
 // (min-height 100%) instead of being a sticky 100vh column, so the account
 // actions in its footer are on screen without scrolling the drawer.
-function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, appName, fill }) {
+function Sidebar({ role, nav, active, onNav, me, onLogout, compact, appName, fill }) {
   const who = me || { name: "Dr. Jordan Chen", avatar: "JC" };
   const name = appName || "DocTurn";
   return (
@@ -59,7 +59,9 @@ function Sidebar({ role, nav, active, onNav, me, onLogout, onRenameMe, compact, 
           <Avatar initials={who.avatar} size={34} />
           {!compact && <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden" }}>
-              {onRenameMe ? <EditableText value={who.name} onSave={onRenameMe} size={13} weight={600} /> : <span style={{ fontWeight: 600 }}>{who.name}</span>}
+              {/* The account's name as the server holds it — not editable here
+                  (no self-rename on the server, A.CON comms-account #2). */}
+              <span style={{ fontWeight: 600 }}>{who.name}</span>
             </div>
             <div style={{ fontSize: 12, color: "var(--muted-foreground)", textTransform: "capitalize" }}>{role.replace("_", " ")}</div>
           </div>}
@@ -97,16 +99,35 @@ function DndButton() {
   const people = (st.directory || []).filter((d) => d.id !== (st.me && st.me.id) &&
     (!q || (d.name || "").toLowerCase().includes(q.toLowerCase()) || (d.specialty || "").toLowerCase().includes(q.toLowerCase())));
   const coveringName = (() => { const c = (st.directory || []).find((d) => d.id === prefs.coveringUserId); return c ? c.name : null; })();
+  // Each step is the server's first (setMyPref resolves true only once
+  // PATCH /api/settings/me stored it); the button, the Settings row and the
+  // toast follow what was stored. A failed save already said "Setting not
+  // saved" and leaves the server's state on screen (A.CON comms-account #15).
+  const [busy, setBusy] = React.useState(false);
   function enable(coverId) {
-    if (coverId != null) a.setMyPref("coveringUserId", coverId);
-    a.setMyPref("dnd", true);
-    setOpen(false);
-    a.toast({ tone: "accepted", title: "Do not disturb on", msg: coverId != null || prefs.coveringUserId != null ? "Messages forward to your covering provider." : "No covering provider set — on-call roles you hold will be unreachable." });
+    if (busy) return;
+    setBusy(true);
+    const covered = coverId != null || prefs.coveringUserId != null;
+    Promise.resolve(coverId != null ? a.setMyPref("coveringUserId", coverId) : true)
+      .then((ok) => (ok ? a.setMyPref("dnd", true) : false))
+      .then((ok) => {
+        setBusy(false);
+        if (!ok) return;
+        setOpen(false);
+        a.toast({ tone: "accepted", title: "Do not disturb on", msg: covered ? "Messages forward to your covering provider." : "No covering provider set — on-call roles you hold will be unreachable." });
+      }, () => setBusy(false));
   }
-  function disable() { a.setMyPref("dnd", false); a.toast({ tone: "accepted", title: "Do not disturb off", msg: "You're receiving messages directly again." }); }
+  function disable() {
+    if (busy) return;
+    setBusy(true);
+    Promise.resolve(a.setMyPref("dnd", false)).then((ok) => {
+      setBusy(false);
+      if (ok) a.toast({ tone: "accepted", title: "Do not disturb off", msg: "You're receiving messages directly again." });
+    }, () => setBusy(false));
+  }
   return (
     <React.Fragment>
-      <button type="button" onClick={() => (prefs.dnd ? disable() : setOpen(true))} title={prefs.dnd ? "DND on — tap to turn off" + (coveringName ? " (covering: " + coveringName + ")" : "") : "Do not disturb"} aria-label={prefs.dnd ? "Do not disturb is on — turn off" : "Do not disturb"} aria-pressed={!!prefs.dnd}
+      <button type="button" data-dnd-button onClick={() => (busy ? null : prefs.dnd ? disable() : setOpen(true))} aria-busy={busy ? "true" : undefined} title={prefs.dnd ? "DND on — tap to turn off" + (coveringName ? " (covering: " + coveringName + ")" : "") : "Do not disturb"} aria-label={prefs.dnd ? "Do not disturb is on — turn off" : "Do not disturb"} aria-pressed={!!prefs.dnd}
         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = prefs.dnd ? "var(--status-pending-bg)" : "transparent"}
         style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", border: "none", background: prefs.dnd ? "var(--status-pending-bg)" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: prefs.dnd ? "var(--status-pending-fg)" : "var(--muted-foreground)" }}>
         <Icon name="moon" size={16} />

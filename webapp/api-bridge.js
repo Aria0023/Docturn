@@ -25,6 +25,9 @@
     s.orgs = []; s.orgsLoaded = false; s.platformOrg = null;
     s.devUsers = []; s.devUsersLoaded = false;
     s.notifications = []; s.platformHealth = null; s.auditCount = null;
+    // Nor the kit's demo threads and broadcasts (A.CON comms-account): the
+    // server's lists are the only ones a live page shows.
+    s.conversations = []; s.broadcasts = [];
     if (s.selectedOrg === "MAYO") s.selectedOrg = null; // the seed's demo tenant, never a real one
     // The admissions log, its counts and the org's shift names/hours are the
     // server's (A.CON schedule #4-#7): no demo admissions, no demo hours.
@@ -68,7 +71,8 @@
       // team …): the new identity's hydrate reads its own. Emptied, never
       // reset to the kit's demo seed rows.
       ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates"].forEach(function (k) { s[k] = []; });
-      ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics"].forEach(function (k) { s[k] = null; });
+      ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
+        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence"].forEach(function (k) { s[k] = null; });
     }
     return s;
   }
@@ -384,35 +388,43 @@
       };
     });
   }
-  // Backend audit/PHI rows → the kit's Compliance shape (per-org, real).
+  // Backend audit/PHI rows → the Compliance screen's rows. Every field is the
+  // server's: the actor's name, username and role are resolved there (the
+  // directory here only knows hospitalists), `operator` is the developer who
+  // acted through an impersonated session. Nothing the server does not record
+  // is shown — no IP on audit rows, no "allowed"/"purpose" on PHI reads
+  // (A.CON comms-account #5/#7/#8).
+  function mapActor(r, usersById) {
+    var u = usersById[r.userId];
+    return {
+      actor: r.actorName || (u && u.displayName) || (r.userId ? "User #" + r.userId : "System"),
+      username: r.actorUsername || "",
+      role: r.actorRole || "",
+      operator: r.operatorName || null,
+    };
+  }
   function mapAudit(rows, usersById, orgCode) {
     return (rows || []).map(function (r) {
-      var u = usersById[r.userId];
-      return {
+      return Object.assign({
         id: r.id,
         at: new Date(r.createdAt || Date.now()).getTime(),
-        actor: (u && u.displayName) || (r.userId ? "User " + r.userId : "System"),
-        role: (u && u.role) || "",
         action: r.action || "",
         resource: r.resourceType ? (r.resourceType + (r.resourceId != null ? " #" + r.resourceId : "")) : "",
-        ip: "—",
         org: orgCode,
         risk: r.riskLevel || "low",
-      };
+      }, mapActor(r, usersById));
     });
   }
   function mapPhi(rows, usersById) {
     return (rows || []).map(function (r) {
-      var u = usersById[r.userId];
-      return {
+      return Object.assign({
         id: r.id,
         at: new Date(r.createdAt || Date.now()).getTime(),
-        actor: (u && u.displayName) || (r.userId ? "User " + r.userId : "System"),
-        patient: r.resource || "—",
         access: r.method || "",
-        fields: "", purpose: "",
-        ok: true,
-      };
+        resource: (r.resource || "") + (r.resourceId != null ? " #" + r.resourceId : ""),
+        patientId: r.patientId != null ? r.patientId : null,
+        ip: r.ip || "",
+      }, mapActor(r, usersById));
     });
   }
   // Normalize a board row's consultDetails → the kit's consult-roster shape:
@@ -515,11 +527,12 @@
       // the Compliance screen reflects this organization (individualized), not a
       // locally-accumulated demo log. Fetch it once per context, then only while
       // the Compliance screen is open — so routine rehydrates (every action / WS
-      // event) don't pay for it.
+      // event) don't pay for it. A clinician's screen is their OWN trail
+      // (GET /api/audit/mine), read while it is open (A.CON comms-account #9).
       var canAudit = (role === "director" || role === "er_director" || role === "developer");
       var onCompliance = (DT.getState().ui && DT.getState().ui.nav) === "compliance";
-      var wantsAudit = canAudit && (!auditLoaded || onCompliance);
-      extra.push(wantsAudit ? get("/api/audit").catch(function () { return null; }) : Promise.resolve(null));
+      var wantsAudit = (canAudit && (!auditLoaded || onCompliance)) || (!canAudit && !!role && onCompliance);
+      extra.push(wantsAudit ? get(canAudit ? "/api/audit" : "/api/audit/mine").catch(function () { return null; }) : Promise.resolve(null));
       // Per-organization preferences (every role): the consult-service catalog and
       // appearance/theme are individualized per tenant. Load ONCE per context so a
       // later rehydrate can't clobber an in-progress local edit.
@@ -612,11 +625,7 @@
           }
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
-            var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
-            s.audit = mapAudit(auditData.audit, usersById, orgCode);
-            // The trail's true size (the rows above are its latest page).
-            s.auditCount = typeof auditData.auditCount === "number" ? auditData.auditCount : null;
-            s.phiLog = mapPhi(auditData.phiAccess, usersById);
+            applyAuditTrail(s, auditData, usersById);
             auditLoaded = true;
           }
           // Per-org consult-service catalog, theme and identity — always the
@@ -650,13 +659,79 @@
           // census for MY rotation profile (A.CON clinical #6).
           if (hosps && (role === "hospitalist" || role === "director")) {
             var myH = (hosps || []).find(function (h) { return h.userId === meId; });
-            s.myProvider = myH ? { id: "h" + myH.id, census: myH.currentPatientCount, cap: myH.patientCap } : null;
+            // ...and my On shift / in-rotation flags (Settings' On shift switch
+            // and the top bar read these — A.CON comms-account #1).
+            s.myProvider = myH ? { id: "h" + myH.id, census: myH.currentPatientCount, cap: myH.patientCap, working: !!myH.working, inRotation: myH.inRotation !== false } : null;
           }
           return s;
         });
       });
     }).catch(function () { /* keep demo data on any failure */ });
   }
+  // The trail page + both trails' TRUE sizes (the rows are the newest page;
+  // the counts are not — A.CON comms-account #7).
+  function applyAuditTrail(s, d, usersById) {
+    var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
+    s.audit = mapAudit(d.audit, usersById || {}, orgCode);
+    s.phiLog = mapPhi(d.phiAccess, usersById || {});
+    s.auditCount = typeof d.auditCount === "number" ? d.auditCount : null;
+    s.phiAccessCount = typeof d.phiAccessCount === "number" ? d.phiAccessCount : null;
+    s.auditScope = d.scope === "mine" ? "mine" : "org";
+    s.auditError = null;
+  }
+  // The Compliance screen asks for its trail when it opens: the org's for the
+  // compliance roles, the user's own for everyone else.
+  DT.actions.loadComplianceTrail = function () {
+    var role = (DT.getState().session || {}).role;
+    if (!role) return Promise.resolve(null);
+    var canAudit = role === "director" || role === "er_director" || role === "developer";
+    return get(canAudit ? "/api/audit" : "/api/audit/mine").then(function (d) {
+      DT.set(function (s) { applyAuditTrail(s, d || {}, null); return s; });
+      return d;
+    }, function (e) {
+      DT.set(function (s) { s.auditError = isNetworkError(e) ? "offline" : (e && e.status === 403) ? "forbidden" : "error"; return s; });
+      return null;
+    });
+  };
+  // Export = the SERVER's CSV of the whole trail (GET /api/audit/export):
+  // every row, full UTC timestamps, actor/username/role. The toast says how
+  // many rows the file holds, and when a very long trail was cut to its
+  // newest rows (A.CON comms-account #8).
+  DT.actions.exportAuditTrail = function (trail, scope) {
+    var path = "/api/audit/export?trail=" + encodeURIComponent(trail) + "&scope=" + encodeURIComponent(scope === "mine" ? "mine" : "org");
+    var headers = {};
+    if (DEMO_TOKEN) headers.Authorization = "Bearer " + DEMO_TOKEN;
+    // Locked: nothing leaves this tab (A.CON-SHO-7).
+    var req = lockActive() ? Promise.reject(lockedError()) : fetch(path, { credentials: "include", headers: headers });
+    return req.then(function (res) {
+      if (!res.ok) { var e = new Error("export_failed"); e.status = res.status; throw e; }
+      var cd = (res.headers && res.headers.get && res.headers.get("Content-Disposition")) || "";
+      var m = cd.match(/filename="([^"]+)"/);
+      var name = m ? m[1] : "docturn-" + trail + ".csv";
+      var rows = Number(res.headers.get("X-Export-Rows"));
+      var total = Number(res.headers.get("X-Export-Total"));
+      var cut = res.headers.get("X-Export-Truncated") === "1";
+      return res.blob().then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement("a"); link.href = url; link.download = name;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 1000);
+        var n = isFinite(rows) ? rows : 0;
+        DT.set(function (s) {
+          s.__toast = { tone: "accepted", title: "Exported " + n.toLocaleString() + " row" + (n === 1 ? "" : "s"),
+            msg: name + (cut ? " — the newest " + n.toLocaleString() + " of " + total.toLocaleString() + " rows; the server caps one file." : " — every row of the trail, times in UTC.") };
+          return s;
+        });
+        return { name: name, rows: rows, total: total, truncated: cut };
+      });
+    }).catch(function (e) {
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: "Export failed", msg: isNetworkError(e) ? "No connection — nothing was downloaded." : (e && e.status === 403) ? "Your role can't export this trail." : "The server refused the export — nothing was downloaded." };
+        return s;
+      });
+      return null;
+    });
+  };
   // A role-gated read for a slice that has a "why it isn't there" twin
   // (<key>Error): { ok, body } on success, { ok:false, why } on refusal.
   function okRead(body) { return { ok: true, body: body }; }
@@ -791,7 +866,9 @@
       name: nm,
       role: c.type === "emergency" ? "Code · all providers" : (c.type === "group" ? ("Group · " + (c.participantIds || []).length + " members") : ((dirOther && dirOther.specialty) || "Provider")),
       initials: initials(nm),
-      presence: (dirOther && dirOther.working) ? "online" : "offline",
+      // The 1:1 partner, whose LIVE presence (a realtime socket, never their
+      // shift) Messaging reads from s.presence (A.CON comms-account #13).
+      otherUserId: (c.type === "direct" && others.length === 1) ? others[0] : null,
       tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
       unread: unreadEarlier + unreadOf(list),
       unreadEarlier: unreadEarlier,
@@ -1415,6 +1492,18 @@
       scheduleReconnect();
     });
   }
+  // GET /api/presence: who in my org holds a live socket now.
+  // `live:false` (no realtime hub) → unknown, never "everyone offline".
+  function loadPresence(epoch) {
+    return get("/api/presence").then(function (p) {
+      if (epoch !== authEpoch) return;
+      var on = {};
+      ((p && p.online) || []).forEach(function (id) { on[id] = true; });
+      DT.set(function (s) { s.presence = p && p.live ? { live: true, online: on } : null; return s; });
+    }, function () {
+      if (epoch === authEpoch) DT.set(function (s) { s.presence = null; return s; });
+    });
+  }
   function connectWs() {
     try { if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; } } catch (e) {}
     if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
@@ -1443,6 +1532,19 @@
           if (convosLiveEpoch === authEpoch) runSync();
           if (wsEstablishedOnce) { rehydrate(); hydrateBroadcasts(); }
           wsEstablishedOnce = true;
+          // Who is online now; the frames below keep it current.
+          loadPresence(epoch);
+        }
+        // Someone in my org opened their first / closed their last realtime
+        // socket (server/ws): live presence, not shift status.
+        else if (ev.type === "USER_PRESENCE_CHANGED" && ev.userId != null) {
+          DT.set(function (s) {
+            if (!s.presence) return s;
+            var on = Object.assign({}, s.presence.online);
+            if (ev.online) on[ev.userId] = true; else delete on[ev.userId];
+            s.presence = Object.assign({}, s.presence, { online: on });
+            return s;
+          });
         }
         else if (ev.type === "MESSAGE_RECEIVED") applyIncoming(ev.message);
         // A STAT/urgent message was acknowledged — patch that recipient's row.
@@ -1506,7 +1608,8 @@
             // pinned banner (with its Acknowledge button); raising a toast for
             // it as well put a second, tap-swallowing copy over that very
             // button (A.CON-SHO-2). Only broadcasts with no banner get a toast.
-            var bannered = mapBroadcast(b).ackReq && (!DT.moduleOn || DT.moduleOn("broadcasts"));
+            var mb = mapBroadcast(b);
+            var bannered = mb.ackReq && mb.recipient && (!DT.moduleOn || DT.moduleOn("broadcasts"));
             if (b.senderId !== meId && !bannered) s.__toast = { tone: "rejected", title: "Broadcast — " + (b.severity || "info"), msg: b.message };
             return s;
           });
@@ -1529,6 +1632,8 @@
       };
       sock.onclose = function (e) {
         if (ws === sock) ws = null;
+        // Without a socket nobody's presence is known: show no one as online.
+        if (epoch === authEpoch && DT.getState().presence) DT.set(function (s) { s.presence = null; return s; });
         // The server locked this session (here or in another tab): show the
         // lock screen and do NOT reconnect (A.CON-SHO-7).
         if (e && e.code === 4423) { if (epoch === authEpoch) engageLock(); return; }
@@ -2199,10 +2304,18 @@
         if (off) refreshModulesAfterRefusal();
       });
   };
+  // A personal preference (DND, covering provider, away message) is shown
+  // only once the server has stored it: the PATCH first, then the screen. A
+  // refused / failed save leaves the screen on what the server still applies
+  // — so "Do not disturb off" is never shown while the server keeps routing
+  // to the covering provider (A.CON comms-account #15). Resolves true/false.
   DT.actions.setMyPref = function (key, value) {
-    DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
-    return api("PATCH", "/api/settings/me", { key: key, value: value }).catch(function () {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Setting not saved", msg: "Couldn\u2019t reach the server." }; return s; });
+    return api("PATCH", "/api/settings/me", { key: key, value: value }).then(function () {
+      DT.set(function (s) { var p = Object.assign({}, s.myPrefs); p[key] = value; s.myPrefs = p; return s; });
+      return true;
+    }, function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Setting not saved", msg: (isNetworkError(e) ? "Couldn\u2019t reach the server" : "The server refused it") + " — nothing changed." }; return s; });
+      return false;
     });
   };
   // Forced change complete: lift the hold and boot the session the same way a
@@ -3090,6 +3203,11 @@
       senderId: b.senderId,
       senderName: b.senderName || "",
       mine: b.senderId === meId,
+      // Who it was sent to (null = everyone), and whether it is addressed to
+      // ME — a director seeing a targeted send is an observer with no
+      // Acknowledge button (A.CON comms-account #10).
+      audience: Array.isArray(b.audience) ? b.audience : null,
+      recipient: b.recipient !== false && b.senderId !== meId,
       ackReq: b.ackRequired != null ? !!b.ackRequired : b.severity !== "info",
       ackedByMe: !!b.acked,
       ackedAt: b.ackedAt ? new Date(b.ackedAt).getTime() : null,
@@ -3133,7 +3251,7 @@
     try {
       var st = DT.getState();
       var mod = !DT.moduleOn || DT.moduleOn("broadcasts");
-      var due = st.session && mod ? (st.broadcasts || []).filter(function (b) { return b.ackReq && !b.ackedByMe && !b.mine && b.senderId != null; }) : [];
+      var due = st.session && mod ? (st.broadcasts || []).filter(function (b) { return b.ackReq && !b.ackedByMe && !b.mine && b.recipient !== false && b.senderId != null; }) : [];
       var key = due.map(function (b) { return b.id; }).join(",");
       if (key === bannerKey) return;
       bannerKey = key;
@@ -3403,6 +3521,47 @@
       function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/working-status", { working: !p.working }); },
       function () { origProviderActions.toggleWorking(id); });
   };
+  // The hospitalist's OWN On shift (Settings → Availability, and the
+  // dashboard's top-bar chip) is their rotation profile's `working` flag on
+  // the server — the very flag round-robin reads (A.CON comms-account #1).
+  // PATCH .../working-status (the server allows the provider themself); the
+  // switch moves only when the server has answered, and a refusal says so.
+  var onShiftBusy = false;
+  DT.actions.toggleOnShift = function () {
+    var mp = DT.getState().myProvider;
+    if (!mp || mp.id == null) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not in the rotation", msg: "You have no rotation profile — a director adds you to the rotation." }; return s; });
+      return Promise.resolve(false);
+    }
+    if (onShiftBusy) return Promise.resolve(false);
+    onShiftBusy = true;
+    var want = !mp.working;
+    DT.set(function (s) { s.myProviderSaving = true; return s; });
+    return api("PATCH", "/api/hospitalists/" + bid(mp.id) + "/working-status", { working: want }).then(function (h) {
+      onShiftBusy = false;
+      var now = h && typeof h.working === "boolean" ? h.working : want;
+      DT.set(function (s) {
+        s.myProviderSaving = false;
+        if (s.myProvider && s.myProvider.id === mp.id) s.myProvider = Object.assign({}, s.myProvider, { working: now });
+        s.__toast = now
+          ? { tone: "accepted", title: "You're on shift", msg: mp.inRotation ? "Round-robin can send you new admissions." : "A director has taken you out of the round-robin, so it still skips you." }
+          : { tone: "accepted", title: "You're off shift", msg: "Round-robin skips you until you go back on shift." };
+        return s;
+      });
+      rehydrate();
+      return true;
+    }, function (e) {
+      onShiftBusy = false;
+      DT.set(function (s) {
+        s.myProviderSaving = false;
+        s.__toast = { tone: "rejected", title: "Shift status not changed",
+          msg: (isNetworkError(e) ? "No connection" : e && e.status === 403 ? "The server refused it" : "The server refused the change") + " — you are still " + (mp.working ? "on" : "off") + " shift." };
+        return s;
+      });
+      rehydrate();
+      return false;
+    });
+  };
   DT.actions.adjustCap = function (id, d) {
     var p = providerById(id);
     if (!p) return;
@@ -3485,35 +3644,42 @@
       return rehydrate();
     });
   };
-  // Emergency broadcast: persist + fan out via the real backend (WS
-  // BROADCAST_CREATED reaches every signed-in member of the org). The kit's
-  // local action still runs for the sender's own list/toast. Severity mapping:
-  // the kit offers info/warning/critical/emergency; the server accepts
-  // info/urgent/critical.
-  var origSendBroadcast = DT.actions.sendBroadcast;
+  // Emergency broadcast: persisted and fanned out by the server — to everyone
+  // or to the chosen roles (`audience`, FR-6.5), with the recipient set fixed
+  // at send time. The kit offers info / warning / critical; the server's
+  // levels are info / urgent / critical, and the server decides the ack rule
+  // (urgent and critical need one, info does not) — A.CON comms-account
+  // #10-#12. The toast reports what the server did: how many people, which
+  // roles.
+  var AUDIENCE_LABEL = { hospitalist: "hospitalists", er_doctor: "ER physicians", er_director: "ER directors", director: "directors" };
   DT.actions.sendBroadcast = function (data) {
-    var SEV_MAP = { info: "info", warning: "urgent", critical: "critical", emergency: "critical" };
+    var SEV_MAP = { info: "info", warning: "urgent", critical: "critical" };
     var msg = (data.title || "").trim() + (data.message && data.message.trim() ? " — " + data.message.trim() : "");
-    if (!msg) { if (origSendBroadcast) return origSendBroadcast(data); return; }
-    // Ack semantics are server-defined: urgent/critical require an ack, info
-    // doesn't. If the composer asked for an ack on an info broadcast, promote
-    // it to urgent so recipients actually get the Acknowledge button.
-    var sev = SEV_MAP[data.severity] || "urgent";
-    if (data.ackReq && sev === "info") sev = "urgent";
-    return api("POST", "/api/broadcasts", { message: msg, severity: sev }).then(function (b) {
+    var sev = SEV_MAP[data.severity];
+    if (!msg || !sev) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not sent", msg: !msg ? "Write the broadcast first." : "Pick a severity." }; return s; });
+      return Promise.resolve(false);
+    }
+    var aud = Array.isArray(data.audience) && data.audience.length && data.audience.indexOf("all") < 0 ? data.audience.slice() : "all";
+    return api("POST", "/api/broadcasts", { message: msg, severity: sev, audience: aud }).then(function (b) {
+      var n = b && typeof b.total === "number" ? b.total : 0;
+      var to = aud === "all" ? "everyone in your organization" : aud.map(function (r) { return AUDIENCE_LABEL[r] || r; }).join(", ");
       DT.set(function (s) {
         if (b && !(s.broadcasts || []).some(function (x) { return x.id === b.id; })) s.broadcasts = [mapBroadcast(Object.assign({ senderName: (s.me && s.me.name) || "" }, b))].concat(s.broadcasts || []);
-        s.__toast = { tone: "sent", title: "Broadcast sent", msg: "Delivered to everyone in your organization" + (sev !== "info" ? " · acknowledgement required" : "") + "." };
+        s.__toast = { tone: "sent", title: "Broadcast sent", msg: "Sent to " + n + " " + (n === 1 ? "person" : "people") + " (" + to + ")" + (sev !== "info" ? " · acknowledgement required" : "") + "." };
         return s;
       });
-      return hydrateBroadcasts();
+      hydrateBroadcasts();
+      return true;
     }).catch(function (e) {
-      // Backend unreachable → the kit's local behaviour, but ONLY in the local
-      // offline demo; in a real session nobody was alerted and the sender must
-      // know. A server REJECTION must not look like success either.
+      // Nobody was alerted unless the server said so — say that, never a
+      // local "sent".
       var offline = isNetworkError(e);
-      if (offline && localDemoSession && origSendBroadcast) return origSendBroadcast(data);
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: offline ? "No connection — nobody was alerted. Send it again when you're back online." : String((e && e.message) || "The server rejected it.") }; return s; });
+      var nobody = e && e.status === 422 && String(e.message) === "no_recipients";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Broadcast not delivered", msg: offline ? "No connection — nobody was alerted. Send it again when you're back online."
+        : nobody ? "Nobody else in your organization holds the selected roles — nobody was alerted."
+        : "The server rejected it — nobody was alerted." }; return s; });
+      return false;
     });
   };
   DT.actions.addProvider = function (data) {

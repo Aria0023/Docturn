@@ -545,79 +545,55 @@ async function checkAdmissionsHeader(page, label) {
   rec(`${label}: Clear buttons tap height ≥ 44`, m.btns.length === 2 && m.btns.every((b) => b.r.height >= TAP), m.btns.map((b) => fmt(b.r.height)).join(","));
 }
 
-// Compliance (A.CON-SHO-50 fix-up): tabs + Export + Clear logs row, the
-// ComplianceTabs strip, and the audit / PHI / logs tables with fixed-width
-// columns used to push <main> to 449px and clip the Risk column.
-// "Clear logs" is gone for every role: the audit trail is the server's and is
-// kept (A.CON org-admin #16), so the check asserts it is absent everywhere.
-async function checkCompliance(page, label, { clear = false } = {}) {
+// Compliance (A.CON-SHO-50 fix-up): tabs + Export row, the ComplianceTabs
+// strip, and the audit / PHI tables used to push <main> to 449px and clip the
+// Risk column. Since A.CON comms-account #3-#8 the screen is the server's trail
+// only: two tabs (Audit log, PHI access), two tiles (the trails' true sizes),
+// Export CSV (the server's file) — no Clear logs, Security incidents, System
+// logs, Open incidents / Denied access tiles, or Allowed / Purpose. The check
+// asserts those are absent for every role.
+async function checkCompliance(page, label) {
   await nav(page, "compliance");
+  await sleep(400); // the screen reads its trail when it opens
   await noOverflow(page, `${label} compliance`);
   const top = await page.evaluate(() => {
     const M = window.__m;
-    const logsTab = M.byText("button", /^System logs$/)[0];
-    if (!logsTab) return null;
-    const strip = logsTab.parentElement;
+    const phiTab = M.byText("button", /^PHI access$/)[0];
+    if (!phiTab) return null;
+    const strip = phiTab.parentElement;
     const stripR = M.rect(strip);
     strip.scrollLeft = strip.scrollWidth;
-    const after = M.rect(logsTab);
+    const after = M.rect(phiTab);
     const reach = M.inViewportX(after) && after.right <= stripR.right + 0.5 && after.left >= stripR.left - 0.5;
     strip.scrollLeft = 0;
     const tabs = [...strip.querySelectorAll("button")];
-    const exp = M.byText("button", /^Export$/)[0];
-    const clr = M.byText("button", /^Clear logs$/)[0];
+    const exp = M.byText("button", /^Export CSV$/)[0];
+    const gone = ["Clear logs", "System logs", "Security incidents", "Open incidents", "Denied access", "Resolve", "Allowed", "Purpose:"]
+      .filter((t) => [...document.querySelectorAll("button,span,div")].some((e) => e.children.length === 0 && e.textContent.trim().startsWith(t)));
     const tiles = [...document.querySelectorAll("div")].filter((d) => getComputedStyle(d).fontSize === "28px" && getComputedStyle(d).fontWeight === "700").map((v) => v.parentElement);
     return {
-      stripRight: stripR.right, reach, after, minTabH: Math.min(...tabs.map((b) => M.rect(b).height)),
-      exp: exp ? { vis: M.fullyVisible(exp), r: M.rect(exp) } : null,
-      clr: clr ? { vis: M.fullyVisible(clr), r: M.rect(clr) } : null,
-      expClrOverlap: exp && clr ? M.overlap(exp, clr) : false,
+      stripRight: stripR.right, reach, after, minTabH: Math.min(...tabs.map((b) => M.rect(b).height)), tabNames: tabs.map((b) => b.textContent.trim()),
+      exp: exp ? { vis: M.fullyVisible(exp), r: M.rect(exp) } : null, gone,
       tilesClipped: tiles.filter((t) => !M.fullyVisible(t) || t.scrollWidth > t.clientWidth + 1).length, tiles: tiles.length,
       vw: window.innerWidth,
     };
   });
   if (!top) { rec(`${label} compliance: tab strip present`, false); return; }
-  rec(`${label} compliance: KPI tiles inside the viewport, values not clipped`, top.tiles === 4 && top.tilesClipped === 0, `${top.tiles} tiles, ${top.tilesClipped} clipped`);
+  rec(`${label} compliance: two tiles (the trails' true sizes) inside the viewport, values not clipped`, top.tiles === 2 && top.tilesClipped === 0, `${top.tiles} tiles, ${top.tilesClipped} clipped`);
+  rec(`${label} compliance: exactly the Audit log / PHI access tabs`, top.tabNames.join("|") === "Audit log|PHI access", top.tabNames.join("|"));
+  rec(`${label} compliance: no Clear logs / incidents / system logs / denied / allowed / purpose`, top.gone.length === 0, top.gone.join(", "));
   rec(`${label} compliance: tab strip inside the viewport`, top.stripRight <= top.vw + 0.5, `strip.right=${fmt(top.stripRight)}`);
-  rec(`${label} compliance: 'System logs' tab reachable by scrolling the strip`, top.reach, `after scroll=${rectStr(top.after)}`);
+  rec(`${label} compliance: 'PHI access' tab reachable in the strip`, top.reach, `after scroll=${rectStr(top.after)}`);
   rec(`${label} compliance: tab tap height ≥ 44`, top.minTabH >= TAP, `minH=${fmt(top.minTabH)}`);
-  rec(`${label} compliance: Export fully visible`, !!(top.exp && top.exp.vis), top.exp ? rectStr(top.exp.r) : "none");
-  if (clear) {
-    rec(`${label} compliance: Clear logs fully visible`, !!(top.clr && top.clr.vis), top.clr ? rectStr(top.clr.r) : "none");
-    rec(`${label} compliance: Export and Clear logs do not overlap`, !top.expClrOverlap);
-    rec(`${label} compliance: Export / Clear logs tap height ≥ 44`, !!(top.exp && top.clr) && top.exp.r.height >= TAP && top.clr.r.height >= TAP, top.exp && top.clr ? `${fmt(top.exp.r.height)},${fmt(top.clr.r.height)}` : "");
-  } else {
-    rec(`${label} compliance: no Clear logs for this role`, !top.clr);
-    rec(`${label} compliance: Export tap height ≥ 44`, !!top.exp && top.exp.r.height >= TAP, top.exp ? fmt(top.exp.r.height) : "");
-  }
+  rec(`${label} compliance: Export CSV fully visible`, !!(top.exp && top.exp.vis), top.exp ? rectStr(top.exp.r) : "none");
+  rec(`${label} compliance: Export CSV tap height ≥ 44`, !!top.exp && top.exp.r.height >= TAP, top.exp ? fmt(top.exp.r.height) : "");
 
-  for (const [tabLabel, lastHead] of [["Audit log", "Risk"], ["PHI access", "Result"], ["System logs", "Event"], ["Security incidents", null]]) {
-    if (!lastHead) {
-      // The web client lists no incidents from the server today, so render two
-      // display-only rows in local state (never sent anywhere) to measure the
-      // incident card layout; the previous list is restored afterwards.
-      await page.evaluate(() => window.DT.set((s) => {
-        window.__savedIncidents = s.incidents;
-        s.incidents = [
-          { id: "lay-1", type: "unusual_access_pattern_detected", sev: "high", desc: "Layout check: 48 chart opens in 5 minutes from one workstation", status: "open", at: Date.now() - 600000 },
-          { id: "lay-2", type: "brute_force", sev: "critical", desc: "Layout check: repeated failed sign-ins", status: "investigating", at: Date.now() - 60000 },
-        ];
-        return s;
-      }));
-    }
+  for (const [tabLabel, lastHead] of [["Audit log", "Risk"], ["PHI access", "Access"]]) {
     await page.evaluate((t) => { const b = window.__m.byText("button", new RegExp("^" + t + "$"))[0]; if (b) b.click(); }, tabLabel);
     await sleep(200);
     await noOverflow(page, `${label} compliance ${tabLabel}`);
     const t = await page.evaluate((lastHead) => {
       const M = window.__m;
-      if (!lastHead) {
-        // incident cards: Resolve buttons and status badges inside the viewport
-        const res = M.byText("button", /^Resolve$/);
-        const cards = res.map((b) => { let p = b.parentElement; while (p && !/box-shadow/.test(p.getAttribute("style") || "")) p = p.parentElement; return p; }).filter(Boolean);
-        const all = [...document.querySelectorAll("span.ds-mono")].filter((t) => /^[a-z ]+$/i.test(t.textContent.trim())).map((t) => { let p = t.parentElement; while (p && !/box-shadow/.test(p.getAttribute("style") || "")) p = p.parentElement; return p; }).filter(Boolean);
-        const spill = (c) => [...c.querySelectorAll("div,span")].some((e) => getComputedStyle(e).display !== "inline" && e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflow === "visible");
-        return { kind: "incidents", res: res.map((b) => ({ vis: M.fullyVisible(b), h: M.rect(b).height })), cards: cards.map((c) => ({ vis: M.fullyVisible(c), over: c.scrollWidth > c.clientWidth + 1 })), spilling: [...new Set(all)].filter(spill).length, n: new Set(all).size };
-      }
       const head = [...document.querySelectorAll("span")].find((s) => s.textContent.trim() === lastHead && s.children.length === 0 && getComputedStyle(s.parentElement).textTransform === "uppercase");
       if (!head) return null;
       const headRow = head.parentElement;
@@ -642,13 +618,7 @@ async function checkCompliance(page, label, { clear = false } = {}) {
       };
     }, lastHead);
     if (!t) { rec(`${label} compliance ${tabLabel}: table present`, false); continue; }
-    if (t.kind === "incidents") {
-      rec(`${label} compliance incidents: cards and Resolve buttons inside the viewport`, t.cards.every((c) => c.vis && !c.over) && t.res.every((b) => b.vis), `${t.cards.length} open cards`);
-      rec(`${label} compliance incidents: no text spills out of its column`, t.n === 2 && t.spilling === 0, `${t.spilling} of ${t.n} cards spill`);
-      rec(`${label} compliance incidents: Resolve tap height ≥ 44`, t.res.length === 2 && t.res.every((b) => b.h >= TAP), t.res.map((b) => fmt(b.h)).join(","));
-      await page.evaluate(() => window.DT.set((s) => { s.incidents = window.__savedIncidents || []; return s; }));
-      continue;
-    }
+    rec(`${label} compliance ${tabLabel}: rows from the server measured`, t.n > 0, `${t.n} rows`);
     rec(`${label} compliance ${tabLabel}: '${lastHead}' header fully visible`, t.head.vis, rectStr(t.head.r));
     rec(`${label} compliance ${tabLabel}: header and rows fit the Card`, !t.headOver && t.rowsOver === 0, `headOver=${t.headOver} rowsOver=${t.rowsOver}/${t.n}`);
     rec(`${label} compliance ${tabLabel}: last column visible in every row`, t.lastVis === 0, `${t.lastVis} clipped`);
@@ -698,12 +668,16 @@ async function checkMessagingDots(page) {
   // Fixture for the conversation list: a 1:1 thread needs to exist. If the
   // list has none, pick the first person in the directory (opens a thread),
   // then come back to the list.
+  // The list's dot is the partner's LIVE presence (A.CON comms-account #13),
+  // so the fixture is a 1:1 thread with someone else — never a thread with
+  // yourself, which has nobody to be online.
   const started = await page.evaluate(() => {
     const st = window.DT.getState();
-    if ((st.conversations || []).some((c) => !c.group && !c.broadcast)) { const b = window.__m.byText("button", /^Close$/)[0]; if (b) b.click(); return false; }
+    if ((st.conversations || []).some((c) => !c.group && !c.broadcast && c.otherUserId != null)) { const b = window.__m.byText("button", /^Close$/)[0]; if (b) b.click(); return false; }
     const t = window.__m.byText("div", /^New message$/).find((x) => x.children.length === 0);
-    const ring = t && t.parentElement.parentElement.querySelector("span[style*='border: 2px solid']");
-    const btn = ring && ring.closest("button");
+    const myName = (st.me && st.me.name) || "";
+    const rings = t ? [...t.parentElement.parentElement.querySelectorAll("span[style*='border: 2px solid']")] : [];
+    const btn = rings.map((r) => r.closest("button")).find((b) => b && !(myName && b.textContent.includes(myName)));
     if (btn) btn.click();
     return !!btn;
   });
@@ -883,7 +857,7 @@ try {
       await checkDirectory(page, false);
       await checkCareTeamDots(page);
       await checkMessagingDots(page);
-      await checkCompliance(page, "hospitalist", { clear: false });
+      await checkCompliance(page, "hospitalist");
     }
     await sweepLabels(page, "hospitalist", "hospitalist");
 
@@ -900,7 +874,7 @@ try {
       await nav(page, "admissions");
       await noOverflow(page, "director admissions log");
       await checkAdmissionsHeader(page, "director admissions log");
-      await checkCompliance(page, "director", { clear: false });
+      await checkCompliance(page, "director");
       await checkAppearance(page, "director");
       await checkAccessStrip(page, "director");
     }
@@ -911,7 +885,7 @@ try {
     if (all) {
       await checkErDirectorHome(page);
       await checkBoardControls(page, "ER director");
-      await checkCompliance(page, "ER director", { clear: false });
+      await checkCompliance(page, "ER director");
       await checkAppearance(page, "ER director");
     }
     await checkSettingsTabs(page, "ER director");

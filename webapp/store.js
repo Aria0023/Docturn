@@ -296,7 +296,9 @@
       consultHidden: [], // specialty names hidden from the ER route-assignment picker
       session: null, // { role, org, user, name }
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
-      ui: { nav: "dashboard", notifOpen: false, realtime: true, onShift: true },
+      // (No local "on shift" flag: a hospitalist's On shift is their rotation
+      // profile on the server — myProvider.working — A.CON comms-account #1.)
+      ui: { nav: "dashboard", notifOpen: false, realtime: true },
       me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
       rotation: null, // server "Next up" (GET /api/rotation/next); see nextUp()
 
@@ -445,7 +447,9 @@
       // until loaded; { error } when the server didn't answer.
       platformHealth: null,
 
-      conversations: [
+      // The offline kit's demo threads and broadcasts; a live deployment starts
+      // with none (the server's lists replace them) — never demo rows.
+      conversations: isLive() ? [] : [
         { id: "cv1", name: "Dr. Sarah Chen", role: "Cardiology", initials: "SC", presence: "online", tint: "emerald", unread: 2, typing: false,
           messages: [
             { me: false, text: "Got the round-robin assignment for patient SC, room 412.", at: t0 - 200000 },
@@ -460,7 +464,7 @@
           messages: [{ me: false, text: "Mass casualty drill at 14:00.", at: t0 - 10800000 }] },
       ],
 
-      broadcasts: [
+      broadcasts: isLive() ? [] : [
         { id: uid("bc"), title: "Code stroke — Bed 4 ICU", sev: "critical", at: t0 - 480000, acked: 11, total: 14, ackReq: true },
         { id: uid("bc"), title: "Diversion lifted — accepting transfers", sev: "info", at: t0 - 3600000, acked: 0, total: 0, ackReq: false },
         { id: uid("bc"), title: "Mass casualty drill at 15:00", sev: "warning", at: t0 - 10800000, acked: 22, total: 24, ackReq: true },
@@ -499,14 +503,22 @@
         { id: uid("n"), icon: "megaphone", title: "Code stroke — Bed 4 ICU", body: "Critical broadcast · ack required", at: t0 - 480000, read: true },
       ],
 
-      // Compliance logs start EMPTY — they fill from real activity (logins,
-      // assignments, PHI access) rather than seeded demo rows.
+      // Compliance logs start EMPTY — they fill from the server's trail
+      // (GET /api/audit, or /api/audit/mine for a clinician), never demo rows.
+      // There is no security-incident feed or "system log" on the server, so
+      // the client keeps none (A.CON comms-account #4/#6).
       audit: [],
-      // The trail's TRUE size from the server (GET /api/audit auditCount) —
-      // the `audit` array is only its latest page. Null until loaded.
+      // The trails' TRUE sizes from the server (auditCount / phiAccessCount)
+      // — the arrays are only their latest page. Null until loaded.
       auditCount: null,
       phiLog: [],
-      incidents: [],
+      phiAccessCount: null,
+      // "org" (the compliance roles) or "mine" (everyone else's own trail).
+      auditScope: null,
+      auditError: null,
+      // Who in my org holds a live realtime socket ({ live, online: {id:true} }),
+      // or null while unknown (no socket) — never shift status.
+      presence: null,
 
       lastAdmitAt: t0,
     };
@@ -580,6 +592,9 @@
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
+      // Retired device-local "on shift" flag (it is the server's rotation
+      // profile now — A.CON comms-account #1).
+      delete s.ui.onShift;
       // Migrate role colors to the softer palette unless the user customized
       // them (only replace values still set to the old saturated defaults).
       var OLD_ROLE = { hospitalist: "#2563EB", er_doctor: "#D97706", er_director: "#DC2626", director: "#7C3AED", developer: "#0F766E", consultant: "#0891B2" };
@@ -759,7 +774,7 @@
   var PHI_SLICES = [
     "conversations", "board", "myPatients", "myAdmissions", "pending",
     "sent", "admissions", "broadcasts", "notifications",
-    "audit", "phiLog", "incidents",
+    "audit", "phiLog",
   ];
   // The signed-in person's identity and per-user settings — reset on sign-out
   // so nothing of the previous user survives in memory either.
@@ -771,7 +786,9 @@
     // the previous person's org: its people, identity, catalog and rules
     "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
     // the previous operator's cross-tenant view (developer console)
-    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount"];
+    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount",
+    // the previous person's trail sizes and their org's live presence
+    "phiAccessCount", "auditScope", "auditError", "presence"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -868,7 +885,8 @@
     setRole: function (role) { set(function (s) { s.session = Object.assign({}, s.session, { role: role }); s.ui.nav = "dashboard"; s.ui.notifOpen = false; return s; }); },
     toggleNotif: function (open) { set(function (s) { s.ui.notifOpen = open == null ? !s.ui.notifOpen : open; if (s.ui.notifOpen) s.notifications = s.notifications.map(function (n) { return Object.assign({}, n, { read: true }); }); return s; }); },
     toggleRealtime: function (on) { set(function (s) { s.ui.realtime = on == null ? !s.ui.realtime : on; return s; }); },
-    toggleOnShift: function () { set(function (s) { s.ui.onShift = !s.ui.onShift; return s; }); },
+    // On shift is the rotation profile on the server (api-bridge.js).
+    toggleOnShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
     markNotifRead: function (id) { set(function (s) { s.notifications = s.notifications.map(function (n) { return n.id === id ? Object.assign({}, n, { read: true }) : n; }); return s; }); },
 
     /* hospitalist */
@@ -1029,7 +1047,8 @@
         return s;
       });
     },
-    renameMe: function (name) { set(function (s) { if (!name.trim()) return s; s.me = Object.assign({}, s.me, { name: name, avatar: initialsOf(name) }); if (s.session) s.session = Object.assign({}, s.session, { name: name }); return s; }); },
+    // (No self-rename: a clinician's display name is identity data the org
+    // manages — People / the director's provider edit — A.CON comms-account #2.)
 
     /* care team — the SERVER's (api-bridge.js → /api/care-team/members). */
     addMember: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
@@ -1080,15 +1099,9 @@
     },
 
     /* broadcasts */
-    sendBroadcast: function (data) {
-      set(function (s) {
-        var total = data.ackReq ? (10 + Math.floor(Math.random() * 14)) : 0;
-        s.broadcasts = [{ id: uid("bc"), title: data.title || "(untitled broadcast)", sev: data.severity, at: now(), acked: 0, total: total, ackReq: data.ackReq }].concat(s.broadcasts);
-        pushAudit(s, { action: "send_broadcast", resource: data.title || "broadcast", risk: data.severity === "emergency" || data.severity === "critical" ? "high" : "low" });
-        s.__toast = { tone: "sent", title: "Broadcast sent", msg: (data.audience.length) + " audience group(s) notified" + (data.ackReq ? " · ack required" : "") + "." };
-        return s;
-      });
-    },
+    // Broadcasts are the server's (api-bridge.js → POST /api/broadcasts): the
+    // offline kit cannot alert anyone, and says so instead of inventing a tally.
+    sendBroadcast: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
 
     /* developer */
     selectOrg: function (code) { set(function (s) { s.selectedOrg = code; return s; }); },
@@ -1330,7 +1343,6 @@
         return s;
       });
     },
-    resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
 
     /* continuous compliance monitor — real implementations live in
        api-bridge.js (they hit /api/compliance/*). The prototype has no way to

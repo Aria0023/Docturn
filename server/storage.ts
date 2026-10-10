@@ -492,7 +492,7 @@ export interface IStorage {
     ip?: string;
     userAgent?: string;
   }): Promise<void>;
-  countPhiAccess(orgId: number): Promise<number>;
+  countPhiAccess(orgId: number, userId?: number): Promise<number>;
   /** Copy an org's audit/PHI/security rows into the six-year retained archive. */
   archiveComplianceRecords(orgId: number, reason: string): Promise<number>;
   /** Write one record straight into the retained archive (e.g. the deletion of the tenant itself). */
@@ -1623,34 +1623,52 @@ export class DatabaseStorage implements IStorage {
       patientId: row.patientId ?? null,
     });
   }
-  async countPhiAccess(orgId: number) {
+  // The trail readers below take an optional `userId`: set, they read only
+  // that user's own rows (GET /api/audit/mine — A.CON comms-account #9).
+  async countPhiAccess(orgId: number, userId?: number) {
     const [row] = await this.db
       .select({ n: sql<number>`count(*)` })
       .from(phiAccessLogs)
-      .where(eq(phiAccessLogs.organizationId, orgId));
+      .where(
+        userId == null
+          ? eq(phiAccessLogs.organizationId, orgId)
+          : and(eq(phiAccessLogs.organizationId, orgId), eq(phiAccessLogs.userId, userId)),
+      );
     return Number(row?.n ?? 0);
   }
-  async countAuditLogs(orgId: number) {
+  async countAuditLogs(orgId: number, userId?: number) {
     const [row] = await this.db
       .select({ n: sql<number>`count(*)` })
       .from(auditLogs)
-      .where(eq(auditLogs.organizationId, orgId));
+      .where(
+        userId == null
+          ? eq(auditLogs.organizationId, orgId)
+          : and(eq(auditLogs.organizationId, orgId), eq(auditLogs.userId, userId)),
+      );
     return Number(row?.n ?? 0);
   }
-  async listAuditLogs(orgId: number, limit = 100) {
+  async listAuditLogs(orgId: number, limit = 100, userId?: number) {
     return this.db
       .select()
       .from(auditLogs)
-      .where(eq(auditLogs.organizationId, orgId))
-      .orderBy(desc(auditLogs.createdAt))
+      .where(
+        userId == null
+          ? eq(auditLogs.organizationId, orgId)
+          : and(eq(auditLogs.organizationId, orgId), eq(auditLogs.userId, userId)),
+      )
+      .orderBy(desc(auditLogs.createdAt), desc(auditLogs.id))
       .limit(limit);
   }
-  async listPhiAccess(orgId: number, limit = 50) {
+  async listPhiAccess(orgId: number, limit = 50, userId?: number) {
     return this.db
       .select()
       .from(phiAccessLogs)
-      .where(eq(phiAccessLogs.organizationId, orgId))
-      .orderBy(desc(phiAccessLogs.createdAt))
+      .where(
+        userId == null
+          ? eq(phiAccessLogs.organizationId, orgId)
+          : and(eq(phiAccessLogs.organizationId, orgId), eq(phiAccessLogs.userId, userId)),
+      )
+      .orderBy(desc(phiAccessLogs.createdAt), desc(phiAccessLogs.id))
       .limit(limit);
   }
 

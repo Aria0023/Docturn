@@ -245,8 +245,22 @@ export function registerProviderRoutes(app: Express) {
       if (parsed.data.working === undefined) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // Already so: nothing changes, nothing to announce or audit.
+      if (h.working === parsed.data.working) return res.json(h);
       const updated = await storage().updateHospitalist(me.organizationId, id, {
         working: parsed.data.working,
+      });
+      // On/off shift decides who round-robin can draw (A.CON comms-account
+      // #1: the hospitalist's own Settings switch is this route), so every
+      // change is on the trail — the provider's own or a director's.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.working_status",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { working: parsed.data.working, self: isSelf, providerUserId: h.userId },
+        riskLevel: "low",
       });
       broadcastRotationChange(me.organizationId);
       res.json(updated);

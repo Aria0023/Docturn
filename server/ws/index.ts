@@ -106,6 +106,9 @@ export class WsHub implements WsFanout {
       typingLastAt: 0,
       typingLastState: null,
     });
+    // Presence counts the person's OWN sockets only: a developer's borrowed
+    // (impersonated / managed-org) session is not that user being here.
+    const wasOnline = this.isPresent(userId);
     if (!this.clients.has(userId)) this.clients.set(userId, new Set());
     this.clients.get(userId)!.add(ws);
 
@@ -117,12 +120,15 @@ export class WsHub implements WsFanout {
       }),
     );
 
-    // Presence: announce online to the tenant.
-    this.broadcast(organizationId, {
-      type: "USER_PRESENCE_CHANGED",
-      userId,
-      online: true,
-    });
+    // Presence: announce online to the tenant when the person's first own
+    // socket opens.
+    if (impersonatorId == null && !wasOnline) {
+      this.broadcast(organizationId, {
+        type: "USER_PRESENCE_CHANGED",
+        userId,
+        online: true,
+      });
+    }
 
     ws.on("pong", () => {
       const m = this.meta.get(ws);
@@ -191,16 +197,46 @@ export class WsHub implements WsFanout {
     if (!m) return;
     const set = this.clients.get(m.userId);
     set?.delete(ws);
-    const stillOnline = set && set.size > 0;
-    if (!stillOnline) {
-      this.clients.delete(m.userId);
+    this.meta.delete(ws);
+    if (!set || set.size === 0) this.clients.delete(m.userId);
+    // Offline when the person's last OWN socket closes (a borrowed socket
+    // closing changes nothing).
+    if (m.impersonatorId == null && !this.isPresent(m.userId)) {
       this.broadcast(m.organizationId, {
         type: "USER_PRESENCE_CHANGED",
         userId: m.userId,
         online: false,
       });
     }
-    this.meta.delete(ws);
+  }
+
+  /** Does this user hold at least one registered socket of their own (not a borrowed one)? */
+  private isPresent(userId: number): boolean {
+    const set = this.clients.get(userId);
+    if (!set) return false;
+    for (const ws of set) {
+      const m = this.meta.get(ws);
+      if (m && m.impersonatorId == null) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Who in `orgId` is online right now: users holding a live socket of their
+   * own on this instance (A.CON comms-account #13). Ascending ids.
+   */
+  onlineUserIds(orgId: number): number[] {
+    const out: number[] = [];
+    for (const [userId, set] of this.clients) {
+      for (const ws of set) {
+        const m = this.meta.get(ws);
+        if (m && m.organizationId === orgId && m.impersonatorId == null && ws.readyState === WebSocket.OPEN) {
+          out.push(userId);
+          break;
+        }
+      }
+    }
+    return out.sort((a, b) => a - b);
   }
 
   /** Resolve the session by replaying the session middleware on the upgrade req. */
@@ -407,6 +443,14 @@ let liveHub: WsHub | null = null;
  */
 export function liveSocketStats(): { connections: number; users: number } | null {
   return liveHub ? liveHub.stats() : null;
+}
+
+/**
+ * Who in `orgId` holds a live socket of their own right now, or null when no
+ * hub is attached (nobody can be said to be online — never a guess).
+ */
+export function liveOnlineUserIds(orgId: number): number[] | null {
+  return liveHub ? liveHub.onlineUserIds(orgId) : null;
 }
 
 /** Attach a WS hub to the HTTP server and route notifications through it. */

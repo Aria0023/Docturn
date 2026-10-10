@@ -35,11 +35,15 @@ function SettingsGroup({ title, children }) {
   );
 }
 
-function Switch({ on, onChange, label }) {
+// A 44px-tall tap target around the 44x26 track. `busy`: the server has not
+// answered yet — the switch shows the last confirmed state and ignores taps.
+function Switch({ on, onChange, label, busy }) {
   return (
-    <button type="button" aria-label={label} aria-pressed={!!on} onClick={() => onChange && onChange(!on)}
-      style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative", background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
-      <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
+    <button type="button" aria-label={label} aria-pressed={!!on} aria-busy={busy ? "true" : undefined} disabled={!!busy} onClick={() => !busy && onChange && onChange(!on)}
+      style={{ width: 44, height: 44, padding: 0, border: "none", background: "transparent", cursor: busy ? "progress" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: busy ? 0.6 : 1 }}>
+      <span style={{ display: "block", width: 44, height: 26, borderRadius: 99, position: "relative", background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
+        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
+      </span>
     </button>
   );
 }
@@ -254,6 +258,7 @@ function AccountSettings({ onLock }) {
   const covering = coveringId == null ? null : (coveringPerson && coveringPerson.name) || "set";
   const isDirector = role === "director" || role === "er_director";
   const isClinical = role === "hospitalist" || role === "er_doctor";
+  const myProv = st.myProvider || null;
 
   // The ONLY place the app asks for notification permission (A.CON-SHO-62 /
   // A.CON-NEE-1): a.enablePush() runs synchronously inside this tap, which is
@@ -285,9 +290,10 @@ function AccountSettings({ onLock }) {
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", marginBottom: 18 }}>
         <Avatar initials={me.avatar} size={48} />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>
-            {a.renameMe ? <EditableText value={me.name || ""} onSave={a.renameMe} size={16} weight={700} /> : (me.name || "")}
-          </div>
+          {/* Read-only: a clinician's name is identity data the organization
+              manages (People / the director's provider edit) — there is no
+              self-rename on the server (A.CON comms-account #2). */}
+          <div data-profile-name style={{ fontSize: 16, fontWeight: 700, overflowWrap: "anywhere" }}>{me.name || ""}</div>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", textTransform: "capitalize" }}>
             {role.replace(/_/g, " ")}{st.session && st.session.org ? " · " + st.session.org : ""}{user && user.username ? " · @" + user.username : ""}
           </div>
@@ -304,10 +310,23 @@ function AccountSettings({ onLock }) {
               <DndAwayMessageField />
             </div>
           )}
-          {role === "hospitalist" && a.toggleOnShift && (
-            <SettingsRow icon="activity" title="On shift" sub={st.ui && st.ui.onShift ? "Receiving admissions in the rotation" : "Off shift — not in the rotation"}
-              right={<Switch on={!!(st.ui && st.ui.onShift)} onChange={() => a.toggleOnShift()} label="On shift" />} />
-          )}
+        </SettingsGroup>
+      )}
+
+      {/* On shift = MY rotation profile's working flag on the server, the one
+          round-robin reads (A.CON comms-account #1). The switch moves when
+          the server answers. A hospitalist with no rotation profile (e.g. a
+          PA on a care team) is told so instead of being given a switch. */}
+      {role === "hospitalist" && (myProv || st.isProvider === false) && (
+        <SettingsGroup title="Rotation">
+          {myProv
+            ? <SettingsRow icon="activity" title="On shift" wrapSub rowProps={{ "data-onshift-row": myProv.working ? "on" : "off" }}
+                sub={myProv.working
+                  ? (myProv.inRotation ? "On shift — round-robin can send you new admissions" : "On shift — but a director has taken you out of the round-robin, so it skips you")
+                  : "Off shift — round-robin skips you"}
+                right={<Switch on={!!myProv.working} busy={!!st.myProviderSaving} onChange={() => a.toggleOnShift()} label="On shift" />} />
+            : <SettingsRow icon="activity" title="Not in the rotation" wrapSub rowProps={{ "data-onshift-row": "none" }}
+                sub="You have no rotation profile, so round-robin never sends you admissions. A director adds you to the rotation." />}
         </SettingsGroup>
       )}
 
@@ -338,7 +357,7 @@ function AccountSettings({ onLock }) {
       )}
       {isClinical && (
         <SettingsGroup title="More">
-          <SettingsRow icon="shield-check" title="Audit & compliance" sub="Your PHI access trail" onClick={() => a.setNav("compliance")} />
+          <SettingsRow icon="shield-check" title="My audit trail" sub="What you did and which records you opened, from the server" onClick={() => a.setNav("compliance")} />
         </SettingsGroup>
       )}
 

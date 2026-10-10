@@ -273,7 +273,7 @@ const NAV = {
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance", label: "My audit trail", icon: "shield-check" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
@@ -281,7 +281,7 @@ const NAV = {
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
-    { id: "compliance", label: "Compliance", icon: "shield-check" },
+    { id: "compliance", label: "My audit trail", icon: "shield-check" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
@@ -343,7 +343,7 @@ const TOP = {
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
   directory:  ["Directory", "Providers, on‑call availability and people"],
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
-  compliance: ["Audit & compliance", "HIPAA audit trail, PHI access and incidents"],
+  compliance: ["Audit & compliance", "The organization's HIPAA audit trail and PHI-access log, from the server"],
   account:    ["Settings", "Your profile, availability, notifications and security"],
   "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
@@ -638,7 +638,7 @@ function App() {
   else if (nav === "account") screen = <AccountSettings onLock={lockByHand} />;
   else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
-  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
+  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} auditCount={st.auditCount} phiCount={st.phiAccessCount} scope={st.auditScope || (role === "director" || role === "er_director" ? "org" : "mine")} error={st.auditError} onLoad={a.loadComplianceTrail} onExport={a.exportAuditTrail} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
   else if (nav === "roles") screen = <RoleManagement />;
   else if (nav === "consult") screen = <ConsultServices />;
@@ -675,8 +675,10 @@ function App() {
     myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessagePatient={a.openPatientThread} />}
     admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={a.purgeData} />} />;
 
-  const topTitle = TOP[nav] ? TOP[nav][0] : meta.title;
-  const topSub   = TOP[nav] ? TOP[nav][1] : meta.subtitle;
+  // A clinician's Compliance screen is their OWN trail (GET /api/audit/mine).
+  const ownTrail = nav === "compliance" && (role === "hospitalist" || role === "er_doctor");
+  const topTitle = ownTrail ? "My audit trail" : TOP[nav] ? TOP[nav][0] : meta.title;
+  const topSub   = ownTrail ? "What you did and which records you opened, from the server" : TOP[nav] ? TOP[nav][1] : meta.subtitle;
 
   const impersonationBanner = <ImpersonationBanner imp={st.impersonating} onReturn={() => a.stopImpersonating()} />;
 
@@ -742,7 +744,7 @@ function App() {
             <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(15,23,42,.45)" }} />
             <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: "calc(264px + var(--sai-left))", maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingBottom: "var(--sai-bottom)" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-                <Sidebar fill role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={false} appName={st.theme.appName} />
+                <Sidebar fill role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} compact={false} appName={st.theme.appName} />
               </div>
               {st.syntheticData !== false && (
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
@@ -769,11 +771,11 @@ function App() {
       <InstallPrompt />
       <EnableAlertsCard />
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
-      <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} onRenameMe={a.renameMe} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
+      <Sidebar role={role} nav={navItems} active={nav} onNav={a.setNav} me={st.me} onLogout={a.logout} compact={st.theme.sidebar === "compact"} appName={st.theme.appName} />
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <Topbar title={topTitle} subtitle={topSub}
-          working={role === "hospitalist" ? st.ui.onShift : undefined}
-          onToggleWorking={role === "hospitalist" && nav === "dashboard" ? a.toggleOnShift : undefined}
+          working={role === "hospitalist" && st.myProvider ? !!st.myProvider.working : undefined}
+          onToggleWorking={role === "hospitalist" && nav === "dashboard" && st.myProvider && !st.myProviderSaving ? a.toggleOnShift : undefined}
           onLock={lockByHand}
           right={st.syntheticData !== false ? <React.Fragment>
             <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}

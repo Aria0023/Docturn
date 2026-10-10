@@ -291,6 +291,12 @@ function failBtn(isMobile, primary) {
 function Messaging() {
   const st = useStore();
   const a = useActions();
+  // Live presence (A.CON comms-account #13): the 1:1 partner holds a realtime
+  // socket right now (GET /api/presence + USER_PRESENCE_CHANGED) —
+  // never their shift status. Unknown (no socket) → no dot, no "Online".
+  const presence = st.presence || null;
+  const presenceOf = (c) => (!presence || !presence.live || !c || c.group || c.broadcast || c.otherUserId == null) ? null
+    : (presence.online && presence.online[c.otherUserId] ? "online" : "offline");
   const convos = st.conversations;
   const isMobile = useIsMobile();
   const [active, setActive] = React.useState(st.__activeConvo || (convos[0] && convos[0].id));
@@ -605,7 +611,7 @@ function Messaging() {
                     presence dot below the avatar's rim. */}
                 <div style={{ position: "relative", flex: "none", alignSelf: "flex-start" }}>
                   <Avatar initials={c.initials} size={isMobile ? 46 : 40} tint={c.tint} />
-                  {!c.group && !c.broadcast && <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={c.presence} /></span>}
+                  {presenceOf(c) && <span data-presence={presenceOf(c)} title={presenceOf(c) === "online" ? "Online now" : "Not connected"} style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={presenceOf(c)} /></span>}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -718,12 +724,14 @@ function Messaging() {
             <div style={{ fontSize: 12, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 5, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden" }}>
               {conv.patientId != null && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 8px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, color: "var(--primary)", background: "#EFF6FF", border: "1px solid var(--primary)", marginRight: 6, flex: "none" }}><Icon name="clipboard-list" size={11} />Patient thread</span>}
               {conv.typing ? <span style={{ color: "var(--status-active)", fontWeight: 600 }}>typing…</span>
-                : <><StatusDot status={conv.presence} pulse={conv.presence === "online"} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{conv.presence === "online" ? "Online" : conv.role}</span></>}
+                : <>{presenceOf(conv) === "online" && <StatusDot status="online" pulse />}<span data-thread-status={presenceOf(conv) || "unknown"} style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{presenceOf(conv) === "online" ? "Online · " + conv.role : conv.role}</span></>}
             </div>
           </div>
           {/* No call button: voice isn't a real capability yet — no fake affordances. */}
           <span data-thread-details style={{ flex: "none", display: "inline-flex" }}>
-            <Button size="icon" variant="ghost" icon="info" title="Conversation details" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: (conv.group ? conv.role : conv.role + " · ") + (conv.messages.length) + " messages." })} />
+            {/* Who this is — not a message count: this device holds only the
+                pages it has loaded (A.CON comms-account #14). */}
+            <Button size="icon" variant="ghost" icon="info" title="Conversation details" onClick={() => a.toast({ tone: "accepted", title: conv.name, msg: conv.role + (presenceOf(conv) === "online" ? " · online now" : "") + "." })} />
           </span>
         </div>
 

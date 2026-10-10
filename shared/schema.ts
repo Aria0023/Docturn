@@ -49,6 +49,13 @@ export const SETTING_SCOPE = ["org", "user"] as const;
 export const CREDENTIAL = ["MD", "DO", "NP", "PA", "RN"] as const;
 export const CONSULT_STATUS = ["requested", "accepted", "declined", "active", "closed"] as const;
 export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
+/**
+ * The roles a broadcast can be addressed to (FR-6.5). A broadcast with no
+ * audience (null) goes to everyone in the org; otherwise only to the org's
+ * active accounts holding one of these roles when it is sent.
+ */
+export const BROADCAST_AUDIENCE = ["hospitalist", "er_doctor", "er_director", "director"] as const;
+export type BroadcastAudienceRole = (typeof BROADCAST_AUDIENCE)[number];
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
 
 /**
@@ -669,6 +676,13 @@ export const emergencyBroadcasts = pgTable("emergency_broadcasts", {
   severity: text("severity", { enum: BROADCAST_SEVERITY })
     .notNull()
     .default("urgent"),
+  // Who it was addressed to: null = everyone in the org, else the roles
+  // (BROADCAST_AUDIENCE) it was sent to.
+  audience: jsonb("audience").$type<BroadcastAudienceRole[] | null>(),
+  // The recipient set, frozen when it was sent (user ids). The ack tally's
+  // denominator and who may acknowledge it. NULL on rows sent before it was
+  // stored: those derive it from the roster at send time (broadcasts.ts).
+  recipientIds: jsonb("recipient_ids").$type<number[] | null>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -1039,6 +1053,10 @@ export const censusOverrideSchema = z.object({
 export const createBroadcastSchema = z.object({
   message: z.string().min(1),
   severity: z.enum(BROADCAST_SEVERITY).default("urgent"),
+  // "all" (or absent) = everyone in the org; otherwise the roles to send to.
+  audience: z
+    .union([z.literal("all"), z.array(z.enum(BROADCAST_AUDIENCE)).min(1).max(BROADCAST_AUDIENCE.length)])
+    .default("all"),
 });
 
 export const devCreateUserSchema = z.object({

@@ -30,6 +30,7 @@ import {
 } from "../services/attachment-store.js";
 import { MESSAGE_PAGE_DEFAULT, MESSAGE_PAGE_MAX, storage } from "../storage.js";
 import { parseId } from "../params.js";
+import { liveOnlineUserIds } from "../ws/index.js";
 
 // Attachment mime allowlist — only these types can be uploaded. Anything else is
 // rejected (400 bad_type) so we never store arbitrary executable/unknown blobs.
@@ -598,6 +599,16 @@ const TEMPLATE_ORG_ROLES = new Set<string>(["director", "er_director", "develope
 export function registerMessagingRoutes(app: Express) {
   app.get("/api/messaging/on-call-targets", requireAuth, async (req, res) => {
     res.json(await resolveOnCallTargets(currentUser(req)));
+  });
+
+  // Who in my org is online right now: users holding a live realtime socket
+  // of their own (A.CON comms-account #13). On shift is NOT online. The
+  // client keeps it current from USER_PRESENCE_CHANGED frames; `live:false`
+  // (no realtime hub in this process) means nobody can be shown as online.
+  app.get("/api/presence", requireAuth, (req, res) => {
+    const online = liveOnlineUserIds(currentUser(req).organizationId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ live: online !== null, online: online ?? [] });
   });
 
   // Upload an attachment (image/file) as base64. Route-level 12 MB JSON parser
