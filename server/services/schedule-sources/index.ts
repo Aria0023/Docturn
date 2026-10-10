@@ -1,7 +1,7 @@
 import { MODULES } from "@shared/modules";
 import { isModuleEnabled } from "../../modules.js";
 import type { DatabaseStorage } from "../../storage.js";
-import { amionConfig, amionConfigured } from "../amion.js";
+import { amionFeedFor } from "../amion.js";
 import { createAmionSource } from "./amion.js";
 import { createEpicSource, type EpicClientDeps } from "./epic-fhir.js";
 import { createManualSource } from "./manual.js";
@@ -92,14 +92,11 @@ export function createSourceRegistry(db: DatabaseStorage, deps: { epic?: EpicCli
 
 /**
  * The source an org should read from when it has made no explicit choice:
- * Amion when the live feed is configured for this org AND schedule.amion is
- * on for it, else the manual list.
+ * Amion when this org has a live feed (its own saved credentials, or the env
+ * feed for AMION_ORG_CODE) AND schedule.amion is on for it, else the manual list.
  */
 export async function defaultSourceFor(db: DatabaseStorage, orgId: number): Promise<ScheduleSourceId> {
-  if (amionConfigured()) {
-    const org = await db.getOrganizationByCode(amionConfig().orgCode);
-    if (org && org.id === orgId && (await sourceModuleEnabled(orgId, "amion"))) return "amion";
-  }
+  if ((await amionFeedFor(db, orgId)) && (await sourceModuleEnabled(orgId, "amion"))) return "amion";
   return "manual";
 }
 

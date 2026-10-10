@@ -419,6 +419,41 @@ export const orgSettings = pgTable(
   }),
 );
 
+/**
+ * A hospital's OWN credentials for an organization-scope integration (Amion
+ * OCS feed, Epic backend app) — see server/integrations/. Write-only from the
+ * API: the secret fields are one AES-256-GCM ciphertext (key from the
+ * INTEGRATION_KEY env, AAD = org + integration + key version, so a row cannot
+ * be replayed under another tenant). `summary` holds NON-secret display fields
+ * only (e.g. the FHIR host). `updated_by` deliberately has no foreign key so a
+ * credential row never blocks deleting a user or a tenant; the tenant cascade
+ * (storage.deleteOrganization) removes the org's rows. Mirrored in
+ * server/db.ts SCHEMA_SQL.
+ */
+export const orgIntegrationCredentials = pgTable(
+  "org_integration_credentials",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    integrationId: text("integration_id").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    authTag: text("auth_tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    summary: jsonb("summary").$type<Record<string, string>>(),
+    updatedBy: integer("updated_by"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    perOrg: uniqueIndex("org_integration_credentials_org_integration_uniq").on(
+      t.organizationId,
+      t.integrationId,
+    ),
+  }),
+);
+
 export const userPreferences = pgTable(
   "user_preferences",
   {
@@ -824,6 +859,7 @@ export type PhiAccessLog = typeof phiAccessLogs.$inferSelect;
 export type RetainedComplianceRecord =
   typeof retainedComplianceRecords.$inferSelect;
 export type OrgSetting = typeof orgSettings.$inferSelect;
+export type OrgIntegrationCredential = typeof orgIntegrationCredentials.$inferSelect;
 export type FeatureFlag = typeof featureFlags.$inferSelect;
 
 /** A user object safe to return over the API — never includes the password hash. */

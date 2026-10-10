@@ -12,6 +12,7 @@ import {
 } from "./seed.js";
 import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { startAmionSyncLoop } from "./services/amion.js";
+import { startEpicSyncLoop } from "./services/schedule-sources/epic-fhir.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
 import { startRetentionLoop } from "./services/retention.js";
 import { initWebPush, LivePushTransport } from "./services/push.js";
@@ -131,10 +132,12 @@ async function main() {
   // Auto-clean: hourly sweep purges patients/assignments older than 24h so stale
   // board and log data clears itself. Manual "Clear" controls call the same path.
   startAutoCleanLoop();
-  // Amion schedule sync: if AMION_OCS_URL is set, pull the live on-call grid
-  // shortly after boot (non-blocking, errors logged + recorded) and then on the
-  // AMION_SYNC_INTERVAL_MIN cadence. No-op when the env var is absent.
+  // Amion / Epic schedule sync: for EVERY org with a connected feed — its own
+  // saved credentials (Settings → Integrations) or the operator's env feed —
+  // and its schedule.* module on, pull shortly after boot (non-blocking, errors
+  // recorded per org) and then on AMION_SYNC_INTERVAL_MIN / EPIC_SYNC_INTERVAL_MIN.
   startAmionSyncLoop();
+  startEpicSyncLoop();
   // STAT non-response loop: unacked STAT → re-alert (2 min) → covering-provider
   // escalation (5 min). Tunable via STAT_REALERT_MS / STAT_ESCALATE_MS.
   startStatEscalationLoop();

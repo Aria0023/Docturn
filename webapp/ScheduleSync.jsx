@@ -1,48 +1,30 @@
-/* DocTurn web-app UI kit — Schedule Sync (Amion / external on-call import).
-   Two ingestion modes:
-     • API        — token-based pull (preferred, when the vendor exposes one)
-     • Capture     — NO public API: DocTurn signs in on your behalf in a sandboxed
-                     headless browser and parses the published on-call grid off the
-                     rendered page ("rip contents off screen"). The access token lives
-                     only in server-side config (never in the DB, never logged),
-                     read-only, every fetch audited.
-   Self-contained demo component; manages its own local state. Director surface. */
+/* DocTurn web-app UI kit — On-call schedule sync (Settings).
 
-// Real captured grid — Tarzana ISP hospitalist schedule (amion.com/cgi-bin/ocs).
-// `secure` = "Secure message to Amion app" (onboarded) vs "Not ready to receive
-// secure messages" — the onboarding signal DocTurn uses to invite the rest.
+   Everything here is the SERVER's state; nothing is "connected" in the browser:
+     • Amion   — the hospital's OCS feed, saved encrypted under Integrations →
+                 Amion (or the operator's AMION_OCS_URL for one org). Status,
+                 the last pulled grid and "Sync now" are /api/amion/*.
+     • Epic    — the hospital's Epic backend app (Integrations → Epic);
+                 status + "Sync now" are /api/oncall/sources + epic/sync-now.
+     • Manual  — the director-maintained list on the On-call board.
+   The source the on-call board reads is the server's choice
+   (PATCH /api/oncall/source). Vendors DocTurn has no connector for (QGenda,
+   Tangier, ShiftAdmin, documents, web pages, custom) can be picked to see that
+   — they import nothing, and the panel says so instead of offering a form.
+   Credentials are never typed or pre-filled here. Director surface; an ER
+   director sees it read-only (the server refuses their writes). */
+
+// Amion hours → the shift label shown for the pulled grid (the server maps the
+// same tokens to day / swing / night on each provider: services/amion.ts).
 const SS_HRS = { "7a-7p": ["Day call", "amber"], "2p-10p": ["Swing", "blue"], "4p-12a": ["Swing", "blue"], "7p-7a": ["Nights", "slate"], "11p-7a": ["Night X-cover", "slate"] };
-// Live Tarzana ISP North on-call roster (captured from Amion OCS grid).
-const SS_ROWS = [
-  { slot: "Tarzana 1", hrs: "7a-7p", prov: "Lou, May", grp: "Lead Hospitalist", secure: true },
-  { slot: "Tarzana 2", hrs: "7a-7p", prov: "Kazanchyan, Moe", grp: "Moonlighter", secure: false },
-  { slot: "Tarzana 3", hrs: "7a-7p", prov: "Darouichi, Joline", grp: "ISP North", secure: false },
-  { slot: "Tarzana 4", hrs: "7a-7p", prov: "Rostami, Matt", grp: "ISP North", secure: true },
-  { slot: "Tarzana 5", hrs: "7a-7p", prov: "Malhotra, Veshal", grp: "ISP North", secure: true },
-  { slot: "Tarzana 6", hrs: "7a-7p", prov: "George, Sharon", grp: "ISP North", secure: true },
-  { slot: "Tarzana 7", hrs: "7a-7p", prov: "Alyesh, Nathan", grp: "ISP North", secure: false },
-  { slot: "Tarzana 8", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
-  { slot: "Tarzana 9", hrs: "7a-7p", prov: "Yu, Allen", grp: "ISP Hospitalist", secure: true },
-  { slot: "North Triage", hrs: "7a-7p", prov: "Gopal, Arun", grp: "ISP Hospitalist", secure: true },
-  { slot: "Tarzana Swing", hrs: "2p-10p", prov: "Kashi, Kioumars", grp: "ISP North", secure: false },
-  { slot: "Tarzana Night Triage", hrs: "7p-7a", prov: "Kohan, Salar", grp: "ISP North", secure: false },
-  { slot: "Tarzana Night Triage (incoming 7p)", hrs: "7p-7a", prov: "Tabibian, Allen", grp: "ISP North", secure: false },
-  { slot: "Tarzana Night XC", hrs: "7p-7a", prov: "Niculescu, Alex", grp: "ISP North", secure: true },
-];
-const SS_MAP = [
-  { code: "7a–7p",  shift: "Day call",      tint: "amber" },
-  { code: "2p–10p", shift: "Swing",         tint: "blue" },
-  { code: "7p–7a",  shift: "Nights",        tint: "slate" },
-  { code: "11p–7a", shift: "Night X-cover", tint: "slate" },
-];
 // "Last, First" → "First Last"; initials from both.
-function ssName(prov) { const [last, first] = prov.split(", "); return (first || "") + " " + last; }
-function ssInit(prov) { const [last, first] = prov.split(", "); return ((first || " ")[0] + last[0]).toUpperCase(); }
+function ssName(prov) { const [last, first] = String(prov).split(", "); return ((first || "") + " " + last).trim(); }
+function ssInit(prov) { const [last, first] = String(prov).split(", "); return ((first || " ")[0] + (last || " ")[0]).toUpperCase(); }
 
-// Amion hours → DocTurn shift type.
+// Amion hours → DocTurn shift type (same table as server/services/amion.ts).
 const SS_SHIFT = { "7a-7p": "day", "2p-10p": "swing", "4p-12a": "swing", "7p-7a": "night", "11p-7a": "night" };
 
-// Relative "synced X ago" label for the live-feed bar.
+// Relative "synced X ago" label.
 function ssAgo(iso) {
   if (!iso) return "never";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -52,408 +34,264 @@ function ssAgo(iso) {
   return Math.floor(s / 86400) + " d ago";
 }
 
-// On-call schedule sources. Each organization picks its own — different
-// hospitals keep their schedule in different places, so the source is
-// org-scoped AND modular by KIND: a scheduling vendor (API/sign-in capture),
-// an uploaded document (Word/PDF), or a published web page. Only the Amion
-// demo carries a real captured grid; the others ingest the org's own data.
+// On-call schedule sources. `connector: true` = the server can really read it
+// (a schedule-source adapter); the rest are listed so a hospital can see that
+// DocTurn does not import from them yet.
 const SS_SOURCES = {
-  amion:      { label: "Amion",          kind: "vendor", demo: true, blurb: "amion.com on-call grid",         loginUrl: "https://www.amion.com",         api: "https://www.amion.com/api" },
-  // Epic on-call via FHIR R4 (SMART Backend Services). Credentials are server
-  // env only (EPIC_FHIR_BASE_URL / EPIC_CLIENT_ID / EPIC_PRIVATE_KEY_PEM /
-  // EPIC_TOKEN_URL) — issued through the health system's Epic app registration.
-  epic:       { label: "Epic (FHIR)",    kind: "epic",   blurb: "PractitionerRole + Schedule/Slot via FHIR R4", loginUrl: "", api: "" },
-  manual:     { label: "Manual list",    kind: "manual", blurb: "Director-maintained on-call slots in DocTurn", loginUrl: "", api: "" },
-  qgenda:     { label: "QGenda",         kind: "vendor", blurb: "QGenda provider schedules",                  loginUrl: "https://app.qgenda.com",        api: "https://api.qgenda.com/v2" },
-  tangier:    { label: "Tangier / Spok", kind: "vendor", blurb: "Tangier (Spok) on-call",                     loginUrl: "https://www.tangieronline.com", api: "" },
-  shiftadmin: { label: "ShiftAdmin",     kind: "vendor", blurb: "ShiftAdmin scheduling",                      loginUrl: "https://www.shiftadmin.com",    api: "" },
-  word:       { label: "Word document",  kind: "doc",  accept: ".doc,.docx", icon: "file-text", blurb: "Upload a .doc/.docx schedule" },
-  pdf:        { label: "PDF document",   kind: "doc",  accept: ".pdf",       icon: "file-type-2", blurb: "Upload a PDF schedule" },
-  online:     { label: "Online page",    kind: "url",  icon: "globe", blurb: "Parse a published web schedule" },
-  custom:     { label: "Custom / other", kind: "vendor", blurb: "Custom endpoint or sign-in capture",         loginUrl: "",                              api: "" },
-  none:       { label: "Not configured", kind: "none", blurb: "No schedule source set for this organization", loginUrl: "", api: "" },
+  amion:      { label: "Amion",          connector: true,  blurb: "amion.com on-call grid (OCS feed)" },
+  epic:       { label: "Epic (FHIR)",    connector: true,  blurb: "PractitionerRole + Schedule/Slot via FHIR R4" },
+  manual:     { label: "Manual list",    connector: true,  blurb: "Director-maintained on-call slots in DocTurn" },
+  qgenda:     { label: "QGenda",         connector: false, blurb: "QGenda provider schedules" },
+  tangier:    { label: "Tangier / Spok", connector: false, blurb: "Tangier (Spok) on-call" },
+  shiftadmin: { label: "ShiftAdmin",     connector: false, blurb: "ShiftAdmin scheduling" },
+  word:       { label: "Word document",  connector: false, blurb: "A .doc/.docx schedule" },
+  pdf:        { label: "PDF document",   connector: false, blurb: "A PDF schedule" },
+  online:     { label: "Online page",    connector: false, blurb: "A published web schedule" },
+  custom:     { label: "Custom / other", connector: false, blurb: "A custom endpoint" },
+  none:       { label: "Not configured", connector: false, blurb: "No schedule source set for this organization" },
 };
 const SS_SOURCE_KEYS = ["amion", "epic", "manual", "qgenda", "tangier", "shiftadmin", "word", "pdf", "online", "custom"];
-// Sources the on-call board can actually read (server-side schedule-source
-// adapters). Picking one of these also persists the org's board source.
-const SS_BOARD_SOURCES = { amion: true, epic: true, manual: true };
-
-// Convert an Amion hour token ("7a","12a","11p","4p") to 24h "HH:00".
-function ss24(tok) {
-  const m = String(tok).match(/^(\d+)([ap])$/i);
-  if (!m) return "00:00";
-  let h = parseInt(m[1], 10) % 12;
-  if (m[2].toLowerCase() === "p") h += 12;
-  return String(h).padStart(2, "0") + ":00";
-}
-function ssRange(hrs) { const p = String(hrs).split("-"); return ss24(p[0]) + "–" + ss24(p[1]); }
-
-// Distinct shift types implied by the schedule's time intervals — so the org's
-// shift types can be created agentically to match what Amion actually uses.
-function ssShiftTypes(rows) {
-  const seen = new Map();
-  rows.forEach((r) => {
-    if (seen.has(r.hrs)) return;
-    seen.set(r.hrs, { code: r.hrs, name: (SS_HRS[r.hrs] || [r.hrs])[0], time: ssRange(r.hrs) });
-  });
-  return [...seen.values()];
-}
-
-// Collapse the per-slot schedule into the DISTINCT people on it — one card per
-// provider (a name appearing in several slots is one person to add as a user).
-function ssUniqueProviders(rows) {
-  const byName = new Map();
-  rows.forEach((r) => {
-    const name = ssName(r.prov);
-    if (!byName.has(name)) {
-      byName.set(name, { name, raw: r.prov, group: r.grp, secure: r.secure, shift: SS_SHIFT[r.hrs] || "day", slots: [r.slot] });
-    } else {
-      byName.get(name).slots.push(r.slot);
-    }
-  });
-  return [...byName.values()];
-}
-
-function SSModeTab({ active, icon, label, sub, onClick }) {
-  return (
-    <button onClick={onClick} style={{ flex: 1, textAlign: "left", display: "flex", gap: 11, alignItems: "flex-start", padding: "12px 13px", borderRadius: "var(--radius-md)", cursor: "pointer",
-      border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`, background: active ? "#EFF6FF" : "#fff", transition: "all .15s" }}>
-      <span style={{ width: 32, height: 32, borderRadius: "var(--radius-md)", background: active ? "#fff" : "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-        <Icon name={icon} size={16} color={active ? "var(--primary)" : "var(--muted-foreground)"} />
-      </span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: active ? "var(--primary)" : "var(--foreground)" }}>{label}</div>
-        <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.35, marginTop: 1 }}>{sub}</div>
-      </div>
-    </button>
-  );
-}
 
 function ShiftChip({ shift, tint }) {
   const c = { amber: ["var(--status-pending-bg)", "var(--status-pending)"], blue: ["var(--status-active-bg)", "var(--status-active)"], slate: ["var(--status-neutral-bg)", "var(--status-neutral)"] }[tint] || ["var(--secondary)", "var(--muted-foreground)"];
   return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: "var(--radius-full)", background: c[0], color: c[1], whiteSpace: "nowrap" }}><span style={{ width: 6, height: 6, borderRadius: 99, background: c[1], flex: "none" }} />{shift}</span>;
 }
 
+function ssGoToIntegrations() {
+  try { const el = document.getElementById("integrations"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
+}
+
+function SSInfo({ icon, children, tone, dataAttr }) {
+  const warn = tone === "warn";
+  const props = dataAttr ? { [dataAttr]: "" } : {};
+  return (
+    <div {...props} style={{ display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap", marginTop: 14, background: warn ? "#FEF3C7" : "var(--secondary)", border: "1px solid " + (warn ? "#FCD34D" : "var(--border)"), borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: warn ? "#92400E" : "var(--muted-foreground)", lineHeight: 1.5 }}>
+      <Icon name={icon} size={15} style={{ marginTop: 1, flex: "none" }} />
+      {children}
+    </div>
+  );
+}
+
 function ScheduleSync({ org }) {
   const a = useActions();
   const st = useStore();
-  const [connected, setConnected] = React.useState(false);
-  const [mode, setMode] = React.useState("capture"); // default to the no-API path
+  const role = st.session && st.session.role;
+  // The server's rule for PATCH /api/oncall/source, POST /api/amion/sync-now
+  // and POST /api/oncall/epic/sync-now.
+  const canEdit = role === "director" || role === "developer";
+  const orgCode = (org && org.code) || (st.session && st.session.org) || "";
+  const orgLabel = (org && org.name) || orgCode;
   const [busy, setBusy] = React.useState(false);
-  const [revealed, setRevealed] = React.useState(false); // capture preview shown
-  const [lastSync, setLastSync] = React.useState("just now");
-  const [interval, setIntervalVal] = React.useState("15m");
-  const [added, setAdded] = React.useState({});      // provider name → true once imported
-  const [adding, setAdding] = React.useState({});    // provider name → true while importing
-  const [bulk, setBulk] = React.useState(false);     // "Add all" in flight
 
-  const [shiftsAdded, setShiftsAdded] = React.useState(false);
-  const [shiftsBusy, setShiftsBusy] = React.useState(false);
-
-  // Live Amion feed status (server-side AMION_OCS_URL env config). Null until
-  // fetched; { configured:false } when the org has no live feed — in which
-  // case everything below behaves exactly like the static snapshot demo.
+  // Live Amion feed status + the last pulled grid (/api/amion/status).
   const [amion, setAmion] = React.useState(null);
-  React.useEffect(() => {
-    if (!a.amionStatus) return;
-    Promise.resolve(a.amionStatus()).then((s) => { if (s) setAmion(s); }).catch(() => {});
-  }, []);
-  // Server-side status of the board sources (amion / epic / manual) for this
-  // org — drives the Epic panel and mirrors the org's persisted board source
-  // into the picker once loaded.
+  const loadAmion = () => { if (!a.amionStatus) return; Promise.resolve(a.amionStatus()).then((s) => { if (s) setAmion(s); }).catch(() => {}); };
+  React.useEffect(loadAmion, []);
+  // Board sources (amion / epic / manual): status + which one the board reads.
   const [boardSources, setBoardSources] = React.useState(null);
   const loadBoardSources = () => { if (!a.loadOnCallSources) return; Promise.resolve(a.loadOnCallSources()).then((r) => { if (r) setBoardSources(r); }).catch(() => {}); };
   React.useEffect(loadBoardSources, []);
+
+  const localKey = st.scheduleSources && st.scheduleSources[orgCode];
+  const serverKey = boardSources && boardSources.selected;
+  // The picker follows the server once it has answered; a no-connector vendor
+  // picked here (to see that DocTurn can't import it) stays shown.
   React.useEffect(() => {
-    if (boardSources && boardSources.explicit && SS_BOARD_SOURCES[boardSources.selected] && a.setScheduleSource) {
-      const code = (org && org.code) || st.selectedOrg || "ISPN";
-      if ((st.scheduleSources || {})[code] !== boardSources.selected) a.setScheduleSource(code, boardSources.selected);
+    if (serverKey && a.setScheduleSource && (!localKey || (SS_SOURCES[localKey] && SS_SOURCES[localKey].connector && localKey !== serverKey))) {
+      a.setScheduleSource(orgCode, serverKey);
     }
-  }, [boardSources]);
+  }, [serverKey]);
+  // A connector source always shows the SERVER's choice once loaded; only a
+  // no-connector vendor picked here overrides it (to show that it imports nothing).
+  const localIsVendorOnly = !!(localKey && SS_SOURCES[localKey] && !SS_SOURCES[localKey].connector);
+  const srcKey = localIsVendorOnly ? localKey : (serverKey || localKey || "manual");
+  const src = SS_SOURCES[srcKey] || SS_SOURCES.manual;
+  const notConfigured = srcKey === "none";
+
+  const [picking, setPicking] = React.useState(false);
   const pickSource = (key) => {
+    if (!canEdit) return;
+    const s = SS_SOURCES[key];
+    if (s && s.connector && a.setOnCallSource) {
+      // The board's source is the server's: change it there first, then show it.
+      setPicking(true);
+      Promise.resolve(a.setOnCallSource(key))
+        .then(() => { a.setScheduleSource(orgCode, key); loadBoardSources(); })
+        .catch(() => {})
+        .finally(() => setPicking(false));
+      return;
+    }
     a.setScheduleSource(orgCode, key);
-    if (SS_BOARD_SOURCES[key] && a.setOnCallSource) Promise.resolve(a.setOnCallSource(key)).then(loadBoardSources).catch(() => {});
   };
+
   const epicStatus = boardSources && boardSources.sources && boardSources.sources.epic;
   const epicModuleOn = !boardSources || !boardSources.modules || boardSources.modules.epic !== false;
   const [epicBusy, setEpicBusy] = React.useState(false);
-  const epicSync = () => { if (!a.epicSyncNow) return; setEpicBusy(true); Promise.resolve(a.epicSyncNow()).then(loadBoardSources).finally(() => setEpicBusy(false)); };
+  const epicSync = () => { if (!a.epicSyncNow || epicBusy) return; setEpicBusy(true); Promise.resolve(a.epicSyncNow()).then(loadBoardSources).finally(() => setEpicBusy(false)); };
 
-  const orgCode = (org && org.code) || st.selectedOrg || "ISPN";
-  // The captured Amion on-call grid is the REAL Cedars / Tarzana ISP roster, so
-  // it only auto-populates for the Cedars org (code ISP*/CEDARS). Any other org
-  // may still select Amion and connect — they just wire their own live feed
-  // instead of seeing Cedars' people.
-  const isCedars = /^(ISP|CEDARS)/i.test(orgCode);
-  const srcKey = (st.scheduleSources && st.scheduleSources[orgCode]) || "amion";
-  const src = SS_SOURCES[srcKey] || SS_SOURCES.amion;
-  const notConfigured = srcKey === "none";
+  const amionConnected = !!(amion && amion.configured);
+  const epicConnected = !!(epicStatus && epicStatus.configured);
+  // "Connected" only ever comes from the server, for the source shown.
+  const connected = (srcKey === "amion" && amionConnected) || (srcKey === "epic" && epicConnected);
+  const connLabel = srcKey === "epic" ? "FHIR" : "Feed";
 
-  // Live feed rows (server-parsed Amion grid) → same shape as SS_ROWS. When
-  // the env var isn't set (or this isn't the Amion org) we keep the snapshot.
-  const liveRows = React.useMemo(() => {
-    if (!amion || !amion.configured || !Array.isArray(amion.providers) || !amion.providers.length) return null;
+  // The last pulled grid (server-parsed). Nothing is shown that the server did not pull.
+  const rows = React.useMemo(() => {
+    if (!amionConnected || !Array.isArray(amion.providers)) return [];
     return amion.providers.map((p) => ({ slot: p.slot, hrs: p.hrs, prov: p.name, grp: p.group, secure: !!p.secure }));
   }, [amion]);
-  const liveOk = !!(amion && amion.configured && amion.lastStatus === "ok" && liveRows);
-  const liveErr = !!(amion && amion.configured && amion.lastStatus === "error");
-  const rows = liveRows || SS_ROWS;
+  const liveOk = amionConnected && amion.lastStatus === "ok" && rows.length > 0;
+  const liveErr = amionConnected && amion.lastStatus === "error";
+  const neverPulled = amionConnected && !amion.lastSyncAt;
+  const people = React.useMemo(() => {
+    const byName = new Map();
+    rows.forEach((r) => {
+      const name = ssName(r.prov);
+      if (!byName.has(name)) byName.set(name, { name, raw: r.prov, group: r.grp, secure: r.secure, shift: SS_SHIFT[r.hrs] || "day", slots: [r.slot] });
+      else byName.get(name).slots.push(r.slot);
+    });
+    return [...byName.values()];
+  }, [rows]);
+  const shiftTypes = React.useMemo(() => {
+    const seen = new Map();
+    rows.forEach((r) => { if (!seen.has(r.hrs)) seen.set(r.hrs, { code: r.hrs, name: (SS_HRS[r.hrs] || [r.hrs])[0], shift: SS_SHIFT[r.hrs] || "day" }); });
+    return [...seen.values()];
+  }, [rows]);
 
-  // A configured live feed connects itself — no fake "sign in & capture" step.
-  React.useEffect(() => {
-    if (amion && amion.configured) {
-      setConnected(true); setRevealed(true);
-      if (amion.lastSyncAt) setLastSync(ssAgo(amion.lastSyncAt));
-    }
-  }, [amion]);
-
-  const people = React.useMemo(() => ssUniqueProviders(rows), [rows]);
-  const remaining = people.filter((p) => !added[p.name]);
-  const shiftTypes = React.useMemo(() => ssShiftTypes(rows), [rows]);
-
-  const importShifts = () => {
-    if (!a.importShiftTypes) return;
-    setShiftsBusy(true);
-    Promise.resolve(a.importShiftTypes(shiftTypes.map((t) => ({ name: t.name, time: t.time }))))
-      .then(() => setShiftsAdded(true))
-      .finally(() => setShiftsBusy(false));
-  };
-
-  const importOne = (p) => {
-    setAdding((m) => ({ ...m, [p.name]: true }));
-    Promise.resolve(a.importProviders(orgCode, [{ name: p.name, group: p.group, shift: p.shift }]))
-      .then(() => { setAdded((m) => ({ ...m, [p.name]: true })); })
-      .finally(() => { setAdding((m) => { const n = { ...m }; delete n[p.name]; return n; }); });
-  };
-  const importAll = () => {
-    if (!remaining.length) return;
-    setBulk(true);
-    Promise.resolve(a.importProviders(orgCode, remaining.map((p) => ({ name: p.name, group: p.group, shift: p.shift }))))
-      .then(() => { setAdded((m) => { const n = { ...m }; remaining.forEach((p) => { n[p.name] = true; }); return n; }); })
-      .finally(() => setBulk(false));
-  };
-
-  // API fields
-  const [token, setToken] = React.useState("");
-  const [baseUrl, setBaseUrl] = React.useState("https://www.amion.com/api");
-  // Capture fields
-  const [loginUrl, setLoginUrl] = React.useState("https://www.amion.com");
-  const [username, setUsername] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [schedKey, setSchedKey] = React.useState("");
-  // Document / online-page ingestion (non-vendor sources).
-  const [fileName, setFileName] = React.useState("");
-  const [pageUrl, setPageUrl] = React.useState("");
-  const connLabel = src.kind === "doc" ? "Document" : src.kind === "url" ? "Web page" : (mode === "api" ? "API" : "Capture");
-
-  // Switching the org's source resets the live connection and points the
-  // sign-in/API fields at the new vendor's defaults.
-  React.useEffect(() => {
-    // A live env-configured Amion feed stays connected regardless of the picker.
-    if (!(amion && amion.configured)) { setConnected(false); setRevealed(false); }
-    if (src.api) setBaseUrl(src.api);
-    if (src.loginUrl) setLoginUrl(src.loginUrl);
-  }, [srcKey]);
-
-  const run = () => {
+  const amionSync = () => {
+    if (!a.amionSyncNow || busy) return;
     setBusy(true);
-    setTimeout(() => { setBusy(false); setConnected(true); setRevealed(true); setLastSync("just now"); }, 1200);
+    Promise.resolve(a.amionSyncNow())
+      .then((s) => { if (s) setAmion(s); })
+      .catch(() => {})
+      .finally(() => setBusy(false));
   };
-  const syncNow = () => {
-    // Live feed → real server-side sync (re-pulls Amion, updates the roster).
-    if (amion && amion.configured && a.amionSyncNow) {
-      setBusy(true);
-      Promise.resolve(a.amionSyncNow())
-        .then((s) => { if (s) setAmion(s); setLastSync("just now"); })
-        .catch(() => {})
-        .finally(() => setBusy(false));
-      return;
-    }
-    setBusy(true); setTimeout(() => { setBusy(false); setLastSync("just now"); }, 900);
-  };
-  const disconnect = () => { setConnected(false); setRevealed(false); };
 
   return (
-    <Card style={{ padding: 18, marginBottom: 18 }}>
-      {/* Feed banner: green when the live Amion feed is connected & healthy;
-          amber "feed error" when the last pull failed (last snapshot shown);
-          amber "Preview" when no live feed is configured (static snapshot). */}
-      {liveOk ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#D1FAE5", border: "1px solid #6EE7B7" }}>
+    <Card style={{ padding: 18, marginBottom: 18, minWidth: 0 }}>
+      <div data-schedule-sync={srcKey} style={{ minWidth: 0 }}>
+      {/* Feed banner — only for a real Amion connection. */}
+      {srcKey === "amion" && liveOk && (
+        <div data-amion-banner="ok" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#D1FAE5", border: "1px solid #6EE7B7", flexWrap: "wrap" }}>
           <Icon name="circle-check-big" size={15} color="#065F46" />
           <span style={{ fontSize: 12.5, fontWeight: 600, color: "#065F46" }}>Live Amion feed · synced {ssAgo(amion.lastSyncAt)} · {amion.rowCount} slots</span>
         </div>
-      ) : liveErr ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+      )}
+      {srcKey === "amion" && liveErr && (
+        <div data-amion-banner="error" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D", flexWrap: "wrap" }}>
           <Icon name="triangle-alert" size={15} color="#92400E" />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Amion feed error — showing last snapshot.</span>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D" }}>
-          <Icon name="info" size={15} color="#92400E" />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>Preview — schedule shown is a loaded snapshot, not a live Amion connection.</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>The last Amion pull failed ({ssAgo(amion.lastSyncAt)}){amion.lastError ? ": " + amion.lastError : ""}{rows.length ? " — showing the last good pull." : "."}</span>
         </div>
       )}
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4 }}>
-        <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, whiteSpace: "nowrap" }}>On-call schedule sync</h3>
-            <Badge variant="secondary">{src.label}</Badge>
-            {connected && <span style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {connLabel}</Badge></span>}
-          </div>
-          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>Each organization uses its own scheduling system — pick <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgCode}</b>'s source, then import its on-call grid to drive DocTurn's rotation pool.</p>
+      {srcKey === "amion" && amionConnected && neverPulled && (
+        <div data-amion-banner="pending" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "var(--secondary)", border: "1px solid var(--border)", flexWrap: "wrap" }}>
+          <Icon name="clock" size={15} color="var(--muted-foreground)" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)" }}>Amion is connected; the first pull hasn't run yet{canEdit ? " — press Sync now, or wait for the scheduled pull." : "."}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-          <span style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</span>
-          <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-            <select value={srcKey} onChange={(e) => pickSource(e.target.value)}
-              style={{ appearance: "none", WebkitAppearance: "none", height: 30, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
-              {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}</option>)}
+      )}
+
+      {/* header — wraps on phones: the Source picker and Sync now drop below the title. */}
+      <div data-ss-header style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4, flexWrap: "wrap", minWidth: 0 }}>
+        <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
+        <div style={{ flex: "1 1 220px", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>On-call schedule sync</h3>
+            <Badge variant="secondary">{src.label}</Badge>
+            {connected && <span data-ss-connected style={{ whiteSpace: "nowrap" }}><Badge status="accepted" icon="circle">Connected · {connLabel}</Badge></span>}
+          </div>
+          <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "2px 0 0" }}>
+            Where <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgLabel}</b>'s on-call schedule comes from.
+            {serverKey ? <React.Fragment> The on-call board reads <b data-ss-board-source={serverKey} style={{ color: "var(--foreground)", fontWeight: 600 }}>{SS_SOURCES[serverKey].label}</b>.</React.Fragment> : null}
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 1 auto", minWidth: 0, flexWrap: "wrap", marginLeft: "auto" }}>
+          <label htmlFor="ss-source" style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</label>
+          <div style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0 }}>
+            <select id="ss-source" value={srcKey} onChange={(e) => pickSource(e.target.value)} disabled={!canEdit || picking}
+              style={{ appearance: "none", WebkitAppearance: "none", minHeight: 44, maxWidth: "100%", padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 16, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.6 }}>
+              {SS_SOURCE_KEYS.map((k) => <option key={k} value={k}>{SS_SOURCES[k].label}{SS_SOURCES[k].connector ? "" : " — no connector yet"}</option>)}
               <option value="none">Not configured</option>
             </select>
             <Icon name="chevron-down" size={12} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
           </div>
-          {connected && <Button size="sm" variant="outline" icon="rotate-ccw" onClick={syncNow}>{busy ? "Syncing…" : "Sync now"}</Button>}
+          {srcKey === "amion" && amionConnected && canEdit && (
+            <Button size="sm" variant="outline" icon="rotate-ccw" onClick={amionSync} disabled={busy}>{busy ? "Syncing…" : "Sync now"}</Button>
+          )}
         </div>
       </div>
+      {!canEdit && <div data-readonly-note style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 6, fontWeight: 600 }}>Only a director can change the source or run a sync.</div>}
 
       {notConfigured && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 14, padding: "16px 18px", borderRadius: "var(--radius-md)", background: "var(--secondary)", border: "1px dashed var(--border)" }}>
-          <Icon name="calendar-off" size={20} color="var(--muted-foreground)" />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600 }}>No schedule source for {orgCode}</div>
-            <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Choose this organization's scheduling system above (Amion, QGenda, …) to import its on-call grid.</div>
-          </div>
-        </div>
+        <SSInfo icon="calendar-off">
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}><b style={{ color: "var(--foreground)" }}>No schedule source for {orgLabel}.</b> Pick Amion, Epic or the Manual list above.</span>
+        </SSInfo>
       )}
 
-      {/* Epic (FHIR R4, SMART Backend Services) — server-env credentials only;
-          shows what the health system's Epic team must issue when absent. */}
+      {/* A vendor DocTurn cannot read: say so — no form, no "Connect". */}
+      {!notConfigured && !src.connector && (
+        <SSInfo icon="info" dataAttr="data-ss-no-connector">
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <b style={{ color: "var(--foreground)" }}>DocTurn has no {src.label} connector yet</b> — nothing is imported from {src.label}, and the on-call board keeps reading {serverKey ? SS_SOURCES[serverKey].label : "its current source"}. Use <b style={{ color: "var(--foreground)" }}>Amion</b> or <b style={{ color: "var(--foreground)" }}>Epic</b> (connect them under Integrations below) or keep the on-call list by hand (<b style={{ color: "var(--foreground)" }}>Manual list</b>).
+          </span>
+        </SSInfo>
+      )}
+
+      {/* Epic (FHIR R4, SMART Backend Services) — the hospital's own app. */}
       {srcKey === "epic" && (
-        <div style={{ marginTop: 14 }}>
-          {!epicModuleOn ? (
-            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
-              <Icon name="triangle-alert" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
-              <span>The <b>Epic on-call (FHIR)</b> module is switched off for this organization. A developer can enable it from the module console.</span>
-            </div>
-          ) : epicStatus && epicStatus.configured ? (
-            <div style={{ display: "flex", gap: 9, alignItems: "center", background: epicStatus.lastStatus === "error" ? "#FEF3C7" : "#D1FAE5", border: "1px solid " + (epicStatus.lastStatus === "error" ? "#FCD34D" : "#6EE7B7"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "#92400E" : "#065F46", flexWrap: "wrap" }}>
-              <Icon name={epicStatus.lastStatus === "error" ? "triangle-alert" : "circle-check-big"} size={15} />
-              <span style={{ fontWeight: 600 }}>Epic FHIR connected · {epicStatus.lastStatus === "error" ? "last sync failed" : "synced " + ssAgo(epicStatus.lastSyncAt)} · {epicStatus.rowCount} on-call rows</span>
-              {epicStatus.error && <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.error}</span>}
-              <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="rotate-ccw" onClick={epicSync} disabled={epicBusy}>{epicBusy ? "Syncing…" : "Sync now"}</Button></span>
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-              <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
-              <span>
-                <b style={{ color: "var(--foreground)" }}>Needs Epic app credentials</b> (App Orchard / Vendor Services registration). DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) using SMART Backend Services — a registered backend app, its client ID and RS384 private key, and the site's FHIR base + token URLs, set on the server as <code>EPIC_FHIR_BASE_URL</code>, <code>EPIC_CLIENT_ID</code>, <code>EPIC_PRIVATE_KEY_PEM</code>, <code>EPIC_TOKEN_URL</code> (and <code>EPIC_ORG_CODE</code> for this organization). Nothing is fabricated until those are present.
-                {epicStatus && epicStatus.message ? <span style={{ display: "block", marginTop: 6, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.message}</span> : null}
-              </span>
-            </div>
-          )}
-        </div>
+        !epicModuleOn ? (
+          <SSInfo icon="triangle-alert" tone="warn">
+            <span style={{ flex: "1 1 220px", minWidth: 0 }}>Epic on-call is switched off for this organization. A director switches it on under <b>Integrations → Epic on-call (FHIR)</b> once it is set up.</span>
+          </SSInfo>
+        ) : epicConnected ? (
+          <div data-ss-epic="connected" style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 14, background: epicStatus.lastStatus === "error" ? "#FEF3C7" : "#D1FAE5", border: "1px solid " + (epicStatus.lastStatus === "error" ? "#FCD34D" : "#6EE7B7"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "#92400E" : "#065F46", flexWrap: "wrap" }}>
+            <Icon name={epicStatus.lastStatus === "error" ? "triangle-alert" : "circle-check-big"} size={15} />
+            <span style={{ fontWeight: 600, minWidth: 0 }}>Epic FHIR connected · {epicStatus.lastStatus === "error" ? "last sync failed" : epicStatus.lastSyncAt ? "synced " + ssAgo(epicStatus.lastSyncAt) : "not synced yet"} · {epicStatus.rowCount} on-call rows</span>
+            {epicStatus.error && <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, overflowWrap: "anywhere" }}>{epicStatus.error}</span>}
+            {canEdit && <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="rotate-ccw" onClick={epicSync} disabled={epicBusy}>{epicBusy ? "Syncing…" : "Sync now"}</Button></span>}
+          </div>
+        ) : (
+          <SSInfo icon="info">
+            <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+              <b style={{ color: "var(--foreground)" }}>Epic isn't connected for {orgLabel}.</b> DocTurn reads on-call from Epic over FHIR R4 (PractitionerRole, Practitioner, Schedule/Slot) with a backend app your Epic team registers for DocTurn: its client ID, RS384 private key and your FHIR base URL. Enter them under <b style={{ color: "var(--foreground)" }}>Integrations → Epic on-call (FHIR) → Set up</b> (stored encrypted), then switch it on. Nothing is shown until they work.
+              {epicStatus && epicStatus.message ? <span style={{ display: "block", marginTop: 6, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>{epicStatus.message}</span> : null}
+            </span>
+          </SSInfo>
+        )
       )}
+
       {srcKey === "manual" && (
-        <div style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-          <Icon name="pencil" size={15} style={{ marginTop: 1, flex: "none" }} />
-          <span>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0 }}>Open the board →</button></span>
-        </div>
+        <SSInfo icon="pencil">
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0, minHeight: 44 }}>Open the board →</button></span>
+        </SSInfo>
       )}
 
-      {!connected && !notConfigured && src.kind === "vendor" && (
-        <React.Fragment>
-          {/* mode selector */}
-          <div style={{ display: "flex", gap: 10, margin: "14px 0 6px" }}>
-            <SSModeTab active={mode === "api"} icon="plug-zap" label="API token" sub="Vendor exposes a schedule API. Cleanest, real-time." onClick={() => setMode("api")} />
-            <SSModeTab active={mode === "capture"} icon="scan-line" label="Sign-in capture" sub="No API? We log in & read the schedule off-screen." onClick={() => setMode("capture")} />
-          </div>
-
-          {mode === "api" ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 12 }}>
-              <Field label="API base URL" icon="link" value={baseUrl} onChange={setBaseUrl} />
-              <Field label="API token" icon="key-round" value={token} onChange={setToken} type="password" placeholder="paste secret token" help="Stored server-side, never exposed to clients." />
-              <div style={{ gridColumn: "1 / -1" }}>
-                <Button icon="plug" onClick={run}>{busy ? "Connecting…" : "Test & connect"}</Button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "#92400E", lineHeight: 1.5 }}>
-                <Icon name="info" size={15} color="#B45309" style={{ marginTop: 1, flex: "none" }} />
-                <span>No public API? DocTurn signs in to {src.label} inside an <b>isolated, server-side headless browser</b>, opens your published on-call page, and parses the grid straight off the rendered screen. The access token lives <b>only in server-side configuration</b> — never stored in the database, never written to a log, never returned by the API — is used only to fetch the schedule, and every capture is written to the audit log.</span>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <Field label="Sign-in URL" icon="link" value={loginUrl} onChange={setLoginUrl} />
-                <Field label="Schedule key / org password" icon="hash" value={schedKey} onChange={setSchedKey} help={src.label + "'s interactive-schedule password."} />
-                <Field label="Username" icon="user" value={username} onChange={setUsername} />
-                <Field label="Password" icon="lock" value={password} onChange={setPassword} type="password" />
-              </div>
-              <div style={{ marginTop: 14 }}>
-                <Button icon="scan-line" onClick={run}>{busy ? "Signing in & capturing…" : "Sign in & capture"}</Button>
-              </div>
-            </div>
-          )}
-        </React.Fragment>
+      {/* Amion is a REAL connection: the hospital's OCS feed, saved encrypted
+          under Integrations → Amion → Set up. No browser-side "connect". */}
+      {srcKey === "amion" && amion && !amionConnected && (
+        <SSInfo icon="plug-zap" dataAttr="data-amion-connect">
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+            <b style={{ color: "var(--foreground)" }}>Amion isn't connected for {orgLabel}.</b> Add your schedule's OCS feed link under <b style={{ color: "var(--foreground)" }}>Integrations → Amion → Set up</b> (below). It is stored encrypted on the server; DocTurn then pulls the grid automatically and this panel shows it.
+          </span>
+          <button type="button" onClick={ssGoToIntegrations}
+            style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--primary)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Go to Integrations</button>
+        </SSInfo>
       )}
 
-      {/* Document upload (Word / PDF) — many orgs keep the schedule in a file. */}
-      {!connected && !notConfigured && src.kind === "doc" && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-            <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
-            <span>Upload <b style={{ color: "var(--foreground)" }}>{orgCode}</b>'s {src.label.toLowerCase()}. DocTurn reads the on-call table out of the file and lists the providers to add — nothing leaves the server unencrypted.</span>
-          </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Schedule file</label>
-              <label style={{ display: "flex", alignItems: "center", gap: 9, height: 40, padding: "0 12px", border: "1px dashed var(--input)", borderRadius: "var(--radius-md)", background: "#fff", cursor: "pointer" }}>
-                <Icon name={src.icon || "file-text"} size={16} color="var(--muted-foreground)" />
-                <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, color: fileName ? "var(--foreground)" : "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fileName || ("Choose a " + src.label + " (" + (src.accept || "") + ")")}</span>
-                <input type="file" accept={src.accept} style={{ display: "none" }} onChange={(e) => setFileName((e.target.files && e.target.files[0] && e.target.files[0].name) || "")} />
-              </label>
-            </div>
-            <Button icon="upload" onClick={run} disabled={busy}>{busy ? "Parsing…" : "Upload & parse"}</Button>
-          </div>
-        </div>
-      )}
-
-      {/* Online page — fetch & parse a published web schedule. */}
-      {!connected && !notConfigured && src.kind === "url" && (
-        <div style={{ marginTop: 14 }}>
-          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
-            <Icon name="info" size={15} style={{ marginTop: 1, flex: "none" }} />
-            <span>Paste <b style={{ color: "var(--foreground)" }}>{orgCode}</b>'s published schedule page. DocTurn fetches it server-side and parses the on-call grid off the page.</span>
-          </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-            <div style={{ flex: 1, minWidth: 0 }}><Field label="Schedule URL" icon="link" value={pageUrl} onChange={setPageUrl} placeholder="https://…/oncall" /></div>
-            <Button icon="globe" onClick={run} disabled={busy}>{busy ? "Fetching…" : "Fetch & parse"}</Button>
-          </div>
-        </div>
-      )}
-
-      {/* capture / sync result — the captured Cedars grid only for the ISP org */}
-      {connected && revealed && src.demo && isCedars && (
-        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(0,260px) 1fr", gap: 16, alignItems: "start" }}>
-          {/* captured raw page */}
-          <div>
+      {/* The last grid the server pulled from this org's Amion feed. */}
+      {srcKey === "amion" && amionConnected && rows.length > 0 && (
+        <div data-amion-grid style={{ marginTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", gap: 16, alignItems: "start" }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
-              <Icon name="scan-line" size={13} color="var(--muted-foreground)" />
-              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Captured page</span>
+              <Icon name="calendar-clock" size={13} color="var(--muted-foreground)" />
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Last pull · {ssAgo(amion.lastSyncAt)}</span>
             </div>
             <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#fff" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ width: 8, height: 8, borderRadius: 99, background: "#E2574C" }} /><span style={{ width: 8, height: 8, borderRadius: 99, background: "#E9B23E" }} /><span style={{ width: 8, height: 8, borderRadius: 99, background: "#3FB950" }} />
-                <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 10.5, color: "var(--muted-foreground)", marginLeft: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>amion.com/cgi-bin/ocs?Lo=…</span>
-              </div>
-              <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+              <div style={{ maxHeight: 300, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>
                   <thead><tr>
                     <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Assignment</th>
                     <th style={{ textAlign: "left", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Provider</th>
-                    <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready">Sec</th>
+                    <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready in Amion">Sec</th>
                   </tr></thead>
                   <tbody>
                     {rows.map((r, i) => (
@@ -469,127 +307,51 @@ function ScheduleSync({ org }) {
                 </table>
               </div>
             </div>
-            {/* hours → shift mapping */}
             <div style={{ marginTop: 11 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Shift types detected</span>
-                {shiftsAdded
-                  ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "var(--status-accepted)" }}><Icon name="check" size={12} />Added</span>
-                  : <Button size="sm" variant="outline" icon="plus" onClick={importShifts} disabled={shiftsBusy}>{shiftsBusy ? "Adding…" : "Add to org (" + shiftTypes.length + ")"}</Button>}
-              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)", marginBottom: 7 }}>Hours in this pull</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {shiftTypes.map((t) => (
-                  <div key={t.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-                    <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, background: "var(--secondary)", padding: "1px 6px", borderRadius: 5, minWidth: 46, textAlign: "center" }}>{t.code}</code>
+                  <div key={t.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
+                    <code style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12, background: "var(--secondary)", padding: "1px 6px", borderRadius: 5, minWidth: 46, textAlign: "center" }}>{t.code}</code>
                     <Icon name="arrow-right" size={12} color="var(--muted-foreground)" />
                     <span style={{ fontSize: 12, fontWeight: 600 }}>{t.name}</span>
-                    <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, color: "var(--muted-foreground)" }}>{t.time}</span>
+                    <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>({t.shift} shift)</span>
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: 11, color: "var(--muted-foreground)", marginTop: 6, lineHeight: 1.4 }}>
-                Created automatically from the schedule's actual time intervals — so the org's shift types match Amion.
-              </div>
             </div>
           </div>
 
-          {/* parsed result → people you can add as users */}
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7, flexWrap: "wrap" }}>
               <Icon name="users-round" size={14} color="var(--status-accepted)" />
-              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Providers found → add as users</span>
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>People on this pull</span>
               <Badge status="accepted">{people.length} people</Badge>
-              {remaining.length > 0 && (
-                <span style={{ marginLeft: "auto" }}>
-                  <Button size="sm" icon="user-plus" onClick={importAll}>{bulk ? "Adding…" : "Add all (" + remaining.length + ")"}</Button>
-                </span>
-              )}
             </div>
-            <p style={{ fontSize: 11.5, color: "var(--muted-foreground)", margin: "0 0 8px", lineHeight: 1.45 }}>
-              Each distinct person on the schedule, ready to add to <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{orgCode}</b> as a hospitalist user. Shift slots aren't imported — just the people.
-            </p>
             <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", maxHeight: 360, overflowY: "auto" }}>
-              {people.map((p, i) => {
-                const isAdded = !!added[p.name];
-                const isAdding = !!adding[p.name];
-                return (
-                  <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 13px", borderTop: i ? "1px solid var(--border)" : "none", opacity: isAdded ? 0.6 : 1 }}>
-                    <Avatar initials={ssInit(p.raw)} size={30} tint={isAdded ? "emerald" : "slate"} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.group} · {p.slots.length} slot{p.slots.length > 1 ? "s" : ""}</div>
-                    </div>
-                    <ShiftChip shift={p.shift === "day" ? "Day" : p.shift === "swing" ? "Swing" : "Night"} tint={p.shift === "day" ? "amber" : p.shift === "swing" ? "blue" : "slate"} />
-                    {isAdded
-                      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 600, color: "var(--status-accepted)", flex: "none" }}><Icon name="check" size={13} />Added</span>
-                      : <Button size="sm" variant="outline" icon="user-plus" onClick={() => importOne(p)} disabled={isAdding}>{isAdding ? "Adding…" : "Add"}</Button>}
+              {people.map((p, i) => (
+                <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 13px", borderTop: i ? "1px solid var(--border)" : "none", minWidth: 0 }}>
+                  <Avatar initials={ssInit(p.raw)} size={30} tint="slate" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.group} · {p.slots.length} slot{p.slots.length > 1 ? "s" : ""}</div>
                   </div>
-                );
-              })}
+                  <ShiftChip shift={p.shift === "day" ? "Day" : p.shift === "swing" ? "Swing" : "Night"} tint={p.shift === "day" ? "amber" : p.shift === "swing" ? "blue" : "slate"} />
+                </div>
+              ))}
             </div>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 9, fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
-              <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />Added providers become hospitalist users in this organization and appear in the rotation pool. Re-running a sync won't create duplicates.
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 9, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
+              <Icon name="info" size={13} style={{ marginTop: 1, flex: "none" }} />
+              <span>Each sync marks everyone on the grid as working with their shift, and creates a hospitalist account for anyone new — locked until a director issues a one-time password (People → Reset password). Nobody is removed. The server pulls on its own schedule (every 4 hours unless the operator changed it).</span>
             </div>
-
-            {/* controls */}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 13, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--muted-foreground)" }}>
-                <Icon name="clock" size={14} />Re-sync every
-                <select value={interval} onChange={(e) => setIntervalVal(e.target.value)} style={{ fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600, padding: "5px 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", cursor: "pointer" }}>
-                  <option value="5m">5 min</option>
-                  <option value="15m">15 min</option>
-                  <option value="30m">30 min</option>
-                  <option value="1h">1 hour</option>
-                  <option value="2h">2 hours</option>
-                  <option value="6h">6 hours</option>
-                  <option value="12h">Twice a day</option>
-                  <option value="24h">Once a day</option>
-                  <option value="manual">Manual only</option>
-                </select>
-              </div>
-              <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· Last sync <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{lastSync}</b></span>
-              <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 11.5, color: "var(--muted-foreground)" }}>
-              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · token kept in server-side config, never in the database · every capture written to the audit log.
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 12, color: "var(--muted-foreground)", flexWrap: "wrap" }}>
+              <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · the feed link is stored encrypted and never shown · every sync is in the audit trail.
+              {canEdit && <button type="button" onClick={ssGoToIntegrations} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, padding: 0, minHeight: 44 }}>Change or remove it under Integrations →</button>}
             </div>
           </div>
         </div>
       )}
-
-      {/* Non-Amion sources — and Amion on a non-Cedars org — connect but have no
-          captured grid: show an honest parsed-result panel + re-sync controls. */}
-      {connected && revealed && (!src.demo || !isCedars) && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--status-accepted-bg)", border: "1px solid var(--status-accepted)", borderRadius: "var(--radius-md)", padding: "11px 13px", marginBottom: 14, fontSize: 12.5, color: "var(--foreground)", lineHeight: 1.5 }}>
-            <Icon name="circle-check-big" size={15} color="var(--status-accepted)" style={{ marginTop: 1, flex: "none" }} />
-            <span>Connected to <b>{src.label}</b> for <b>{orgCode}</b> via {connLabel.toLowerCase()}. DocTurn will parse this source and list its providers here to add to the rotation pool.</span>
-          </div>
-          <div style={{ border: "1px dashed var(--border)", borderRadius: "var(--radius-md)", padding: 22, textAlign: "center", color: "var(--muted-foreground)" }}>
-            <Icon name="users-round" size={20} color="var(--muted-foreground)" />
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--foreground)", marginTop: 8 }}>No providers parsed yet</div>
-            <div style={{ fontSize: 12.5, marginTop: 4 }}>Wire a live {src.label} feed{src.kind === "doc" ? " (or upload the real schedule)" : ""} to import this organization's people automatically.</div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 13, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--muted-foreground)" }}>
-              <Icon name="clock" size={14} />Re-sync every
-              <select value={interval} onChange={(e) => setIntervalVal(e.target.value)} style={{ fontFamily: "var(--font-sans)", fontSize: 12.5, fontWeight: 600, padding: "5px 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", cursor: "pointer" }}>
-                <option value="5m">5 min</option>
-                <option value="15m">15 min</option>
-                <option value="30m">30 min</option>
-                <option value="1h">1 hour</option>
-                <option value="2h">2 hours</option>
-                <option value="6h">6 hours</option>
-                <option value="12h">Twice a day</option>
-                <option value="24h">Once a day</option>
-                <option value="manual">Manual only</option>
-              </select>
-            </div>
-            <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· Last sync <b style={{ color: "var(--foreground)", fontWeight: 600 }}>{lastSync}</b></span>
-            <button onClick={disconnect} style={{ marginLeft: "auto", border: "none", background: "transparent", color: "var(--destructive)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="unplug" size={13} />Disconnect</button>
-          </div>
-        </div>
-      )}
+      </div>
     </Card>
   );
 }

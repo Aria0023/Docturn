@@ -73,6 +73,7 @@ function ScheduleSync() {
   const [baseUrl, setBaseUrl] = React.useState("https://www.amion.com/api");
   // Capture fields
   const [loginUrl, setLoginUrl] = React.useState("https://www.amion.com");
+  // Never pre-filled: a sign-in is typed by the user, not shipped in the kit.
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [schedKey, setSchedKey] = React.useState("");

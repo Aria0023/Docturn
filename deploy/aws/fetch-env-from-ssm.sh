@@ -86,6 +86,14 @@ fi
 if grep -q '^SYNTHETIC_DATA="true"$' "$TMP"; then
   echo "WARNING: SYNTHETIC_DATA=true — this instance will seed DEMO accounts. Fine for a test box, never for real PHI." >&2
 fi
+# Hospital integration credentials (Settings → Integrations) are encrypted with
+# INTEGRATION_KEY; without a usable key the app refuses to store them.
+IK=$(sed -n 's/^INTEGRATION_KEY="\(.*\)"$/\1/p' "$TMP")
+if [[ -z "$IK" ]]; then
+  echo "WARNING: INTEGRATION_KEY is not in SSM — hospitals cannot save Amion/Epic credentials (put /docturn/prod/INTEGRATION_KEY as a SecureString: openssl rand -hex 32)." >&2
+elif [[ ! "$IK" =~ ^[0-9a-fA-F]{64}$ && ${#IK} -lt 32 ]]; then
+  die "INTEGRATION_KEY must be 64 hex chars or at least 32 characters (openssl rand -hex 32)"
+fi
 PAP=$(sed -n 's/^PLATFORM_ADMIN_PASSWORD="\(.*\)"$/\1/p' "$TMP")
 [[ ${#PAP} -ge 12 ]] || die "PLATFORM_ADMIN_PASSWORD is shorter than 12 chars — the app will refuse to create the operator account"
 

@@ -1,6 +1,7 @@
 import webpush from "web-push";
 import { storage } from "../storage.js";
 import type { PushTransport } from "./notifications.js";
+import { pushAllowedForOrg } from "../integrations/gates.js";
 
 /**
  * Real push delivery — the "message reaches the doctor's pocket" transport.
@@ -95,6 +96,11 @@ export class LivePushTransport implements PushTransport {
   }
 
   async send(userId: number, payload: { title: string }): Promise<void> {
+    // Push switched off for the recipient's org (Settings → Integrations):
+    // nothing leaves for Apple/Google/Expo. Tokens are kept, so switching it
+    // back on resumes delivery without every device re-registering.
+    const user = await storage().getUserById(userId);
+    if (!user || !(await pushAllowedForOrg(user.organizationId))) return;
     const tokens = await storage().listDeviceTokens(userId);
     const expoBatch: Array<{ to: string; title: string }> = [];
     for (const t of tokens) {

@@ -133,6 +133,14 @@ export const GATE_TABLE: readonly GateRule[] = [
   // /api/settings/org refuses a NEW messageRetentionDays window (after that
   // route validates the value; clearing it to 0 stays allowed).
   { path: /^\/api\/maintenance\/purge$/, module: "ops.retention" },
+  // Integrations (Settings → Integrations). The background paths — SMS
+  // escalation / STAT nudges / MFA codes, push delivery, the intake extractor —
+  // check the same switches in server/integrations/gates.ts.
+  { path: /^\/api\/sms\/send$/, module: "integration.sms", methods: ["POST"] },
+  { path: /^\/api\/push\/vapid-key$/, module: "integration.push", methods: ["GET"] },
+  // Registering a device is refused while push is off; REMOVING one (sign-out)
+  // always works.
+  { path: /^\/api\/mobile\/device-tokens$/, module: "integration.push", methods: ["POST"] },
   // Platform — theming is written through PATCH /api/org/preferences { theme }.
   { path: /^\/api\/org\/preferences$/, module: "platform.appearance", methods: ["PATCH"], when: bodyHasTheme },
   { path: /^\/api\/cms(\/|$)/, module: "platform.cms" },

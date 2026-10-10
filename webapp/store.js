@@ -439,14 +439,16 @@
         { id: uid("bc"), title: "Mass casualty drill at 15:00", sev: "warning", at: t0 - 10800000, acked: 22, total: 24, ackReq: true },
       ],
 
-      settings: { timeout: 15, autoReassign: true, onCallOnly: false, activeOnly: true,
-        flags: { sms: true, push: true, ai: true, broadcasts: true, amion: false },
+      // Integrations (Twilio / push / OpenAI / Amion / Epic) and their per-org
+      // switches are NOT client state: Settings → Integrations reads and writes
+      // them on the server (/api/integrations). The old local `flags` /
+      // `integrations` booleans claimed effects nothing enforced and are gone.
+      settings: { timeout: 15, autoReassign: true,
         shiftTypes: [
           { id: "rounding",   name: "Rounding",   time: "07:00–19:00", color: "var(--status-active)" },
           { id: "swing",      name: "Swing",      time: "13:00–23:00", color: "var(--status-pending)" },
           { id: "nocturnist", name: "Nocturnist", time: "19:00–07:00", color: "var(--status-neutral)" },
-        ],
-        integrations: { twilio: true, firebase: true, openai: true, amion: false } },
+        ] },
 
       roles: [
         { id: "r_super", name: "Super Admin", desc: "Full platform access across all tenants and portals.", system: true,
@@ -474,12 +476,12 @@
         rules: { timeout: 15, autoReassign: false, autoCleanHours: 24, rotationMode: "lowest_census", onCallOnly: false, activeOnly: true },
         // Platform-wide controls the operator manages centrally (modeled on
         // enterprise clinical-comms admin consoles, e.g. TigerConnect/PerfectServe):
-        // mobile-app management, secure-messaging policy, access/security, integrations.
+        // mobile-app management, secure-messaging policy, access/security.
+        // (Integrations are server-backed: Enterprise defaults → Integrations.)
         platform: {
           mobile: { ios: true, android: true, minVersion: "3.2.0", forceUpdate: false, mdm: false, biometric: true },
           messaging: { retentionDays: 90, recall: true, readReceipts: true, attachments: true, priority: true },
           security: { sso: false, enforce2fa: true, sessionTimeoutMin: 15, autoLock: true },
-          integrations: { sms: true, push: true, fhir: false, paging: false },
         },
         permissions: {
           hospitalist: ["view_census", "manage_assignments", "request_consult", "message"],
@@ -568,6 +570,17 @@
       // crash the developer settings pages.
       if (!s.enterprise) s.enterprise = seed().enterprise;
       if (!s.enterprise.platform) s.enterprise.platform = seed().enterprise.platform;
+      // Drop the retired local-only integration booleans an older build saved
+      // (they claimed "Connected" for things nothing enforced).
+      if (s.settings) {
+        s.settings = Object.assign({}, s.settings);
+        delete s.settings.flags; delete s.settings.integrations;
+        delete s.settings.onCallOnly; delete s.settings.activeOnly;
+      }
+      if (s.enterprise.platform && s.enterprise.platform.integrations) {
+        s.enterprise = Object.assign({}, s.enterprise, { platform: Object.assign({}, s.enterprise.platform) });
+        delete s.enterprise.platform.integrations;
+      }
       if (!s.myPrefs) s.myPrefs = { dnd: false, coveringUserId: null };
       if (!s.orgConfigs) s.orgConfigs = {};
       // transient UI bits always reset sensibly
@@ -1317,12 +1330,13 @@
       });
     },
 
-    /* per-organization on-call schedule source (Amion / QGenda / custom / …) */
+    /* The schedule-source PICKER's position for an org (a view preference).
+       What the on-call board really reads is the server's choice
+       (PATCH /api/oncall/source, which toasts and audits); this never claims
+       a sync or writes an audit row of its own. */
     setScheduleSource: function (code, source) {
       set(function (s) {
         s.scheduleSources = Object.assign({}, s.scheduleSources, (function () { var o = {}; o[code] = source; return o; })());
-        pushAudit(s, { action: "set_schedule_source", resource: code + " → " + source, risk: "low" });
-        s.__toast = { tone: "accepted", title: "Schedule source updated", msg: code + " now syncs via " + source + "." };
         return s;
       });
     },
@@ -1459,8 +1473,6 @@
         return s;
       });
     },
-    toggleFlag: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { flags: Object.assign({}, s.settings.flags, (function () { var o = {}; o[key] = !s.settings.flags[key]; return o; })()) }); pushAudit(s, { action: "toggle_feature_flag", resource: key, risk: "low" }); return s; }); },
-    toggleIntegration: function (key) { set(function (s) { s.settings = Object.assign({}, s.settings, { integrations: Object.assign({}, s.settings.integrations, (function () { var o = {}; o[key] = !s.settings.integrations[key]; return o; })()) }); pushAudit(s, { action: "toggle_integration", resource: key, risk: "medium" }); s.__toast = { tone: "accepted", title: (s.settings.integrations[key] ? "Connected" : "Disconnected"), msg: key + " integration updated." }; return s; }); },
     addShiftType: function () {
       set(function (s) {
         var n = s.settings.shiftTypes.length + 1;

@@ -431,6 +431,25 @@ CREATE TABLE IF NOT EXISTS org_settings (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_settings_org_key_uniq ON org_settings(organization_id, key);
 
+-- A hospital's own credentials for an organization-scope integration (Amion,
+-- Epic). Secrets are ONE AES-256-GCM ciphertext (key: INTEGRATION_KEY env);
+-- summary = non-secret display fields only. updated_by has no FK on purpose
+-- (never blocks a user/tenant delete). Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS org_integration_credentials (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  integration_id TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  summary JSONB,
+  updated_by INTEGER,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_integration_credentials_org_integration_uniq
+  ON org_integration_credentials(organization_id, integration_id);
+
 CREATE TABLE IF NOT EXISTS user_preferences (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),

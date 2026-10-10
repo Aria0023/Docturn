@@ -1,7 +1,6 @@
 import type { DatabaseStorage } from "../../storage.js";
 import {
-  amionConfig,
-  amionConfigured,
+  amionFeedFor,
   normalizeName,
   toDisplayName,
   SYNC_SETTING_KEY,
@@ -11,14 +10,14 @@ import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus } from "./types.j
 
 /**
  * Amion adapter: wraps the existing sync state (org setting "amionSync",
- * written by services/amion.ts) into OnCallSlots. The live feed is scoped to
- * the AMION_ORG_CODE tenant, so any other org reports configured:false.
+ * written by services/amion.ts) into OnCallSlots. An org has a live feed when
+ * it saved its own Amion credentials (Settings → Integrations) or is the
+ * AMION_ORG_CODE tenant of the operator's env feed; any other org reports
+ * configured:false.
  */
 export function createAmionSource(db: DatabaseStorage): ScheduleSource {
   async function orgMatches(orgId: number): Promise<boolean> {
-    if (!amionConfigured()) return false;
-    const org = await db.getOrganizationByCode(amionConfig().orgCode);
-    return !!org && org.id === orgId;
+    return !!(await amionFeedFor(db, orgId));
   }
 
   async function state(orgId: number): Promise<AmionSyncState | null> {
@@ -71,7 +70,7 @@ export function createAmionSource(db: DatabaseStorage): ScheduleSource {
         rowCount: s?.rowCount ?? 0,
         message: configured
           ? null
-          : "Amion feed not configured for this organization (set AMION_OCS_URL + AMION_ORG_CODE on the server).",
+          : "Amion feed not connected for this organization — a director connects it in Settings → Integrations → Amion (the hospital's OCS feed URL).",
       };
     },
   };

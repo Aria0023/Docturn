@@ -17,6 +17,10 @@ export function registerOrgRoutes(app: Express) {
       storage().getOrgSetting(me.organizationId, "theme"),
     ]);
     res.json({
+      // The caller's own organization's identity (Settings header). Editing
+      // it is developer-only (PATCH /api/dev/organizations/:id).
+      name: org.name,
+      code: org.code,
       assignmentTimeoutMin: org.assignmentTimeoutMin,
       roundRobinShiftTypes: org.roundRobinShiftTypes,
       rotationMode: org.rotationMode,

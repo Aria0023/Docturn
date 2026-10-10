@@ -3,7 +3,7 @@ import { createPatientSchema, extractNoteSchema } from "@shared/schema";
 import { logPhiAccess } from "../audit.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { getExtractor } from "../services/ai-intake.js";
+import { extractorForOrg } from "../services/ai-intake.js";
 import { broadcastAssignmentChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
@@ -13,9 +13,11 @@ export function registerPatientRoutes(app: Express) {
     requireAuth,
     requireRole("er_doctor", "er_director", "developer"),
     async (req, res) => {
+      const me = currentUser(req);
       const parsed = extractNoteSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
-      const extracted = await getExtractor().extract(parsed.data.note);
+      // Per-org switch: with OpenAI off for this org the note never leaves DocTurn.
+      const extracted = await (await extractorForOrg(me.organizationId)).extract(parsed.data.note);
       res.json(extracted);
     },
   );

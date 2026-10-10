@@ -4,6 +4,7 @@ import { appendAudit } from "../audit.js";
 import { getNotificationProfile } from "../config.js";
 import { isModuleEnabled } from "../modules.js";
 import { notificationDeps } from "./notifications.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 import {
   deliverViaCoveringThread,
   forwardedAttachmentIds,
@@ -26,6 +27,8 @@ async function sendStatSmsFallback(
   userId: number,
 ): Promise<boolean> {
   if ((await s.getOrgSetting(orgId, "statSmsFallback")) === false) return false;
+  // SMS switched off for the org (Settings → Integrations → Twilio).
+  if (!(await smsAllowedForOrg(orgId))) return false;
   try {
     const user = await s.getUser(orgId, userId);
     if (!user?.phone) return false;

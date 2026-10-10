@@ -62,6 +62,20 @@ automatically uses encrypted Postgres instead of the local file database.
   when the developer is deactivated. Deactivation closes live sockets at once.
 - **External AI is OFF by default** — intake notes are parsed locally and never
   leave the server unless an operator deliberately turns it on (see below).
+- **Integrations are real and fail closed** (Settings → Integrations,
+  `docs/INTEGRATIONS.md`): status comes from live configuration, each org's
+  switch is enforced server-side, OpenAI cannot be switched on without the BAA
+  attestation, and each hospital's own Amion/Epic credentials are write-only,
+  AES-256-GCM encrypted with `INTEGRATION_KEY` (bound to the org; the full
+  128-bit tag is required on read), never returned or logged, and can only
+  reach public `https://` hosts: private, loopback, link-local, metadata,
+  IPv4-mapped / NAT64 / any non-global IPv6 address is refused when saved,
+  when resolved, on every redirect hop, and again by the connection's own DNS
+  lookup (no DNS-rebinding window). Every outbound integration call has one
+  ≤ 10 s deadline over headers **and** body, and bodies are capped at 5 MB, so
+  a slow or hostile vendor cannot hold a request or another hospital's sync.
+  Only a director (or the operator) can switch, test or set up integrations;
+  an ER director sees them read-only.
 
 ---
 
@@ -102,5 +116,7 @@ The only AI is parsing a free-text ER note into initials/room/complaint. The
 **local** parser does this on-server with nothing sent out, and is the default.
 The external (OpenAI) version is now disabled unless you set BOTH
 `OPENAI_API_KEY` and `AI_EXTERNAL_PHI_OK=true` — and you should only ever do that
-with a BAA-covered, HIPAA-eligible endpoint (e.g. Azure OpenAI). For the pilot,
-leave it off.
+with a BAA-covered, HIPAA-eligible endpoint. (DocTurn's client calls
+`api.openai.com`; a different endpoint such as Azure OpenAI would need a code
+change.) Each organization can additionally switch it off for itself in
+Settings → Integrations. For the pilot, leave it off.

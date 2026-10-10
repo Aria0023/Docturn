@@ -182,6 +182,10 @@
         if (!r.ok) {
           var err = new Error((d && d.error) || r.statusText || ("HTTP " + r.status));
           err.status = r.status;
+          // The server's explanation, for screens that show it (Integrations:
+          // the 409 reason / the invalid field). Never a secret — the server
+          // does not put one in an error body.
+          err.body = d || null;
           if (r.status === 423 && d && d.error === "session_locked" && !lockActive()) engageLock();
           throw err;
         }
@@ -474,8 +478,10 @@
       // ER roles: their live "sent" board (declines / re-routes / accepts).
       var wantsSent = (role === "er_doctor" || role === "er_director");
       extra.push(wantsSent ? get("/api/assignments/sent").catch(function () { return null; }) : Promise.resolve(null));
-      // Director: org settings (auto-reassign-on-decline toggle).
-      extra.push(role === "director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
+      // Director / ER director: the org settings their Settings screen shows
+      // (auto-reassign, STAT SMS fallback, assignment timeout) — always the
+      // server's values, never the store's demo defaults.
+      extra.push(role === "director" || role === "er_director" ? get("/api/settings").catch(function () { return null; }) : Promise.resolve(null));
       // Director / ER director: pending self-registrations awaiting approval.
       var wantsRegs = (role === "director" || role === "er_director");
       extra.push(wantsRegs ? get("/api/registrations").catch(function () { return null; }) : Promise.resolve(null));
@@ -555,7 +561,11 @@
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
             return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
           });
-          if (settings && settings.org) s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false });
+          if (settings && settings.org) {
+            s.settings = Object.assign({}, s.settings, { autoReassign: !!settings.org.autoReassignOnDecline, statSmsFallback: settings.org.statSmsFallback !== false },
+              typeof settings.org.assignmentTimeoutMin === "number" ? { timeout: settings.org.assignmentTimeoutMin } : {});
+            if (typeof settings.org.assignmentTimeoutMin === "number") lastServerTimeout = settings.org.assignmentTimeoutMin;
+          }
           if (wantsRegs && regs) s.registrations = regs;
           if (wantsAudit && auditData) {
             var orgCode = (s.session && s.session.org) || s.selectedOrg || "";
@@ -1995,11 +2005,13 @@
         });
       })
       .catch(function (e) {
+        // Refused: show the window the server is still applying, and why.
         var off = moduleRefused(e);
         DT.set(function (s) {
           s.orgRetentionDays = prev;
           s.__toast = { tone: "rejected", title: "Not saved", msg: off
             ? "The message retention purge is switched off for your organization, so no retention window can be set; messages are kept indefinitely."
+            : e && e.status === 403 ? "Only a director can change this."
             : "Couldn't update retention." };
           return s;
         });
@@ -2083,15 +2095,51 @@
       });
   };
 
-  // Persist the director's "auto-reassign on decline" toggle to the org settings
-  // (other settings stay local to the kit).
+  // Persist the director's Settings controls to the server: auto-reassign and
+  // the STAT SMS fallback are org settings; the assignment timeout is the
+  // org's config (each new assignment's expiry is computed from
+  // organizations.assignment_timeout_min, services/assignments.ts).
+  // Shift-type names stay a local display aid.
+  // The change shows at once, but a refusal (403 for an ER director, a
+  // failed save, an out-of-range timeout) puts back the value the SERVER
+  // holds and says why — the screen never shows a setting the server is not
+  // applying.
   var origSetSetting = DT.actions.setSetting;
+  var timeoutTimer = null;
+  var lastServerTimeout = null; // the timeout the server last confirmed (hydrate / PATCH)
+  var ORG_SETTING_KEYS = { autoReassign: "autoReassignOnDecline", statSmsFallback: "statSmsFallback" };
   DT.actions.setSetting = function (key, value) {
-    if (key === "autoReassign") {
-      api("PATCH", "/api/settings/org", { key: "autoReassignOnDecline", value: !!value }).catch(function () {});
+    if (ORG_SETTING_KEYS[key]) {
+      var prev = (DT.getState().settings || {})[key];
+      api("PATCH", "/api/settings/org", { key: ORG_SETTING_KEYS[key], value: !!value }).catch(function (e) {
+        if (origSetSetting) origSetSetting(key, prev);
+        DT.set(function (s) {
+          s.__toast = { tone: "rejected", title: "Not saved", msg: e && e.status === 403 ? "Only a director can change this." : "Try again." };
+          return s;
+        });
+      });
     }
-    if (key === "statSmsFallback") {
-      api("PATCH", "/api/settings/org", { key: "statSmsFallback", value: !!value }).catch(function () {});
+    if (key === "timeout") {
+      // Debounced: typing "15" must not save "1" first.
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      var minutes = Number(value);
+      var restore = function () { if (lastServerTimeout != null && origSetSetting) origSetSetting("timeout", lastServerTimeout); };
+      timeoutTimer = setTimeout(function () {
+        timeoutTimer = null;
+        if (!(minutes >= 1 && minutes <= 120)) {
+          restore();
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Timeout not saved", msg: "Enter 1–120 minutes." }; return s; });
+          return;
+        }
+        api("PATCH", "/api/org/config", { assignmentTimeoutMin: Math.round(minutes) }).then(function (r) {
+          lastServerTimeout = r && typeof r.assignmentTimeoutMin === "number" ? r.assignmentTimeoutMin : Math.round(minutes);
+          if (origSetSetting) origSetSetting("timeout", lastServerTimeout);
+          DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment timeout saved", msg: lastServerTimeout + " minutes" }; return s; });
+        }).catch(function (e) {
+          restore();
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "Timeout not saved", msg: (e && e.status === 403) || String((e && e.message) || "") === "forbidden" ? "Only a director can change it." : "Try again." }; return s; });
+        });
+      }, 700);
     }
     if (origSetSetting) return origSetSetting(key, value);
   };
@@ -3060,7 +3108,9 @@
       if (localDemoSession && isNetworkError(e)) { if (origProviderActions.resetRotation) origProviderActions.resetRotation(); return; }
       DT.set(function (s) {
         s.__toast = { tone: "rejected", title: "Couldn't reset rotation",
-          msg: isNetworkError(e) ? "No connection — the rotation index was NOT reset." : "The server refused the reset — the rotation index is unchanged." };
+          msg: isNetworkError(e) ? "No connection — the rotation index was NOT reset."
+            : e && e.status === 403 ? "Only a director can reset it — the rotation index is unchanged."
+            : "The server refused the reset — the rotation index is unchanged." };
         return s;
       });
       return rehydrate();
@@ -3640,7 +3690,7 @@
     }).catch(function (e) {
       putOrgModules(id, before);
       DT.actions.loadOrgModules(id).catch(function () {});
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not change module", msg: String((e && e.message) || e) }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not change module", msg: (e && e.body && e.body.reason) || String((e && e.message) || e) }; return s; });
       throw e;
     });
   };
@@ -3789,6 +3839,96 @@
     });
   };
   // ==== oncall / ehr — END ==================================================
+
+  // ==== integrations: Settings → Integrations (server-enforced) — BEGIN =====
+  // Every card, switch and test result is the server's answer
+  // (/api/integrations, server/integrations/registry.ts). Nothing about an
+  // integration is decided or remembered in the browser: there is no local
+  // "Connected" flag any more. Errors carry the server's reason through.
+  function integrationsQuery(orgId) {
+    return orgId != null && orgId !== "" ? "?orgId=" + encodeURIComponent(orgId) : "";
+  }
+  function serverError(e) {
+    return String((e && e.message) || "unavailable");
+  }
+  // api() with the server's reason / invalid field lifted onto the error.
+  function apiWithBody(method, path, body) {
+    return api(method, path, body).catch(function (e) {
+      var d = (e && e.body) || {};
+      if (e) { e.detail = d.message || d.reason || null; e.field = d.field || null; }
+      throw e;
+    });
+  }
+  function refreshOwnModules(orgId) {
+    var sess = DT.getState().session;
+    if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
+  }
+  DT.actions.loadIntegrations = function (orgId) {
+    return get("/api/integrations" + integrationsQuery(orgId));
+  };
+  // The signed-in user's OWN organization as the server knows it (Settings
+  // header for every non-developer role) — never the demo store's org list.
+  DT.actions.loadOrgIdentity = function () {
+    return get("/api/org/config").then(function (r) {
+      var id = r && r.code ? { name: r.name || r.code, code: r.code, timezone: r.timezone || "" } : null;
+      DT.set(function (s) { s.orgIdentity = id; return s; });
+      return id;
+    }).catch(function () { return null; });
+  };
+  DT.actions.loadIntegrationsOverview = function () {
+    return get("/api/dev/integrations");
+  };
+  DT.actions.setIntegrationEnabled = function (id, enabled, orgId) {
+    return apiWithBody("PATCH", "/api/integrations/" + encodeURIComponent(id) + integrationsQuery(orgId), { enabled: !!enabled }).then(function (r) {
+      var c = r && r.integration;
+      refreshOwnModules(orgId);
+      DT.set(function (s) {
+        s.__toast = { tone: enabled ? "accepted" : "sent", title: (c ? c.name : id) + (enabled ? " switched on" : " switched off"), msg: c ? c.statusText : "" };
+        return s;
+      });
+      return r;
+    }).catch(function (e) {
+      DT.set(function (s) {
+        s.__toast = { tone: "rejected", title: enabled ? "Can't switch it on yet" : "Couldn't switch it off", msg: e.detail || serverError(e) };
+        return s;
+      });
+      throw e;
+    });
+  };
+  DT.actions.testIntegration = function (id, orgId) {
+    return apiWithBody("POST", "/api/integrations/" + encodeURIComponent(id) + "/test" + integrationsQuery(orgId), {}).then(function (r) {
+      DT.set(function (s) {
+        s.__toast = r && r.ok
+          ? { tone: "accepted", title: "Test passed", msg: r.message }
+          : { tone: "rejected", title: "Test failed", msg: (r && r.message) || "The connection did not work." };
+        return s;
+      });
+      return r;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Nothing to test yet", msg: e.detail || serverError(e) }; return s; });
+      return null;
+    });
+  };
+  DT.actions.saveIntegrationCredentials = function (id, values, orgId) {
+    // Values are sent once over TLS and never kept in the store.
+    return apiWithBody("PUT", "/api/integrations/" + encodeURIComponent(id) + "/credentials" + integrationsQuery(orgId), values || {}).then(function (r) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Saved (encrypted)", msg: r && r.integration ? r.integration.statusText : "" }; return s; });
+      return r;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: e.detail || serverError(e) }; return s; });
+      throw e;
+    });
+  };
+  DT.actions.clearIntegrationCredentials = function (id, orgId) {
+    return apiWithBody("DELETE", "/api/integrations/" + encodeURIComponent(id) + "/credentials" + integrationsQuery(orgId)).then(function (r) {
+      DT.set(function (s) { s.__toast = { tone: "sent", title: "Credentials removed", msg: r && r.integration ? r.integration.statusText : "" }; return s; });
+      return r;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove them", msg: e.detail || serverError(e) }; return s; });
+      throw e;
+    });
+  };
+  // ==== integrations — END ==================================================
 
   console.log("[DocTurn] live API bridge active — actions wired to /api");
 })();

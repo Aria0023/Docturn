@@ -12,6 +12,8 @@
  *
  * Adding a carrier = one adapter + one switch arm; no workflow changes.
  */
+import { integrationFetch } from "../integrations/http.js";
+
 export interface SmsService {
   readonly carrier: string;
   send(to: string, body: string): Promise<{ sid: string }>;
@@ -22,7 +24,13 @@ export class SmsUnavailableError extends Error {
   readonly code = "sms_unavailable" as const;
   constructor(
     readonly carrier: string,
-    readonly reason: "no_credentials" | "not_implemented" | "console_in_production",
+    readonly reason:
+      | "no_credentials"
+      | "not_implemented"
+      | "console_in_production"
+      | "switched_off"
+      | "carrier_rejected"
+      | "carrier_unreachable",
   ) {
     // Content-free on purpose: this message reaches server logs.
     super(`sms_unavailable: carrier "${carrier}" cannot deliver (${reason})`);
@@ -77,22 +85,32 @@ export class TwilioSms implements SmsService {
     const auth = Buffer.from(
       `${sid}:${process.env.TWILIO_AUTH_TOKEN}`,
     ).toString("base64");
-    const res = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/x-www-form-urlencoded",
+    // Bounded and injectable like every integration call (one ≤ 10 s deadline
+    // over headers AND body, body ≤ 5 MB and already buffered, so res.json()
+    // below cannot block); a carrier rejection or an unreachable / stalled
+    // carrier is a typed failure, never a "sent".
+    let res: Response;
+    try {
+      res = await integrationFetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            To: to,
+            From: process.env.TWILIO_FROM_NUMBER!,
+            Body: body,
+          }),
         },
-        body: new URLSearchParams({
-          To: to,
-          From: process.env.TWILIO_FROM_NUMBER!,
-          Body: body,
-        }),
-      },
-    );
-    const data = (await res.json()) as { sid?: string };
+      );
+    } catch {
+      throw new SmsUnavailableError("twilio", "carrier_unreachable");
+    }
+    if (!res.ok) throw new SmsUnavailableError("twilio", "carrier_rejected");
+    const data = (await res.json().catch(() => ({}))) as { sid?: string };
     return { sid: data.sid ?? `twilio_${Date.now()}` };
   }
 }
@@ -103,14 +121,26 @@ export function smsStubAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * Registry: org.notification_profile.smsCarrier → adapter.
+ * The carrier an org's texts actually use. An org that never chose one (the
+ * notification profile's default "console") uses Twilio as soon as the
+ * operator has configured it — so "Twilio: Connected" in Settings →
+ * Integrations is what really happens. An org that explicitly names another
+ * carrier keeps it.
+ */
+export function resolveSmsCarrier(carrier: string | null | undefined, env: NodeJS.ProcessEnv = process.env): string {
+  const c = carrier || "console";
+  return c === "console" && twilioConfigured(env) ? "twilio" : c;
+}
+
+/**
+ * Registry: org.notification_profile.smsCarrier → adapter (via resolveSmsCarrier).
  * `env` is injectable so tests can exercise the production posture without
  * mutating process.env.
  */
 export function smsFor(carrier: string, env: NodeJS.ProcessEnv = process.env): SmsService {
   const fallback = (id: string, reason: SmsUnavailableError["reason"]): SmsService =>
     smsStubAllowed(env) ? new ConsoleSms(id) : new UnavailableSms(id, reason);
-  switch (carrier) {
+  switch (resolveSmsCarrier(carrier, env)) {
     case "twilio":
       return twilioConfigured(env) ? new TwilioSms() : fallback("twilio", "no_credentials");
     // AWS SNS / Pinpoint / MessageBird / Vonage report their carrier but have no

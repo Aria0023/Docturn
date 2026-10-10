@@ -109,9 +109,12 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
     : (isEnt ? audit : (audit || []).filter((r) => !r.org || r.org === scope));
   const scopedInc = isEnt ? incidents : (incidents || []).filter((r) => !r.org || r.org === scope);
 
+  // Integrations are server-backed (/api/integrations): the enterprise view is
+  // the live every-org × integration overview; an org's view is that org's
+  // real cards (switch / test / set up act on THAT org).
   const TABS = isEnt
-    ? [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["platform", "Platform & mobile", "smartphone"], ["compliance", "Compliance", "shield-check"]]
-    : [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["compliance", "Compliance", "shield-check"]];
+    ? [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["platform", "Platform & mobile", "smartphone"], ["integrations", "Integrations", "plug"], ["compliance", "Compliance", "shield-check"]]
+    : [["rules", "Rules", "sliders-horizontal"], ["perms", "Permissions", "shield-half"], ["integrations", "Integrations", "plug"], ["compliance", "Compliance", "shield-check"]];
   const plat = (DT.getState().enterprise || {}).platform || {};
   const setPlat = (sec, k, v) => a.setEnterprisePlatform(sec, k, v);
   const mobile = useIsMobile();
@@ -210,9 +213,16 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
         </div>
       )}
 
+      {tab === "integrations" && isEnt && typeof IntegrationsOverview === "function" && <IntegrationsOverview />}
+      {tab === "integrations" && !isEnt && typeof IntegrationsPanel === "function" && (
+        org && org.id != null
+          ? <IntegrationsPanel orgId={org.id} />
+          : <Card style={{ padding: 18, fontSize: 13, color: "var(--muted-foreground)" }}>Pick an organization first.</Card>
+      )}
+
       {tab === "platform" && isEnt && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Platform-wide controls the operator manages centrally for every tenant — mobile apps, secure-messaging policy, access &amp; security, and integrations.</div>
+          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Platform-wide controls the operator manages centrally for every tenant — mobile apps, secure-messaging policy and access &amp; security. Integrations (Twilio, push, OpenAI, Amion, Epic) are on the Integrations tab, live from the server.</div>
 
           {/* Mobile apps */}
           <div>
@@ -277,20 +287,6 @@ function OrgConfig({ scope, org, audit = [], incidents = [], onClearCompliance }
             </Card>
           </div>
 
-          {/* Integrations */}
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, margin: "0 0 6px 2px", display: "flex", alignItems: "center", gap: 7 }}><Icon name="plug" size={15} color="var(--primary)" />Integrations</div>
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <RuleRow icon="message-square" title="SMS (Twilio)" desc="Escalate to SMS when a push isn't acknowledged." scope="*"
-                control={<OCToggle on={!!(plat.integrations || {}).sms} onChange={(v) => setPlat("integrations", "sms", v)} />} />
-              <RuleRow icon="bell" title="Push notifications (APNs / FCM)" desc="Deliver alerts to the mobile apps." scope="*"
-                control={<OCToggle on={!!(plat.integrations || {}).push} onChange={(v) => setPlat("integrations", "push", v)} />} />
-              <RuleRow icon="activity" title="EHR / FHIR sync" desc="Pull census/ADT from the EHR (Epic/Cerner via FHIR)." scope="*"
-                control={<OCToggle on={!!(plat.integrations || {}).fhir} onChange={(v) => setPlat("integrations", "fhir", v)} />} />
-              <RuleRow icon="radio" title="Paging bridge" desc="Bridge legacy pagers into secure messaging." scope="*"
-                control={<OCToggle on={!!(plat.integrations || {}).paging} onChange={(v) => setPlat("integrations", "paging", v)} />} />
-            </Card>
-          </div>
         </div>
       )}
 

@@ -11,7 +11,7 @@ import {
 } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { getExtractor } from "../services/ai-intake.js";
+import { externalExtractorActive, getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
 import { parseId } from "../params.js";
 import { broadcastRotationChange } from "../services/notifications.js";
@@ -39,10 +39,11 @@ async function swappedUserBody(u: User) {
  * ids and counts only. Developer reads served OUTSIDE this file follow the same
  * rule: GET /api/dev/modules/:orgId (routes/modules.ts), a developer's
  * GET /api/accounts (routes/accounts.ts, every tenant's workforce) and a
- * developer's GET /api/amion/status from outside the Amion org
- * (routes/amion.ts, that tenant's provider schedule → dev.amion_status_read in
- * the Amion org). POST /api/amion/sync-now answers with the same snapshot; its
- * amion.sync row is filed in the Amion org naming the developer.
+ * developer's GET /api/amion/status served from another org's feed — with no
+ * feed of their own, the env AMION_ORG_CODE org's (routes/amion.ts, that
+ * tenant's provider schedule → dev.amion_status_read in that org).
+ * POST /api/amion/sync-now answers with the same snapshot; its amion.sync row
+ * is filed in that org naming the developer.
  */
 export function registerDevRoutes(app: Express) {
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
@@ -712,7 +713,9 @@ export function registerDevRoutes(app: Express) {
       );
       res.json({
         extractor: getExtractor().constructor.name,
-        liveAi: !!process.env.OPENAI_API_KEY,
+        // True only when notes really go to the external LLM (key AND the
+        // BAA attestation AI_EXTERNAL_PHI_OK) — a key alone sends nothing.
+        liveAi: externalExtractorActive(),
         sample,
       });
     },

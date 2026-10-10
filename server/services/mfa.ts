@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt } from "node:crypto";
 import speakeasy from "speakeasy";
 import { storage } from "../storage.js";
 import { isSmsUnavailable, smsFor } from "./sms.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 import { getNotificationProfile } from "../config.js";
 
 /**
@@ -56,6 +57,8 @@ export type SmsOtpResult =
 export async function sendSmsOtp(userId: number): Promise<SmsOtpResult> {
   const user = await storage().getUserById(userId);
   if (!user?.phone) return { sent: false, reason: "no_phone" };
+  // The org switched SMS off (Settings → Integrations): no text, nothing armed.
+  if (!(await smsAllowedForOrg(user.organizationId))) return { sent: false, reason: "sms_unavailable" };
   const profile = await getNotificationProfile(user.organizationId);
   const sms = smsFor(profile.smsCarrier);
   const code = String(randomInt(100000, 999999));
