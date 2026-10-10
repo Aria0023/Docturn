@@ -378,7 +378,13 @@ function SettingsTabs() {
   var role = st.session && st.session.role;
   if (role !== "director" && role !== "er_director") return null;
   var nav = (st.ui && st.ui.nav) || "settings";
-  var tabs = [["settings", "Organization", "sliders-horizontal"], ["appearance", "Appearance", "palette"], ["compliance", "Compliance", "shield-check"], ["compliance-monitor", "Compliance monitor", "activity"]];
+  // Appearance is the org theme, written through PATCH /api/org/preferences,
+  // which the server refuses while the platform.appearance module is off for
+  // the org — so the tab is not offered then (as the developer's nav item).
+  var appearanceOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("platform.appearance");
+  var tabs = [["settings", "Organization", "sliders-horizontal"]]
+    .concat(appearanceOn ? [["appearance", "Appearance", "palette"]] : [])
+    .concat([["compliance", "Compliance", "shield-check"], ["compliance-monitor", "Compliance monitor", "activity"]]);
   return (
     <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", marginBottom: 18, maxWidth: "100%", overflowX: "auto" }}>
       {tabs.map(function (t) {

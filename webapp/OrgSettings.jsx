@@ -6,7 +6,11 @@
    config (PATCH /api/org/config), and Integrations (Integrations.jsx) are the
    org's gating modules + encrypted hospital credentials (/api/integrations).
    The old "Feature toggles" card and the "On-call only" / "Active only" rows
-   were browser-only booleans nothing enforced; they are gone.
+   were browser-only booleans nothing enforced; they are gone. So is the old
+   local list of named shift types (Rounding / Swing / Nocturnist) nothing
+   read: "Shift types" now shows the server's shift types (Day, Swing, Night)
+   and which of them admissions rotate to — organizations.round_robin_shift_types,
+   PATCH /api/org/config (director only).
    Who may change what is the server's rule: org-wide settings are
    director/developer (PATCH /api/settings/org, /api/org/config,
    /api/integrations writes). An ER director sees the same values read-only,
@@ -59,8 +63,9 @@ function OrgSettings() {
   // Everyone else: their own org as the server reports it.
   const devOrg = st.orgs.find((o) => o.code === st.selectedOrg) || st.orgs[0];
   const sessionCode = (st.session && st.session.org) || "";
-  const ident = st.orgIdentity && st.orgIdentity.code === sessionCode ? st.orgIdentity : null;
-  const org = isDev ? devOrg : { code: sessionCode, name: ident ? ident.name : "", timezone: ident ? ident.timezone : "", active: true };
+  // Org codes are case-insensitive (the sign-in form keeps what was typed).
+  const ident = st.orgIdentity && String(st.orgIdentity.code).toUpperCase() === sessionCode.toUpperCase() ? st.orgIdentity : null;
+  const org = isDev ? devOrg : { code: ident ? ident.code : sessionCode, name: ident ? ident.name : "", timezone: ident ? ident.timezone : "", active: true };
 
   return (
     <PageWrap>
@@ -115,26 +120,8 @@ function OrgSettings() {
           )}
         </Card>
 
-        {/* Custom shift types */}
-        <Card style={{ padding: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <Icon name="clock" size={18} color="var(--primary)" />
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Shift types</h3>
-            <span style={{ marginLeft: "auto" }}><Button size="sm" variant="ghost" icon="plus" onClick={a.addShiftType}>Add</Button></span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-            {s.shiftTypes.map((sh) => (
-              <div key={sh.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
-                <span style={{ width: 10, height: 10, borderRadius: 99, background: sh.color, flex: "none" }} />
-                <span style={{ flex: 1, minWidth: 0 }}><EditableText value={sh.name} onSave={(v) => a.updateShiftType(sh.id, { name: v })} size={13.5} weight={600} /></span>
-                <span style={{ flex: "none" }}><EditableText value={sh.time} onSave={(v) => a.updateShiftType(sh.id, { time: v })} size={12.5} weight={400} mono color="var(--muted-foreground)" /></span>
-                <button onClick={() => a.removeShiftType(sh.id)} title="Remove shift type"
-                  onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                  style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={14} /></button>
-              </div>
-            ))}
-          </div>
-        </Card>
+        {/* Shift types = the server's shift enum and the org's routable set */}
+        <ShiftTypesCard canEdit={canEdit} />
 
         {/* Message retention (server-enforced purge, audited) */}
         <Card style={{ padding: 18 }}>
@@ -161,6 +148,60 @@ function OrgSettings() {
         <OrgDangerZone org={org} onDeleted={() => a.setNav("dashboard")} />
       )}
     </PageWrap>
+  );
+}
+
+// Settings → Shift types. DocTurn's shift types are fixed (Day, Swing, Night —
+// shared/schema.ts SHIFT_TYPE); each hospitalist works one of them. What the
+// organization chooses is which shifts NEW ADMISSIONS ROTATE TO
+// (organizations.round_robin_shift_types, read by the router in
+// server/services/rotation.ts). The switches read and write exactly that; the
+// last routable shift can't be switched off (the server refuses an empty set).
+const SERVER_SHIFTS = [
+  ["day", "Day", "sun"],
+  ["swing", "Swing", "sunset"],
+  ["night", "Night", "moon"],
+];
+function ShiftTypesCard({ canEdit }) {
+  const st = useStore();
+  const a = useActions();
+  const sess = st.session || {};
+  const isDev = sess.role === "developer";
+  const ident = st.orgIdentity && (isDev || String(st.orgIdentity.code).toUpperCase() === String(sess.org || "").toUpperCase()) ? st.orgIdentity : null;
+  const routable = ident && Array.isArray(ident.roundRobinShiftTypes) ? ident.roundRobinShiftTypes : null;
+  const providers = st.providers || [];
+  const toggle = (id) => {
+    if (!routable || !canEdit) return;
+    const on = routable.indexOf(id) >= 0;
+    if (on && routable.length === 1) { a.toast({ tone: "rejected", title: "Not saved", msg: "At least one shift must stay in rotation." }); return; }
+    const next = SERVER_SHIFTS.map((x) => x[0]).filter((x) => (x === id ? !on : routable.indexOf(x) >= 0));
+    a.setRotationShiftTypes(next);
+  };
+  return (
+    <Card style={{ padding: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Icon name="clock" size={18} color="var(--primary)" />
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Shift types</h3>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 4px", lineHeight: 1.45 }}>
+        Every hospitalist works a Day, Swing or Night shift. New admissions rotate only to hospitalists on a shift switched on here.{canEdit ? "" : <span data-readonly-note style={{ fontWeight: 600 }}> {DIRECTOR_ONLY_NOTE}</span>}
+      </p>
+      {!routable && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "10px 0" }}>Loading…</div>}
+      {routable && SERVER_SHIFTS.map(([id, label, icon], i) => {
+        const on = routable.indexOf(id) >= 0;
+        const n = providers.filter((p) => p.shift === id).length;
+        const last = on && routable.length === 1;
+        return (
+          <div key={id} data-shift-type={id} data-routable={on ? "yes" : "no"}>
+            <FlagRow icon={icon} title={label + " shift"}
+              desc={(n ? n + " hospitalist" + (n === 1 ? "" : "s") + " on this shift · " : "") + (on ? "in rotation — receives new admissions" : "not in rotation")}
+              on={on} onToggle={() => toggle(id)} disabled={!canEdit || last}
+              note={canEdit && last ? "The only shift in rotation — switch another on first." : null}
+              last={i === SERVER_SHIFTS.length - 1} />
+          </div>
+        );
+      })}
+    </Card>
   );
 }
 

@@ -171,7 +171,7 @@ for (const w of WIDTHS) {
   await ctx.close();
 }
 
-// 7. Developer console: Enterprise defaults → Integrations is the same server
+// 7. Developer console: Platform → Integrations is the same server
 //    truth across every org; Organization config → Integrations shows one
 //    org's real cards. (390 px only — the layout rules are the same.)
 {

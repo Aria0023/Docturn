@@ -127,10 +127,15 @@ const inputByPlaceholder = (sub) => [...window.document.querySelectorAll("input,
 const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "hospitalist director", "developer",
   "log out", "sign out", "logout", "lock", "lock app", "return to developer",
   // destructive maintenance buttons — don't wipe data mid-sweep
-  "clear all", "clear 24h+", "clear logs"]);
+  "clear all", "clear 24h+", "clear logs",
+  // Platform → Security: really ends every other session on the server
+  "sign out all"]);
+// Account-lifecycle buttons on People act on REAL seeded accounts (a reset
+// password would lock the next role's sign-in out) — never swept.
+const SKIP_PREFIX = /^(reset password for|reset two-factor for|remove access for|restore access for)/;
 const buttonKeys = (b) => [b.textContent, b.getAttribute("aria-label"), b.getAttribute("title")]
   .map((s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase()).filter(Boolean);
-const isSkipped = (b) => buttonKeys(b).some((k) => SKIP_LABELS.has(k));
+const isSkipped = (b) => buttonKeys(b).some((k) => SKIP_LABELS.has(k) || SKIP_PREFIX.test(k));
 const describeButton = (b) => buttonKeys(b)[0] || "<unlabelled button>";
 // The app lock is React state in index.html (no DT flag), so look for the lock dialog.
 const lockScreenShown = () => !!window.document.querySelector('[aria-labelledby="dt-lock-title"]');
@@ -221,48 +226,18 @@ let ownErr = "";
 try { await DT.actions.deleteTenant({ code: "DOCTURN" }); } catch (e) { ownErr = e.message; }
 rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr), "msg=" + ownErr);
 
-// Enterprise defaults vs per-organization overrides (individualized config).
+// Per-organization rules are each org's OWN server values (no enterprise
+// defaults / inheritance — those were browser-only and are gone).
 {
-  // Per-org rule starts inherited (no override recorded), then becomes custom.
-  const before = DT.orgConfig("ISPN");
-  DT.actions.setOrgRule("ISPN", "autoCleanHours", 48);
-  await flush();
-  const after = DT.orgConfig("ISPN");
-  rec("per-org rule override is individualized (ISPN autoCleanHours=48, marked custom)",
-    after.rules.autoCleanHours === 48 && after.overridden.rules.indexOf("autoCleanHours") >= 0
-      && before.overridden.rules.indexOf("autoCleanHours") < 0,
-    "before=" + JSON.stringify(before.overridden.rules) + " after=" + JSON.stringify(after.overridden.rules) + " val=" + after.rules.autoCleanHours);
-  // Reset reverts to the inherited enterprise default.
-  DT.actions.resetOrgRule("ISPN", "autoCleanHours");
-  await flush();
-  const reset = DT.orgConfig("ISPN");
-  const ent = DT.getState().enterprise.rules.autoCleanHours;
-  rec("reset reverts a per-org rule to the enterprise default",
-    reset.overridden.rules.indexOf("autoCleanHours") < 0 && reset.rules.autoCleanHours === ent,
-    "overridden=" + JSON.stringify(reset.overridden.rules) + " val=" + reset.rules.autoCleanHours + " ent=" + ent);
-  // Enterprise change propagates to every org that hasn't overridden it.
-  DT.actions.setEnterpriseRule("timeout", 25);
-  await flush();
-  rec("enterprise default propagates to inheriting orgs",
-    DT.orgConfig("ISPN").rules.timeout === 25 && DT.orgConfig("*").rules.timeout === 25,
-    "ispn=" + DT.orgConfig("ISPN").rules.timeout);
-  // Per-org permission override is independent of enterprise.
-  DT.actions.setRolePerm("*", "hospitalist", "view_reports", false);
-  DT.actions.setRolePerm("ISPN", "hospitalist", "view_reports", true);
-  await flush();
-  const perm = DT.orgConfig("ISPN");
-  rec("per-org permission override is individualized",
-    perm.permissions.hospitalist.indexOf("view_reports") >= 0
-      && DT.orgConfig("*").permissions.hospitalist.indexOf("view_reports") < 0,
-    "ispn=" + JSON.stringify(perm.permissions.hospitalist));
-  // Enterprise platform controls (mobile/messaging/security/integrations).
-  DT.actions.setEnterprisePlatform("mobile", "ios", false);
-  DT.actions.setEnterprisePlatform("security", "sessionTimeoutMin", 30);
-  await flush();
-  const entPlat = DT.getState().enterprise.platform || {};
-  rec("enterprise platform controls (mobile + security) are settable",
-    entPlat.mobile && entPlat.mobile.ios === false && entPlat.security && entPlat.security.sessionTimeoutMin === 30,
-    "platform=" + JSON.stringify({ ios: entPlat.mobile && entPlat.mobile.ios, to: entPlat.security && entPlat.security.sessionTimeoutMin }));
+  const orgs = await window.fetch("/api/dev/organizations", { credentials: "include" }).then((r) => r.json()).catch(() => []);
+  const ispn = (orgs || []).find((o) => o.code === "ISPN");
+  const ok = await DT.actions.setOrgRule("ISPN", "autoCleanHours", 48);
+  const srv = ispn ? await window.fetch("/api/dev/organizations/" + ispn.id + "/settings", { credentials: "include" }).then((r) => r.json()).catch(() => null) : null;
+  rec("per-org rule is saved on the server (ISPN autoCleanHours=48)", ok === true && srv && srv.settings && srv.settings.autoCleanHours === 48,
+    "ok=" + ok + " server=" + JSON.stringify(srv && srv.settings));
+  await DT.actions.setOrgRule("ISPN", "autoCleanHours", null); // back to the platform default
+  rec("no browser-only enterprise defaults / permission switches remain",
+    DT.getState().enterprise === undefined && typeof DT.actions.setEnterpriseRule === "undefined" && typeof DT.actions.setRolePerm === "undefined" && typeof DT.actions.clearComplianceLogs === "undefined");
 }
 
 // Cross-org compliance overview: per-organization audit/PHI counts, separated by
@@ -587,12 +562,9 @@ await demoLogin("developer", "ISPN"); await flush();
     "np=" + JSON.stringify(np && { n: np.name, c: np.credential }) + " toast=" + JSON.stringify(DT.getState().__toast || null).slice(0, 160));
 }
 
-// Amion → shift types: importing detected intervals adds matching shift types
-const beforeShifts = (DT.getState().settings.shiftTypes || []).length;
-await DT.actions.importShiftTypes([{ name: "Night X-cover", time: "23:00–07:00" }, { name: "Swing", time: "13:00–23:00" }]);
-await flush();
-const afterShifts = DT.getState().settings.shiftTypes || [];
-rec("importShiftTypes adds detected intervals (dedup)", afterShifts.some((t) => t.time === "23:00–07:00") && afterShifts.length === beforeShifts + 1, "before=" + beforeShifts + " after=" + afterShifts.length);
+// Shift types are the server's (Day / Swing / Night + the org's routable set),
+// not a local list of named intervals.
+rec("no browser-only shift-type list remains", DT.getState().settings.shiftTypes === undefined && typeof DT.actions.importShiftTypes === "undefined");
 
 // default assignment timeout is 15
 rec("default assignment timeout is 15 min", DT.getState().settings.timeout === 15, "timeout=" + DT.getState().settings.timeout);
@@ -724,33 +696,35 @@ await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 // Consult services are director-editable (add / rename / set on-call / remove).
 await demoLogin("director", "ISPN"); await flush();
 {
-  const n0 = (DT.getState().consultServices || []).length;
-  DT.actions.addConsultService("Hematology"); await flush();
-  const added = (DT.getState().consultServices || []).some((s) => s.name === "Hematology");
-  const svc = (DT.getState().consultServices || []).find((s) => s.name === "Hematology");
-  DT.actions.setConsultOnCall(svc.id, { name: "Dr. Jordan Chen", avatar: "JC" }); await flush();
-  const pinned = (DT.getState().consultServices || []).find((s) => s.name === "Hematology").onCall;
-  DT.actions.renameConsultService(svc.id, "Heme/Onc"); await flush();
-  const renamed = (DT.getState().consultServices || []).some((s) => s.name === "Heme/Onc");
-  // assign a PA/NP under the service, then remove it
-  DT.actions.addConsultMember(svc.id, { id: "m_t1", name: "Taylor PA-C", avatar: "TP", role: "PA" }); await flush();
-  const withMember = ((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.name === "Taylor PA-C");
-  DT.actions.removeConsultMember(svc.id, "m_t1"); await flush();
-  const memberRemoved = !((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.id === "m_t1");
-  rec("consult service carries its own PA/NPs (add/remove member)", withMember && memberRemoved, "withMember=" + withMember + " removed=" + memberRemoved);
-  DT.actions.removeConsultService(svc.id); await flush();
-  const removed = !(DT.getState().consultServices || []).some((s) => s.id === svc.id);
-  rec("consult services are director-editable (add/rename/on-call/remove)",
-    n0 >= 1 && added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed,
-    "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
+  // Every edit is an item-level server call (/api/org/consult-services).
+  const cs = () => DT.getState().consultServices || [];
+  await DT.actions.addConsultService("Hematology");
+  const added = cs().some((s) => s.name === "Hematology");
+  const svc = cs().find((s) => s.name === "Hematology") || { id: "missing" };
+  await DT.actions.setConsultOnCall(svc.id, { name: "Dr. Jordan Chen", avatar: "JC" });
+  const pinned = (cs().find((s) => s.id === svc.id) || {}).onCall;
+  await DT.actions.renameConsultService(svc.id, "Heme/Onc");
+  const renamed = cs().some((s) => s.name === "Heme/Onc");
+  // assign a PA/NP under the service, then remove it (the server mints the id)
+  await DT.actions.addConsultMember(svc.id, { name: "Taylor PA-C", avatar: "TP", role: "PA" });
+  const member = ((cs().find((s) => s.id === svc.id) || {}).members || []).find((m) => m.name === "Taylor PA-C");
+  if (member) await DT.actions.removeConsultMember(svc.id, member.id);
+  const memberRemoved = !((cs().find((s) => s.id === svc.id) || {}).members || []).some((m) => m.name === "Taylor PA-C");
+  rec("consult service carries its own PA/NPs (add/remove member)", !!member && memberRemoved, "member=" + JSON.stringify(member) + " removed=" + memberRemoved);
+  await DT.actions.removeConsultService(svc.id);
+  const removed = !cs().some((s) => s.id === svc.id);
+  const srv = await window.fetch("/api/org/consult-services", { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  rec("consult services are director-editable (add/rename/on-call/remove), on the server",
+    added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed && !(srv.services || []).some((s) => s.id === svc.id),
+    "added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
 }
 // ER director can add/rename but NOT delete; delete stays with director + dev.
 await demoLogin("er_director", "ISPN"); await flush();
 {
-  DT.actions.addConsultService("Pain Mgmt"); await flush();
+  await DT.actions.addConsultService("Pain Mgmt");
   const svc = (DT.getState().consultServices || []).find((s) => s.name === "Pain Mgmt");
   const erCanAdd = !!svc;
-  if (svc) { DT.actions.removeConsultService(svc.id); await flush(); }
+  if (svc) await DT.actions.removeConsultService(svc.id); // the server answers 403
   const stillThere = (DT.getState().consultServices || []).some((s) => s.name === "Pain Mgmt");
   rec("consult delete is director/dev-only (ER director add ok, delete blocked)",
     erCanAdd && stillThere, "erCanAdd=" + erCanAdd + " blockedDelete=" + stillThere);
@@ -820,8 +794,10 @@ await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 // nameless "on-call team") — the requester sees who they called.
 await demoLogin("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 {
+  // The org's catalog starts empty (no demo list): add Cardiology if needed.
+  if (!(DT.getState().consultServices || []).some((s) => s.name === "Cardiology")) await DT.actions.addConsultService("Cardiology");
   const card = (DT.getState().consultServices || []).find((s) => s.name === "Cardiology");
-  if (card) DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
+  if (card) await DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
   for (let i = 0; i < 8; i++) await flush();
   let brd = DT.getState().board || [];
   for (let i = 0; i < 10 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
@@ -842,9 +818,9 @@ await demoLogin("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 // stored per tenant and survive a fresh login (persisted to org settings).
 await demoLogin("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
-  DT.actions.addConsultService("Smoke Consult Svc");
+  await DT.actions.addConsultService("Smoke Consult Svc");
   DT.actions.setTheme({ appName: "SmokeBrand" });
-  for (let i = 0; i < 10; i++) await flush();
+  await sleep(1200); // the theme save is batched (≈0.5 s), then confirmed by the server
   await demoLogin("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
   const st = DT.getState();
   rec("per-org consult catalog persists to the tenant",

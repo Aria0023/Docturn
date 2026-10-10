@@ -244,7 +244,8 @@ async function checkDirectory(page, hub) {
   if (hub) {
     const t = await page.evaluate(() => {
       const M = window.__m;
-      const roles = M.byText("button", /Roles & permissions/)[0];
+      // The last sub-tab (Roles — read-only now; was "Roles & permissions").
+      const roles = M.byText("button", /^Roles$/).filter((b) => b.closest("[data-directory-tabs]"))[0];
       if (!roles) return null;
       const strip = roles.parentElement;
       const before = M.rect(roles);
@@ -259,7 +260,7 @@ async function checkDirectory(page, hub) {
     if (!t) rec("directory hub: sub-tab strip present", false);
     else {
       rec("directory hub: sub-tab strip stays inside the viewport", t.stripRight <= (await page.evaluate(() => window.innerWidth)) + 0.5, `strip.right=${fmt(t.stripRight)}`);
-      rec("directory hub: 4th sub-tab reachable (scroll strip, not page)", t.afterVisible && t.singleLine, `Roles tab after scroll=${rectStr(t.after)} scrollable=${t.stripScrollable}`);
+      rec("directory hub: last sub-tab reachable (scroll strip, not page)", t.afterVisible && t.singleLine, `Roles tab after scroll=${rectStr(t.after)} scrollable=${t.stripScrollable}`);
       rec("directory hub: sub-tab tap height ≥ 44", t.minH >= TAP, `minH=${fmt(t.minH)}`);
     }
   }
@@ -542,7 +543,9 @@ async function checkAdmissionsHeader(page, label) {
 // Compliance (A.CON-SHO-50 fix-up): tabs + Export + Clear logs row, the
 // ComplianceTabs strip, and the audit / PHI / logs tables with fixed-width
 // columns used to push <main> to 449px and clip the Risk column.
-async function checkCompliance(page, label, { clear = true } = {}) {
+// "Clear logs" is gone for every role: the audit trail is the server's and is
+// kept (A.CON org-admin #16), so the check asserts it is absent everywhere.
+async function checkCompliance(page, label, { clear = false } = {}) {
   await nav(page, "compliance");
   await noOverflow(page, `${label} compliance`);
   const top = await page.evaluate(() => {
@@ -739,7 +742,7 @@ async function checkAccessStrip(page, label) {
   await noOverflow(page, `${label} access & people`);
   const t = await page.evaluate(() => {
     const M = window.__m;
-    const roles = M.byText("button", /Roles & permissions/)[0];
+    const roles = M.byText("main button", /^Roles$/)[0]; // was "Roles & permissions"
     if (!roles) return null;
     const strip = roles.parentElement;
     const tabs = [...strip.querySelectorAll("button")];
@@ -812,7 +815,8 @@ async function checkLabelsInside(page, label) {
 // (the Add provider modal's 4 equal-width role choices left "Hospitalist"
 // drawn past its button at 375px).
 const OPENERS = {
-  director: { dashboard: ["Add provider"], access: ["Add person"], roles: ["Create new role"] },
+  // (Roles is read-only now — DocTurn's roles are fixed — so it opens nothing.)
+  director: { dashboard: ["Add provider"], access: ["Add person"] },
   er_director: { dashboard: ["Add"], access: ["Add person"] },
   developer: { dashboard: ["Add user / provider"] },
 };
@@ -831,8 +835,8 @@ async function sweepLabels(page, role, label) {
       await checkLabelsInside(page, `${label} ${id} › ${opener} open`);
     }
     if (id === "directory" && (role === "director" || role === "er_director")) {
-      for (const sub of ["People", "Consult services", "Roles & permissions", "Directory"]) {
-        const ok = await page.evaluate((s) => { const b = window.__m.byText("button", new RegExp("^" + s.replace(/[&]/g, "\\&") + "$"))[0]; if (b) b.click(); return !!b; }, sub);
+      for (const sub of ["People", "Consult services", "Roles", "Directory"]) {
+        const ok = await page.evaluate((s) => { const b = window.__m.byText("main button", new RegExp("^" + s.replace(/[&]/g, "\\&") + "$"))[0]; if (b) b.click(); return !!b; }, sub);
         if (!ok) { rec(`${label} directory › ${sub}: sub-tab present`, false); continue; }
         await sleep(400);
         await prep(page);
@@ -889,7 +893,7 @@ try {
       await nav(page, "admissions");
       await noOverflow(page, "director admissions log");
       await checkAdmissionsHeader(page, "director admissions log");
-      await checkCompliance(page, "director");
+      await checkCompliance(page, "director", { clear: false });
       await checkAppearance(page, "director");
       await checkAccessStrip(page, "director");
     }
@@ -900,7 +904,7 @@ try {
     if (all) {
       await checkErDirectorHome(page);
       await checkBoardControls(page, "ER director");
-      await checkCompliance(page, "ER director");
+      await checkCompliance(page, "ER director", { clear: false });
       await checkAppearance(page, "ER director");
     }
     await checkSettingsTabs(page, "ER director");

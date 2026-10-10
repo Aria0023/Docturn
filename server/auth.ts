@@ -582,6 +582,12 @@ export interface SessionPrincipal {
   id: number;
   /** Password generation the session was issued under. */
   pg: number;
+  /**
+   * When the session was issued (epoch ms). A platform-wide "Sign out all"
+   * (POST /api/dev/sessions/revoke-all) ends every session issued before it;
+   * a session written before this field existed counts as issued at 0.
+   */
+  iat?: number;
 }
 
 export function passwordGeneration(user: { passwordChangedAt?: Date | string | null } | null | undefined): number {
@@ -592,16 +598,18 @@ export function passwordGeneration(user: { passwordChangedAt?: Date | string | n
 }
 
 export function sessionPrincipalFor(user: { id: number; passwordChangedAt?: Date | string | null }): SessionPrincipal {
-  return { id: user.id, pg: passwordGeneration(user) };
+  return { id: user.id, pg: passwordGeneration(user), iat: Date.now() };
 }
 
 /** Parse whatever `session.passport.user` holds. A bare number is a pre-upgrade session (generation 0). */
 export function parseSessionPrincipal(raw: unknown): SessionPrincipal | null {
   if (typeof raw === "number" && Number.isInteger(raw) && raw > 0) return { id: raw, pg: 0 };
   if (raw && typeof raw === "object") {
-    const o = raw as { id?: unknown; pg?: unknown };
+    const o = raw as { id?: unknown; pg?: unknown; iat?: unknown };
     if (typeof o.id === "number" && Number.isInteger(o.id) && o.id > 0) {
-      return { id: o.id, pg: typeof o.pg === "number" && Number.isFinite(o.pg) ? o.pg : 0 };
+      const p: SessionPrincipal = { id: o.id, pg: typeof o.pg === "number" && Number.isFinite(o.pg) ? o.pg : 0 };
+      if (typeof o.iat === "number" && Number.isFinite(o.iat)) p.iat = o.iat;
+      return p;
     }
   }
   return null;
@@ -616,12 +624,24 @@ export function parseSessionPrincipal(raw: unknown): SessionPrincipal | null {
 export async function resolveSessionUser(raw: unknown): Promise<User | null> {
   const principal = parseSessionPrincipal(raw);
   if (!principal) return null;
-  const user = await storage().getUserById(principal.id);
+  // Issued before the operator's last "Sign out all": over.
+  if ((principal.iat ?? 0) < (await sessionsRevokedAt())) return null;
+  return liveUserAtGeneration(principal.id, principal.pg);
+}
+
+/**
+ * The user, if the account still exists, is not deactivated and its password
+ * generation is still `pg`. Shared by sessions (above) and by the developer
+ * behind a borrowed session (resolveImpersonator) — whose own sign-out-all
+ * cut-off is the borrowed session's issue time, already checked above.
+ */
+async function liveUserAtGeneration(id: number, pg: number): Promise<User | null> {
+  const user = await storage().getUserById(id);
   if (!user) return null;
   // A deactivated account's live sessions die on their next request —
   // deactivation is immediate, not "at next login".
   if (user.disabledAt) return null;
-  if (passwordGeneration(user) !== principal.pg) return null;
+  if (passwordGeneration(user) !== pg) return null;
   return user;
 }
 
@@ -679,7 +699,7 @@ export async function resolveImpersonator(
   if (impersonatorId === null || typeof pg !== "number" || !Number.isFinite(pg)) {
     return { state: "revoked", impersonatorId, reason: "unbound_session" };
   }
-  const developer = await resolveSessionUser({ id: impersonatorId, pg });
+  const developer = await liveUserAtGeneration(impersonatorId, pg);
   if (developer && developer.role === "developer") return { state: "ok", developer };
   const row = developer ?? (await storage().getUserById(impersonatorId));
   const reason: ImpersonationRevokedReason = !row
@@ -713,17 +733,73 @@ export async function auditRevokedImpersonation(
   });
 }
 
-/* ── Session revocation (live transports) ─────────────────────────────────── */
-export interface SessionRevocation {
-  /**
-   * The user whose sessions end: their own sessions AND every borrowed
-   * (impersonated / managed-org) session they opened as a developer.
-   */
-  userId: number;
-  /** The session performing the change keeps its own live connections. */
-  exceptSessionId?: string;
-  reason: "password_changed" | "password_reset" | "account_deactivated";
+/* ── Platform-wide sign-out ("Sign out all") ─────────────────────────────────
+ * The operator's incident-response switch: every session issued before the
+ * moment it was pressed stops resolving (resolveSessionUser compares the
+ * session's `iat` with this epoch), on every instance — the epoch is a row in
+ * the platform org's settings, read through a short cache — and the live
+ * sockets / demo tokens of this instance are closed at once. The operator's
+ * own session is re-issued so it stays signed in.
+ */
+const SESSIONS_REVOKED_KEY = "sessionsRevokedAt";
+const SESSIONS_REVOKED_TTL_MS = 5_000;
+let sessionsRevokedCache: { readAt: number; value: number } | null = null;
+
+/** Epoch ms of the last "Sign out all" (0 = never). Cached for 5 s. */
+export async function sessionsRevokedAt(): Promise<number> {
+  const hit = sessionsRevokedCache;
+  if (hit && Date.now() - hit.readAt < SESSIONS_REVOKED_TTL_MS) return hit.value;
+  try {
+    const platform = await storage().getOrganizationByCode(PLATFORM_ORG_CODE);
+    const v = platform ? await storage().getOrgSetting(platform.id, SESSIONS_REVOKED_KEY) : null;
+    const value = typeof v === "number" && Number.isFinite(v) ? v : 0;
+    sessionsRevokedCache = { readAt: Date.now(), value };
+    return value;
+  } catch {
+    return hit ? hit.value : 0;
+  }
 }
+
+/** Tests: forget the cached epoch (each test file builds a fresh database). */
+export function _resetSessionsRevokedCache(): void {
+  sessionsRevokedCache = null;
+}
+
+/**
+ * End every session on the platform except `keep` (the operator's own, which
+ * the caller re-issues). Returns the epoch it recorded.
+ */
+export async function revokeAllSessions(opts: { byUserId: number; keepSessionId?: string }): Promise<number> {
+  const platform = await storage().getOrganizationByCode(PLATFORM_ORG_CODE);
+  if (!platform) throw new Error("platform_org_missing");
+  const at = Date.now();
+  await storage().setOrgSetting(platform.id, SESSIONS_REVOKED_KEY, at, opts.byUserId);
+  sessionsRevokedCache = { readAt: Date.now(), value: at };
+  revokeSessions({ all: true, exceptSessionId: opts.keepSessionId, reason: "sign_out_all" });
+  return at;
+}
+
+/* ── Session revocation (live transports) ─────────────────────────────────── */
+export type SessionRevocation =
+  | {
+      /**
+       * The user whose sessions end: their own sessions AND every borrowed
+       * (impersonated / managed-org) session they opened as a developer.
+       */
+      userId: number;
+      all?: undefined;
+      /** The session performing the change keeps its own live connections. */
+      exceptSessionId?: string;
+      reason: "password_changed" | "password_reset" | "account_deactivated";
+    }
+  | {
+      /** Every session of every user ("Sign out all"). */
+      all: true;
+      userId?: undefined;
+      /** The operator's own session keeps its live connections. */
+      exceptSessionId?: string;
+      reason: "sign_out_all";
+    };
 export type SessionRevoker = (revocation: SessionRevocation) => void;
 const sessionRevokers = new Set<SessionRevoker>();
 
@@ -774,7 +850,7 @@ export function endSessionsOfDeactivatedUser(userId: number): void {
 export async function rotatePassword(
   userId: number,
   newPassword: string,
-  opts: { mustChangePassword: boolean; keepSessionId?: string; reason: SessionRevocation["reason"] },
+  opts: { mustChangePassword: boolean; keepSessionId?: string; reason: Extract<SessionRevocation, { userId: number }>["reason"] },
 ): Promise<User | undefined> {
   const passwordHash = await hashPassword(newPassword);
   const updated = await storage().updateUser(userId, {
@@ -822,7 +898,7 @@ export function bearerCredentialOf(res: Response): BearerCredential | undefined 
  * bearer-token request has no passport entry of its own, and the cookie that
  * happens to ride along with it may be someone else's.
  */
-function restampSession(req: Request, user: User): Promise<void> {
+export function restampSession(req: Request, user: User): Promise<void> {
   return new Promise((resolve, reject) => {
     const sess = req.session as (typeof req.session & { passport?: { user?: unknown } }) | undefined;
     if (!sess?.passport || sess.passport.user === undefined) return resolve();
@@ -902,7 +978,7 @@ export function configurePassport() {
     if (u.passwordChangedAt !== undefined) return done(null, sessionPrincipalFor(u));
     storage()
       .getUserById(u.id)
-      .then((fresh) => done(null, { id: u.id, pg: passwordGeneration(fresh) }))
+      .then((fresh) => done(null, { id: u.id, pg: passwordGeneration(fresh), iat: Date.now() }))
       .catch((err: Error) => done(err));
   });
 

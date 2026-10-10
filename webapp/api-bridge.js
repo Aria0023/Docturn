@@ -573,11 +573,17 @@
             s.phiLog = mapPhi(auditData.phiAccess, usersById);
             auditLoaded = true;
           }
-          // Per-org consult-service catalog + theme (fall back to defaults when
-          // the tenant hasn't customized them). Applied once per context.
+          // Per-org consult-service catalog, theme and identity — always the
+          // SERVER's: an org with no catalog has none (never a demo list), and
+          // an org with no theme gets the defaults, never the theme this
+          // device last showed for another org. Applied once per context.
           if (orgCfg && !prefsLoaded) {
-            if (Array.isArray(orgCfg.consultServices) && orgCfg.consultServices.length) s.consultServices = orgCfg.consultServices;
-            if (orgCfg.theme && typeof orgCfg.theme === "object") s.theme = Object.assign({}, s.theme, orgCfg.theme);
+            s.consultServices = Array.isArray(orgCfg.consultServices) ? orgCfg.consultServices : [];
+            s.consultServicesVersion = typeof orgCfg.consultServicesVersion === "number" ? orgCfg.consultServicesVersion : 0;
+            serverTheme = themeOf(orgCfg.theme);
+            s.theme = Object.assign({}, s.theme, serverTheme);
+            s.themeSave = null;
+            s.orgIdentity = identityOf(orgCfg);
             prefsLoaded = true;
           }
           return s;
@@ -1451,27 +1457,26 @@
         }
         return s;
       });
-      // Pull each tenant's individualized rule settings into orgConfigs so the
-      // developer's per-org page reflects real backend state (overrides vs
-      // inherited enterprise defaults).
+      // Pull each tenant's REAL rule values into orgConfigs (the developer's
+      // per-org page shows exactly these; there is no inheritance).
       return Promise.all(tenants.map(function (o) {
         return get("/api/dev/organizations/" + o.id + "/settings")
           .then(function (d) { return { code: o.code, d: d }; })
           .catch(function () { return null; });
       })).then(function (rows) {
+        orgRuleConfirmed = {};
         DT.set(function (s) {
-          var ent = (s.enterprise || {}).rules || {};
           var cfgs = Object.assign({}, s.orgConfigs);
           (rows || []).filter(Boolean).forEach(function (row) {
             var d = row.d || {}, org = d.org || {}, setg = d.settings || {};
-            var rules = {};
-            // Only record values that genuinely differ from the enterprise
-            // default — so unchanged tenants show "Inherited", not "Custom".
-            if (typeof org.assignmentTimeoutMin === "number" && org.assignmentTimeoutMin !== ent.timeout) rules.timeout = org.assignmentTimeoutMin;
-            if (org.rotationMode && org.rotationMode !== ent.rotationMode) rules.rotationMode = org.rotationMode;
-            if (setg.autoReassignOnDecline === true || setg.autoReassignOnDecline === false) rules.autoReassign = !!setg.autoReassignOnDecline;
-            if (typeof setg.autoCleanHours === "number") rules.autoCleanHours = setg.autoCleanHours;
-            var c = Object.assign({}, cfgs[row.code]); c.rules = Object.assign({}, c.rules, rules); cfgs[row.code] = c;
+            cfgs[row.code] = { loaded: true, rules: {
+              timeout: typeof org.assignmentTimeoutMin === "number" ? org.assignmentTimeoutMin : null,
+              rotationMode: org.rotationMode || "lowest_census",
+              // Unset reads as off — the router's own rule (=== true).
+              autoReassign: setg.autoReassignOnDecline === true,
+              // null = unset: the auto-clean sweep's platform default applies.
+              autoCleanHours: typeof setg.autoCleanHours === "number" ? setg.autoCleanHours : null,
+            } };
           });
           s.orgConfigs = cfgs;
           return s;
@@ -1483,29 +1488,47 @@
     var o = (DT.getState().orgs || []).find(function (x) { return x.code === code; });
     return o ? o.id : null;
   }
-  // Persist the real per-org rule fields to the backend (others stay local).
+  // Developer → an organization's Rules: each value is that org's own on the
+  // server (there are no platform-wide defaults to inherit). Shown at once;
+  // the server's refusal puts back the previous value and says why. Number
+  // fields are debounced so typing "42" saves 42, not 4 then 42.
   var origSetOrgRule = DT.actions.setOrgRule;
+  var orgRuleTimers = {};
+  var orgRuleConfirmed = {}; // "CODE|key" → the value the server last held
+  function orgRuleRequest(id, key, val) {
+    if (key === "timeout") return api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: val });
+    if (key === "rotationMode") return api("PATCH", "/api/dev/organizations/" + id, { rotationMode: val });
+    if (key === "autoReassign") return api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoReassignOnDecline", value: !!val });
+    if (key === "autoCleanHours") return api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoCleanHours", value: val });
+    return null;
+  }
   DT.actions.setOrgRule = function (code, key, val) {
     var id = orgIdForCode(code);
-    if (id != null) {
-      if (key === "timeout") api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: Number(val) || 15 }).catch(function () {});
-      else if (key === "rotationMode") api("PATCH", "/api/dev/organizations/" + id, { rotationMode: val }).catch(function () {});
-      else if (key === "autoReassign") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoReassignOnDecline", value: !!val }).catch(function () {});
-      else if (key === "autoCleanHours") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoCleanHours", value: Number(val) || 0 }).catch(function () {});
-    }
-    if (origSetOrgRule) return origSetOrgRule(code, key, val);
-  };
-  var origResetOrgRule = DT.actions.resetOrgRule;
-  DT.actions.resetOrgRule = function (code, key) {
-    var id = orgIdForCode(code);
-    var ent = (DT.getState().enterprise || {}).rules || {};
-    if (id != null) {
-      if (key === "timeout") api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: Number(ent.timeout) || 15 }).catch(function () {});
-      else if (key === "rotationMode") api("PATCH", "/api/dev/organizations/" + id, { rotationMode: ent.rotationMode || "lowest_census" }).catch(function () {});
-      else if (key === "autoReassign") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoReassignOnDecline", value: null }).catch(function () {});
-      else if (key === "autoCleanHours") api("PATCH", "/api/dev/organizations/" + id + "/settings", { key: "autoCleanHours", value: null }).catch(function () {});
-    }
-    if (origResetOrgRule) return origResetOrgRule(code, key);
+    var ck = code + "|" + key;
+    if (!(ck in orgRuleConfirmed)) orgRuleConfirmed[ck] = (((DT.getState().orgConfigs || {})[code] || {}).rules || {})[key];
+    if (origSetOrgRule) origSetOrgRule(code, key, val);
+    if (id == null) return Promise.resolve(false);
+    var run = function () {
+      var req = orgRuleRequest(id, key, val);
+      if (!req) return Promise.resolve(false);
+      return req.then(function () {
+        orgRuleConfirmed[ck] = val;
+        DT.set(function (s) { s.__toast = { tone: "accepted", title: "Saved for " + code, msg: "Applies to this organization only." }; return s; });
+        return true;
+      }).catch(function (e) {
+        if (origSetOrgRule) origSetOrgRule(code, key, orgRuleConfirmed[ck]);
+        var why = isNetworkError(e) ? "No connection — nothing was saved." : String((e && e.message) || "") === "validation_error"
+          ? (key === "timeout" ? "Enter 1–120 whole minutes." : key === "autoCleanHours" ? "Enter 0–8760 whole hours (0 keeps patients indefinitely)." : "That value isn't allowed.")
+          : "The server refused. Try again.";
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: why }; return s; });
+        return false;
+      });
+    };
+    if (key !== "timeout" && key !== "autoCleanHours") return run();
+    if (orgRuleTimers[ck]) { clearTimeout(orgRuleTimers[ck].t); orgRuleTimers[ck].resolve(false); }
+    return new Promise(function (resolve) {
+      orgRuleTimers[ck] = { resolve: resolve, t: setTimeout(function () { delete orgRuleTimers[ck]; run().then(resolve); }, 600) };
+    });
   };
 
   // ---- action overrides ----------------------------------------------------
@@ -1522,7 +1545,10 @@
   // (until then every one of these calls would just 403).
   function bootSession(u) {
     connectWs();
-    if (u.role === "developer") { hydrateOrgs(); hydrateDevUsers(); }
+    if (u.role === "developer") hydrateOrgs();
+    // The people an administrator manages: the developer's cross-tenant list,
+    // a director's / ER director's own org (GET /api/accounts).
+    if (u.role === "developer" || u.role === "director" || u.role === "er_director") hydrateDevUsers();
     hydrateMyPrefs();
     ensurePushSubscription(); // never prompts — see DT.actions.enablePush
     if (PRIVILEGED[u.role]) hydrateOpsReport();
@@ -2144,27 +2170,180 @@
     if (origSetSetting) return origSetSetting(key, value);
   };
 
-  // Persist per-organization preferences (consult-service catalog + theme) to the
-  // tenant's org settings, so each organization keeps its own and edits made
-  // while "managing" an org apply only there.
-  function persistOrgPrefs(patch) { api("PATCH", "/api/org/preferences", patch).catch(function () {}); }
-  ["addConsultService", "renameConsultService", "setConsultOnCall", "addConsultMember", "removeConsultMember", "removeConsultService"].forEach(function (name) {
-    var orig = DT.actions[name];
-    if (!orig) return;
-    DT.actions[name] = function () {
-      var r = orig.apply(null, arguments);
-      persistOrgPrefs({ consultServices: DT.getState().consultServices || [] });
-      return r;
-    };
-  });
-  var origSetTheme = DT.actions.setTheme;
-  if (origSetTheme) {
-    DT.actions.setTheme = function (patch) {
-      var r = origSetTheme(patch);
-      persistOrgPrefs({ theme: DT.getState().theme });
-      return r;
-    };
+  // Why the server refused an org-admin write, in words (never "check the form"
+  // for a refusal that has nothing to do with the form).
+  function adminRefusal(e, fallback) {
+    if (isNetworkError(e)) return "No connection — nothing was saved.";
+    var code = String((e && e.message) || "");
+    if (e && e.status === 404 && code === "module_disabled") {
+      var mod = (e.body && e.body.module) || "";
+      return mod === "platform.appearance" ? "Appearance is switched off for your organization by the DocTurn operator."
+        : mod === "routing.consults" ? "Consult services are switched off for your organization by the DocTurn operator."
+        : "This feature is switched off for your organization.";
+    }
+    if (e && e.status === 403) return fallback && fallback.forbidden ? fallback.forbidden : "Your role can't change this.";
+    return (fallback && fallback[code]) || (fallback && fallback.other) || "Try again.";
   }
+
+  // ---- Directory → Consult services (server: /api/org/consult-services) ----
+  // Every edit is ONE item-level server call: the server applies it to the
+  // org's CURRENT catalog under a lock and answers with the whole list, which
+  // is what the screen then shows. So a confirmation follows the server's
+  // answer, a failure changes nothing on screen and says so, and an edit can
+  // never delete a service another admin added meanwhile (the old whole-list
+  // PATCH from a sign-in-time copy did — A.CON org-admin #9/#10).
+  function applyCatalog(r) {
+    if (!r || !Array.isArray(r.services)) return;
+    DT.set(function (s) {
+      s.consultServices = r.services;
+      if (typeof r.version === "number") s.consultServicesVersion = r.version;
+      return s;
+    });
+  }
+  var CONSULT_WHY = {
+    forbidden: "Your role can't change consult services.",
+    duplicate_name: "A consult service with that name already exists.",
+    duplicate_member: "That PA/NP is already listed under this service.",
+    not_found: "That service or person was already removed — the list has been refreshed.",
+    validation_error: "Enter a name (up to 80 characters).",
+    other: "The server didn't save it. Try again.",
+  };
+  function consultCall(method, path, body, okToast) {
+    return api(method, path, body).then(function (r) {
+      applyCatalog(r);
+      if (okToast) DT.set(function (s) { s.__toast = okToast(r); return s; });
+      return true;
+    }).catch(function (e) {
+      var why = adminRefusal(e, CONSULT_WHY);
+      if (e && e.status === 404) DT.actions.loadConsultServices();
+      if (e && e.status === 404 && String(e.message) === "module_disabled") hydrateModules();
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: why }; return s; });
+      return false;
+    });
+  }
+  DT.actions.loadConsultServices = function () {
+    return get("/api/org/consult-services").then(function (r) {
+      applyCatalog({ services: (r && Array.isArray(r.services)) ? r.services : [], version: r && typeof r.version === "number" ? r.version : 0 });
+      return true;
+    }).catch(function () { return false; });
+  };
+  var CS = "/api/org/consult-services";
+  function csPath(id) { return CS + "/" + encodeURIComponent(id); }
+  DT.actions.addConsultService = function (name) {
+    var nm = String(name || "").trim();
+    if (!nm) return Promise.resolve(false);
+    return consultCall("POST", CS, { name: nm }, function (r) {
+      return { tone: "accepted", title: "Consult service added", msg: ((r && r.service && r.service.name) || nm) + " is now available in ER intake." };
+    });
+  };
+  DT.actions.renameConsultService = function (id, name) {
+    var nm = String(name || "").trim();
+    if (!nm) return Promise.resolve(false);
+    return consultCall("PATCH", csPath(id), { name: nm }, null);
+  };
+  DT.actions.setConsultOnCall = function (id, onCall) {
+    var body = { onCall: onCall && onCall.name ? { name: String(onCall.name), avatar: onCall.avatar ? String(onCall.avatar).slice(0, 4) : undefined } : null };
+    if (body.onCall && !body.onCall.avatar) delete body.onCall.avatar;
+    return consultCall("PATCH", csPath(id), body, null);
+  };
+  DT.actions.addConsultMember = function (serviceId, member) {
+    if (!member || !member.name) return Promise.resolve(false);
+    var body = { name: String(member.name), role: member.role || "NP" };
+    if (member.avatar) body.avatar = String(member.avatar).slice(0, 4);
+    return consultCall("POST", csPath(serviceId) + "/members", body, null);
+  };
+  DT.actions.removeConsultMember = function (serviceId, memberId) {
+    return consultCall("DELETE", csPath(serviceId) + "/members/" + encodeURIComponent(memberId), null, null);
+  };
+  DT.actions.removeConsultService = function (id) {
+    return consultCall("DELETE", csPath(id), null, function () {
+      return { tone: "sent", title: "Consult service removed", msg: "It's no longer offered in ER intake." };
+    });
+  };
+
+  // ---- Settings → Appearance: the ORGANIZATION's theme ---------------------
+  // PATCH /api/org/preferences { theme } with ONLY the keys that changed (the
+  // server merges them, so two admins never undo each other). The change shows
+  // at once as a preview; the server's answer decides: a refusal (the
+  // platform.appearance module switched off → 404, a 403, a failure) puts back
+  // the theme the server holds and says why — it never stays on screen as if
+  // applied (A.CON org-admin #8). Edits are batched (typing a name is one save).
+  var THEME_KEYS = ["appName", "accent", "radius", "sidebar", "contentWidth", "palette"];
+  var THEME_DEFAULTS = { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard", palette: "classic" };
+  var serverTheme = null;   // the theme the server last confirmed (hydrate / PATCH)
+  var themePending = {};    // changed keys not sent yet
+  var themeTimer = null;
+  var themeSeq = 0;         // the newest request; only its answer settles the screen
+  function pickTheme(t) {
+    var out = {};
+    if (!t || typeof t !== "object") return out;
+    THEME_KEYS.forEach(function (k) { if (t[k] !== undefined && t[k] !== null) out[k] = t[k]; });
+    return out;
+  }
+  function themeOf(t) { return Object.assign({}, THEME_DEFAULTS, pickTheme(t)); }
+  var THEME_WHY = { forbidden: "Your role can't change your organization's appearance.", validation_error: "That value isn't allowed.", other: "The server didn't save it. Try again." };
+  function flushTheme() {
+    themeTimer = null;
+    var body = themePending; themePending = {};
+    if (!Object.keys(body).length) return Promise.resolve(true);
+    var seq = ++themeSeq;
+    return api("PATCH", "/api/org/preferences", { theme: body }).then(function (r) {
+      serverTheme = themeOf(Object.assign({}, serverTheme || THEME_DEFAULTS, (r && r.theme) || body));
+      if (seq === themeSeq && !themeTimer) {
+        DT.set(function (s) { s.theme = Object.assign({}, s.theme, serverTheme); s.themeSave = { state: "saved", at: Date.now() }; return s; });
+      }
+      return true;
+    }).catch(function (e) {
+      var why = adminRefusal(e, THEME_WHY);
+      if (e && e.status === 404 && String(e.message) === "module_disabled") hydrateModules();
+      DT.set(function (s) {
+        if (seq === themeSeq && !themeTimer) {
+          s.theme = Object.assign({}, s.theme, serverTheme || THEME_DEFAULTS);
+          s.themeSave = { state: "error", msg: why };
+        }
+        s.__toast = { tone: "rejected", title: "Appearance not saved", msg: why };
+        return s;
+      });
+      return false;
+    });
+  }
+  DT.actions.setTheme = function (patch) {
+    var clean = pickTheme(patch);
+    if (!Object.keys(clean).length) return;
+    Object.assign(themePending, clean);
+    DT.set(function (s) { s.theme = Object.assign({}, s.theme, clean); s.themeSave = { state: "saving" }; return s; });
+    if (themeTimer) clearTimeout(themeTimer);
+    themeTimer = setTimeout(flushTheme, 450);
+  };
+  // "Reset to defaults": the org theme goes back to the defaults ON THE SERVER
+  // (for everyone), and this device's navigation layout is reset. Nothing
+  // changes — and the toast says so — unless the server accepted it.
+  DT.actions.resetLayout = function (role) {
+    if (themeTimer) { clearTimeout(themeTimer); themeTimer = null; }
+    themePending = {};
+    var seq = ++themeSeq;
+    return api("PATCH", "/api/org/preferences", { theme: Object.assign({}, THEME_DEFAULTS) }).then(function (r) {
+      serverTheme = themeOf((r && r.theme) || THEME_DEFAULTS);
+      DT.set(function (s) {
+        if (seq === themeSeq) { s.theme = Object.assign({}, s.theme, serverTheme); s.themeSave = { state: "saved", at: Date.now() }; }
+        var hid = {}; hid[role] = []; var ord = {}; ord[role] = null;
+        s.navHidden = Object.assign({}, s.navHidden, hid);
+        s.navOrder = Object.assign({}, s.navOrder, ord);
+        s.__toast = { tone: "accepted", title: "Appearance reset", msg: "Your organization's theme is back to the defaults for everyone; this device's navigation layout is reset too." };
+        return s;
+      });
+      return true;
+    }).catch(function (e) {
+      var why = adminRefusal(e, THEME_WHY);
+      if (e && e.status === 404 && String(e.message) === "module_disabled") hydrateModules();
+      DT.set(function (s) {
+        if (seq === themeSeq) s.theme = Object.assign({}, s.theme, serverTheme || THEME_DEFAULTS);
+        s.__toast = { tone: "rejected", title: "Appearance not reset", msg: why + " Nothing was changed." };
+        return s;
+      });
+      return false;
+    });
+  };
 
   // ---- self-registration + director/ER-director approval queue -------------
   // Public: anyone with an org code can request an account (no session needed).
@@ -3256,8 +3435,8 @@
   // directors / ER directors read their own org via /api/accounts (same shape).
   function hydrateDevUsers() {
     var role = (DT.getState().session || {}).role;
-    var path = role === "developer" ? "/api/dev/users" : "/api/accounts";
-    return get(path).then(function (users) {
+    if (role !== "developer") return DT.actions.loadAccounts();
+    return get("/api/dev/users").then(function (users) {
       DT.set(function (s) {
         s.devUsers = (users || []).map(function (u) {
           return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
@@ -3267,6 +3446,94 @@
       });
     }).catch(function () {});
   }
+  // Directory → People / Roles (director, ER director): the people of the
+  // SESSION's org as the server lists them (GET /api/accounts) — never the
+  // store's demo users or its demo "selected org" (A.CON org-admin #1). Rows
+  // are tagged with the org they were read for, so a screen never shows one
+  // org's people under another's session.
+  DT.actions.loadAccounts = function () {
+    var sess = DT.getState().session || {};
+    if (sess.role !== "director" && sess.role !== "er_director") return Promise.resolve(null);
+    var org = sess.org;
+    return get("/api/accounts").then(function (users) {
+      DT.set(function (s) {
+        if (!s.session || s.session.org !== org) return s; // someone else signed in meanwhile
+        var myId = s.me && s.me.id != null ? s.me.id : meId;
+        s.accounts = (users || []).map(function (u) {
+          return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
+            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword, self: u.id === myId };
+        });
+        s.accountsOrg = org;
+        s.accountsError = null;
+        return s;
+      });
+      return users;
+    }).catch(function (e) {
+      DT.set(function (s) { s.accountsError = isNetworkError(e) ? "No connection — the list couldn't be loaded." : "The server didn't return the list. Try again."; return s; });
+      return null;
+    });
+  };
+  // Directory → People → Add person (director, ER director): the director
+  // route, which mints the one-time password. A director may add any clinical
+  // role (a PA/NP is a hospitalist account with that credential); an ER
+  // director only ER physicians — the server enforces both, and its refusal
+  // is reported as such, never as a form error (A.CON org-admin #2).
+  var PERSON_WHY = {
+    forbidden: "Your role can't add this kind of account.",
+    username_taken: "That username is already taken in your organization.",
+    validation_error: "Enter a full name and a username of at least 3 characters.",
+    other: "The server didn't create the account. Try again.",
+  };
+  DT.actions.addPerson = function (form) {
+    var name = String((form && form.name) || "").trim();
+    var username = String((form && form.username) || "").trim().toLowerCase();
+    var role = form && form.role;
+    var body = { username: username, displayName: name, role: role === "consultant" ? "hospitalist" : role };
+    if (role === "consultant") { body.credential = form.credential === "PA" ? "PA" : "NP"; body.specialty = String(form.specialty || "").trim() || "Hospital Medicine"; }
+    else if (role === "hospitalist") { body.specialty = String(form.specialty || "").trim() || "Hospital Medicine"; }
+    return api("POST", "/api/director/hospitalists", body).then(function (res) {
+      DT.actions.loadAccounts();
+      if (body.role === "hospitalist") rehydrate();
+      revealCredential({ title: "Person added", name: name, username: (res && res.user && res.user.username) || username, temporaryPassword: res && res.temporaryPassword });
+      return true;
+    }).catch(function (e) {
+      var why = isNetworkError(e) ? "No connection — nobody was added." : e && e.status === 403 ? PERSON_WHY.forbidden : (PERSON_WHY[String((e && e.message) || "")] || PERSON_WHY.other);
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not add " + (name || "person"), msg: why }; return s; });
+      return false;
+    });
+  };
+  // Settings → Shift types: the org's ROUTABLE shift types
+  // (organizations.round_robin_shift_types, PATCH /api/org/config — director
+  // only). Shown at once; a refusal puts back the server's set with a reason.
+  DT.actions.setRotationShiftTypes = function (list) {
+    var prev = ((DT.getState().orgIdentity || {}).roundRobinShiftTypes || null);
+    var put = function (v) { DT.set(function (s) { if (s.orgIdentity) s.orgIdentity = Object.assign({}, s.orgIdentity, { roundRobinShiftTypes: v }); return s; }); };
+    put(list.slice());
+    return api("PATCH", "/api/org/config", { roundRobinShiftTypes: list }).then(function (r) {
+      var saved = r && Array.isArray(r.roundRobinShiftTypes) ? r.roundRobinShiftTypes : list;
+      put(saved.slice());
+      var NAMES = { day: "Day", swing: "Swing", night: "Night" };
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Rotation shifts saved", msg: "New admissions rotate to hospitalists on: " + saved.map(function (x) { return NAMES[x] || x; }).join(", ") + "." }; return s; });
+      return true;
+    }).catch(function (e) {
+      put(prev);
+      var why = isNetworkError(e) ? "No connection — nothing was saved." : e && e.status === 403 ? "Only a director can change this." : String((e && e.message) || "") === "validation_error" ? "At least one shift must stay in rotation." : "Try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: why }; return s; });
+      return false;
+    });
+  };
+  // Developer → Platform → Security → "Sign out all": every session on every
+  // tenant ends now (server: POST /api/dev/sessions/revoke-all); the operator's
+  // own stays. The toast follows the server's answer (A.CON org-admin #15).
+  DT.actions.revokeAllSessions = function () {
+    return api("POST", "/api/dev/sessions/revoke-all", {}).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Everyone else is signed out", msg: "Every other session on every organization must sign in again. Yours stays open." }; return s; });
+      return true;
+    }).catch(function (e) {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Nobody was signed out", msg: isNetworkError(e) ? "No connection — try again." : e && e.status === 403 ? "Only the DocTurn operator can do this." : "The server refused. Try again." }; return s; });
+      return false;
+    });
+  };
   var SHIFT_MAP = { rounding: "day", swing: "swing", nocturnist: "night", day: "day", night: "night" };
 
   // developer — cross-tenant user provisioning
@@ -3868,9 +4135,16 @@
   };
   // The signed-in user's OWN organization as the server knows it (Settings
   // header for every non-developer role) — never the demo store's org list.
+  function identityOf(r) {
+    return r && r.code ? {
+      name: r.name || r.code, code: r.code, timezone: r.timezone || "",
+      // The org's ROUTABLE shift types (Settings → Shift types).
+      roundRobinShiftTypes: Array.isArray(r.roundRobinShiftTypes) ? r.roundRobinShiftTypes.slice() : null,
+    } : null;
+  }
   DT.actions.loadOrgIdentity = function () {
     return get("/api/org/config").then(function (r) {
-      var id = r && r.code ? { name: r.name || r.code, code: r.code, timezone: r.timezone || "" } : null;
+      var id = identityOf(r);
       DT.set(function (s) { s.orgIdentity = id; return s; });
       return id;
     }).catch(function () { return null; });

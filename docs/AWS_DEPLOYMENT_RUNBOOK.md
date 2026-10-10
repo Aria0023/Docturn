@@ -259,7 +259,7 @@ box.
 ### 7a. Connecting integrations (any time after go-live)
 
 Every integration has a card in **Settings → Integrations** (director) and in
-**Organization config → Integrations** / **Enterprise defaults → Integrations**
+**Organization config → Integrations** / **Platform → Integrations**
 (developer). The card shows the live status (`Active`, `Off`, `Not set up`,
 `Needs BAA`, `Error`), what is missing **by name**, a real **Test connection**,
 and a **Set up** sheet. Full plain-language guide: `docs/INTEGRATIONS.md`.

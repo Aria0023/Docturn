@@ -248,7 +248,7 @@ and a scheduled run is skipped while the previous one is still going.
 
 ## For you as developer
 
-- **Enterprise defaults → Integrations** shows every organization × integration
+- **Platform → Integrations** shows every organization × integration
   status, plus which platform variables are missing. The header badge of a
   platform integration says **Set on server** (keys present and no failed
   test), **Error** (the last test of those keys failed), **Not set up** or

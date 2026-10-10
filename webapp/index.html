@@ -304,7 +304,7 @@ const NAV = {
     { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
-    { id: "roles",      label: "Role management", icon: "shield-half" },
+    { id: "roles",      label: "Roles", icon: "shield-half" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
@@ -315,7 +315,7 @@ const NAV = {
   ],
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
-    { id: "enterprise", label: "Enterprise defaults", icon: "globe" },
+    { id: "enterprise", label: "Platform", icon: "globe" },
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
@@ -348,13 +348,13 @@ const TOP = {
   "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
   oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
-  roles:      ["Role management", "Create and manage user roles, permissions and portal access"],
-  consult:    ["Consult services", "Curate consult services and on-call — shared across the app"],
-  people:     ["People", "Manage everyone in your organization, grouped by role"],
-  access:     ["Access & people", "Manage your organization's people and the roles that govern their access"],
-  appearance: ["Appearance & layout", "Customize branding, theme and navigation structure"],
+  roles:      ["Roles", "DocTurn's fixed roles and who holds them in your organization"],
+  consult:    ["Consult services", "The services ER physicians can request — saved for your organization"],
+  people:     ["People", "Your organization's accounts, as the server holds them"],
+  access:     ["Access & people", "Your organization's people and the fixed roles that govern their access"],
+  appearance: ["Appearance & layout", "Your organization's branding and theme, and this device's navigation"],
   settings:   ["Organization settings", "Rotation rules, retention and integrations"],
-  enterprise: ["Enterprise defaults", "Platform-wide rules and permissions every tenant inherits"],
+  enterprise: ["Platform", "Operations that span every organization"],
   users:      ["Users by organization", "Support directory — every user grouped by tenant"],
 };
 
@@ -612,11 +612,13 @@ function App() {
 
   const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} fhir={st.fhir} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onConnectFhir={a.connectFhir} onDisconnectFhir={a.disconnectFhir} onSyncFhir={a.syncFhir} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
 
-  // Roles that also manage org people/roles — their Directory tab folds in the
-  // Access & people surfaces (People + Roles & permissions) as sub-tabs.
+  // Roles that also manage org people — their Directory tab folds in People,
+  // Consult services and Roles as sub-tabs. A director sees (and manages)
+  // every clinical account; an ER director the ER staff (server rule:
+  // server/routes/accounts.ts).
   const dirDomain = (role === "er_director")
-    ? { roles: ["er_doctor", "er_director", "consultant"], portals: ["er_physician", "er_director"] }
-    : { roles: ["hospitalist", "director", "consultant"], portals: ["hospitalist", "hosp_director"] };
+    ? { roles: ["er_doctor", "er_director"] }
+    : { roles: ["hospitalist", "consultant", "er_doctor", "er_director", "director"] };
   const canManagePeople = role === "director" || role === "er_director";
 
   // ER Consult services come from the director-curated menu. Each service's
@@ -640,7 +642,7 @@ function App() {
   let screen;
   if (nav === "messages") screen = <Messaging />;
   else if (nav === "directory") screen = canManagePeople
-    ? <DirectoryHub providers={sortedProviders} onMessage={message} scopeOrg={st.selectedOrg} domainRoles={dirDomain.roles} domainPortals={dirDomain.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />
+    ? <DirectoryHub providers={sortedProviders} onMessage={message} domainRoles={dirDomain.roles} />
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
@@ -655,27 +657,23 @@ function App() {
   else if (nav === "account") screen = <AccountSettings onLock={lockByHand} />;
   else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
-  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} onClear={(role === "director" || role === "developer" || role === "er_director") ? a.clearComplianceLogs : undefined} />;
+  else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} incidents={st.incidents} onResolve={a.resolveIncident} />;
   else if (nav === "users") screen = <SupportDirectory users={st.devUsers} organizations={st.orgs} roleColors={st.roleColors} onImpersonate={a.impersonate} />;
-  else if (nav === "roles") screen = <RoleManagement roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} domainPortals={dirDomain.portals} />;
+  else if (nav === "roles") screen = <RoleManagement />;
   else if (nav === "consult") screen = <ConsultServices />;
   else if (nav === "oncall") screen = <OnCallBoard />;
   else if (nav === "approvals") screen = <RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />;
-  else if (nav === "people") screen = <PeopleManager scopeOrg={st.selectedOrg} />;
-  else if (nav === "access") {
-    const dom = role === "er_director"
-      ? { roles: ["er_doctor", "er_director", "consultant"], portals: ["er_physician", "er_director"] }
-      : { roles: ["hospitalist", "director", "consultant"], portals: ["hospitalist", "hosp_director"] };
-    screen = <AccessPeople scopeOrg={st.selectedOrg} domainRoles={dom.roles} domainPortals={dom.portals} roles={st.roles} onCreate={a.createRole} onUpdate={a.updateRole} onDelete={a.deleteRole} />;
-  }
-  else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)} />;
-  else if (nav === "enterprise") screen = <OrgConfig scope="*" audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
-  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} audit={st.audit} incidents={st.incidents} onClearCompliance={a.clearComplianceLogs} />;
+  else if (nav === "people") screen = <PeopleManager domainRoles={dirDomain.roles} />;
+  else if (nav === "access") screen = <AccessPeople domainRoles={dirDomain.roles} />;
+  else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
+    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave} />;
+  else if (nav === "enterprise") screen = <OrgConfig scope="*" audit={st.audit} incidents={st.incidents} />;
+  else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} audit={st.audit} incidents={st.incidents} />;
   else if (nav === "settings") screen = <OrgSettings />;
   else if (role === "hospitalist") screen = <HospitalistDashboard pending={st.pending} myAdmissions={st.myAdmissions} onAccept={a.accept} onDecline={a.decline} onMessage={message} providers={st.providers} meName={st.me && st.me.name} rotationMode={st.settings && st.settings.rotationMode} onOpenHistory={() => a.setNav("history")} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} />;
   else if (role === "er_doctor") screen = <CustomizableDashboard role="er_doctor" widgets={[
     { id: "mymetrics", label: "My metrics", icon: "activity", node: <ErMyMetricsPanel sent={st.sent} meName={st.me && st.me.name} avgAcceptSec={st.avgAcceptSec} /> },
-    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} onAddService={a.addConsultService} /> },
+    { id: "intake", label: "Patient intake & routing", icon: "clipboard-plus", node: <IntakeRoutingPanel providers={sortedProviders} onSend={a.sendAssignment} consultConfig={consultConfig} midlevels={midlevels} services={consultServiceNames} hiddenServices={st.consultHidden} onToggleService={a.toggleConsultHidden} /> },
     { id: "board", label: "Patient board", icon: "layout-list", node: <RoutedBoardPanel sent={st.sent} providers={sortedProviders} onReassign={a.reassignSent} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} consultServices={consultServiceNames} /> },
   ]} />;
   else if (role === "er_director") screen = <CustomizableDashboard role="er_director" widgets={[

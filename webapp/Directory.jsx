@@ -92,23 +92,28 @@ function Directory({ providers, onMessage }) {
 }
 
 // Directory + Access & people, combined. For directors/ER directors the
-// Directory tab carries People and Roles & permissions as sub-tabs so there's
-// a single place for "everyone in the org" — provider directory and the access
-// management that used to live under its own nav item.
-function DirectoryHub({ providers, onMessage, scopeOrg, domainRoles, domainPortals, roles, onCreate, onUpdate, onDelete }) {
+// Directory tab carries People, Consult services and Roles as sub-tabs so
+// there's a single place for "everyone in the org". People and Roles are the
+// server's (GET /api/accounts; fixed roles); Consult services is hidden while
+// the routing.consults module is off for the org (its API answers 404 then).
+function DirectoryHub({ providers, onMessage, domainRoles }) {
   const [tab, setTab] = React.useState("directory");
   const mobile = useIsMobile();
-  const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"], ["consult", "Consult services", "stethoscope"], ["roles", "Roles & permissions", "shield-half"]];
+  const consultOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("routing.consults");
+  const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"]]
+    .concat(consultOn ? [["consult", "Consult services", "stethoscope"]] : [])
+    .concat([["roles", "Roles", "shield-half"]]);
+  const shown = tab === "consult" && !consultOn ? "directory" : tab;
   return (
     <React.Fragment>
       {/* Same mobile padding as PageWrap; the strip scrolls sideways within the
           viewport (like SettingsTabs) instead of pushing the page 80px wider. */}
       <div style={{ padding: mobile ? "16px 14px 0" : "22px 28px 0", maxWidth: "var(--content-max, 1040px)", margin: "0 auto" }}>
-        <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div data-directory-tabs style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", maxWidth: "100%", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
           {tabs.map(([id, label, icon]) => {
-            const on = tab === id;
+            const on = shown === id;
             return (
-              <button key={id} onClick={() => setTab(id)}
+              <button key={id} type="button" onClick={() => setTab(id)} aria-pressed={on}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", minHeight: mobile ? 44 : undefined, borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
                   background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                 <Icon name={icon} size={15} />{label}
@@ -117,13 +122,13 @@ function DirectoryHub({ providers, onMessage, scopeOrg, domainRoles, domainPorta
           })}
         </div>
       </div>
-      {tab === "directory"
+      {shown === "directory"
         ? <Directory providers={providers} onMessage={onMessage} />
-        : tab === "people"
-          ? <PeopleManager scopeOrg={scopeOrg} domainRoles={domainRoles} />
-          : tab === "consult"
+        : shown === "people"
+          ? <PeopleManager domainRoles={domainRoles} />
+          : shown === "consult"
             ? <ConsultServices />
-            : <RoleManagement roles={roles} onCreate={onCreate} onUpdate={onUpdate} onDelete={onDelete} domainPortals={domainPortals} />}
+            : <RoleManagement />}
     </React.Fragment>
   );
 }

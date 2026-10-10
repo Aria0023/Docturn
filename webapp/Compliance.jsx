@@ -69,7 +69,10 @@ const LOG_LEVEL = {
 };
 function logLevelFor(r) { return r.risk === "high" ? "error" : r.risk === "medium" ? "warn" : (/login|logout|access|impersonat|audit/.test(r.action) ? "audit" : "info"); }
 
-function Compliance({ audit = [], phiLog = [], incidents = [], onResolve, onClear }) {
+// The audit, PHI-access and incident trails are the server's and are kept
+// (HIPAA §164.316 retention): nothing on this screen clears them. The old
+// "Clear logs" button only emptied this browser's copy (A.CON org-admin #16).
+function Compliance({ audit = [], phiLog = [], incidents = [], onResolve }) {
   const [tab, setTab] = React.useState("audit");
   // Phones get stacked table rows: the desktop columns (fixed 72/120/70px plus
   // two flex columns) left the Actor column 1px wide at 375px and pushed the
@@ -96,8 +99,8 @@ function Compliance({ audit = [], phiLog = [], incidents = [], onResolve, onClea
         <StatTile label="Denied access" value={deniedCount} icon="ban" tint="slate" />
       </div>
 
-      {/* Wraps: on a phone Export / Clear logs drop below the tab strip,
-          right-aligned, instead of sitting past the viewport edge. */}
+      {/* Wraps: on a phone Export drops below the tab strip, right-aligned,
+          instead of sitting past the viewport edge. */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", columnGap: 12, rowGap: 10, marginBottom: 18 }}>
         <ComplianceTabs tab={tab} setTab={setTab} />
         <span style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", flex: "none" }}>
@@ -107,9 +110,6 @@ function Compliance({ audit = [], phiLog = [], incidents = [], onResolve, onClea
           else if (tab === "incidents") csvDownload("docturn-incidents.csv", [["type", "severity", "description", "status"]].concat(incidents.map((r) => [r.type, r.sev, r.desc, r.status])));
           else csvDownload("docturn-logs.csv", [["time", "level", "org", "message", "risk"]].concat(logs.map((l) => [l.t, l.level, l.org, l.msg, l.risk])));
         }}>Export</Button>
-        {onClear && (
-          <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Clear all audit, PHI and incident logs? This can't be undone.")) onClear(); }}>Clear logs</Button>
-        )}
         </span>
       </div>
 

@@ -78,7 +78,9 @@ export class WsHub implements WsFanout {
     this.wss = new WebSocketServer({ server, path: "/ws" });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
     this.unsubscribeRevoker = onSessionsRevoked((r) =>
-      this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId }),
+      r.all
+        ? this.closeAllSockets({ exceptSessionId: r.exceptSessionId })
+        : this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId }),
     );
     this.unsubscribeLock = onSessionLocked((e) => this.closeSessionSockets(e.userId, e.connectionId));
     this.startHeartbeat();
@@ -275,6 +277,27 @@ export class WsHub implements WsFanout {
    * sockets of one session, the one that changed the password.
    * Returns how many sockets were closed.
    */
+  /**
+   * Close every live socket on this instance (1008 "session_revoked") — the
+   * operator's "Sign out all" — sparing only the operator's own session.
+   */
+  closeAllSockets(opts: { exceptSessionId?: string } = {}): number {
+    let closed = 0;
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        const m = this.meta.get(ws);
+        if (m && opts.exceptSessionId && m.sessionId === opts.exceptSessionId) continue;
+        try {
+          ws.close(1008, "session_revoked");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
+      }
+    }
+    return closed;
+  }
+
   closeUserSockets(userId: number, opts: { exceptSessionId?: string } = {}): number {
     let closed = 0;
     for (const set of [...this.clients.values()]) {

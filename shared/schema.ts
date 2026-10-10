@@ -1095,9 +1095,77 @@ export const attestationUpsertSchema = z.object({
 export const orgConfigSchema = z
   .object({
     assignmentTimeoutMin: z.number().int().min(1).max(120).optional(),
-    roundRobinShiftTypes: z.array(z.enum(SHIFT_TYPE)).optional(),
+    // The org's ROUTABLE shift types (Settings → Shift types). Never empty — an
+    // empty set would leave no one to route an admission to — and no repeats.
+    roundRobinShiftTypes: z
+      .array(z.enum(SHIFT_TYPE))
+      .min(1)
+      .refine((a) => new Set(a).size === a.length, { message: "duplicate shift type" })
+      .optional(),
     rotationMode: z.enum(["lowest_census", "sequential"]).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
     message: "at least one field is required",
   });
+
+/* ── Org theme (Settings → Appearance) ──────────────────────────────────────
+ * PATCH /api/org/preferences { theme } is validated against this and MERGED
+ * key by key into the stored theme, so two admins changing different keys
+ * never undo each other. "Reset to defaults" writes ORG_THEME_DEFAULTS. */
+export const ORG_THEME_DEFAULTS = {
+  appName: "DocTurn",
+  accent: "#2563EB",
+  radius: 8,
+  sidebar: "expanded",
+  contentWidth: "standard",
+  palette: "classic",
+} as const;
+export const orgThemePatchSchema = z
+  .object({
+    // Shown in the sidebar; printable characters only.
+    appName: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[^\u0000-\u001f\u007f]*$/)
+      .optional(),
+    accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+    radius: z.number().int().min(0).max(24).optional(),
+    sidebar: z.enum(["expanded", "compact"]).optional(),
+    contentWidth: z.enum(["standard", "wide", "full"]).optional(),
+    palette: z.enum(["classic", "calm", "warm"]).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+
+/* ── Consult-service catalog (Directory → Consult services) ─────────────────
+ * Stored as org setting "consultServices" (read by the ER intake, the on-call
+ * board and on-call message addressing) with a revision counter in
+ * "consultServicesRev". Edited one item at a time (/api/org/consult-services). */
+const consultServiceName = z.string().trim().min(1).max(80);
+const consultPersonName = z.string().trim().min(1).max(120);
+export const consultOnCallSchema = z
+  .object({
+    name: consultPersonName,
+    avatar: z.string().trim().max(4).optional(),
+    userId: z.number().int().positive().optional(),
+  })
+  .strict()
+  .nullable();
+export const consultServiceCreateSchema = z.object({ name: consultServiceName }).strict();
+export const consultServicePatchSchema = z
+  .object({ name: consultServiceName.optional(), onCall: consultOnCallSchema.optional() })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
+export const consultMemberCreateSchema = z
+  .object({
+    name: consultPersonName,
+    role: z.enum(["NP", "PA", "RN"]),
+    avatar: z.string().trim().max(4).optional(),
+  })
+  .strict();
+/** The legacy whole-catalog replace (PATCH /api/org/preferences { consultServices }). */
+export const consultServicesArraySchema = z
+  .array(z.object({ id: z.string().max(64).optional(), name: consultServiceName }).passthrough())
+  .max(200);

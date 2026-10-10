@@ -451,6 +451,12 @@ export interface IStorage {
     value: unknown,
     updatedBy: number | null,
   ): Promise<void>;
+  mutateOrgSettings<R>(
+    orgId: number,
+    keys: readonly string[],
+    updatedBy: number | null,
+    fn: (current: Record<string, unknown>) => { write?: Record<string, unknown>; result: R },
+  ): Promise<R>;
   // per-hospital integration credentials (ciphertext only — server/integrations/)
   getIntegrationCredential(orgId: number, integrationId: string): Promise<OrgIntegrationCredential | undefined>;
   listIntegrationCredentials(integrationId?: string): Promise<OrgIntegrationCredential[]>;
@@ -1410,6 +1416,46 @@ export class DatabaseStorage implements IStorage {
         target: [orgSettings.organizationId, orgSettings.key],
         set: { value, updatedBy, updatedAt: new Date() },
       });
+  }
+  /**
+   * Atomic read-modify-write of org settings that several admins edit at once
+   * (the consult-service catalog, the org theme). Inside ONE transaction the
+   * rows are locked (SELECT … FOR UPDATE; a missing row is created empty first
+   * so there is something to lock), `fn` sees the CURRENT values and returns
+   * what to write. Concurrent writers are serialized, so neither overwrites a
+   * change it never saw. `fn` must be synchronous and side-effect free; a
+   * `write` of undefined (or omitted keys) leaves those values untouched.
+   */
+  async mutateOrgSettings<R>(
+    orgId: number,
+    keys: readonly string[],
+    updatedBy: number | null,
+    fn: (current: Record<string, unknown>) => { write?: Record<string, unknown>; result: R },
+  ): Promise<R> {
+    return this.db.transaction(async (tx) => {
+      for (const key of keys) {
+        await tx
+          .insert(orgSettings)
+          .values({ organizationId: orgId, key, value: null, updatedBy: null })
+          .onConflictDoNothing({ target: [orgSettings.organizationId, orgSettings.key] });
+      }
+      const rows = await tx
+        .select()
+        .from(orgSettings)
+        .where(and(eq(orgSettings.organizationId, orgId), inArray(orgSettings.key, [...keys])))
+        .for("update");
+      const current: Record<string, unknown> = {};
+      for (const r of rows) current[r.key] = r.value ?? undefined;
+      const { write, result } = fn(current);
+      for (const [key, value] of Object.entries(write ?? {})) {
+        if (!keys.includes(key)) throw new Error("mutateOrgSettings: unlocked key " + key);
+        await tx
+          .update(orgSettings)
+          .set({ value, updatedBy, updatedAt: new Date() })
+          .where(and(eq(orgSettings.organizationId, orgId), eq(orgSettings.key, key)));
+      }
+      return result;
+    });
   }
   // ── per-hospital integration credentials ─────────────────────────────────────
   // Rows hold ciphertext + non-secret summary only; encryption/decryption is

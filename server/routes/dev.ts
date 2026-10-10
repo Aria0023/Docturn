@@ -2,12 +2,15 @@ import type { Express } from "express";
 import { devCreateUserSchema, toSafeUser, type User } from "@shared/schema";
 import {
   auditRevokedImpersonation,
+  bearerCredentialOf,
   beginImpersonation,
   clearImpersonation,
   hashPassword,
   issueTemporaryPassword,
   mfaEnrollmentRequired,
   resolveImpersonator,
+  restampSession,
+  revokeAllSessions,
 } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -46,6 +49,38 @@ async function swappedUserBody(u: User) {
  * is filed in that org naming the developer.
  */
 export function registerDevRoutes(app: Express) {
+  // Platform → Security → "Sign out all": the operator's incident-response
+  // switch. Every session on every tenant issued before now stops resolving
+  // (server/auth.ts revokeAllSessions — HTTP on its next request, live sockets
+  // and demo tokens at once); the operator's own session is re-issued and
+  // stays. Audited high in the platform org.
+  app.post(
+    "/api/dev/sessions/revoke-all",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const bearer = bearerCredentialOf(res);
+      const at = await revokeAllSessions({
+        byUserId: me.id,
+        keepSessionId: bearer ? bearer.connectionId : req.sessionID,
+      });
+      const fresh = (await storage().getUserById(me.id)) ?? me;
+      if (bearer) bearer.restamp(fresh);
+      else await restampSession(req, fresh);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.sessions_revoke_all",
+        resourceType: "session",
+        resourceId: null,
+        details: { at },
+        riskLevel: "high",
+      });
+      res.json({ ok: true, at });
+    },
+  );
+
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
   // state + timezone + a suggested code (NPI registry, curated fallback).
   app.get(
@@ -251,8 +286,14 @@ export function registerDevRoutes(app: Express) {
       if (typeof b.city === "string") patch.city = b.city;
       if (typeof b.state === "string") patch.state = b.state;
       if (typeof b.timezone === "string") patch.timezone = b.timezone;
-      if (b.assignmentTimeoutMin != null)
-        patch.assignmentTimeoutMin = Number(b.assignmentTimeoutMin);
+      // The same 1–120 whole minutes a director's PATCH /api/org/config accepts.
+      if (b.assignmentTimeoutMin !== undefined) {
+        const t = b.assignmentTimeoutMin;
+        if (!(typeof t === "number" && Number.isInteger(t) && t >= 1 && t <= 120)) {
+          return res.status(400).json({ error: "validation_error" });
+        }
+        patch.assignmentTimeoutMin = t;
+      }
       if (Array.isArray(b.roundRobinShiftTypes))
         patch.roundRobinShiftTypes = b.roundRobinShiftTypes;
       if (b.rotationMode === "sequential" || b.rotationMode === "lowest_census")
@@ -420,6 +461,15 @@ export function registerDevRoutes(app: Express) {
       if (typeof b.key !== "string" || !ORG_SETTING_KEYS.includes(b.key)) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // null clears the org's value (the platform default applies again).
+      // autoCleanHours: whole hours 0–8760 (0 = keep patients indefinitely —
+      // the auto-clean sweep skips the org); autoReassignOnDecline: boolean.
+      const v = b.value;
+      const valid =
+        v === null ||
+        (b.key === "autoCleanHours" && typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 8760) ||
+        (b.key === "autoReassignOnDecline" && typeof v === "boolean");
+      if (!valid) return res.status(400).json({ error: "validation_error" });
       await storage().setOrgSetting(id, b.key, b.value, me.id);
       await appendAudit({
         organizationId: id,

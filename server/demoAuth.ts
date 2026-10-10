@@ -64,10 +64,11 @@ export async function resolveDemoUser(token: string): Promise<User | null> {
 }
 
 // A password change / reset drops the user's other tokens at once (the
-// generation check above would refuse them anyway on their next use).
-onSessionsRevoked(({ userId, exceptSessionId }) => {
+// generation check above would refuse them anyway on their next use); the
+// operator's "Sign out all" drops every token but the operator's own.
+onSessionsRevoked((r) => {
   for (const [t, p] of tokens) {
-    if (p.id === userId && demoConnectionId(t) !== exceptSessionId) {
+    if ((r.all || p.id === r.userId) && demoConnectionId(t) !== r.exceptSessionId) {
       tokens.delete(t);
       lockedTokens.delete(t);
     }

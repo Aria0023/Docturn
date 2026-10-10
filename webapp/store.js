@@ -219,24 +219,10 @@
     { initials: "TS", room: "210", complaint: "Acute pancreatitis", specialty: "GI", from: "Dr. Osei (ER)" },
   ];
 
-  // Default consult-service menu (directors edit these; the ER intake's
-  // multi-select + quick PA/NP add render from this list). onCall null = use the
-  // live registered roster for that specialty.
-  function defaultConsultServices() {
-    // Each service = a consultant specialty with an on-call attending (onCall)
-    // and its own PA/NP midlevels (members). onCall null = derive from the live
-    // registered roster for that specialty; members [] = none assigned yet.
-    return [
-      { id: "cs_hm",    name: "Hospital Medicine",  onCall: null, members: [] },
-      { id: "cs_card",  name: "Cardiology",         onCall: null, members: [] },
-      { id: "cs_gi",    name: "GI",                 onCall: null, members: [] },
-      { id: "cs_pulm",  name: "Pulmonology",        onCall: null, members: [] },
-      { id: "cs_neph",  name: "Nephrology",         onCall: null, members: [] },
-      { id: "cs_endo",  name: "Endocrine",          onCall: null, members: [] },
-      { id: "cs_id",    name: "Infectious Disease", onCall: null, members: [] },
-      { id: "cs_neuro", name: "Neurology",          onCall: null, members: [] },
-    ];
-  }
+  // The consult-service catalog is the ORGANIZATION's (server: org setting
+  // "consultServices", Directory → Consult services). There is no client-side
+  // default list: an org that has not curated one has none, and the ER intake
+  // shows its own generic specialty picker.
 
   /* ---- seed (initial) state --------------------------------------------- */
   function seed() {
@@ -284,7 +270,8 @@
       // org (Cedars) ships a captured demo grid; nobody else defaults to Amion.
       scheduleSources: { CEDARS: "amion", ISPN: "amion", MAYO: "qgenda", STJUDE: "word", CLEVE: "online", PINE: "none" },
       // Director-editable consult-service menu that powers the ER intake.
-      consultServices: defaultConsultServices(),
+      consultServices: [],
+      consultServicesVersion: null, // the server's catalog revision; null until loaded
       consultHidden: [], // specialty names hidden from the ER route-assignment picker
       session: null, // { role, org, user, name }
       impersonating: null, // { name, role, org } when a developer is viewing a user's portal
@@ -443,56 +430,24 @@
       // switches are NOT client state: Settings → Integrations reads and writes
       // them on the server (/api/integrations). The old local `flags` /
       // `integrations` booleans claimed effects nothing enforced and are gone.
-      settings: { timeout: 15, autoReassign: true,
-        shiftTypes: [
-          { id: "rounding",   name: "Rounding",   time: "07:00–19:00", color: "var(--status-active)" },
-          { id: "swing",      name: "Swing",      time: "13:00–23:00", color: "var(--status-pending)" },
-          { id: "nocturnist", name: "Nocturnist", time: "19:00–07:00", color: "var(--status-neutral)" },
-        ] },
+      // Shift types are the org's routable set on the server
+      // (organizations.round_robin_shift_types → orgIdentity.roundRobinShiftTypes),
+      // not a local list.
+      settings: { timeout: 15, autoReassign: true },
 
-      roles: [
-        { id: "r_super", name: "Super Admin", desc: "Full platform access across all tenants and portals.", system: true,
-          portals: ["hospitalist", "hosp_director", "er_physician", "er_director", "admin", "developer"],
-          perms: ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "system_settings"],
-          features: ["ai_chatbot", "portal_customization"], users: 3 },
-        { id: "r_hospdir", name: "Hospitalist Director", desc: "Runs the hospitalist group — rotation, staff and census.", system: true,
-          portals: ["hospitalist", "hosp_director"],
-          perms: ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff"],
-          features: ["ai_chatbot", "portal_customization"], users: 4 },
-        { id: "r_hosp", name: "Hospitalist", desc: "Accepts hand-offs and manages their own census.", system: true,
-          portals: ["hospitalist"], perms: ["view_census", "manage_assignments"], features: ["ai_chatbot"], users: 38 },
-        { id: "r_erdir", name: "ER Director", desc: "Oversees ER intake and routing performance.", system: false,
-          portals: ["er_physician", "er_director"], perms: ["view_census", "assign_patients", "view_reports"], features: ["ai_chatbot"], users: 2 },
-        { id: "r_er", name: "ER Physician", desc: "Admits patients and routes them to hospitalists.", system: false,
-          portals: ["er_physician"], perms: ["view_census", "assign_patients"], features: ["ai_chatbot"], users: 21 },
-        { id: "r_tech", name: "Technician", desc: "Read-only census visibility for floor support.", system: false,
-          portals: ["hospitalist"], perms: ["view_census"], features: [], users: 12 },
-      ],
+      // The signed-in org as the server reports it (GET /api/org/config): name,
+      // code, time zone, routable shift types. Null until loaded.
+      orgIdentity: null,
+      // People an administrator manages (GET /api/accounts) for the session's
+      // org — null until loaded, never demo rows. Roles are DocTurn's fixed
+      // roles (server/rbac.ts); there is no custom-role list.
+      accounts: null,
+      accountsOrg: null,
+      accountsError: null,
 
-      // Enterprise (platform-wide) defaults every organization inherits unless it
-      // overrides a value. The developer edits these on "Enterprise defaults"; an
-      // org's detail page can override any rule or permission individually.
-      enterprise: {
-        rules: { timeout: 15, autoReassign: false, autoCleanHours: 24, rotationMode: "lowest_census", onCallOnly: false, activeOnly: true },
-        // Platform-wide controls the operator manages centrally (modeled on
-        // enterprise clinical-comms admin consoles, e.g. TigerConnect/PerfectServe):
-        // mobile-app management, secure-messaging policy, access/security.
-        // (Integrations are server-backed: Enterprise defaults → Integrations.)
-        platform: {
-          mobile: { ios: true, android: true, minVersion: "3.2.0", forceUpdate: false, mdm: false, biometric: true },
-          messaging: { retentionDays: 90, recall: true, readReceipts: true, attachments: true, priority: true },
-          security: { sso: false, enforce2fa: true, sessionTimeoutMin: 15, autoLock: true },
-        },
-        permissions: {
-          hospitalist: ["view_census", "manage_assignments", "request_consult", "message"],
-          er_doctor:   ["view_census", "assign_patients", "request_consult", "message"],
-          er_director: ["view_census", "assign_patients", "view_reports", "manage_staff", "approve_users", "message"],
-          director:    ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "approve_users", "request_consult", "message"],
-          developer:   ["view_census", "assign_patients", "manage_assignments", "view_reports", "manage_staff", "system_settings", "approve_users", "request_consult", "message"],
-        },
-      },
-      // Sparse per-organization overrides keyed by org code. Only customized keys
-      // are present; everything else inherits from `enterprise`.
+      // Developer console: each tenant's REAL rule values, keyed by org code,
+      // loaded from GET /api/dev/organizations/:id/settings. There are no
+      // platform-wide "enterprise defaults" — the server has no inheritance.
       orgConfigs: {},
 
       notifications: [
@@ -540,8 +495,8 @@
     "v", "syntheticData", "session", "me", "impersonating",
     "theme", "roleColors", "navHidden", "navOrder", "boardModules",
     "dashLayout", "statLayout", "customStats",
-    "scheduleSources", "consultServices", "consultHidden",
-    "selectedOrg", "settings", "roles", "enterprise", "orgConfigs",
+    "scheduleSources", "consultHidden",
+    "selectedOrg", "settings",
     "orgRetentionDays", "autoCleanHours", "ui",
   ];
   // Identity is written only while someone is signed in.
@@ -566,23 +521,16 @@
       // slices, and this drops them on the floor instead of rehydrating them.
       var s = seed();
       PERSIST_KEYS.forEach(function (k) { if (saved[k] !== undefined) s[k] = saved[k]; });
-      // Per-org / enterprise config (added v10) — backfill so older saves don't
-      // crash the developer settings pages.
-      if (!s.enterprise) s.enterprise = seed().enterprise;
-      if (!s.enterprise.platform) s.enterprise.platform = seed().enterprise.platform;
       // Drop the retired local-only integration booleans an older build saved
       // (they claimed "Connected" for things nothing enforced).
       if (s.settings) {
         s.settings = Object.assign({}, s.settings);
         delete s.settings.flags; delete s.settings.integrations;
         delete s.settings.onCallOnly; delete s.settings.activeOnly;
-      }
-      if (s.enterprise.platform && s.enterprise.platform.integrations) {
-        s.enterprise = Object.assign({}, s.enterprise, { platform: Object.assign({}, s.enterprise.platform) });
-        delete s.enterprise.platform.integrations;
+        // Retired local shift-type list (the org's routable shifts are the server's).
+        delete s.settings.shiftTypes;
       }
       if (!s.myPrefs) s.myPrefs = { dnd: false, coveringUserId: null };
-      if (!s.orgConfigs) s.orgConfigs = {};
       // transient UI bits always reset sensibly
       s.ui = s.ui || { nav: "dashboard", notifOpen: false, realtime: true };
       s.ui.notifOpen = false;
@@ -594,8 +542,6 @@
       Object.keys(NEW_ROLE).forEach(function (k) {
         if (!s.roleColors[k] || s.roleColors[k] === OLD_ROLE[k]) s.roleColors[k] = NEW_ROLE[k];
       });
-      if (!s.consultServices || !s.consultServices.length) s.consultServices = defaultConsultServices();
-      else s.consultServices = s.consultServices.map(function (x) { return x.members ? x : Object.assign({}, x, { members: [] }); });
       return s;
     } catch (e) { return null; }
   }
@@ -764,7 +710,9 @@
   ];
   // The signed-in person's identity and per-user settings — reset on sign-out
   // so nothing of the previous user survives in memory either.
-  var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail"];
+  var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
+    // the previous person's org: its people, identity, catalog and rules
+    "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -772,34 +720,7 @@
     return s;
   }
 
-  /* ---- enterprise / per-org config helpers ------------------------------- */
   function kvPair(key, val) { var o = {}; o[key] = val; return o; }
-  function togglePerm(list, perm, on) {
-    var arr = (list || []).slice();
-    var i = arr.indexOf(perm);
-    if (on && i < 0) arr.push(perm);
-    if (!on && i >= 0) arr.splice(i, 1);
-    return arr;
-  }
-  // Effective config for an org code (or "*" for enterprise itself): enterprise
-  // defaults merged with that org's sparse overrides, plus which keys are
-  // overridden so the UI can show "inherited" vs "custom".
-  function orgEffectiveConfig(code) {
-    var ent = state.enterprise || { rules: {}, permissions: {} };
-    if (!code || code === "*") {
-      return { rules: Object.assign({}, ent.rules), permissions: Object.assign({}, ent.permissions), overridden: { rules: [], permissions: [] }, scope: "*" };
-    }
-    var ov = (state.orgConfigs || {})[code] || {};
-    var rules = Object.assign({}, ent.rules, ov.rules || {});
-    var perms = {};
-    Object.keys(ent.permissions || {}).forEach(function (r) {
-      perms[r] = (ov.permissions && ov.permissions[r]) ? ov.permissions[r].slice() : (ent.permissions[r] || []).slice();
-    });
-    return {
-      rules: rules, permissions: perms, scope: code,
-      overridden: { rules: Object.keys(ov.rules || {}), permissions: Object.keys(ov.permissions || {}) },
-    };
-  }
 
   /* ---- the 1-second clock: live countdowns + expiry re-routing ---------- */
   var lastTickRender = 0;
@@ -1047,8 +968,6 @@
         return s;
       });
     },
-    updateShiftType: function (id, patch) { set(function (s) { s.settings = Object.assign({}, s.settings, { shiftTypes: s.settings.shiftTypes.map(function (x) { return x.id === id ? Object.assign({}, x, patch) : x; }) }); return s; }); },
-    removeShiftType: function (id) { set(function (s) { s.settings = Object.assign({}, s.settings, { shiftTypes: s.settings.shiftTypes.filter(function (x) { return x.id !== id; }) }); return s; }); },
     updateBoardRow: function (id, patch) { set(function (s) { s.board = s.board.map(function (b) { return b.id === id ? Object.assign({}, b, patch) : b; }); pushAudit(s, { action: "edit_admission", resource: id, risk: "low" }); return s; }); },
     addBoardPatient: function (data) {
       set(function (s) {
@@ -1405,106 +1324,19 @@
     /* org settings */
     setSetting: function (key, val) { set(function (s) { s.settings = Object.assign({}, s.settings, (function () { var o = {}; o[key] = val; return o; })()); return s; }); },
 
-    /* enterprise defaults + per-organization overrides (developer console) */
-    setEnterpriseRule: function (key, val) {
-      set(function (s) {
-        var ent = Object.assign({}, s.enterprise);
-        ent.rules = Object.assign({}, ent.rules, kvPair(key, val));
-        s.enterprise = ent;
-        pushAudit(s, { action: "enterprise_rule_set", resource: key, risk: "medium" });
-        return s;
-      });
-    },
-    setEnterprisePlatform: function (section, key, val) {
-      set(function (s) {
-        var ent = Object.assign({}, s.enterprise);
-        var plat = Object.assign({}, ent.platform);
-        plat[section] = Object.assign({}, plat[section], kvPair(key, val));
-        ent.platform = plat; s.enterprise = ent;
-        pushAudit(s, { action: "enterprise_platform_set", resource: section + "." + key, risk: "medium" });
-        return s;
-      });
-    },
+    /* developer console: a tenant's rule values (local copy of the server's;
+       api-bridge.js writes them to /api/dev/organizations/:id and rolls back
+       on a refusal) */
     setOrgRule: function (code, key, val) {
       set(function (s) {
         var cfgs = Object.assign({}, s.orgConfigs);
         var c = Object.assign({}, cfgs[code]);
         c.rules = Object.assign({}, c.rules, kvPair(key, val));
         cfgs[code] = c; s.orgConfigs = cfgs;
-        pushAudit(s, { action: "org_rule_set", resource: code + "." + key, risk: "medium" });
         return s;
       });
-    },
-    resetOrgRule: function (code, key) {
-      set(function (s) {
-        var cfgs = Object.assign({}, s.orgConfigs);
-        var c = Object.assign({}, cfgs[code]);
-        var r = Object.assign({}, c.rules); delete r[key]; c.rules = r;
-        cfgs[code] = c; s.orgConfigs = cfgs;
-        pushAudit(s, { action: "org_rule_reset", resource: code + "." + key, risk: "low" });
-        return s;
-      });
-    },
-    setRolePerm: function (scope, role, perm, on) {
-      set(function (s) {
-        if (scope === "*") {
-          var ent = Object.assign({}, s.enterprise);
-          var p = Object.assign({}, ent.permissions);
-          p[role] = togglePerm(p[role] || [], perm, on);
-          ent.permissions = p; s.enterprise = ent;
-        } else {
-          var cfgs = Object.assign({}, s.orgConfigs);
-          var c = Object.assign({}, cfgs[scope]);
-          var pp = Object.assign({}, c.permissions || {});
-          var base = ((s.enterprise.permissions || {})[role] || []).slice();
-          pp[role] = togglePerm(pp[role] || base, perm, on);
-          c.permissions = pp; cfgs[scope] = c; s.orgConfigs = cfgs;
-        }
-        pushAudit(s, { action: "permission_set", resource: (scope === "*" ? "enterprise" : scope) + "." + role + "." + perm, risk: "medium" });
-        return s;
-      });
-    },
-    resetOrgPerms: function (code, role) {
-      set(function (s) {
-        var cfgs = Object.assign({}, s.orgConfigs);
-        var c = Object.assign({}, cfgs[code]);
-        var pp = Object.assign({}, c.permissions || {}); delete pp[role]; c.permissions = pp;
-        cfgs[code] = c; s.orgConfigs = cfgs;
-        return s;
-      });
-    },
-    addShiftType: function () {
-      set(function (s) {
-        var n = s.settings.shiftTypes.length + 1;
-        s.settings.shiftTypes = s.settings.shiftTypes.concat([{ id: uid("st"), name: "Custom shift " + n, time: "08:00–20:00", color: "var(--primary)" }]);
-        return s;
-      });
-    },
-    // Agentically add shift types detected from an external schedule (Amion):
-    // any time interval the schedule uses that the org doesn't already have
-    // becomes a shift type. Returns count added. Dedupes by time range.
-    importShiftTypes: function (types) {
-      var added = 0;
-      set(function (s) {
-        var have = {};
-        s.settings.shiftTypes.forEach(function (x) { have[x.time] = true; have[(x.name || "").toLowerCase()] = true; });
-        var fresh = (types || []).filter(function (t) {
-          if (have[t.time] || have[(t.name || "").toLowerCase()]) return false;
-          have[t.time] = true; have[(t.name || "").toLowerCase()] = true; added++;
-          return true;
-        }).map(function (t) {
-          return { id: uid("st"), name: t.name, time: t.time, color: t.color || "var(--primary)" };
-        });
-        s.settings.shiftTypes = s.settings.shiftTypes.concat(fresh);
-        s.__toast = added
-          ? { tone: "accepted", title: "Added " + added + " shift type(s)", msg: "Detected from the schedule's time intervals." }
-          : { tone: "rejected", title: "No new shift types", msg: "All detected intervals already exist." };
-        return s;
-      });
-      return Promise.resolve({ added: added });
     },
     resolveIncident: function (id) { set(function (s) { s.incidents = s.incidents.map(function (i) { return i.id === id ? Object.assign({}, i, { status: "resolved" }) : i; }); pushAudit(s, { action: "resolve_incident", resource: id, risk: "low" }); return s; }); },
-    clearComplianceLogs: function () { set(function (s) { s.audit = []; s.phiLog = []; s.incidents = []; return s; }); },
 
     /* continuous compliance monitor — real implementations live in
        api-bridge.js (they hit /api/compliance/*). The prototype has no way to
@@ -1534,34 +1366,6 @@
     toast: function (t) { set(function (s) { s.__toast = t; return s; }); },
     clearToast: function () { set(function (s) { s.__toast = null; return s; }); },
 
-    /* role management */
-    createRole: function (data) {
-      set(function (s) {
-        if (!data.name || !data.name.trim()) { s.__toast = { tone: "rejected", title: "Role name required", msg: "Give the role a name." }; return s; }
-        s.roles = s.roles.concat([{ id: uid("r"), name: data.name.trim(), desc: (data.desc || "").trim(), system: false,
-          portals: data.portals || [], perms: data.perms || [], features: data.features || [], users: 0 }]);
-        pushAudit(s, { action: "create_role", resource: data.name.trim(), risk: "medium" });
-        s.__toast = { tone: "accepted", title: "Role created", msg: data.name.trim() + " is ready to assign." };
-        return s;
-      });
-    },
-    updateRole: function (id, patch) {
-      set(function (s) {
-        s.roles = s.roles.map(function (r) { return r.id === id ? Object.assign({}, r, patch) : r; });
-        pushAudit(s, { action: "update_role", resource: id, risk: "medium" });
-        return s;
-      });
-    },
-    deleteRole: function (id) {
-      set(function (s) {
-        var r = s.roles.find(function (x) { return x.id === id; });
-        if (r && r.system) { s.__toast = { tone: "rejected", title: "Protected role", msg: "Built-in roles can't be deleted." }; return s; }
-        s.roles = s.roles.filter(function (x) { return x.id !== id; });
-        if (r) { pushAudit(s, { action: "delete_role", resource: r.name, risk: "high" }); s.__toast = { tone: "rejected", title: "Role deleted", msg: r.name + " removed." }; }
-        return s;
-      });
-    },
-
     /* appearance & layout customization */
     setTheme: function (patch) { set(function (s) { s.theme = Object.assign({}, s.theme, patch); pushAudit(s, { action: "update_appearance", resource: Object.keys(patch).join(","), risk: "low" }); return s; }); },
     toggleNavItem: function (role, id) {
@@ -1586,7 +1390,7 @@
     },
     resetLayout: function (role) {
       set(function (s) {
-        s.theme = { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" };
+        s.theme = { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard", palette: "classic" };
         s.navHidden = Object.assign({}, s.navHidden, (function () { var o = {}; o[role] = []; return o; })());
         s.navOrder = Object.assign({}, s.navOrder, (function () { var o = {}; o[role] = null; return o; })());
         s.__toast = { tone: "accepted", title: "Layout reset", msg: "Appearance and navigation restored to defaults." };
@@ -1610,7 +1414,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, orgConfig: orgEffectiveConfig };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

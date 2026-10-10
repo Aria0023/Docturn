@@ -1,7 +1,13 @@
 /* DocTurn web-app UI kit — Appearance & Layout customization.
-   Brand name, accent color, corner radius, sidebar style, content width, and
-   per-role navigation structure (show/hide + reorder). Store-backed & live:
-   every change applies to the whole app immediately and persists. */
+   Two different things, labelled as such:
+   - Brand & theme and Layout (name, accent, color scheme, radius, sidebar,
+     content width) are the ORGANIZATION's theme on the server
+     (PATCH /api/org/preferences { theme }, only the changed keys): shown at
+     once, then kept or rolled back by the server's answer (api-bridge.js).
+     While the platform.appearance module is off the server refuses them, so
+     this screen says so instead of offering them.
+   - Navigation structure (hide / reorder sidebar items) is a preference of
+     THIS DEVICE (browser storage) — said in its title and footnote. */
 
 const ACCENTS = [
   ["#2563EB", "Blue"], ["#0F766E", "Teal"], ["#7C3AED", "Violet"],
@@ -58,7 +64,19 @@ function CardHead({ icon, title, sub }) {
   );
 }
 
-function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset }) {
+function ThemeSaveNote({ save }) {
+  if (!save || !save.state) return null;
+  const map = {
+    saving: ["loader", "var(--muted-foreground)", "Saving…"],
+    saved: ["check-circle-2", "var(--status-accepted-fg, var(--status-accepted))", "Saved for your organization"],
+    error: ["alert-triangle", "var(--destructive)", "Not saved" + (save.msg ? " — " + save.msg : "")],
+  };
+  const m = map[save.state];
+  if (!m) return null;
+  return <span data-theme-save={save.state} role="status" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: m[1] }}><Icon name={m[0]} size={13} />{m[2]}</span>;
+}
+
+function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset, appearanceOn = true, themeSave }) {
   const mobile = useIsMobile();
   // build ordered, annotated nav list for the structure editor
   const items = navOrder.map((id) => master.find((m) => m.id === id)).filter(Boolean);
@@ -70,9 +88,14 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 16 }}>
         <div style={{ flex: "1 1 240px", minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Appearance &amp; layout</div>
-          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Customize branding, theme and how the workspace is structured. Changes apply instantly.</div>
+          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
+            {appearanceOn
+              ? "Your organization's branding and theme are saved on the server for everyone in it. Navigation order is kept on this device."
+              : "Navigation order is kept on this device."}
+          </div>
+          {appearanceOn && <div style={{ marginTop: 4 }}><ThemeSaveNote save={themeSave} /></div>}
         </div>
-        <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onReset}>Reset to defaults</Button>
+        {appearanceOn && <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onReset} title="Reset your organization's theme to the defaults (for everyone) and this device's navigation">Reset to defaults</Button>}
       </div>
 
       {/* minWidth 0 on both grid children: the phone rule collapses the grid
@@ -81,9 +104,18 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
       <div style={{ display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 16, alignItems: "start" }}>
         {/* LEFT: controls */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+          {!appearanceOn && (
+            <Card style={{ padding: 18 }}>
+              <div data-appearance-off role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, lineHeight: 1.5 }}>
+                <span style={{ flex: "none", marginTop: 1 }}><Icon name="info" size={16} color="var(--muted-foreground)" /></span>
+                <span><b>Appearance is switched off for your organization</b> by the DocTurn operator. Your organization keeps its current theme; its branding and colors can't be changed until the operator switches Appearance back on.</span>
+              </div>
+            </Card>
+          )}
+          {appearanceOn && <React.Fragment>
           <Card style={{ padding: 18 }}>
-            <CardHead icon="palette" title="Brand & theme" />
-            <Row label="Workspace name" sub="Shown in the sidebar and on login.">
+            <CardHead icon="palette" title="Brand & theme" sub="for everyone in your organization" />
+            <Row label="Workspace name" sub="Shown in the sidebar for everyone in your organization. A device's sign-in screen shows it only after someone from your organization has signed in on it.">
               <div style={{ width: mobile ? "100%" : 200, maxWidth: "100%" }}><Field icon="type" value={theme.appName} onChange={(v) => onSetTheme({ appName: v || "DocTurn" })} placeholder="DocTurn" /></div>
             </Row>
             <Row label="Accent color" sub="Drives buttons, links and highlights.">
@@ -113,9 +145,11 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
               <Seg options={WIDTHS} value={theme.contentWidth} onChange={(v) => onSetTheme({ contentWidth: v })} />
             </Row>
           </Card>
+          </React.Fragment>}
 
           <Card style={{ padding: 18 }}>
-            <CardHead icon="list-tree" title="Navigation structure" sub="show, hide & reorder for this role" />
+            <CardHead icon="list-tree" title="Navigation structure" sub="on this device only" />
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.45 }}>Hide or reorder your sidebar on this browser. It isn't saved to your account or your organization — other devices and other people keep their own.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 12 }}>
               {items.map((it, i) => {
                 const locked = it.id === "dashboard";
@@ -195,7 +229,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
           </Card>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 12, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
             <Icon name="info" size={14} style={{ marginTop: 1, flex: "none" }} />
-            <span>Branding, theme and content width apply across every portal. Navigation structure is saved per role.</span>
+            <span>{appearanceOn ? "Branding, theme, sidebar style and content width are saved for everyone in your organization. " : ""}Navigation order and hidden items are kept on this device only.</span>
           </div>
         </div>
       </div>

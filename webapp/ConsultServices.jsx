@@ -9,7 +9,14 @@
      on-call schedule (the live registered/working roster) — leave it on "Auto".
 
    Delete is reserved for the Hospitalist Director and developer. The ER
-   physician's intake quick-add is unchanged. */
+   physician's intake quick-add is unchanged.
+
+   The catalog is the ORGANIZATION's, on the server (org setting
+   "consultServices"). Every control here is one item-level server call
+   (api-bridge.js → /api/org/consult-services): the list shown is the list the
+   server answered with, a confirmation appears only after the server saved
+   it, and a refusal or a lost connection changes nothing and says so. The
+   screen re-reads the catalog when it opens, so another admin's edits show. */
 
 function initialsFrom(nm) {
   return String(nm || "").replace(/^Dr\.?\s*/i, "").trim().split(/[\s,]+/).map(function (w) { return w[0]; }).filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
@@ -31,8 +38,14 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
     const p = providerOpts.find((x) => x.name === v);
     a.setConsultOnCall(s.id, { name: v, avatar: (p && p.avatar) || initialsFrom(v) });
   };
-  const saveCustomOn = () => { if (customName.trim()) { a.setConsultOnCall(s.id, { name: customName.trim(), avatar: initialsFrom(customName) }); setCustomName(""); setCustomOn(false); } };
-  const addManualMl = () => { if (mlName.trim()) { a.addConsultMember(s.id, { id: "cm" + Date.now(), name: mlName.trim(), avatar: initialsFrom(mlName), role: mlRole }); setMlName(""); } };
+  const saveCustomOn = () => {
+    if (!customName.trim()) return;
+    Promise.resolve(a.setConsultOnCall(s.id, { name: customName.trim(), avatar: initialsFrom(customName) })).then((ok) => { if (ok !== false) { setCustomName(""); setCustomOn(false); } });
+  };
+  const addManualMl = () => {
+    if (!mlName.trim()) return;
+    Promise.resolve(a.addConsultMember(s.id, { name: mlName.trim(), avatar: initialsFrom(mlName), role: mlRole })).then((ok) => { if (ok !== false) setMlName(""); });
+  };
 
   return (
     <Card style={{ padding: 14 }}>
@@ -70,7 +83,7 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
             </div>
           )}
           {canDelete
-            ? <button onClick={() => a.removeConsultService(s.id)} title="Remove service"
+            ? <button type="button" onClick={() => { if (window.confirm("Remove " + s.name + " from your organization's consult services?")) a.removeConsultService(s.id); }} title={"Remove " + s.name} aria-label={"Remove " + s.name}
                 onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
                 style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={16} /></button>
             : <span title="Only the Hospitalist Director or developer can remove a service" style={{ width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--border)", flex: "none" }}><Icon name="lock" size={14} /></span>}
@@ -87,12 +100,12 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
               <Avatar initials={m.avatar || initialsFrom(m.name)} size={20} tint="slate" />
               <span style={{ fontSize: 12, fontWeight: 600 }}>{m.name.split(",")[0]}</span>
               <RolePill role={m.role} />
-              <button onClick={() => a.removeConsultMember(s.id, m.id)} title="Remove" style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", color: "var(--muted-foreground)", padding: 0 }}><Icon name="x" size={12} /></button>
+              <button type="button" onClick={() => a.removeConsultMember(s.id, m.id)} title={"Remove " + m.name} aria-label={"Remove " + m.name} style={{ border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", padding: 0 }}><Icon name="x" size={12} /></button>
             </span>
           ))}
           {addable.length > 0 && (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-              <select value="" onChange={(e) => { const m = addable.find((x) => x.id === e.target.value); if (m) a.addConsultMember(s.id, m); }}
+              <select aria-label={"Add a registered PA / NP to " + s.name} value="" onChange={(e) => { const m = addable.find((x) => x.id === e.target.value); if (m) a.addConsultMember(s.id, { name: m.name, avatar: m.avatar, role: m.role }); }}
                 style={{ appearance: "none", WebkitAppearance: "none", height: 28, padding: "0 24px 0 10px", borderRadius: "var(--radius-full)", border: "1px dashed var(--border)", background: "#fff", fontSize: 12, fontWeight: 600, color: "var(--primary)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
                 <option value="">+ Registered PA / NP</option>
                 {addable.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.role}</option>)}
@@ -124,6 +137,9 @@ function ConsultServices() {
   const services = st.consultServices || [];
   const directory = st.directory || [];
   const [name, setName] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => { if (a.loadConsultServices) a.loadConsultServices(); }, []);
+  const loaded = st.consultServicesVersion != null;
 
   const role = (st.session || {}).role;
   const canDelete = role === "director" || role === "developer";
@@ -131,27 +147,32 @@ function ConsultServices() {
   const providerOpts = directory.map((d) => ({ name: d.name, avatar: d.avatar, specialty: d.specialty }));
   const midlevelOpts = directory.filter((d) => /^(PA|NP|RN)$/.test(d.credential)).map((d) => ({ id: "ml" + d.id, name: d.name, avatar: d.avatar, role: d.credential }));
 
-  const add = () => { if (name.trim()) { a.addConsultService(name); setName(""); } };
+  const add = () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    Promise.resolve(a.addConsultService(name)).then((ok) => { if (ok !== false) setName(""); }).finally(() => setBusy(false));
+  };
 
   return (
     <PageWrap>
       <div style={{ marginBottom: 6 }}>
         <div style={{ fontSize: 15, fontWeight: 700 }}>Consult services</div>
-        <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Curate the services ER physicians can request. Specialist call lists are maintained by hand; the Hospital Medicine on-call syncs from the imported schedule.</div>
+        <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Curate the services ER physicians can request — saved for your whole organization. Specialist call lists are maintained by hand; leave the on-call on "Auto" to follow the registered roster.</div>
       </div>
 
       <Card style={{ padding: 14, margin: "14px 0" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-          <div style={{ flex: 1 }}>
-            <Field label="Add a consult service" icon="stethoscope" value={name} onChange={setName} placeholder="e.g. Hematology, Orthopedics" />
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+            <Field label="Add a consult service" icon="stethoscope" value={name} onChange={setName} placeholder="e.g. Hematology, Orthopedics" onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
           </div>
-          <Button icon="plus" onClick={add}>Add service</Button>
+          <Button icon="plus" onClick={add}>{busy ? "Adding…" : "Add service"}</Button>
         </div>
       </Card>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-        {services.length === 0 && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No consult services yet — add one above.</Card>}
-        {services.map((s) => <ConsultServiceRow key={s.id} s={s} providerOpts={providerOpts} midlevelOpts={midlevelOpts} canDelete={canDelete} a={a} />)}
+        {!loaded && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Loading your organization's consult services…</Card>}
+        {loaded && services.length === 0 && <Card style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No consult services yet — add one above.</Card>}
+        {loaded && services.map((s) => <ConsultServiceRow key={s.id} s={s} providerOpts={providerOpts} midlevelOpts={midlevelOpts} canDelete={canDelete} a={a} />)}
       </div>
 
       <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 12, fontSize: 11.5, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
