@@ -1,4 +1,4 @@
-import { createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey } from "node:crypto";
 import type { OrgIntegrationCredential } from "@shared/schema";
 import type { DatabaseStorage } from "../storage.js";
 import { credentialKeyState, decryptCredentialRow, sealCredentials } from "./crypto.js";
@@ -126,6 +126,35 @@ export type StoredCredentials =
   | { state: "unreadable"; reason: "no_key" | "key_mismatch"; row: OrgIntegrationCredential };
 
 /** Load + decrypt one org's credentials. Never throws; never logs the values. */
+/**
+ * Which connection a sync was made with — never a secret. For the hospital's
+ * saved credentials: a digest of that save's random IV, which is new on every
+ * save, so replacing the credentials (even with the same values) starts a new
+ * version. For the operator's env setting: "env". Each sync stores it, so a
+ * result from credentials since replaced or removed is never reported as the
+ * current connection's (its "last sync failed", its on-call grid).
+ */
+export function feedVersionOf(
+  source: "organization" | "env",
+  row?: Pick<OrgIntegrationCredential, "iv"> | null,
+): string {
+  if (source === "env" || !row) return "env";
+  return "org:" + createHash("sha256").update(row.iv).digest("hex").slice(0, 16);
+}
+
+/**
+ * Does a stored sync belong to the connection `current` names? None belongs
+ * to a missing connection. A sync stored before versions were recorded can't
+ * be attributed and is kept, as before, until the next pull replaces it.
+ */
+export function syncBelongsTo(
+  stored: { feedVersion?: string | null } | null | undefined,
+  current: string | null | undefined,
+): boolean {
+  if (!stored || typeof stored !== "object" || !current) return false;
+  return stored.feedVersion == null || stored.feedVersion === current;
+}
+
 export async function readOrgCredentials(
   db: DatabaseStorage,
   orgId: number,

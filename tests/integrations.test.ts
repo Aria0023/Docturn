@@ -1154,3 +1154,98 @@ describe("Set up sheet — which credential fields are saved (names only)", () =
     expect([...e.setup.current.fieldsSet].sort()).toEqual(["baseUrl", "clientId", "privateKeyPem"]);
   });
 });
+
+// ── a sync result belongs to the credentials that produced it ───────────────
+// Before: the org's "amionSync" / "epicSync" state was not tied to the feed it
+// came from, so after a director replaced (or removed) the hospital's
+// credentials the card, /api/amion/status and the on-call source status kept
+// saying "The last sync failed: …" — and serving the old feed's on-call grid —
+// for a feed nobody had pulled yet (gate 2 open item).
+describe("Amion / Epic — a sync result belongs to the credentials that produced it", () => {
+  const AMION_OK = () => new Response(AMION_HTML, { status: 200, headers: { "Content-Type": "text/html" } });
+  const NEW_URL = "https://www.amion.com/cgi-bin/ocs?Lo=NEW-LOGIN-456";
+  const sourceStatus = async (agent: any, id: string) =>
+    (await agent.get("/api/oncall/sources").expect(200)).body.sources[id];
+
+  it("Amion: replacing the credentials drops the previous feed's failure and its on-call grid", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const orgId = ctx.seedResult.orgId;
+    const agent = await director();
+    let up = new Set<string>();
+    configureIntegrations({ fetch: scripted((url) => (up.has(url) ? AMION_OK() : new Response("down", { status: 503 }))) });
+
+    // Feed A fails → the card, the status route and the source status all say so.
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    expect((await syncAmion(ctx.storage, { orgId })).lastStatus).toBe("error");
+    let amion = card((await agent.get("/api/integrations")).body, "amion");
+    expect(amion.status).toBe("error");
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ configured: true, lastStatus: "error" });
+    expect(await sourceStatus(agent, "amion")).toMatchObject({ lastStatus: "error" });
+
+    // The director replaces the feed: nothing has pulled feed B yet.
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: NEW_URL }).expect(200);
+    amion = card((await agent.get("/api/integrations")).body, "amion");
+    expect(amion.status).toBe("active");
+    expect(amion.lastCheck).toBeNull();
+    expect(amion.statusText).not.toMatch(/last sync failed/i);
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ configured: true, lastSyncAt: null, lastError: null, rowCount: 0, providers: [] });
+    expect(await sourceStatus(agent, "amion")).toMatchObject({ lastStatus: "never", lastSyncAt: null, error: null });
+
+    // Feed B pulls fine → its 13 rows are the status.
+    up = new Set([NEW_URL]);
+    expect((await syncAmion(ctx.storage, { orgId })).rowCount).toBe(13);
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ lastStatus: "ok", rowCount: 13 });
+    expect(card((await agent.get("/api/integrations")).body, "amion").lastCheck).toMatchObject({ kind: "sync", ok: true });
+
+    // Back to feed A, which is down: B's grid is not A's — no rows are served or carried into A's failure.
+    up = new Set();
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ rowCount: 0, providers: [] });
+    const failed = await syncAmion(ctx.storage, { orgId });
+    expect(failed).toMatchObject({ lastStatus: "error", rowCount: 0, providers: [] });
+
+    // Removing the credentials: nothing about the removed feed is reported.
+    await agent.delete("/api/integrations/amion/credentials").expect(200);
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ configured: false, lastSyncAt: null });
+  });
+
+  it("Amion: a pull that started with the old feed and finished after the save is not the new feed's", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const orgId = ctx.seedResult.orgId;
+    const agent = await director();
+    await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: AMION_ORG_URL }).expect(200);
+    configureIntegrations({
+      fetch: scripted(async (url) => {
+        if (url === AMION_ORG_URL) {
+          // The director saves feed B while feed A's pull is in flight.
+          await agent.put("/api/integrations/amion/credentials").send({ ocsUrl: NEW_URL }).expect(200);
+          return new Response("down", { status: 503 });
+        }
+        return AMION_OK();
+      }),
+    });
+    expect((await syncAmion(ctx.storage, { orgId })).lastStatus).toBe("error");
+    const amion = card((await agent.get("/api/integrations")).body, "amion");
+    expect(amion.status).toBe("active");
+    expect(amion.lastCheck).toBeNull();
+    expect((await agent.get("/api/amion/status").expect(200)).body).toMatchObject({ lastSyncAt: null, lastError: null });
+  });
+
+  it("Epic: replacing the app's credentials drops the previous app's failure", async () => {
+    process.env.INTEGRATION_KEY = KEY_HEX;
+    const orgId = ctx.seedResult.orgId;
+    const agent = await director();
+    await agent.put("/api/integrations/epic-fhir/credentials").send(EPIC_CREDS).expect(200);
+    await agent.patch("/api/integrations/epic-fhir").send({ enabled: true }).expect(200);
+    const down = scripted(() => json({}, 503));
+    expect((await syncEpic(ctx.storage, { orgId, fetchImpl: down })).lastStatus).toBe("error");
+    expect(card((await agent.get("/api/integrations")).body, "epic-fhir").status).toBe("error");
+    expect(await sourceStatus(agent, "epic")).toMatchObject({ lastStatus: "error" });
+
+    await agent.put("/api/integrations/epic-fhir/credentials").send({ ...EPIC_CREDS, clientId: "hospital-one-NEW-client" }).expect(200);
+    const epic = card((await agent.get("/api/integrations")).body, "epic-fhir");
+    expect(epic.status).toBe("active");
+    expect(epic.lastCheck).toBeNull();
+    expect(await sourceStatus(agent, "epic")).toMatchObject({ lastStatus: "never", lastSyncAt: null, error: null });
+  });
+});

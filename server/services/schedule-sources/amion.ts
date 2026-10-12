@@ -2,8 +2,8 @@ import type { DatabaseStorage } from "../../storage.js";
 import {
   amionFeedFor,
   normalizeName,
+  readAmionSync,
   toDisplayName,
-  SYNC_SETTING_KEY,
   type AmionSyncState,
 } from "../amion.js";
 import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus } from "./types.js";
@@ -20,9 +20,11 @@ export function createAmionSource(db: DatabaseStorage): ScheduleSource {
     return !!(await amionFeedFor(db, orgId));
   }
 
+  // Only a pull made with the org's current feed (never one from replaced or
+  // removed credentials).
   async function state(orgId: number): Promise<AmionSyncState | null> {
-    const raw = (await db.getOrgSetting(orgId, SYNC_SETTING_KEY)) as Partial<AmionSyncState> | null;
-    if (!raw || typeof raw !== "object") return null;
+    const raw = await readAmionSync(db, orgId);
+    if (!raw) return null;
     return {
       lastSyncAt: raw.lastSyncAt ?? null,
       lastStatus: raw.lastStatus ?? "ok",

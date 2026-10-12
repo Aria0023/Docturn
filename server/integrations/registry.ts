@@ -10,16 +10,16 @@ import {
   amionConfig,
   amionFeedFor,
   parseAmionBody,
-  SYNC_SETTING_KEY,
+  readAmionSync,
   toDisplayName,
   type AmionSyncState,
 } from "../services/amion.js";
 import {
-  EPIC_SETTING_KEY,
   epicConfig,
   epicConfigFor,
   epicConfigured,
   getAccessToken,
+  readEpicSync,
   type EpicSyncState,
 } from "../services/schedule-sources/epic-fhir.js";
 import { getSelectedSource } from "../services/schedule-sources/index.js";
@@ -203,8 +203,10 @@ async function platformOrgId(db: DatabaseStorage): Promise<number | null> {
   return (await db.getOrganizationByCode("DOCTURN"))?.id ?? null;
 }
 
-async function syncCheck(db: DatabaseStorage, orgId: number, key: string): Promise<LastCheck | null> {
-  const s = (await db.getOrgSetting(orgId, key)) as Partial<AmionSyncState & EpicSyncState> | null;
+// `s` is the org's stored sync ONLY when it was made with the current
+// credentials (readAmionSync / readEpicSync): a pull from credentials since
+// replaced or removed never sets this card's status.
+function syncCheck(s: Partial<AmionSyncState & EpicSyncState> | null): LastCheck | null {
   if (!s || typeof s !== "object" || !s.lastSyncAt) return null;
   return { kind: "sync", ok: s.lastStatus !== "error", at: s.lastSyncAt, reason: s.lastStatus === "error" ? s.lastError ?? "sync failed" : null };
 }
@@ -512,7 +514,7 @@ const amion: IntegrationDef = {
     const people = new Set(rows.map((r) => toDisplayName(r.name).toLowerCase())).size;
     return { ok: true, code: "ok", message: "Reached Amion and read the on-call grid.", detail: `${rows.length} on-call rows, ${people} people. The roster was not changed — the scheduled sync does that.` };
   },
-  lastSync: (db, org) => syncCheck(db, org.id, SYNC_SETTING_KEY),
+  lastSync: async (db, org) => syncCheck(await readAmionSync(db, org.id)),
 };
 
 const EPIC_ENV: EnvVarSpec[] = [
@@ -601,7 +603,7 @@ const epic: IntegrationDef = {
     }
     return { ok: true, code: "ok", message: "Epic issued an access token for DocTurn's backend app.", detail: "No schedule data was changed — the sync does that." };
   },
-  lastSync: (db, org) => syncCheck(db, org.id, EPIC_SETTING_KEY),
+  lastSync: async (db, org) => syncCheck(await readEpicSync(db, org.id)),
 };
 
 export const INTEGRATIONS: readonly IntegrationDef[] = [twilio, push, openai, amion, epic];

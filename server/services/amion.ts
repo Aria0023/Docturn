@@ -4,7 +4,7 @@ import { appendAudit } from "../audit.js";
 import { hashPassword } from "../auth.js";
 import { isModuleEnabled } from "../modules.js";
 import { storage, type DatabaseStorage } from "../storage.js";
-import { amionUrlFromCredentials, readOrgCredentials } from "../integrations/credentials.js";
+import { amionUrlFromCredentials, feedVersionOf, readOrgCredentials, syncBelongsTo } from "../integrations/credentials.js";
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../integrations/http.js";
 import { skipWhileRunning } from "../integrations/single-flight.js";
 import { broadcastRotationChange } from "./notifications.js";
@@ -57,6 +57,12 @@ export interface AmionSyncState {
   rotationApplied?: boolean;
   /** Why it did not (null when it did, or when the pull failed). */
   rotationSkipped?: Exclude<AmionRotationGate, "applies"> | null;
+  /**
+   * Which feed this pull read (AmionFeed.version — never the URL). Readers
+   * ignore a state from another version: the credentials were replaced or
+   * removed since. Absent on states stored before this was recorded.
+   */
+  feedVersion?: string;
 }
 
 /**
@@ -104,6 +110,8 @@ export interface AmionFeed {
   orgId: number;
   url: string;
   source: "organization" | "env";
+  /** Non-secret id of this connection (feedVersionOf) — stored with each sync. */
+  version: string;
 }
 
 /**
@@ -115,13 +123,28 @@ export async function amionFeedFor(db: DatabaseStorage, orgId: number): Promise<
   const creds = await readOrgCredentials(db, orgId, "amion");
   if (creds.state === "ok") {
     const url = amionUrlFromCredentials(creds.values);
-    if (url) return { orgId, url, source: "organization" };
+    if (url) return { orgId, url, source: "organization", version: feedVersionOf("organization", creds.row) };
   }
   const cfg = amionConfig();
   if (!cfg.url) return null;
   const org = await db.getOrganization(orgId);
-  if (org && org.code === cfg.orgCode) return { orgId, url: cfg.url, source: "env" };
+  if (org && org.code === cfg.orgCode) return { orgId, url: cfg.url, source: "env", version: feedVersionOf("env") };
   return null;
+}
+
+/**
+ * The org's stored sync state — only when it was made with the org's CURRENT
+ * feed. Null when there is no feed, no sync yet, or the stored one came from
+ * credentials that were replaced or removed since.
+ */
+export async function readAmionSync(
+  db: DatabaseStorage,
+  orgId: number,
+  feed?: AmionFeed | null,
+): Promise<Partial<AmionSyncState> | null> {
+  const current = feed === undefined ? await amionFeedFor(db, orgId) : feed;
+  const raw = (await db.getOrgSetting(orgId, SYNC_SETTING_KEY)) as Partial<AmionSyncState> | null;
+  return current && syncBelongsTo(raw, current.version) ? raw : null;
 }
 
 /** Every org with a feed: each one with saved credentials + the env org. */
@@ -343,8 +366,9 @@ export async function syncAmion(
   try {
     rows = await fetchAmionGrid(feed.url, { guarded: feed.source === "organization" });
   } catch (err) {
-    // Record the failure but keep the last good snapshot for the UI.
-    const prev = ((await db.getOrgSetting(org.id, SYNC_SETTING_KEY)) ?? {}) as Partial<AmionSyncState>;
+    // Record the failure but keep the last good snapshot for the UI — only
+    // this feed's: another feed's grid is not this one's.
+    const prev = (await readAmionSync(db, org.id, feed)) ?? {};
     const state: AmionSyncState = {
       lastSyncAt: new Date().toISOString(),
       lastStatus: "error",
@@ -353,6 +377,7 @@ export async function syncAmion(
       providers: prev.providers ?? [],
       rotationApplied: false,
       rotationSkipped: null,
+      feedVersion: feed.version,
     };
     await db.setOrgSetting(org.id, SYNC_SETTING_KEY, state, updatedBy);
     await appendAudit({
@@ -442,6 +467,7 @@ export async function syncAmion(
     providers: rows,
     rotationApplied: applies,
     rotationSkipped: applies ? null : gate,
+    feedVersion: feed.version,
   };
   await db.setOrgSetting(org.id, SYNC_SETTING_KEY, state, updatedBy);
   await appendAudit({
@@ -518,8 +544,10 @@ export async function getAmionStatus(
   };
   const feed = await amionStatusFeed(db, me);
   if (!feed) return { configured: false, ...empty };
-  const state = ((await db.getOrgSetting(feed.orgId, SYNC_SETTING_KEY)) ?? empty) as AmionSyncState;
-  return { configured: true, ...empty, ...state };
+  // A pull made with replaced or removed credentials is not this feed's status.
+  const state = (await readAmionSync(db, feed.orgId, feed)) ?? empty;
+  const { feedVersion: _v, ...shown } = state;
+  return { configured: true, ...empty, ...shown };
 }
 
 // ── boot loop ─────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { createSign, randomUUID } from "node:crypto";
 import { appendAudit } from "../../audit.js";
 import { isModuleEnabled } from "../../modules.js";
 import { storage, type DatabaseStorage } from "../../storage.js";
-import { deriveEpicTokenUrl, readOrgCredentials } from "../../integrations/credentials.js";
+import { deriveEpicTokenUrl, feedVersionOf, readOrgCredentials, syncBelongsTo } from "../../integrations/credentials.js";
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../../integrations/http.js";
 import { skipWhileRunning } from "../../integrations/single-flight.js";
 import { mapHoursToShift, normalizeName } from "../amion.js";
@@ -84,7 +84,8 @@ export const EPIC_NOT_CONFIGURED_MESSAGE =
   "(FHIR base URL, client ID, RS384 private key), or the operator sets EPIC_FHIR_BASE_URL, " +
   "EPIC_CLIENT_ID, EPIC_PRIVATE_KEY_PEM and EPIC_TOKEN_URL on the server.";
 
-export type EpicSourcedConfig = EpicConfig & { source: "organization" | "env" };
+/** `version`: non-secret id of this connection (feedVersionOf) — stored with each sync. */
+export type EpicSourcedConfig = EpicConfig & { source: "organization" | "env"; version: string };
 
 /**
  * One org's Epic connection: its OWN saved credentials first, else the env
@@ -109,11 +110,27 @@ export async function epicConfigFor(
       orgCode: org?.code ?? "",
       intervalMin: base.intervalMin,
       source: "organization",
+      version: feedVersionOf("organization", creds.row),
     };
   }
   if (!epicConfigured(env)) return null;
   const org = await db.getOrganization(orgId);
-  return org && org.code === base.orgCode ? { ...base, source: "env" } : null;
+  return org && org.code === base.orgCode ? { ...base, source: "env", version: feedVersionOf("env") } : null;
+}
+
+/**
+ * The org's stored Epic sync — only when it was made with the org's CURRENT
+ * Epic connection (never one from replaced or removed credentials).
+ */
+export async function readEpicSync(
+  db: DatabaseStorage,
+  orgId: number,
+  env: NodeJS.ProcessEnv = process.env,
+  cfg?: EpicSourcedConfig | null,
+): Promise<Partial<EpicSyncState> | null> {
+  const current = cfg === undefined ? await epicConfigFor(db, orgId, env) : cfg;
+  const raw = (await db.getOrgSetting(orgId, EPIC_SETTING_KEY)) as Partial<EpicSyncState> | null;
+  return current && syncBelongsTo(raw, current.version) ? raw : null;
 }
 
 /**
@@ -374,6 +391,8 @@ export interface EpicSyncState {
   lastError: string | null;
   rowCount: number;
   slots: ParsedEpicSlot[];
+  /** Which connection this pull used (EpicSourcedConfig.version); absent on older states. */
+  feedVersion?: string;
 }
 
 /**
@@ -456,13 +475,15 @@ export async function syncEpic(
     }
     slots = parseEpicBundle({ entry: [...(roles.entry ?? []), ...(slotBundle.entry ?? [])] }, now);
   } catch (err) {
-    const prev = ((await db.getOrgSetting(org.id, EPIC_SETTING_KEY)) ?? {}) as Partial<EpicSyncState>;
+    // Keep the last good slots — only this connection's.
+    const prev = (await readEpicSync(db, org.id, opts.env, cfg)) ?? {};
     const state: EpicSyncState = {
       lastSyncAt: now.toISOString(),
       lastStatus: "error",
       lastError: sanitizeError(err, cfg),
       rowCount: prev.rowCount ?? 0,
       slots: prev.slots ?? [],
+      feedVersion: cfg.version,
     };
     await db.setOrgSetting(org.id, EPIC_SETTING_KEY, state, updatedBy);
     await appendAudit({
@@ -483,6 +504,7 @@ export async function syncEpic(
     lastError: null,
     rowCount: slots.length,
     slots,
+    feedVersion: cfg.version,
   };
   await db.setOrgSetting(org.id, EPIC_SETTING_KEY, state, updatedBy);
   await appendAudit({
@@ -505,9 +527,10 @@ export function createEpicSource(db: DatabaseStorage, deps: EpicClientDeps = {})
   async function orgMatches(orgId: number): Promise<boolean> {
     return !!(await epicConfigFor(db, orgId, env()));
   }
+  // Only a pull made with the org's current Epic connection.
   async function state(orgId: number): Promise<EpicSyncState | null> {
-    const raw = (await db.getOrgSetting(orgId, EPIC_SETTING_KEY)) as Partial<EpicSyncState> | null;
-    if (!raw || typeof raw !== "object") return null;
+    const raw = await readEpicSync(db, orgId, env());
+    if (!raw) return null;
     return {
       lastSyncAt: raw.lastSyncAt ?? null,
       lastStatus: raw.lastStatus ?? "ok",
