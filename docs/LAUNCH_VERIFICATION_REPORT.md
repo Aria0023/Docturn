@@ -5,7 +5,7 @@
 | Product | DocTurn — HIPAA-oriented clinical messaging web app + iPhone PWA |
 | Commit verified | `81bb06e` (git HEAD; working tree left unmodified by every run) |
 | Verification date | 2026-10-06 |
-| Verdict | **NO-GO** — 7 launch blockers |
+| Verdict | **NO-GO** at audit time — 7 launch blockers (all since fixed; see §0) |
 | Audience | Founder (decision); hospital security reviewer (evidence) |
 
 ---
@@ -31,7 +31,82 @@ on a freshly started server. (Earlier smoke "failures" during remediation were
 traced to a leftover server process holding port 3000 — stale code and state —
 not to the product.)
 
-The §4 should-fix list and the §6 real-device checklist remain open.
+The §4 should-fix list and the §6 real-device checklist remained open after this round; see Round 2.
+
+### Round 2 — every open finding, real integrations, no fake controls (2026-10-08 → 10-12)
+
+After the blockers, the remaining **93 open findings** in Appendix A
+(`docs/launch-findings-open.json`) were fixed in 11 packages, merged one at a time,
+and re-probed twice by independent verifiers. The first re-probe found 60
+fixed and 29 partly fixed; all 29 were finished. The second re-probe of those
+29 confirmed 22 and found 7 still partial; those 7 were finished too. The
+other 4 can only be checked with WebKit on a real iPhone (§6).
+
+Settings → Integrations used to be a static list ("Connected" with no
+connection behind it). It is now **server-backed**:
+- Every card's status comes from live configuration plus a real **Test
+  connection**, with end-to-end deadlines and an SSRF guard.
+- Each integration has an on/off module per organization; only a director can
+  change one.
+- Each hospital's own Amion / Epic credentials are encrypted with AES-256-GCM
+  under `INTEGRATION_KEY`. They are write-only and deleted with the tenant.
+- Platform keys (Twilio, OpenAI, VAPID) stay in the server environment.
+- See `docs/INTEGRATIONS.md`.
+
+A **fake-control sweep** of every screen found 86 controls that only changed
+the browser or showed demo data as real. The recommendations were: 48 wire to
+the server, 35 remove, and 3 label as a per-device preference. After the fixes,
+an independent verifier pass found 46 real, 32 removed, 3 honestly labelled
+and 5 still partly fake. Those 5 were finished and are proven by
+`scripts/final-truth-check.mjs`.
+
+Later fixes:
+- **A hard-coded Amion login** was removed from the schedule screen
+  (`92a86b2`). It remains in git history, so the login must be rotated at Amion.
+- **Demo data on a live deployment.** The live client now starts every clinical
+  list empty: providers, patient board, ER sent list, incoming requests,
+  census and the signed-in name. Before, a failed first read left the design
+  kit's demo patients and doctors on screen as if they were the org's.
+  Sign-out no longer re-seeds them, and the next user no longer inherits the
+  previous org's roster. Only the labelled offline demo of a synthetic server
+  shows them. Proof: `tests/live-no-demo-seeds.test.ts`.
+- **Amion / Epic sync status follows the credentials that produced it.** After
+  a director replaced or removed the hospital's credentials, the card and the
+  schedule panel still showed the old feed's "last sync failed" and its
+  on-call grid. Proof: `tests/integrations.test.ts`, "a sync result belongs to
+  the credentials that produced it".
+
+Final gate on a fresh server for every check (`4be5f92`):
+
+| Check | Result |
+|---|---|
+| `tsc --noEmit` | clean |
+| `npm test` (vitest) | **72 files / 774 tests** |
+| `npm run build` + built server, `NODE_ENV=production HOST=0.0.0.0 TRUST_PROXY=uniquelocal` | `/api/health` 200 |
+| login E2E (synthetic + `SYNTHETIC_DATA=false`) | 46/46 |
+| ui-smoke · xuser · interop (iPhone viewport) | 106/106 · 34/34 · 21/21 |
+| PWA offline (dev + bundle) · client load (dev / bundle) | 46/46 · 24/24 / 27/27 |
+| realtime E2E · messaging on phone · next-up | 58/58 · 82/82 · all pass |
+| CSP (dev / bundle) · phone layout 375/390/430 · phone shell | 45/45 / 45/45 · 1305/1305 · 227/227 |
+| integrations panel (dev / bundle) · settings truth · retention card | 82/82 / 82/82 · 36/36 · all pass |
+| truth checks: org-admin · developer · clinical · comms/account · schedule · final | 157/157 · 154/154 · 119/119 · 115/115 · 112/112 · 161/161 |
+
+Each browser check ran against its own freshly started server, with a separate
+database. The truth checks also ran against a `SYNTHETIC_DATA=false` server
+and, for Amion, a server reading the repo's OCS fixture.
+
+Open:
+- **The §6 real-iPhone checklist.** Nothing here ran on WebKit. Several of its
+  "expected today" notes no longer apply: inputs are 16 px with autocorrect
+  and auto-capitalise off (SF-17); the lock is server-backed and survives a
+  relaunch (SF-3); the broadcast toast no longer covers Acknowledge (SF-16);
+  and MFA shows On once enrolled (LB-3).
+- **Rotate the exposed Amion login.**
+- **Set `INTEGRATION_KEY`** on every deployment that stores hospital
+  credentials. Render generates one; on AWS it goes in SSM.
+- **The Expo native app is out of scope here.** Its
+  `GET /api/mobile/assignments` lists only the caller's own requests (there is
+  no on-behalf-of view for care-team members). The web app and PWA have one.
 
 ## 1. Verdict
 
