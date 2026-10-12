@@ -19,7 +19,8 @@ import { createTestApp, login, type TestContext } from "./helpers.js";
  *     hospitalist, newest first, with the server's counts. PHI read → one
  *     phi-access row per request.
  *   - "Reset count" (#6) is an org-wide counter reset the server stores and
- *     audits (POST /api/admissions/reset); the log keeps every row.
+ *     audits (POST /api/admissions/reset); it deletes no row. The counts come
+ *     from the admissions ledger, which purges do not touch.
  *   - The schedule source (#1-#3) is GET /api/oncall/sources; a fresh org
  *     reads "manual" with nothing synced — what the dashboard must show.
  */
@@ -195,7 +196,10 @@ describe("the admissions log is the org's real routing history", () => {
   it("an empty org has an empty log — nothing invented", async () => {
     const director = await as("director");
     await director.post("/api/maintenance/purge").send({ olderThanHours: 0 }).expect(200);
-    expect((await director.get("/api/admissions").expect(200)).body).toMatchObject({ rows: [], total: 0, last24h: 0, sinceReset: 0 });
+    // The log is empty; the counts still hold the ONE real admission (the
+    // seeded SC) that Clear all removed — the admissions ledger keeps it
+    // (final verification, schedule #6) and says it is no longer in the log.
+    expect((await director.get("/api/admissions").expect(200)).body).toMatchObject({ rows: [], total: 0, last24h: 1, sinceReset: 1, sinceResetRemoved: 1 });
   });
 });
 

@@ -66,16 +66,30 @@ function ErDiversionPanel({ diversion, error, busy, onSetDiversion }) {
   const loaded = !!diversion;
   const on = !!(diversion && diversion.active);
   const since = on && diversion.since ? (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(new Date(diversion.since).getTime()) : diversion.since) : null;
+  // Whether the declare would broadcast: the org's broadcasts module (the
+  // server skips the broadcast when it is off, and records that it did).
+  const broadcastsOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("broadcasts");
   const toggle = () => {
     if (!loaded || busy || !onSetDiversion) return;
-    if (!on && !window.confirm("Declare ER diversion? Everyone in your organization gets a critical broadcast. DocTurn does not notify EMS — you still tell them directly.")) return;
+    if (!on && !window.confirm("Declare ER diversion? " + (broadcastsOn
+      ? "Everyone else in your organization gets a critical broadcast."
+      : "Broadcasts are switched off for your organization, so DocTurn will alert nobody — tell your team directly.")
+      + " DocTurn does not notify EMS — you still tell them directly.")) return;
     onSetDiversion(!on);
   };
+  // What the declare's broadcast actually did — the server records it in the
+  // diversion state (alert), so every session's banner says the same thing.
+  const alert = on ? diversion.alert : null;
+  const alertLine = !on ? ""
+    : alert && alert.sent ? "A critical broadcast went to " + alert.recipients + " " + (alert.recipients === 1 ? "person" : "people") + " in your organization."
+    : alert && alert.reason === "module_disabled" ? "Broadcasts were switched off, so DocTurn alerted nobody — tell your team directly."
+    : alert && alert.reason === "failed" ? "The broadcast failed, so DocTurn alerted nobody — tell your team directly."
+    : "No broadcast is on record for this declaration.";
   const tone = !loaded ? "neutral" : on ? "rejected" : "accepted";
   const fg = { neutral: "var(--muted-foreground)", rejected: "var(--status-rejected)", accepted: "var(--status-accepted)" }[tone];
   const bg = { neutral: "var(--secondary)", rejected: "var(--status-rejected-bg)", accepted: "var(--status-accepted-bg)" }[tone];
   return (
-    <div data-diversion={!loaded ? (error ? "error" : "loading") : on ? "on" : "off"} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderRadius: "var(--radius-md)",
+    <div data-diversion={!loaded ? (error ? "error" : "loading") : on ? "on" : "off"} data-diversion-alert={!on ? undefined : alert ? (alert.sent ? "sent" : alert.reason || "none") : "unknown"} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderRadius: "var(--radius-md)",
       background: bg, border: `1px solid ${tone === "neutral" ? "var(--border)" : fg}` }}>
       <Icon name={!loaded ? "loader" : on ? "octagon-alert" : "circle-check-big"} size={20} color={fg} />
       {/* flex-basis 200px: on a phone the button wraps under the text instead of squeezing it */}
@@ -83,7 +97,7 @@ function ErDiversionPanel({ diversion, error, busy, onSetDiversion }) {
         <div data-diversion-title style={{ fontSize: 14, fontWeight: 700, color: fg }}>{!loaded ? "ER diversion status" : on ? "ER is on diversion" : "ER is accepting patients"}</div>
         <div data-diversion-line style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
           {!loaded ? "Diversion status: " + erReadWhy(error) + "."
-            : on ? "Declared" + (diversion.by && diversion.by.name ? " by " + diversion.by.name : "") + (since ? " · " + since : "") + ". Everyone in your organization was sent a broadcast. DocTurn does not notify EMS — tell them through your usual channel."
+            : on ? "Declared" + (diversion.by && diversion.by.name ? " by " + diversion.by.name : "") + (since ? " · " + since : "") + ". " + alertLine + " DocTurn does not notify EMS — tell them through your usual channel."
             : "No diversion declared for your organization."}
         </div>
       </div>

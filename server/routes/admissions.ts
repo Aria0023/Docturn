@@ -17,8 +17,9 @@ import { storage } from "../storage.js";
  *                               with the server's counts. PHI read: one
  *                               phi-access row per request, ids only.
  *   POST /api/admissions/reset  director / developer — moves the org-wide
- *                               counter marker to now (the log keeps every
- *                               row), audited, announced as ADMISSIONS_UPDATED.
+ *                               counter marker to now (no row is deleted;
+ *                               the log's rows go only with their patients),
+ *                               audited, announced as ADMISSIONS_UPDATED.
  *
  * Both are gated with routing.assignments (server/modules.ts GATE_TABLE), the
  * module the Admissions log nav item already follows. Org-scoped to the
@@ -63,7 +64,7 @@ export function registerAdmissionsRoutes(app: Express) {
       });
       broadcastAdmissionsChange(me.organizationId);
       // Counts only — the response carries no patient rows.
-      res.json({ total: after.total, last24h: after.last24h, sinceReset: after.sinceReset, reset: after.reset });
+      res.json({ total: after.total, last24h: after.last24h, sinceReset: after.sinceReset, sinceResetRemoved: after.sinceResetRemoved, autoCleanHours: after.autoCleanHours, reset: after.reset });
     },
   );
 }

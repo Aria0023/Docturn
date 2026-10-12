@@ -8,6 +8,7 @@ import { amionUrlFromCredentials, readOrgCredentials } from "../integrations/cre
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../integrations/http.js";
 import { skipWhileRunning } from "../integrations/single-flight.js";
 import { broadcastRotationChange } from "./notifications.js";
+import { SCHEDULE_SOURCE_IDS, SOURCE_SETTING_KEY } from "./schedule-sources/types.js";
 
 /**
  * Amion on-call schedule sync — per hospital.
@@ -47,6 +48,39 @@ export interface AmionSyncState {
   lastError: string | null;
   rowCount: number;
   providers: AmionRow[];
+  /**
+   * Whether this pull changed the rotation (put the grid's providers on
+   * shift). False when the pull only refreshed the snapshot because Amion
+   * does not drive this org's rotation (see amionRotationGate), or failed.
+   * Absent on snapshots stored before this was recorded.
+   */
+  rotationApplied?: boolean;
+  /** Why it did not (null when it did, or when the pull failed). */
+  rotationSkipped?: Exclude<AmionRotationGate, "applies"> | null;
+}
+
+/**
+ * May an Amion pull change this org's rotation (who is on shift, and on which
+ * shift)? Only while ALL of these hold — the same things the director's
+ * dashboard states (A.CON schedule #1):
+ *   - schedule.amion is on ("module_off" otherwise);
+ *   - the on-call board is on ("board_off": the dashboard says no schedule
+ *     source is read);
+ *   - Amion is the org's schedule source: the director picked it, or picked
+ *     nothing and the org has a connected feed (the board's own default,
+ *     schedule-sources/index.ts defaultSourceFor). A director who picked the
+ *     Manual list or Epic gets "not_selected": the dashboard says no feed
+ *     changes who is on shift, and none does.
+ */
+export type AmionRotationGate = "applies" | "module_off" | "board_off" | "not_selected";
+export async function amionRotationGate(db: DatabaseStorage, orgId: number): Promise<AmionRotationGate> {
+  if (!(await isModuleEnabled(orgId, "schedule.amion"))) return "module_off";
+  if (!(await isModuleEnabled(orgId, "oncall.board"))) return "board_off";
+  const chosen = await db.getOrgSetting(orgId, SOURCE_SETTING_KEY);
+  if (typeof chosen === "string" && (SCHEDULE_SOURCE_IDS as readonly string[]).includes(chosen) && chosen !== "amion") {
+    return "not_selected";
+  }
+  return "applies";
 }
 
 export const SYNC_SETTING_KEY = "amionSync";
@@ -299,6 +333,11 @@ export async function syncAmion(
   const cfg = { url: feed.url };
   // The org-settings row is nullable on updated_by; scheduled syncs have no actor.
   const updatedBy = (opts.actorUserId ?? null) as unknown as number;
+  // A pull only changes the rotation while Amion drives it; otherwise (an
+  // explicit Sync now with another source selected, or the board off) it
+  // refreshes the snapshot and touches nobody's shift.
+  const gate = await amionRotationGate(db, org.id);
+  const applies = gate === "applies";
 
   let rows: AmionRow[];
   try {
@@ -312,6 +351,8 @@ export async function syncAmion(
       lastError: sanitizeError(err, cfg.url),
       rowCount: prev.rowCount ?? 0,
       providers: prev.providers ?? [],
+      rotationApplied: false,
+      rotationSkipped: null,
     };
     await db.setOrgSetting(org.id, SYNC_SETTING_KEY, state, updatedBy);
     await appendAudit({
@@ -344,7 +385,7 @@ export async function syncAmion(
   let created = 0;
   let updated = 0;
   let rotationChanged = false; // a shift / on-shift change or a new provider
-  for (const [key, row] of unique) {
+  for (const [key, row] of applies ? unique : new Map<string, AmionRow>()) {
     const displayName = toDisplayName(row.name);
     let user = byName.get(key);
     if (!user) {
@@ -399,6 +440,8 @@ export async function syncAmion(
     lastError: null,
     rowCount: rows.length,
     providers: rows,
+    rotationApplied: applies,
+    rotationSkipped: applies ? null : gate,
   };
   await db.setOrgSetting(org.id, SYNC_SETTING_KEY, state, updatedBy);
   await appendAudit({
@@ -413,6 +456,8 @@ export async function syncAmion(
       uniqueProviders: unique.size,
       created,
       updated,
+      rotationApplied: applies,
+      ...(applies ? {} : { rotationSkipped: gate }),
       trigger: opts.actorUserId ? "manual" : "scheduled",
     },
     riskLevel: "low",
@@ -488,17 +533,28 @@ export type ScheduledAmionSyncOutcome =
   | "skipped_not_configured"
   | "skipped_org_missing"
   | "skipped_module_off"
+  | "skipped_board_off"
+  | "skipped_not_selected"
   | "failed";
+
+const GATE_OUTCOME: Record<Exclude<AmionRotationGate, "applies">, ScheduledAmionSyncOutcome> = {
+  module_off: "skipped_module_off",
+  board_off: "skipped_board_off",
+  not_selected: "skipped_not_selected",
+};
 
 /**
  * One scheduled tick over EVERY org with a feed (its own saved credentials, or
- * the env org). Each org syncs ONLY while its `schedule.amion` module is on —
- * switching it off (Settings → Integrations, or the developer console) stops
- * that org's pulls (and the board stops serving Amion slots, see
- * schedule-sources/index.ts) without touching the stored snapshot, so
- * switching it back on resumes seamlessly. The orgs sync CONCURRENTLY, each
- * under its own fetch deadline, so one hospital's slow feed never delays
- * another's; one org's failure never stops the others.
+ * the env org). Each org is pulled ONLY while Amion drives its rotation
+ * (amionRotationGate): schedule.amion on, the on-call board on, and Amion its
+ * schedule source. Anything else — the module off, the board off, the Manual
+ * list or Epic picked — skips the org entirely (nothing fetched, nobody's
+ * shift touched), without touching the stored snapshot, so turning it back
+ * on resumes seamlessly. Before, the pull ran whatever the director had
+ * picked and put people back on shift behind a dashboard that said "Manual
+ * list … no feed updates it" (A.CON schedule #1). The orgs sync
+ * CONCURRENTLY, each under its own fetch deadline, so one hospital's slow
+ * feed never delays another's; one org's failure never stops the others.
  */
 export async function runScheduledAmionSyncAll(
   db: DatabaseStorage = storage(),
@@ -506,7 +562,8 @@ export async function runScheduledAmionSyncAll(
   const feeds = await amionFeeds(db);
   const settled = await Promise.allSettled(
     feeds.map(async (feed): Promise<ScheduledAmionSyncOutcome> => {
-      if (!(await isModuleEnabled(feed.orgId, "schedule.amion"))) return "skipped_module_off";
+      const gate = await amionRotationGate(db, feed.orgId);
+      if (gate !== "applies") return GATE_OUTCOME[gate];
       await syncAmion(db, { orgId: feed.orgId });
       return "synced";
     }),
@@ -521,10 +578,11 @@ export async function runScheduledAmionSyncAll(
 
 /**
  * Aggregate of one tick (kept for callers that want a single word): "synced"
- * when any org synced; "failed" when an attempted sync threw;
- * "skipped_module_off" when every connected org has the module off;
- * "skipped_org_missing" when only the env feed exists and its AMION_ORG_CODE
- * matches no org; else "skipped_not_configured".
+ * when any org synced; "failed" when an attempted sync threw; when every
+ * connected org was skipped, the first reason in the order module off →
+ * board off → another source selected; "skipped_org_missing" when only the
+ * env feed exists and its AMION_ORG_CODE matches no org; else
+ * "skipped_not_configured".
  */
 export async function runScheduledAmionSync(
   db: DatabaseStorage = storage(),
@@ -532,7 +590,9 @@ export async function runScheduledAmionSync(
   const results = await runScheduledAmionSyncAll(db);
   if (results.some((r) => r.outcome === "synced")) return "synced";
   if (results.some((r) => r.outcome === "failed")) return "failed";
-  if (results.length) return "skipped_module_off";
+  for (const o of ["skipped_module_off", "skipped_board_off", "skipped_not_selected"] as const) {
+    if (results.some((r) => r.outcome === o)) return o;
+  }
   const cfg = amionConfig();
   if (cfg.url && !(await db.getOrganizationByCode(cfg.orgCode))) return "skipped_org_missing";
   return "skipped_not_configured";
@@ -546,18 +606,24 @@ export async function runScheduledAmionSync(
 export function startAmionSyncLoop() {
   if (loopTimer) return;
   const intervalMin = amionConfig().intervalMin;
-  // Log each org's module-off skip once per off-period, not on every tick.
-  const announcedOff = new Set<number>();
+  // Log each org's skip once per paused period, not on every tick.
+  const announcedOff = new Map<number, ScheduledAmionSyncOutcome>();
+  const WHY: Partial<Record<ScheduledAmionSyncOutcome, string>> = {
+    skipped_module_off: "schedule.amion is switched off",
+    skipped_board_off: "the on-call board is switched off",
+    skipped_not_selected: "another schedule source is selected",
+  };
   // A tick is skipped while the previous one is still running (never two
   // overlapping runs against the same hospitals).
   const run = skipWhileRunning(() =>
     runScheduledAmionSyncAll()
       .then((results) => {
         for (const r of results) {
-          if (r.outcome === "skipped_module_off") {
-            if (!announcedOff.has(r.orgId)) {
-              console.log(`[amion] scheduled sync paused for org ${r.orgId} — schedule.amion is switched off; resumes when switched back on`);
-              announcedOff.add(r.orgId);
+          const why = WHY[r.outcome];
+          if (why) {
+            if (announcedOff.get(r.orgId) !== r.outcome) {
+              console.log(`[amion] scheduled sync paused for org ${r.orgId} — ${why}; resumes when Amion drives its rotation again`);
+              announcedOff.set(r.orgId, r.outcome);
             }
           } else if (announcedOff.delete(r.orgId) && r.outcome === "synced") {
             console.log(`[amion] scheduled sync resumed for org ${r.orgId}`);
@@ -570,7 +636,7 @@ export function startAmionSyncLoop() {
   bootTimer.unref?.();
   loopTimer = setInterval(run, intervalMin * 60_000);
   loopTimer.unref?.();
-  console.log(`[amion] schedule sync loop — every ${intervalMin} min for each org with a connected feed and schedule.amion on`);
+  console.log(`[amion] schedule sync loop — every ${intervalMin} min for each org with a connected feed, schedule.amion and the on-call board on, and Amion as its schedule source`);
 }
 
 export function stopAmionSyncLoop() {

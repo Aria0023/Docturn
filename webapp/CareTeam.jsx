@@ -2,8 +2,11 @@
    Any clinician links their own midlevels (NP, PA) or partner doctors into an
    on-call unit. It is the SERVER's (A.CON clinical #4): GET /api/care-team and
    POST / PATCH / DELETE /api/care-team/members/:id. A member marked On call
-   receives the owner's new assignment requests too (the routing fan-out) and
-   may accept them. The people to link are the org's real, active accounts. */
+   receives the owner's new assignment requests too (the routing fan-out),
+   sees them in their own Incoming list (GET /api/assignments/pending) and may
+   accept them for the owner (the patient goes on the owner's census; only the
+   owner can decline). The people to link are the org's real, active
+   accounts that can accept a request (hospitalists and directors). */
 
 const TEAM_ROLE = {
   MD: { label: "MD", tint: "blue",    fg: "var(--primary-ink, #1D4ED8)" },
@@ -29,11 +32,15 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
   const mobile = useIsMobile();
   const loaded = Array.isArray(team);
   const members = team || [];
-  const onCall = members.filter((m) => m.onCall);
+  // Who really shares your requests: On call, active, and in a role that can
+  // see and accept one (the server's rule — GET /api/assignments/pending).
+  const onCall = members.filter((m) => m.onCall && m.active !== false && m.canAccept !== false);
   // Doctors on service (rounding), and the consult specialties currently active.
   const doctors = (providers || []).slice().sort((a, b) => (b.working === a.working) ? 0 : (b.working ? 1 : -1));
   const q = query.toLowerCase();
+  // Only accounts that can accept a request can be linked (the server's rule).
   const pool = (candidates || []).filter((c) =>
+    c.canJoinUnit !== false &&
     !members.some((t) => t.id === c.id) &&
     (c.name.toLowerCase().includes(q) || String(c.specialty || c.roleLabel || "").toLowerCase().includes(q)));
   // One write at a time per person; the screen follows the server's answer.
@@ -46,7 +53,8 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
         <Icon name="link" size={17} color="var(--primary)" style={{ marginTop: 1 }} />
         <div style={{ fontSize: 13, lineHeight: 1.5, color: "#1E3A5F" }}>
           <strong>Members you mark On call share your new admission requests.</strong> Each request routed to you also
-          reaches them, and any of them can accept it — so nothing waits on one person. Changes are saved for everyone.
+          shows in their Incoming list, and any of them can accept it for you — the patient goes on your census. Only you
+          can decline it. Changes are saved for everyone.
         </div>
       </div>
 
@@ -85,7 +93,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
               <div style={{ flex: 1, minWidth: 160, paddingLeft: 18 }}>
                 <Badge status="accepted" icon="circle">{onCall.length} on call with you</Badge>
                 <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 7, lineHeight: 1.45 }}>
-                  Your new admission requests also reach everyone shown here.
+                  Your new admission requests also show in their Incoming list, and they can accept them for you.
                 </div>
               </div>
             </>
@@ -142,7 +150,8 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
         <Card style={{ padding: 14, marginBottom: 14, background: "var(--secondary)" }}>
           <Field icon="search" value={query} onChange={setQuery} placeholder="Search people in your organization…" />
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflow: "auto" }}>
-            {pool.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "6px 4px" }}>{(candidates || []).length ? "No matches." : "No one else in your organization to link."}</div>}
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)", padding: "0 4px" }}>Hospitalists and directors only — the roles that can accept a request.</div>
+            {pool.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "6px 4px" }}>{(candidates || []).some((c) => c.canJoinUnit !== false) ? "No matches." : "No one else in your organization to link."}</div>}
             {pool.map((c) => (
               <div key={c.id} data-candidate={c.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 10px", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
                 <Avatar initials={c.avatar} size={32} tint={teamTint(c.role)} />
@@ -171,7 +180,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
             <Avatar initials={m.avatar} size={38} tint={teamTint(m.role)} />
             <div style={{ flex: "1 1 140px", minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>{m.name}<RolePill role={m.role} label={m.roleLabel} /></div>
-              <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{m.active === false ? "Account deactivated" : m.onCall ? "Gets your new admission requests" : "Not getting your requests"}</div>
+              <div data-member-status style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{m.active === false ? "Account deactivated" : m.canAccept === false ? "Their role can't see or accept admission requests" : m.onCall ? "Sees and can accept your new admission requests" : "Not getting your requests"}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
               <button onClick={() => run("call" + m.id, () => onToggleCall(m.id))} aria-pressed={!!m.onCall}

@@ -213,6 +213,36 @@ export const assignments = pgTable("assignments", {
   resolvedAt: timestamp("resolved_at"),
 });
 
+/**
+ * Admissions ledger: ONE row per patient the first time it is routed to a
+ * hospitalist (storage.createAssignment inserts it; a re-route, decline or
+ * hand-off is the same admission). It is what "Admissions since last reset"
+ * and "Last 24 hours" count, so the counter does not drop when Clear 24h+ /
+ * Clear all / Remove admission or the hourly auto-clean sweep deletes the
+ * patient and its assignments (A.CON schedule #6). PHI-free on purpose — ids,
+ * the route and the time only, no initials, room or complaint — so keeping it
+ * after the patient is gone keeps no patient data. patient_id is a plain
+ * number (no FK): the patient row may be purged. Removed with the tenant.
+ */
+export const admissionEvents = pgTable(
+  "admission_events",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    patientId: integer("patient_id").notNull(),
+    via: text("via", { enum: ASSIGNMENT_VIA }).notNull(),
+    firstRoutedAt: timestamp("first_routed_at").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    patient: uniqueIndex("admission_events_patient_uniq").on(t.patientId),
+    orgRouted: index("admission_events_org_routed_idx").on(t.organizationId, t.firstRoutedAt),
+  }),
+);
+export type AdmissionEvent = typeof admissionEvents.$inferSelect;
+
 /* ── Messaging ─────────────────────────────────────────────────────────────── */
 
 export const conversations = pgTable("conversations", {

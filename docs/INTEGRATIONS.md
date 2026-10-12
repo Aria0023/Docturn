@@ -171,7 +171,12 @@ data is sent. A working key still shows **Needs BAA** until
 
 **What it does:** pulls the hospital's on-call grid from Amion every 4 hours
 (`AMION_SYNC_INTERVAL_MIN`), so the on-call board and the admission rotation
-know who is working.
+know who is working. The scheduled pull runs only while Amion is the
+organization's on-call source (the default once a feed is connected) **and**
+the on-call board is switched on: with the Manual list or Epic picked, or the
+board off, nothing is pulled and nobody's shift changes from Amion (the
+director's dashboard says so). A director's **Sync now** with another source
+picked refreshes the stored grid only.
 
 **PHI / BAA:** DocTurn only reads clinicians' schedules (workforce data); it
 sends nothing to Amion. No PHI.
@@ -189,14 +194,16 @@ support. Treat it like a password.
 3. **Test connection** — DocTurn fetches the feed and reads the grid with the
    same parser the sync uses ("13 on-call rows, 12 people"). The roster is not
    changed by a test.
-4. Turn the switch **on** (it is on by default). The next scheduled pull (or
-   **Sync now** in the schedule panel) imports the grid: everyone on it is
-   marked working with their shift, and anyone new gets a hospitalist account
-   (locked until a director issues a one-time password).
+4. Turn the switch **on** (it is on by default). While Amion is the on-call
+   source and the board is on, the next scheduled pull (or **Sync now** in the
+   schedule panel) imports the grid: everyone on it is marked working with
+   their shift, and anyone new gets a hospitalist account (locked until a
+   director issues a one-time password).
 5. The **On-call schedule sync** panel above the cards then shows the last
    pulled grid. The on-call **board** shows Amion when Amion is its source
    (the default once a feed is connected); if a director picked another
-   source, the Amion card says which one the board reads.
+   source, the Amion card says which one the board reads and that Amion is
+   not pulled meanwhile.
 
 The schedule panel only offers real connectors: Amion, Epic and the Manual
 list — the sources the server has (`PATCH /api/oncall/source`). QGenda,

@@ -459,13 +459,18 @@ const amion: IntegrationDef = {
     "DocTurn only READS your clinicians' schedule from Amion (names, shifts) — workforce data, not patient data. Nothing is sent to Amion.",
   offEffect: "Scheduled pulls stop and the on-call board stops showing Amion's holders (it falls back to the manual list); the last snapshot is kept.",
   activeText: "Connected — your Amion on-call grid is pulled automatically.",
-  // syncAmion runs for every connected org with schedule.amion on, whatever
-  // the board shows; the BOARD only shows Amion when it is the selected source.
+  // The scheduled pull runs only while Amion drives the org's rotation
+  // (services/amion.ts amionRotationGate): the board on AND Amion its
+  // selected source. Otherwise the card says it is not pulled.
   activeTextFor({ board }) {
-    const base = `Connected — your Amion on-call grid is pulled ${everyMinutes(amionConfig().intervalMin)} and keeps the rotation roster's shifts current`;
-    if (!board || board.selected === "amion") return `${base}.`;
-    if (!board.boardEnabled) return `${base}; the on-call board is switched off for this organization.`;
-    return `${base}, but the on-call board reads ${boardLabel(board.selected)}; ${PICK_SOURCE_HINT("Amion")}`;
+    const every = everyMinutes(amionConfig().intervalMin);
+    if (!board || (board.boardEnabled && board.selected === "amion")) {
+      return `Connected — your Amion on-call grid is pulled ${every} and keeps the rotation roster's shifts current.`;
+    }
+    if (!board.boardEnabled) {
+      return "Connected — not pulled while the on-call board is switched off for this organization, so Amion changes nobody's shift.";
+    }
+    return `Connected — not pulled while the on-call board reads ${boardLabel(board.selected)}, so Amion changes nobody's shift; ${PICK_SOURCE_HINT("Amion")}`;
   },
   envVars: AMION_ENV,
   async evaluate(db, org) {

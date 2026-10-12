@@ -3,10 +3,14 @@
    (GET /api/admissions), newest first: one row per patient — a re-route is
    the same admission (the row says how many times it was routed). The tiles
    are the server's counts; "Since last reset" follows the org-wide counter
-   reset (POST /api/admissions/reset). Clear 24h+ / Clear all delete the
-   patients on the server and the log follows. Never demo rows, never rows
-   this browser appended (A.CON schedule #7). `info` (the server's counts) is
-   absent only in the offline kit, which counts its own demo log. */
+   reset (POST /api/admissions/reset). Clear 24h+ / Clear all and the hourly
+   auto-clean delete patients on the server and their ROWS leave the log;
+   "Last 24 hours" and "Since last reset" are the server's admissions ledger
+   and keep counting them (A.CON schedule #6) — the screen says how many are
+   no longer in the log, and when auto-clean removes a patient. Never demo
+   rows, never rows this browser appended (A.CON schedule #7). `info` (the
+   server's counts) is absent only in the offline kit, which counts its own
+   demo log. */
 
 // The app's one locale-aware day + clock format (window.dtFmt, A.CON-MIN-18).
 function alWhen(at) {
@@ -22,7 +26,11 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
   const total = server ? (ready ? info.total : "—") : log.length;
   const sinceReset = server ? (ready ? info.sinceReset : "—") : log.filter((a) => a.at >= (resetAt || 0)).length;
   const last24h = server ? (ready ? info.last24h : "—") : log.filter((a) => a.at >= Date.now() - 86400000).length;
-  const resetNote = server && ready ? (info.resetAt ? "since " + alWhen(info.resetAt) : "never reset") : "";
+  const resetNote = server && ready ? (info.resetAt ? "since " + alWhen(info.resetAt) : "never reset") + (info.sinceResetRemoved ? " · incl. " + info.sinceResetRemoved + " no longer in the log" : "") : "";
+  // How long a patient — and its row here — stays (the org's auto-clean).
+  const keepNote = !server || !ready ? null
+    : info.autoCleanHours === 0 ? "Auto-clean is off here: patients stay in this log until someone clears them. Cleared patients still count in the tiles."
+    : "Auto-clean removes patients — and their rows here — after " + (info.autoCleanHours || 24) + " h. Removed patients still count in “Last 24 hours” and “Since last reset”.";
   const capped = server && ready && info.total > log.length;
 
   const statusTint = (s) => s === "accepted" ? "accepted" : (s === "rejected" || s === "declined") ? "rejected" : "pending";
@@ -32,7 +40,7 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
     <Wrap>
       <div style={{ display: "flex", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
         <Card style={{ padding: "14px 18px", flex: 1, minWidth: 160 }}>
-          <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>Total logged</div>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>{server ? "In the log" : "Total logged"}</div>
           <div data-adm-tile="total" style={{ fontSize: 26, fontWeight: 800, marginTop: 2 }}>{total}</div>
         </Card>
         <Card style={{ padding: "14px 18px", flex: 1, minWidth: 160 }}>
@@ -57,12 +65,13 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
           {onPurge ? (
             <span style={{ marginLeft: "auto", display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
               <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>
-              <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients and admission history? This can't be undone.")) onPurge(0); }}>Clear all</Button>
+              <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm(server ? "Delete ALL patients with their assignments, consults and patient threads? Their rows leave this log; the admission counts keep counting them. This can't be undone." : "Delete ALL patients and admission history? This can't be undone.")) onPurge(0); }}>Clear all</Button>
             </span>
           ) : (
-            <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>Newest first · every patient on record</span>
+            <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>Newest first · patients still on record</span>
           )}
         </div>
+        {keepNote && <div data-adm-keep style={{ padding: "8px 18px", fontSize: 12, color: "var(--muted-foreground)", borderBottom: "1px solid var(--border)", lineHeight: 1.45 }}>{keepNote}</div>}
         {capped && <div data-adm-capped style={{ padding: "8px 18px", fontSize: 12, color: "var(--muted-foreground)", borderBottom: "1px solid var(--border)" }}>Showing the newest {log.length} of {info.total} admissions on record.</div>}
 
         {err === "module_disabled" ? (

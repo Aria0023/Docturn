@@ -12,6 +12,9 @@ export type ScheduleSourceId = "amion" | "epic" | "manual";
 
 export const SCHEDULE_SOURCE_IDS: readonly ScheduleSourceId[] = ["amion", "epic", "manual"];
 
+/** Org setting holding the selected source id (read by the board AND the Amion pull). */
+export const SOURCE_SETTING_KEY = "scheduleSource";
+
 export type ShiftType = "day" | "swing" | "night";
 
 export interface OnCallSlot {

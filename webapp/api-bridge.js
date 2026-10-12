@@ -345,8 +345,14 @@
     return (assignments || []).map(function (a) {
       var p = patientsById[a.patientId] || {};
       var er = usersById[a.erDoctorId] || {};
+      // A request routed to a care-team owner this user is On call for
+      // (A.CON clinical #4): they may accept it for the owner, not decline it.
+      var obo = a.onBehalfOf && a.onBehalfOf.userId != null
+        ? { userId: a.onBehalfOf.userId, name: a.onBehalfOf.displayName || (usersById[a.onBehalfOf.userId] || {}).displayName || "your unit's attending" }
+        : null;
       return {
         id: a.id,
+        onBehalfOf: obo,
         patientId: a.patientId,
         initials: p.initials || "??",
         room: p.roomNumber || "—",
@@ -364,7 +370,9 @@
       var p = patientsById[a.patientId] || {};
       // `at` drives the hospitalist dashboard's "this shift" filter — without it
       // a handed-off/reassigned patient would be filtered out and never show.
-      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [], consultDetails: (consultDetailByPid && consultDetailByPid[a.patientId]) || [] };
+      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [], consultDetails: (consultDetailByPid && consultDetailByPid[a.patientId]) || [],
+        // Accepted for a care-team owner: on THEIR census, named here.
+        onBehalfOf: a.onBehalfOf && a.onBehalfOf.userId != null ? { userId: a.onBehalfOf.userId, name: a.onBehalfOf.displayName || "your unit's attending" } : null };
     });
   }
   // ER "Patient board": the assignments this ER routed, with LIVE backend status
@@ -748,11 +756,15 @@
   var TEAM_CREDS = { MD: 1, DO: 1, PA: 1, NP: 1, RN: 1 };
   function mapCareTeam(body) {
     return ((body && body.members) || []).map(function (m) {
-      return { id: m.userId, userId: m.userId, name: m.displayName, avatar: initials(m.displayName), role: TEAM_CREDS[m.credential] ? m.credential : null, roleLabel: roleLabel(m.role), onCall: !!m.onCall, active: m.active !== false };
+      return { id: m.userId, userId: m.userId, name: m.displayName, avatar: initials(m.displayName), role: TEAM_CREDS[m.credential] ? m.credential : null, roleLabel: roleLabel(m.role), onCall: !!m.onCall, active: m.active !== false,
+        // Whether their role can see and accept a request (the server's rule).
+        canAccept: m.canAccept !== false };
     });
   }
   function mapCandidate(c) {
-    return { id: c.userId, userId: c.userId, name: c.displayName, avatar: initials(c.displayName), role: TEAM_CREDS[c.credential] ? c.credential : null, roleLabel: roleLabel(c.role), specialty: roleLabel(c.role) };
+    return { id: c.userId, userId: c.userId, name: c.displayName, avatar: initials(c.displayName), role: TEAM_CREDS[c.credential] ? c.credential : null, roleLabel: roleLabel(c.role), specialty: roleLabel(c.role),
+      // The server links only accounts that can see and accept a request.
+      canJoinUnit: c.canJoinUnit !== false };
   }
   function rehydrate() {
     var st = DT.getState();
@@ -1672,8 +1684,11 @@
         }
         return s;
       });
-      // Pull each tenant's REAL rule values into orgConfigs (the developer's
-      // per-org page shows exactly these; there is no inheritance).
+      // Pull each tenant's REAL rule values into orgConfigs, with the time they
+      // were read (readAt). This is a sign-in snapshot only: the org's page
+      // re-reads its own values each time it opens (loadOrgRules), because a
+      // director or another developer can change them at any time.
+      var sentAt = Date.now();
       return Promise.all(tenants.map(function (o) {
         return get("/api/dev/organizations/" + o.id + "/settings")
           .then(function (d) { return { code: o.code, d: d }; })
@@ -1683,15 +1698,8 @@
         DT.set(function (s) {
           var cfgs = Object.assign({}, s.orgConfigs);
           (rows || []).filter(Boolean).forEach(function (row) {
-            var d = row.d || {}, org = d.org || {}, setg = d.settings || {};
-            cfgs[row.code] = { loaded: true, rules: {
-              timeout: typeof org.assignmentTimeoutMin === "number" ? org.assignmentTimeoutMin : null,
-              rotationMode: org.rotationMode || "lowest_census",
-              // Unset reads as off — the router's own rule (=== true).
-              autoReassign: setg.autoReassignOnDecline === true,
-              // null = unset: the auto-clean sweep's platform default applies.
-              autoCleanHours: typeof setg.autoCleanHours === "number" ? setg.autoCleanHours : null,
-            } };
+            if (cfgs[row.code] && cfgs[row.code].readAt && cfgs[row.code].readAt > sentAt) return; // a newer page read won
+            cfgs[row.code] = { loaded: true, rules: rulesFromSettings(row.d), readAt: sentAt, readError: null };
           });
           s.orgConfigs = cfgs;
           return s;
@@ -1702,16 +1710,84 @@
       DT.set(function (s) { if (s.orgsLoaded !== true) s.orgsLoaded = "error"; return s; });
     });
   }
+  // One tenant's rule values as GET /api/dev/organizations/:id/settings holds them.
+  function rulesFromSettings(d) {
+    d = d || {};
+    var org = d.org || {}, setg = d.settings || {};
+    return {
+      timeout: typeof org.assignmentTimeoutMin === "number" ? org.assignmentTimeoutMin : null,
+      rotationMode: org.rotationMode || "lowest_census",
+      // Unset reads as off — the router's own rule (=== true).
+      autoReassign: setg.autoReassignOnDecline === true,
+      // null = unset: the auto-clean sweep's platform default applies.
+      autoCleanHours: typeof setg.autoCleanHours === "number" ? setg.autoCleanHours : null,
+    };
+  }
   function orgIdForCode(code) {
     var o = (DT.getState().orgs || []).find(function (x) { return x.code === code; });
     return o ? o.id : null;
   }
+  // Developer → an organization's Rules page: re-read THAT org's values from
+  // the server (A.CON developer #6 follow-up). Called when the page opens,
+  // while it stays open, and after every save, so the page never presents a
+  // sign-in snapshot as the org's current setting; readAt is when the server
+  // answered (the page shows it). A value the developer is still typing or
+  // whose save is in flight is left as typed until that save answers.
+  // readAt is when the read was SENT (the server's values are at least that
+  // recent). Overlapping calls share one read unless `opts.fresh` asks for a
+  // read sent now (the page's opening read).
+  var orgRulesReads = {};
+  DT.actions.loadOrgRules = function (code, opts) {
+    var id = orgIdForCode(code);
+    if (id == null) return Promise.resolve(null);
+    if (orgRulesReads[code] && !(opts && opts.fresh)) return orgRulesReads[code];
+    var epoch = authEpoch;
+    var sentAt = Date.now();
+    var p = get("/api/dev/organizations/" + id + "/settings").then(function (d) {
+      if (epoch !== authEpoch) return null;
+      var fresh = rulesFromSettings(d);
+      DT.set(function (s) {
+        var cfgs = Object.assign({}, s.orgConfigs);
+        // Never step back to an older read that answered late.
+        if (cfgs[code] && cfgs[code].readAt && cfgs[code].readAt > sentAt) return s;
+        var prev = (cfgs[code] && cfgs[code].rules) || {};
+        var rules = {};
+        Object.keys(fresh).forEach(function (k) {
+          var ck = code + "|" + k;
+          // Being typed / saved, or saved after this read was sent: the
+          // read's value for this key is older than what the server holds.
+          if (orgRuleTimers[ck] || orgRuleInflight[ck] || (orgRuleSavedAt[ck] || 0) > sentAt) { rules[k] = prev[k]; return; }
+          rules[k] = fresh[k];
+          orgRuleConfirmed[ck] = fresh[k];
+        });
+        cfgs[code] = { loaded: true, rules: rules, readAt: sentAt, readError: null };
+        s.orgConfigs = cfgs;
+        return s;
+      });
+      return fresh;
+    }, function (e) {
+      if (epoch !== authEpoch) return null;
+      DT.set(function (s) {
+        var cfgs = Object.assign({}, s.orgConfigs);
+        cfgs[code] = Object.assign({}, cfgs[code] || {}, { readError: isNetworkError(e) ? "offline" : "unavailable" });
+        s.orgConfigs = cfgs;
+        return s;
+      });
+      return null;
+    });
+    orgRulesReads[code] = p;
+    var clear = function () { if (orgRulesReads[code] === p) delete orgRulesReads[code]; };
+    p.then(clear, clear);
+    return p;
+  };
   // Developer → an organization's Rules: each value is that org's own on the
   // server (there are no platform-wide defaults to inherit). Shown at once;
   // the server's refusal puts back the previous value and says why. Number
   // fields are debounced so typing "42" saves 42, not 4 then 42.
   var origSetOrgRule = DT.actions.setOrgRule;
   var orgRuleTimers = {};
+  var orgRuleInflight = {}; // "CODE|key" → saves not yet answered
+  var orgRuleSavedAt = {}; // "CODE|key" → when the server last answered a save
   var orgRuleConfirmed = {}; // "CODE|key" → the value the server last held
   function orgRuleRequest(id, key, val) {
     if (key === "timeout") return api("PATCH", "/api/dev/organizations/" + id, { assignmentTimeoutMin: val });
@@ -1729,17 +1805,25 @@
     var run = function () {
       var req = orgRuleRequest(id, key, val);
       if (!req) return Promise.resolve(false);
+      orgRuleInflight[ck] = (orgRuleInflight[ck] || 0) + 1;
+      var settle = function () { if (!--orgRuleInflight[ck]) delete orgRuleInflight[ck]; };
       return req.then(function () {
+        settle();
+        orgRuleSavedAt[ck] = Date.now();
         orgRuleConfirmed[ck] = val;
         DT.set(function (s) { s.__toast = { tone: "accepted", title: "Saved for " + code, msg: "Applies to this organization only." }; return s; });
-        return true;
+        // Show what the server now holds for every rule (another session may
+        // have changed the others meanwhile).
+        return DT.actions.loadOrgRules(code, { fresh: true }).then(function () { return true; });
       }).catch(function (e) {
+        settle();
         if (origSetOrgRule) origSetOrgRule(code, key, orgRuleConfirmed[ck]);
         var why = isNetworkError(e) ? "No connection — nothing was saved." : String((e && e.message) || "") === "validation_error"
           ? (key === "timeout" ? "Enter 1–120 whole minutes." : key === "autoCleanHours" ? "Enter 0–8760 whole hours (0 keeps patients indefinitely)." : "That value isn't allowed.")
           : "The server refused. Try again.";
         DT.set(function (s) { s.__toast = { tone: "rejected", title: "Not saved", msg: why }; return s; });
-        return false;
+        orgRuleSavedAt[ck] = Date.now();
+        return DT.actions.loadOrgRules(code, { fresh: true }).then(function () { return false; });
       });
     };
     if (key !== "timeout" && key !== "autoCleanHours") return run();
@@ -1970,14 +2054,23 @@
     rehydrate();
   }
   DT.actions.accept = function (id) {
+    var obo = null;
     DT.set(function (s) {
       var p = (s.pending || []).find(function (x) { return x.id === id; });
-      if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), patientId: p.patientId, initials: p.initials, room: p.room, complaint: p.complaint, consultants: [] }].concat(s.myAdmissions || []);
+      obo = p && p.onBehalfOf ? p.onBehalfOf : null;
+      if (p) s.myAdmissions = [{ id: "ma" + id, at: Date.now(), patientId: p.patientId, initials: p.initials, room: p.room, complaint: p.complaint, consultants: [], onBehalfOf: obo }].concat(s.myAdmissions || []);
       s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
       return s;
     });
     return api("PATCH", "/api/assignments/" + id + "/accept").then(function () {
-      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." }; return s; });
+      DT.set(function (s) {
+        // A care-team member accepts FOR the owner: the patient goes on the
+        // owner's census (the server's rule), not the member's.
+        s.__toast = obo
+          ? { tone: "accepted", title: "Accepted for " + obo.name, msg: "The patient is on " + obo.name + "'s census; it's listed under your accepted patients too." }
+          : { tone: "accepted", title: "Assignment accepted", msg: "Added to your census." };
+        return s;
+      });
       return rehydrate();
     }).catch(function (e) { assignmentRefused(e, "accept"); });
   };
@@ -2342,6 +2435,12 @@
       });
   };
   DT.actions.decline = function (id) {
+    var row = (DT.getState().pending || []).find(function (x) { return x.id === id; });
+    if (row && row.onBehalfOf) {
+      // The server lets only the attending decline their own request.
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Only " + row.onBehalfOf.name + " can decline this", msg: "You can accept it for them; nothing was sent." }; return s; });
+      return Promise.resolve(false);
+    }
     DT.set(function (s) {
       s.pending = (s.pending || []).filter(function (x) { return x.id !== id; }); // drop from Incoming immediately
       return s;
@@ -2696,8 +2795,10 @@
   };
 
   // Clear old patients/logs (or all). hours=24 by default; 0 = everything.
-  // Backend deletes patients + their assignments/consults; the admissions log
-  // follows on the re-read. Also runs automatically every 24h server-side.
+  // Backend deletes patients + their assignments/consults; their log rows go
+  // on the re-read, while the admission counts (the server's ledger) keep
+  // them. The server's hourly auto-clean does the same for patients older
+  // than the org's window (24 h unless set).
   DT.actions.purgeData = function (hours) {
     var h = (hours == null) ? 24 : Number(hours);
     return api("POST", "/api/maintenance/purge", { olderThanHours: h }).then(function (r) {
@@ -4507,6 +4608,10 @@
     s.admissionsInfo = {
       loaded: true, error: null,
       total: r.total, last24h: r.last24h, sinceReset: r.sinceReset, shown: (r.rows || []).length,
+      // The counts come from the admissions ledger and keep patients that
+      // auto-clean / Clear removed; the log rows do not (A.CON schedule #6).
+      sinceResetRemoved: typeof r.sinceResetRemoved === "number" ? r.sinceResetRemoved : 0,
+      autoCleanHours: typeof r.autoCleanHours === "number" ? r.autoCleanHours : null,
       resetAt: r.reset && r.reset.at ? new Date(r.reset.at).getTime() : null,
       resetBy: r.reset && r.reset.by ? (r.reset.by.name || "a director") : null,
     };
@@ -4529,13 +4634,17 @@
         if (r) {
           s.admissionsInfo = Object.assign({}, s.admissionsInfo || {}, {
             loaded: true, error: null, total: r.total, last24h: r.last24h, sinceReset: r.sinceReset,
+            sinceResetRemoved: typeof r.sinceResetRemoved === "number" ? r.sinceResetRemoved : 0,
+            autoCleanHours: typeof r.autoCleanHours === "number" ? r.autoCleanHours : (s.admissionsInfo || {}).autoCleanHours,
             resetAt: r.reset && r.reset.at ? new Date(r.reset.at).getTime() : null,
             resetBy: r.reset && r.reset.by ? (r.reset.by.name || "a director") : null,
           });
           s.admissionsResetAt = s.admissionsInfo.resetAt || 0;
         }
         var org = (s.orgIdentity && s.orgIdentity.name) || (s.session && s.session.org) || "your organization";
-        s.__toast = { tone: "accepted", title: "Admissions count reset", msg: "Counting from now for everyone at " + org + ". The log keeps every admission." };
+        // Nothing is deleted by a reset — and the log never "keeps every
+        // admission": its rows go with their patients (auto-clean / Clear).
+        s.__toast = { tone: "accepted", title: "Admissions count reset", msg: "Counting from now for everyone at " + org + ". No admission or log row was deleted." };
         return s;
       });
       return DT.actions.loadAdmissions().then(function () { return true; });
@@ -4854,11 +4963,12 @@
         s.erDiversion = r.diversion; s.erDiversionError = null;
         // DocTurn has no EMS integration: the toast says who WAS told — the
         // org, through the broadcast — and that EMS was not.
+        var skipped = r && r.broadcastSkipped === "failed" ? "the broadcast failed" : "broadcasts are switched off";
         s.__toast = active
           ? { tone: "rejected", title: "Diversion declared",
-              msg: (b ? "Critical broadcast sent to " + b.total + " " + (b.total === 1 ? "person" : "people") + " in your organization." : "Saved for your organization, but broadcasts are switched off — nobody was alerted.") + " DocTurn does not notify EMS — tell them through your usual channel." }
+              msg: (b ? "Critical broadcast sent to " + b.total + " " + (b.total === 1 ? "person" : "people") + " in your organization." : "Saved for your organization, but " + skipped + " — nobody was alerted.") + " DocTurn does not notify EMS — tell them through your usual channel." }
           : { tone: "accepted", title: "Diversion lifted",
-              msg: b ? "Everyone in your organization was told (" + b.total + " " + (b.total === 1 ? "person" : "people") + ")." : "Saved — broadcasts are switched off, so nobody was alerted." };
+              msg: b ? "Broadcast sent to " + b.total + " " + (b.total === 1 ? "person" : "people") + " in your organization." : "Saved — " + skipped + ", so nobody was alerted." };
         return s;
       });
       hydrateBroadcasts();
@@ -4938,6 +5048,7 @@
       : code === "already_linked" ? "They're already in your unit — the list has been refreshed."
       : code === "user_deactivated" ? "That account is deactivated."
       : code === "self_link_forbidden" ? "You can't link yourself."
+      : code === "member_cannot_accept" ? "Only hospitalists and directors can join a unit — they're the roles that can accept a request."
       : e && e.status === 404 ? "That person is no longer in your organization — the list has been refreshed."
       : "The server refused it — nothing changed.";
   }

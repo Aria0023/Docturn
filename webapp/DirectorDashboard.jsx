@@ -179,7 +179,15 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const admResetLine = admInfo === undefined ? "Every admission routed to a team is kept in the log. Reset clears this count only."
     : admError === "module_disabled" ? "Admission routing is switched off for this organization."
     : !admInfo || !admInfo.loaded ? (admError ? "Couldn't load the count from the server." : "Loading the count…")
-    : (admInfo.resetAt ? "Counting since " + ddClock(admInfo.resetAt) + (admInfo.resetBy ? " (reset by " + admInfo.resetBy + ")" : "") + "." : "Never reset — this counts every admission on record.") + " Reset restarts the count for everyone at your organization; the log keeps every admission.";
+    : (admInfo.resetAt ? "Counting since " + ddClock(admInfo.resetAt) + (admInfo.resetBy ? " (reset by " + admInfo.resetBy + ")" : "") + "." : "Never reset.")
+      // The count is the server's admissions ledger: it keeps patients that
+      // auto-clean or Clear removed. The log does NOT keep them (A.CON
+      // schedule #6), so say both — and how long the log keeps a patient.
+      + (admInfo.sinceResetRemoved ? " " + admInfo.sinceResetRemoved + " of these " + (admInfo.sinceResetRemoved === 1 ? "is" : "are") + " no longer in the log." : "")
+      + (admInfo.autoCleanHours === 0
+        ? " Auto-clean is off here: patients stay in the log until someone clears them; cleared ones still count."
+        : " The log lists only patients still on record — auto-clean removes them after " + (admInfo.autoCleanHours || 24) + " h; removed ones still count.")
+      + " Reset restarts the count for everyone at your organization.";
 
   const handleDrop = (targetId) => { if (dragId && dragId !== targetId) onReorder(dragId, targetId); setDragId(null); setOverId(null); };
 
@@ -247,9 +255,17 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   // What the panel says, case by case — each line is something the server reported.
   let schedTitle, schedBadge = null, schedLine;
   const switchesLine = "The rotation follows the On/Off, Rotation and shift controls below — changes apply to everyone at once.";
+  const amionPullsLine = "Each successful Amion pull puts everyone on the grid on shift with the grid's shift; the On/Off, Rotation and shift controls below change it until the next pull.";
+  // Amion pulls change who is on shift ONLY while Amion is the selected
+  // source and the board is on (server: services/amion.ts amionRotationGate);
+  // a connected feed that is not selected is said to be idle, not hidden.
+  const amionIdle = srcInfo && schedKey && schedKey !== "amion" && srcInfo.sources && srcInfo.sources.amion && srcInfo.sources.amion.configured
+    ? " Amion is connected but not pulled while " + (overridden && overridden.source !== "amion"
+      ? (SRC_NAME[overridden.source] || overridden.source) + " is chosen"
+      : (SRC_NAME[schedKey] || schedKey) + " is selected") + "." : "";
   if (!oncallOn) {
     schedTitle = "On-call schedule";
-    schedLine = "The on-call board is switched off for this organization, so no schedule source is read.";
+    schedLine = "The on-call board is switched off for this organization, so no schedule source is read and no feed changes who is on shift. The On/Off switch below does.";
   } else if (!srcInfo) {
     schedTitle = "On-call schedule";
     schedLine = srcErr ? "Couldn't load the schedule source from the server." : "Loading the schedule source…";
@@ -257,7 +273,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     schedTitle = "On-call schedule: Manual list";
     const n = schedStatus ? schedStatus.rowCount : 0;
     schedBadge = <Badge status={n ? "accepted" : "pending"} icon="circle">{n ? n + " slot" + (n === 1 ? "" : "s") + (schedStatus.lastSyncAt ? " · edited " + ddAgo(schedStatus.lastSyncAt) : "") : "No slots yet"}</Badge>;
-    schedLine = (overridden ? (SRC_NAME[overridden.source] || overridden.source) + " is switched off for this organization, so the On call board reads the manual list. " : "Directors keep the on-call list by hand on the On call board; no feed updates it. ") + switchesLine;
+    schedLine = [overridden ? (SRC_NAME[overridden.source] || overridden.source) + " is switched off for this organization, so the On call board reads the manual list." : "Directors keep the on-call list by hand on the On call board; no feed updates it.", amionIdle.trim(), switchesLine].filter(Boolean).join(" ");
   } else {
     const name = SRC_NAME[schedKey] || schedKey;
     const configured = !!(schedStatus && schedStatus.configured);
@@ -269,17 +285,17 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     } else if (schedStatus.lastStatus === "error") {
       schedTitle = "On-call schedule: " + name;
       schedBadge = <Badge status="rejected" icon="circle">{"Last sync failed" + (ago ? " · " + ago : "")}</Badge>;
-      schedLine = (schedKey === "amion" ? "The board keeps the last good Amion pull. " : "The board keeps the last good Epic sync. ") + switchesLine;
+      schedLine = schedKey === "amion" ? "The board keeps the last good Amion pull. " + amionPullsLine : "The board keeps the last good Epic sync. " + switchesLine;
     } else if (!schedStatus.lastSyncAt) {
       schedTitle = "On-call schedule: " + name;
       schedBadge = <Badge status="pending" icon="circle">Not synced yet</Badge>;
-      schedLine = "Connected; the first sync hasn't run. " + switchesLine;
+      schedLine = "Connected; the first sync hasn't run. " + (schedKey === "amion" ? amionPullsLine : switchesLine);
     } else {
       schedTitle = "On-call schedule synced from " + name;
       schedBadge = <Badge status="accepted" icon="circle">{"Synced " + ago + " · " + schedStatus.rowCount + " slot" + (schedStatus.rowCount === 1 ? "" : "s")}</Badge>;
       schedLine = schedKey === "amion"
         ? "Each Amion pull puts everyone on the grid on shift with the grid's shift, so changes below last until the next pull."
-        : "Epic feeds the On call board only; it does not change who is on shift. " + switchesLine;
+        : ["Epic feeds the On call board only; it does not change who is on shift.", amionIdle.trim(), switchesLine].filter(Boolean).join(" ");
     }
   }
   const scheduleNode = (

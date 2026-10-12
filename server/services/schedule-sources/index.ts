@@ -7,6 +7,7 @@ import { createEpicSource, type EpicClientDeps } from "./epic-fhir.js";
 import { createManualSource } from "./manual.js";
 import {
   SCHEDULE_SOURCE_IDS,
+  SOURCE_SETTING_KEY,
   type OnCallSlot,
   type ScheduleSource,
   type ScheduleSourceId,
@@ -18,8 +19,6 @@ export { createAmionSource } from "./amion.js";
 export { createManualSource } from "./manual.js";
 export { createEpicSource } from "./epic-fhir.js";
 
-/** Org setting holding the selected source id. */
-export const SOURCE_SETTING_KEY = "scheduleSource";
 
 /**
  * The feature module that must be ON for a source to be offered, selected or

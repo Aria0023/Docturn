@@ -278,6 +278,25 @@ CREATE TABLE IF NOT EXISTS assignments (
   resolved_at TIMESTAMP
 );
 
+-- Admissions ledger (shared/schema.ts admissionEvents): one PHI-free row per
+-- patient's FIRST routing, kept when purges delete the patient, so the
+-- admissions counter does not drop (A.CON schedule #6). The INSERT backfills
+-- patients routed before the ledger existed; idempotent (first routing wins).
+CREATE TABLE IF NOT EXISTS admission_events (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  patient_id INTEGER NOT NULL,
+  via TEXT NOT NULL,
+  first_routed_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS admission_events_patient_uniq ON admission_events(patient_id);
+CREATE INDEX IF NOT EXISTS admission_events_org_routed_idx ON admission_events(organization_id, first_routed_at);
+INSERT INTO admission_events (organization_id, patient_id, via, first_routed_at)
+  SELECT DISTINCT ON (patient_id) organization_id, patient_id, via, created_at
+  FROM assignments ORDER BY patient_id, created_at ASC, id ASC
+  ON CONFLICT (patient_id) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS conversations (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),

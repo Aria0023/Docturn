@@ -13,8 +13,13 @@ import { storage } from "../storage.js";
  *
  * Changing a unit changes who is paged for the owner's admissions, so each
  * link / unlink / on-call toggle is audited. Only ACTIVE accounts of the
- * caller's org can be linked (A.CON clinical #4).
+ * caller's org can be linked (A.CON clinical #4), and only accounts that can
+ * actually take a request: a member On call sees the owner's pending requests
+ * in their own Incoming list (GET /api/assignments/pending) and may accept
+ * them, which only the hospitalist and director roles can do
+ * (UNIT_MEMBER_ROLES — the roles of those routes).
  */
+const UNIT_MEMBER_ROLES = new Set(["hospitalist", "director"]);
 export function registerCareTeamRoutes(app: Express) {
   app.get("/api/care-team", requireAuth, async (req, res) => {
     const me = currentUser(req);
@@ -35,6 +40,9 @@ export function registerCareTeamRoutes(app: Express) {
           role: u?.role ?? null,
           active: !!u && !u.disabledAt,
           onCall: m.onCall,
+          // A member linked before the role rule (or whose role changed
+          // since) is still in the unit but cannot see or accept a request.
+          canAccept: !!u && UNIT_MEMBER_ROLES.has(u.role),
         };
       }),
     });
@@ -59,6 +67,8 @@ export function registerCareTeamRoutes(app: Express) {
           // Kept for name resolution (an old thread still names a
           // deactivated colleague); a deactivated account cannot be linked.
           active: !u.disabledAt,
+          // Whether this account could see and accept the caller's requests.
+          canJoinUnit: UNIT_MEMBER_ROLES.has(u.role),
         })),
     );
   });
@@ -77,6 +87,7 @@ export function registerCareTeamRoutes(app: Express) {
     );
     if (!member) return res.status(404).json({ error: "not_found" });
     if (member.disabledAt) return res.status(409).json({ error: "user_deactivated" });
+    if (!UNIT_MEMBER_ROLES.has(member.role)) return res.status(409).json({ error: "member_cannot_accept" });
     const existing = await storage().getCareTeamMember(
       me.organizationId,
       me.id,

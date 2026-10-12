@@ -5,6 +5,7 @@ import { attachmentStoreFor, FS_REF_PREFIX } from "./services/attachment-store.j
 import { getDb } from "./db.js";
 import { normalizeUsername, usernameKey } from "./usernames.js";
 import {
+  admissionEvents,
   assignments,
   auditLogs,
   beds,
@@ -282,6 +283,15 @@ export interface IStorage {
   createAssignment(
     a: Omit<Assignment, "id" | "createdAt" | "resolvedAt">,
   ): Promise<Assignment>;
+  /** Admissions-ledger counts (PHI-free, survive purges): see admissionEvents. */
+  countAdmissionEvents(
+    orgId: number,
+    opts: { since: Date | null; dayAgo: Date },
+  ): Promise<{ since: number; sinceRemoved: number; last24h: number }>;
+  /** Pending requests routed to any owner whose unit has `memberUserId` On call. */
+  listPendingForUnitMember(orgId: number, memberUserId: number): Promise<Array<Assignment & { ownerUserId: number }>>;
+  /** Assignments `userId` accepted on a unit owner's behalf (still accepted). */
+  listAcceptedByUser(orgId: number, userId: number): Promise<Assignment[]>;
   updateAssignment(
     orgId: number,
     id: number,
@@ -901,7 +911,42 @@ export class DatabaseStorage implements IStorage {
     a: Omit<Assignment, "id" | "createdAt" | "resolvedAt">,
   ) {
     const [row] = await this.db.insert(assignments).values(a).returning();
+    // The patient's FIRST routing enters the admissions ledger; a re-route,
+    // decline or hand-off is the same admission (first one wins).
+    await this.db
+      .insert(admissionEvents)
+      .values({ organizationId: row!.organizationId, patientId: row!.patientId, via: row!.via, firstRoutedAt: row!.createdAt })
+      .onConflictDoNothing({ target: admissionEvents.patientId });
     return row!;
+  }
+  async countAdmissionEvents(orgId: number, opts: { since: Date | null; dayAgo: Date }) {
+    const sinceCond = opts.since ? gte(admissionEvents.firstRoutedAt, opts.since) : sql`TRUE`;
+    const [row] = await this.db
+      .select({
+        since: sql<number>`count(*) FILTER (WHERE ${sinceCond})::int`,
+        sinceRemoved: sql<number>`count(*) FILTER (WHERE ${sinceCond} AND NOT EXISTS (SELECT 1 FROM ${patients} WHERE ${patients.id} = ${admissionEvents.patientId}))::int`,
+        last24h: sql<number>`count(*) FILTER (WHERE ${admissionEvents.firstRoutedAt} >= ${opts.dayAgo})::int`,
+      })
+      .from(admissionEvents)
+      .where(eq(admissionEvents.organizationId, orgId));
+    return { since: Number(row?.since ?? 0), sinceRemoved: Number(row?.sinceRemoved ?? 0), last24h: Number(row?.last24h ?? 0) };
+  }
+  async listPendingForUnitMember(orgId: number, memberUserId: number) {
+    const rows = await this.db
+      .select({ a: assignments, ownerUserId: careTeamMembers.ownerUserId })
+      .from(careTeamMembers)
+      .innerJoin(hospitalists, and(eq(hospitalists.organizationId, orgId), eq(hospitalists.userId, careTeamMembers.ownerUserId)))
+      .innerJoin(assignments, and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, hospitalists.id), eq(assignments.status, "pending")))
+      .where(and(eq(careTeamMembers.organizationId, orgId), eq(careTeamMembers.memberUserId, memberUserId), eq(careTeamMembers.onCall, true)))
+      .orderBy(desc(assignments.createdAt));
+    return rows.map((r) => ({ ...r.a, ownerUserId: r.ownerUserId }));
+  }
+  async listAcceptedByUser(orgId: number, userId: number) {
+    return this.db
+      .select()
+      .from(assignments)
+      .where(and(eq(assignments.organizationId, orgId), eq(assignments.acceptedByUserId, userId), eq(assignments.status, "accepted")))
+      .orderBy(desc(assignments.createdAt));
   }
   async updateAssignment(
     orgId: number,
@@ -2130,6 +2175,7 @@ export class DatabaseStorage implements IStorage {
       }
       await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
       await tx.delete(assignments).where(eq(assignments.organizationId, id));
+      await tx.delete(admissionEvents).where(eq(admissionEvents.organizationId, id));
       await tx.delete(patientConsults).where(eq(patientConsults.organizationId, id));
       await tx.delete(messages).where(eq(messages.organizationId, id));
       await tx.delete(conversations).where(eq(conversations.organizationId, id));

@@ -9,9 +9,17 @@ import type { DatabaseStorage } from "../storage.js";
  * adds an assignment row on the server but is still ONE admission, so the
  * patient's first routing is "when" and "how" (round-robin / manual) and its
  * latest routing is "to whom" and "status". Patients with no assignment (a
- * board row nobody routed) are not admissions. Rows go as long as the patient
- * does: Clear 24h+ / Clear all and the auto-clean sweep delete the patient
- * and its assignments, and the log follows.
+ * board row nobody routed) are not admissions. ROWS go as long as the patient
+ * does: Clear 24h+ / Clear all / Remove admission and the hourly auto-clean
+ * sweep (24 h unless the org set autoCleanHours) delete the patient and its
+ * assignments, and the log follows — `total` is what is still on record.
+ *
+ * The COUNTS do not follow the purges (A.CON schedule #6): "since last reset"
+ * and "last 24 hours" count the admissions ledger (admission_events — one
+ * PHI-free row per patient's first routing, never purged with the patient),
+ * so the counter does not silently drop when a patient is cleaned away.
+ * `sinceResetRemoved` says how many of those are no longer on record, and
+ * `autoCleanHours` how long patients stay, so the screens can say both.
  *
  * The counter's reset is an org-wide marker (org setting
  * "admissionsCounterReset" = { at, by }): "since last reset" counts admissions
@@ -48,12 +56,21 @@ export interface AdmissionsLog {
   rows: AdmissionRow[];
   /** Admissions on record (may exceed rows.length when capped). */
   total: number;
+  /** Admissions first routed in the last 24 h (ledger — includes purged patients). */
   last24h: number;
+  /** Admissions first routed since the reset (ledger — includes purged patients). */
   sinceReset: number;
+  /** How many of `sinceReset` are no longer on record (cleared / auto-cleaned). */
+  sinceResetRemoved: number;
+  /** The auto-clean window in force for this org (0 = kept indefinitely). */
+  autoCleanHours: number;
   reset: AdmissionsReset | null;
   limit: number;
   generatedAt: string;
 }
+
+/** The auto-clean sweep's default when an org set no window (services/expiry.ts). */
+export const AUTOCLEAN_DEFAULT_HOURS = 24;
 
 /** The stored reset marker, or null when never reset / malformed. */
 export function parseReset(raw: unknown): { at: string; by: number | null } | null {
@@ -70,12 +87,13 @@ export async function buildAdmissionsLog(
 ): Promise<AdmissionsLog> {
   const now = opts.now ?? new Date();
   const limit = Math.max(1, Math.min(opts.limit ?? ADMISSIONS_LOG_MAX_ROWS, ADMISSIONS_LOG_MAX_ROWS));
-  const [assignments, patients, hospitalists, users, resetRaw] = await Promise.all([
+  const [assignments, patients, hospitalists, users, resetRaw, autoCleanRaw] = await Promise.all([
     db.listAssignments(orgId), // newest first
     db.listPatients(orgId),
     db.listHospitalists(orgId),
     db.listUsers(orgId),
     db.getOrgSetting(orgId, ADMISSIONS_RESET_KEY),
+    db.getOrgSetting(orgId, "autoCleanHours"),
   ]);
   const pById = new Map(patients.map((p) => [p.id, p]));
   const hById = new Map(hospitalists.map((h) => [h.id, h]));
@@ -113,21 +131,20 @@ export async function buildAdmissionsLog(
   rows.sort((x, y) => Date.parse(y.routedAt) - Date.parse(x.routedAt) || y.patientId - x.patientId);
 
   const stored = parseReset(resetRaw);
-  const resetMs = stored ? Date.parse(stored.at) : null;
-  const dayAgo = now.getTime() - 24 * 3600_000;
-  let last24h = 0;
-  let sinceReset = 0;
-  for (const r of rows) {
-    const t = Date.parse(r.routedAt);
-    if (t >= dayAgo) last24h++;
-    if (resetMs == null || t >= resetMs) sinceReset++;
-  }
+  const counts = await db.countAdmissionEvents(orgId, {
+    since: stored ? new Date(stored.at) : null,
+    dayAgo: new Date(now.getTime() - 24 * 3600_000),
+  });
   const resetBy = stored && stored.by != null ? uById.get(stored.by) : undefined;
   return {
     rows: rows.slice(0, limit),
     total: rows.length,
-    last24h,
-    sinceReset,
+    last24h: counts.last24h,
+    sinceReset: counts.since,
+    sinceResetRemoved: counts.sinceRemoved,
+    // The sweep's own rule (services/expiry.ts runAutoClean): a stored number
+    // is the window, ≤ 0 keeps patients indefinitely, unset is the default.
+    autoCleanHours: typeof autoCleanRaw === "number" ? Math.max(0, autoCleanRaw) : AUTOCLEAN_DEFAULT_HOURS,
     reset: stored ? { at: stored.at, by: stored.by != null ? { id: stored.by, name: resetBy?.displayName ?? null } : null } : null,
     limit,
     generatedAt: now.toISOString(),

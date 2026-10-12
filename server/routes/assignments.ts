@@ -33,6 +33,12 @@ const reassignSchema = z.object({
   hospitalistId: z.number().int().positive().optional(),
 });
 
+/** Display names of the org's users, by id (for "on behalf of" labels). */
+async function ownerNames(orgId: number): Promise<Map<number, string>> {
+  const users = await storage().listUsers(orgId);
+  return new Map(users.map((u) => [u.id, u.displayName]));
+}
+
 export function registerAssignmentRoutes(app: Express) {
   // ER intake routing — and a director's manual admission from the Patient
   // board (A.CON clinical #14): the director becomes the patient's admitting
@@ -73,6 +79,12 @@ export function registerAssignmentRoutes(app: Express) {
     },
   );
 
+  // The caller's incoming requests: those routed to their own rotation
+  // profile, AND — for a care-team member marked On call — those routed to
+  // each unit owner (the fan-out already alerts them and PATCH …/accept
+  // already lets them take it; A.CON clinical #4). A shared row names the
+  // owner it is for (`onBehalfOf`); the caller's own rows carry null. A
+  // member cannot decline the owner's request (…/reject is the owner's).
   app.get(
     "/api/assignments/pending",
     requireAuth,
@@ -80,14 +92,24 @@ export function registerAssignmentRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "assignments");
-      const h = await storage().getHospitalistByUser(me.organizationId, me.id);
-      if (!h) return res.json([]);
-      res.json(
-        await storage().listPendingForHospitalist(me.organizationId, h.id),
-      );
+      const db = storage();
+      const h = await db.getHospitalistByUser(me.organizationId, me.id);
+      const own = h ? await db.listPendingForHospitalist(me.organizationId, h.id) : [];
+      const shared = await db.listPendingForUnitMember(me.organizationId, me.id);
+      const names = shared.length ? await ownerNames(me.organizationId) : new Map<number, string>();
+      const seen = new Set(own.map((a) => a.id));
+      const rows = [
+        ...own.map((a) => ({ ...a, onBehalfOf: null })),
+        ...shared
+          .filter((a) => !seen.has(a.id))
+          .map(({ ownerUserId, ...a }) => ({ ...a, onBehalfOf: { userId: ownerUserId, displayName: names.get(ownerUserId) ?? null } })),
+      ].sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime());
+      res.json(rows);
     },
   );
 
+  // The caller's accepted patients: their own census, plus any request they
+  // accepted for a unit owner (on the owner's census, `onBehalfOf` names them).
   app.get(
     "/api/assignments/my",
     requireAuth,
@@ -95,10 +117,23 @@ export function registerAssignmentRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "assignments");
-      const h = await storage().getHospitalistByUser(me.organizationId, me.id);
-      if (!h) return res.json([]);
+      const db = storage();
+      const h = await db.getHospitalistByUser(me.organizationId, me.id);
+      const own = h ? await db.listAcceptedForHospitalist(me.organizationId, h.id) : [];
+      const seen = new Set(own.map((a) => a.id));
+      const forOthers = (await db.listAcceptedByUser(me.organizationId, me.id)).filter((a) => !seen.has(a.id));
+      let extra: Array<(typeof own)[number] & { onBehalfOf: { userId: number; displayName: string | null } | null }> = [];
+      if (forOthers.length) {
+        const [hosps, names] = await Promise.all([db.listHospitalists(me.organizationId), ownerNames(me.organizationId)]);
+        const ownerOf = new Map(hosps.map((x) => [x.id, x.userId]));
+        extra = forOthers.map((a) => {
+          const ownerUserId = ownerOf.get(a.hospitalistId);
+          return { ...a, onBehalfOf: ownerUserId != null ? { userId: ownerUserId, displayName: names.get(ownerUserId) ?? null } : null };
+        });
+      }
       res.json(
-        await storage().listAcceptedForHospitalist(me.organizationId, h.id),
+        [...own.map((a) => ({ ...a, onBehalfOf: null })), ...extra]
+          .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime()),
       );
     },
   );

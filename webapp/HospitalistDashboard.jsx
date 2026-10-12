@@ -140,14 +140,25 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
           </Card>
         )}
         {sortedPending.map((p) => {
+          // A request routed to a care-team owner this user is On call for
+          // (the server lists it here and lets them accept it for the owner;
+          // only the owner can decline it).
+          const obo = p.onBehalfOf;
           const actions = (
             <div style={{ display: "flex", gap: 8, flex: "none", marginTop: mobile ? 12 : 0 }}>
-              <Button variant="outline" size="sm" icon="x" onClick={() => onDecline(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>Decline</Button>
-              <Button size="sm" icon="check" onClick={() => onAccept(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>Accept</Button>
+              {!obo && <Button variant="outline" size="sm" icon="x" onClick={() => onDecline(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>Decline</Button>}
+              <Button size="sm" icon="check" onClick={() => onAccept(p.id)} style={mobile ? { flex: 1, height: 44 } : null}>{obo ? "Accept for " + String(obo.name).split(",")[0] : "Accept"}</Button>
             </div>
           );
           return (
           <Card key={p.id} style={{ padding: 16 }}>
+            <div data-pending-id={p.id} data-pending-for={obo ? obo.userId : undefined}>
+            {obo && (
+              <div data-pending-obo style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12, color: "var(--primary-ink, #1D4ED8)", fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
+                <Icon name="link-2" size={13} style={{ marginTop: 1, flex: "none" }} />
+                <span>For {obo.name} — you're on call in their care team. Accepting puts the patient on {String(obo.name).split(",")[0]}'s census; only they can decline.</span>
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
               <Avatar initials={p.initials} size={42} tint="amber" />
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -169,6 +180,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
               {!mobile && actions}
             </div>
             {mobile && actions}
+            </div>
           </Card>
           );
         })}
@@ -198,6 +210,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
               <Avatar initials={p.initials} size={34} tint="blue" />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
+                {p.onBehalfOf && <div data-accepted-obo style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>Accepted for {p.onBehalfOf.name} · on their census</div>}
                 <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <span>{p.complaint}</span>
                   {(!p.consultDetails || !p.consultDetails.length) && (p.consultants || []).map((c) => <SpecialtyTag key={c} name={c} size="sm" />)}

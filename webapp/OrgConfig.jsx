@@ -5,8 +5,14 @@
    - An organization's Rules are THAT org's own values on the server
      (assignment timeout and rotation mode on the organization row,
      auto-reassign and auto-clean as org settings —
-     /api/dev/organizations/:id[/settings]). A refused write is rolled back
-     with the reason (api-bridge.js setOrgRule).
+     /api/dev/organizations/:id[/settings]). They are RE-READ from the server
+     each time the page opens, every minute while it is open, when the browser
+     comes back to it, and after every save (api-bridge.js loadOrgRules) — a
+     director or another developer can change them at any time — and the page
+     says when they were read. Until this opening's read has answered, the
+     values show their read time and the controls wait, so a stale value is
+     never presented, or saved over, as the current setting. A refused write
+     is rolled back with the reason (setOrgRule).
    - Platform → Security → "Sign out all" really ends every other session
      (POST /api/dev/sessions/revoke-all).
    - Integrations are server-backed (/api/integrations); Compliance shows the
@@ -26,11 +32,11 @@
    and must not be clearable), and the "Open incidents" tile (nothing records
    security incidents — A.CON developer #13). */
 
-function OCToggle({ on, onChange, label }) {
+function OCToggle({ on, onChange, label, disabled }) {
   // 44×44 tap target around the 42×24 track.
   return (
-    <button type="button" onClick={() => onChange(!on)} role="switch" aria-checked={!!on} aria-label={label}
-      style={{ width: 52, height: 44, minWidth: 44, border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+    <button type="button" onClick={() => { if (!disabled) onChange(!on); }} role="switch" aria-checked={!!on} aria-label={label} disabled={!!disabled}
+      style={{ width: 52, height: 44, minWidth: 44, border: "none", background: "transparent", cursor: disabled ? "default" : "pointer", opacity: disabled ? .5 : 1, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
       <span style={{ display: "block", width: 42, height: 24, borderRadius: 99, padding: 2, background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
         <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
       </span>
@@ -54,10 +60,10 @@ function RuleRow({ icon, title, desc, control, note }) {
   );
 }
 
-function OCNumber({ value, onChange, suffix, label, placeholder, min, max }) {
+function OCNumber({ value, onChange, suffix, label, placeholder, min, max, disabled }) {
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <input type="number" inputMode="numeric" aria-label={label} value={value == null ? "" : value} placeholder={placeholder} min={min} max={max}
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, opacity: disabled ? .5 : 1 }}>
+      <input type="number" inputMode="numeric" aria-label={label} value={value == null ? "" : value} placeholder={placeholder} min={min} max={max} disabled={!!disabled}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
         style={{ width: 76, height: 44, textAlign: "center", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", color: "var(--foreground)" }} />
       {suffix && <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{suffix}</span>}
@@ -94,7 +100,33 @@ function OrgConfig({ scope, org }) {
 
   const cfg = (st.orgConfigs || {})[scope] || null;
   const rules = (cfg && cfg.rules) || null;
-  const setRule = (k, v) => a.setOrgRule(scope, k, v);
+  const setRule = (k, v) => { if (fresh) a.setOrgRule(scope, k, v); };
+
+  // The Rules values are re-read from the server when this page opens (or
+  // switches organization), every minute while it stays open, and when the
+  // browser comes back to it. `openedAt` is this opening: until a read SENT
+  // at or after it has landed, the controls wait (no write from a stale value).
+  const [openedAt, setOpenedAt] = React.useState(() => Date.now());
+  const orgKnown = !isEnt && orgId != null;
+  React.useEffect(() => {
+    if (isEnt || tab !== "rules" || !a.loadOrgRules || !orgKnown) return undefined;
+    const opened = Date.now();
+    setOpenedAt(opened);
+    a.loadOrgRules(scope, { fresh: true });
+    const reread = () => { a.loadOrgRules(scope); };
+    const t = setInterval(reread, 60000);
+    const onVisible = () => { if (!document.hidden) reread(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", reread);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", reread); };
+  }, [scope, tab, orgKnown]);
+  const readAt = cfg && cfg.readAt ? cfg.readAt : null;
+  const fresh = !!(rules && readAt && readAt >= openedAt);
+  const readAtText = readAt ? (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(readAt) : new Date(readAt).toLocaleString()) : null;
+  const readLine = !rules ? null
+    : cfg.readError && !fresh ? "Couldn't re-read this organization's settings from the server" + (readAtText ? " — the values below are as of " + readAtText + " and may be out of date. Changes wait until they are re-read." : ".")
+    : !fresh ? "Checking the server for this organization's current settings…" + (readAtText ? " (shown: as of " + readAtText + ")" : "")
+    : "Read from the server at " + readAtText + ". Re-read every minute while this page is open, and after every change.";
 
   const title = isEnt ? "Platform" : (org ? org.name : scope);
   const sub = isEnt
@@ -161,16 +193,20 @@ function OrgConfig({ scope, org }) {
       {tab === "rules" && !isEnt && (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 16px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>Assignment &amp; routing</div>
-          {!rules && <div style={{ padding: "14px 16px", borderTop: "1px solid var(--border)", fontSize: 13, color: "var(--muted-foreground)" }}>Loading this organization's settings…</div>}
+          {!rules && <div style={{ padding: "14px 16px", borderTop: "1px solid var(--border)", fontSize: 13, color: "var(--muted-foreground)" }}>{cfg && cfg.readError ? "Couldn't read this organization's settings from the server." : "Loading this organization's settings…"}</div>}
+          {rules && <div data-rules-read={fresh ? "fresh" : cfg.readError ? "error" : "checking"} style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap", padding: "10px 16px", borderTop: "1px solid var(--border)", fontSize: 12, color: cfg.readError && !fresh ? "var(--status-rejected)" : "var(--muted-foreground)", lineHeight: 1.45 }}>
+            <span style={{ flex: "1 1 200px", minWidth: 0 }}>{readLine}</span>
+            {a.loadOrgRules && <Button size="sm" variant="outline" icon="refresh-cw" onClick={() => a.loadOrgRules(scope, { fresh: true })}>Refresh</Button>}
+          </div>}
           {rules && <React.Fragment>
             <RuleRow icon="rotate-cw" title="Auto-reassign on decline" desc="When a hospitalist declines, the request goes straight to the next provider in rotation instead of waiting for a manual reassignment."
-              control={<OCToggle label="Auto-reassign on decline" on={!!rules.autoReassign} onChange={(v) => setRule("autoReassign", v)} />} />
+              control={<OCToggle label="Auto-reassign on decline" on={!!rules.autoReassign} disabled={!fresh} onChange={(v) => setRule("autoReassign", v)} />} />
             <RuleRow icon="timer" title="Assignment timeout" desc="How long a pending assignment waits before it expires and is re-paged to the next provider (1–120 minutes)."
-              control={<OCNumber label="Assignment timeout in minutes" value={rules.timeout} min={1} max={120} onChange={(v) => setRule("timeout", v)} suffix="min" />} />
+              control={<OCNumber label="Assignment timeout in minutes" value={rules.timeout} min={1} max={120} disabled={!fresh} onChange={(v) => setRule("timeout", v)} suffix="min" />} />
             <RuleRow icon="git-branch" title="Rotation mode" desc="How the next hospitalist is chosen for round-robin routing."
               control={
-                <select aria-label="Rotation mode" value={rules.rotationMode} onChange={(e) => setRule("rotationMode", e.target.value)}
-                  style={{ height: 44, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", background: "#fff", cursor: "pointer", maxWidth: "100%" }}>
+                <select aria-label="Rotation mode" value={rules.rotationMode} disabled={!fresh} onChange={(e) => setRule("rotationMode", e.target.value)}
+                  style={{ height: 44, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", background: "#fff", cursor: fresh ? "pointer" : "default", opacity: fresh ? 1 : .5, maxWidth: "100%" }}>
                   <option value="lowest_census">Lowest census first</option>
                   <option value="sequential">Sequential order</option>
                 </select>
@@ -179,7 +215,7 @@ function OrgConfig({ scope, org }) {
             <RuleRow icon="trash-2" title="Auto-clean old patients"
               desc={"Every hour, patients (and their assignments and consults) older than this many hours are purged for this organization. 0 keeps them indefinitely. Empty uses the platform's " + AUTOCLEAN_PLATFORM_DEFAULT_H + " hours."}
               note={rules.autoCleanHours == null ? "Not set — the platform's " + AUTOCLEAN_PLATFORM_DEFAULT_H + " hours apply." : rules.autoCleanHours === 0 ? "0 — patients are kept indefinitely." : null}
-              control={<OCNumber label="Auto-clean after hours" value={rules.autoCleanHours} placeholder={String(AUTOCLEAN_PLATFORM_DEFAULT_H)} min={0} max={8760} onChange={(v) => setRule("autoCleanHours", v)} suffix="hrs" />} />
+              control={<OCNumber label="Auto-clean after hours" value={rules.autoCleanHours} placeholder={String(AUTOCLEAN_PLATFORM_DEFAULT_H)} min={0} max={8760} disabled={!fresh} onChange={(v) => setRule("autoCleanHours", v)} suffix="hrs" />} />
           </React.Fragment>}
         </Card>
       )}

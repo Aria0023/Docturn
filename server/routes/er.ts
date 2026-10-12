@@ -19,8 +19,13 @@ import { sendOrgBroadcast } from "./broadcasts.js";
  * lifting it is a locked read-modify-write, audited, announced to every open
  * session (DIVERSION_UPDATED) and — while the broadcasts module is on — sent
  * to everyone in the org as an ordinary broadcast (critical with ack on
- * declare, info on lift). DocTurn has NO EMS / ambulance-dispatch integration:
- * nothing here notifies EMS, and nothing says it does.
+ * declare, info on lift). What happened to that broadcast is recorded IN the
+ * declared state (`alert`: sent to N people, or not sent and why), so the
+ * persistent banner every session shows can say it — with broadcasts
+ * switched off it says nobody was alerted instead of claiming everyone was
+ * (A.CON clinical #1). A state saved before this was recorded reads
+ * alert: null (unknown). DocTurn has NO EMS / ambulance-dispatch
+ * integration: nothing here notifies EMS, and nothing says it does.
  *
  * The ER roster is the org's ACTIVE er_doctor accounts (People → Add person
  * creates and deactivates them). Their on/off shift and shift type are kept
@@ -33,12 +38,38 @@ export const ER_ROSTER_KEY = "erRoster";
 const ER_ADMIN_ROLES = ["er_director", "director"] as const;
 const DAY_MS = 24 * 3_600_000;
 
+/** What the declare's org-wide broadcast did. */
+export interface DiversionAlert {
+  sent: boolean;
+  /** Why nothing was sent: the broadcasts module is off, or the send failed. */
+  reason: "module_disabled" | "failed" | null;
+  /** People the broadcast went to (its frozen recipient set; 0 when not sent). */
+  recipients: number;
+  broadcastId: number | null;
+}
 export interface DiversionState {
   active: boolean;
   since: string | null;
   by: { id: number; name: string } | null;
+  /**
+   * Set on every declared state: what its broadcast did, or null for a state
+   * saved before alerts were recorded (unknown). Absent while not diverting.
+   */
+  alert?: DiversionAlert | null;
 }
 const NOT_DIVERTING: DiversionState = { active: false, since: null, by: null };
+
+function parseAlert(raw: unknown): DiversionAlert | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.sent !== "boolean") return null;
+  return {
+    sent: o.sent,
+    reason: o.reason === "module_disabled" || o.reason === "failed" ? o.reason : null,
+    recipients: typeof o.recipients === "number" && o.recipients >= 0 ? o.recipients : 0,
+    broadcastId: typeof o.broadcastId === "number" ? o.broadcastId : null,
+  };
+}
 
 /** Read the stored value defensively — anything malformed reads as "accepting". */
 export function parseDiversion(raw: unknown): DiversionState {
@@ -50,6 +81,7 @@ export function parseDiversion(raw: unknown): DiversionState {
     active: true,
     since: typeof o.since === "string" ? o.since : null,
     by: by && typeof by.id === "number" ? { id: by.id, name: typeof by.name === "string" ? by.name : "" } : null,
+    alert: parseAlert(o.alert),
   };
 }
 
@@ -123,7 +155,7 @@ export function registerErRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
     const want = parsed.data.active;
     const next: DiversionState = want
-      ? { active: true, since: new Date().toISOString(), by: { id: me.id, name: me.displayName } }
+      ? { active: true, since: new Date().toISOString(), by: { id: me.id, name: me.displayName }, alert: null }
       : NOT_DIVERTING;
     type Outcome = { changed: boolean; state: DiversionState; previous: DiversionState };
     const outcome = await storage().mutateOrgSettings<Outcome>(me.organizationId, [DIVERSION_KEY], me.id, (cur) => {
@@ -144,24 +176,44 @@ export function registerErRoutes(app: Express) {
       details: want ? { since: next.since } : { declaredAt: outcome.previous.since, declaredBy: outcome.previous.by?.id ?? null },
       riskLevel: want ? "high" : "medium",
     });
+    let broadcast: { id: number; total: number } | null = null;
+    let broadcastSkipped: "module_disabled" | "failed" | null = null;
+    if (await isModuleEnabled(me.organizationId, "broadcasts")) {
+      const message = want
+        ? `ER ON DIVERSION — divert incoming ambulances until further notice. Declared by ${me.displayName}.`
+        : `ER diversion lifted — the ER is accepting patients again (${me.displayName}).`;
+      try {
+        const sent = await sendOrgBroadcast(me, message, want ? "critical" : "info", { reason: "er_diversion" });
+        broadcast = { id: sent.broadcast.id, total: sent.total };
+      } catch (err) {
+        console.error("[er] diversion broadcast failed", (err as Error)?.name ?? "error");
+        broadcastSkipped = "failed";
+      }
+    } else {
+      broadcastSkipped = "module_disabled";
+    }
+
+    // Record what the declare's broadcast did IN the state, so the banner
+    // every session shows says it. Only onto THIS declaration (same `since`):
+    // a lift or a newer declaration that landed meanwhile is left alone.
+    let state = outcome.state;
+    if (want) {
+      const alert: DiversionAlert = broadcast
+        ? { sent: true, reason: null, recipients: broadcast.total, broadcastId: broadcast.id }
+        : { sent: false, reason: broadcastSkipped, recipients: 0, broadcastId: null };
+      state = await storage().mutateOrgSettings<DiversionState>(me.organizationId, [DIVERSION_KEY], me.id, (cur) => {
+        const current = parseDiversion(cur[DIVERSION_KEY]);
+        if (!current.active || current.since !== next.since) return { result: current };
+        const withAlert: DiversionState = { ...current, alert };
+        return { write: { [DIVERSION_KEY]: withAlert }, result: withAlert };
+      });
+    }
     try {
       notificationDeps().ws.broadcast(me.organizationId, { type: "DIVERSION_UPDATED" });
     } catch (err) {
       console.error("[er] diversion broadcast frame failed", err);
     }
-
-    let broadcast: { id: number; total: number } | null = null;
-    let broadcastSkipped: "module_disabled" | null = null;
-    if (await isModuleEnabled(me.organizationId, "broadcasts")) {
-      const message = want
-        ? `ER ON DIVERSION — divert incoming ambulances until further notice. Declared by ${me.displayName}.`
-        : `ER diversion lifted — the ER is accepting patients again (${me.displayName}).`;
-      const sent = await sendOrgBroadcast(me, message, want ? "critical" : "info", { reason: "er_diversion" });
-      broadcast = { id: sent.broadcast.id, total: sent.total };
-    } else {
-      broadcastSkipped = "module_disabled";
-    }
-    res.json({ diversion: outcome.state, broadcast, broadcastSkipped });
+    res.json({ diversion: state, broadcast, broadcastSkipped });
   });
 
   app.get("/api/er/roster", requireAuth, requireRole(...ER_ADMIN_ROLES), async (req, res) => {
