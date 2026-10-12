@@ -34,8 +34,25 @@
     s.admissions = []; s.admissionsInfo = null; s.admissionsResetAt = 0;
     s.shifts = DT.defaultShifts ? DT.defaultShifts() : s.shifts;
     s.onCallSources = null; s.onCallSourcesError = null;
+    // Nor the kit's demo clinicians, patients, requests and census: until the
+    // server answers — or if a read fails — these lists are empty, never the
+    // seed's fabricated rows presented as the org's.
+    s.providers = []; s.board = []; s.sent = []; s.pending = [];
+    s.myPatients = []; s.myAdmissions = []; s.acceptedToday = 0;
+    s.directory = []; s.orgPeople = {};
+    if (!s.session) s.me = { name: "", avatar: "", role: "" };
     return s;
   });
+  // The labelled local demo only (a synthetic server that has become
+  // unreachable): load the kit's demo clinical rows so it stays explorable.
+  function applyLocalDemoRows() {
+    if (!DT.demoSeed) return;
+    var demo = DT.demoSeed();
+    DT.set(function (s) {
+      ["me", "providers", "board", "sent", "pending", "myPatients", "myAdmissions", "acceptedToday"].forEach(function (k) { s[k] = demo[k]; });
+      return s;
+    });
+  }
   var fmt = window.dtFmt;
   var origLogin = DT.actions.login;
   // True only once GET /api/config has answered syntheticData:true in THIS page
@@ -1981,6 +1998,7 @@
           // defaults to ON and sign-out purges the snapshot that remembers it,
           // so an installed app relaunched offline would otherwise "sign in"
           // to fabricated data on a real-PHI instance (A.CON-MIN-9).
+          applyLocalDemoRows();
           origLogin(role, org, user);
           localDemoSession = true;
           DT.set(function (s) { s.__toast = { tone: "rejected", title: "Offline — demo mode", msg: "Backend unreachable; showing demo data." }; return s; });
@@ -2029,7 +2047,7 @@
         // Same rule as sign-in: a local role flip onto demo data only when the
         // server has confirmed, in this page load, that this is a synthetic
         // instance.
-        if (serverSaidSynthetic && origSetRole) { origSetRole(role); localDemoSession = true; return; }
+        if (serverSaidSynthetic && origSetRole) { applyLocalDemoRows(); origSetRole(role); localDemoSession = true; return; }
         DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not switch role", msg: "No connection — nothing was changed." }; return s; });
         return;
       }

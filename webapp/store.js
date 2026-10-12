@@ -299,10 +299,13 @@
       // (No local "on shift" flag: a hospitalist's On shift is their rotation
       // profile on the server — myProvider.working — A.CON comms-account #1.)
       ui: { nav: "dashboard", notifOpen: false, realtime: true },
-      me: { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
+      // Live, the signed-in person comes from the server at sign-in; the kit's
+      // demo identity and every demo clinical list below are the offline kit's
+      // only (and the labelled local demo's — DT.demoSeed()).
+      me: isLive() ? { name: "", avatar: "", role: "" } : { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
       rotation: null, // server "Next up" (GET /api/rotation/next); see nextUp()
 
-      providers: [
+      providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
         { id: "h2", name: "Dr. Amir Patel",  avatar: "AP", specialty: "Hospital Medicine", census: 5, cap: 12, working: true,  shift: "day",   inRotation: true },
         { id: "h3", name: "Dr. Maria Lopez", avatar: "ML", specialty: "Pulmonology",       census: 7, cap: 10, working: true,  shift: "swing", inRotation: true },
@@ -333,19 +336,19 @@
       // GET /api/hospitalists — the hospitalist dashboard's "Current census".
       myProvider: null,
 
-      pending: [
+      pending: isLive() ? [] : [
         { id: "a1", initials: "RM", room: "318", complaint: "Acute abdominal pain, 2-day onset", from: "Dr. Reyes (ER)", specialty: "General Medicine", acuity: 3, via: "Round-robin", expiresAt: t0 + 272000, acceptedToday: false },
         { id: "a2", initials: "TK", room: "205", complaint: "Diabetic ketoacidosis", from: "Dr. Osei (ER)", specialty: "Endocrinology", acuity: 2, via: "Manual", expiresAt: t0 + 430000, acceptedToday: false },
       ],
-      myPatients: [
+      myPatients: isLive() ? [] : [
         { id: "p1", initials: "DW", room: "410", complaint: "CHF exacerbation" },
         { id: "p2", initials: "BG", room: "402", complaint: "Community-acquired pneumonia" },
         { id: "p3", initials: "SC", room: "412", complaint: "Chest pain — observation" },
       ],
-      acceptedToday: 7,
+      acceptedToday: isLive() ? 0 : 7,
       // Timestamped log of THIS hospitalist's accepted admissions. The dashboard
       // shows the current shift (since 7am); the History tab keeps 3+ days.
-      myAdmissions: [
+      myAdmissions: isLive() ? [] : [
         { id: uid("ma"), at: now() - 40 * 60000,    initials: "DW", room: "410", complaint: "CHF exacerbation" },
         { id: uid("ma"), at: now() - 3 * 3600000,   initials: "BG", room: "402", complaint: "Community-acquired pneumonia" },
         { id: uid("ma"), at: now() - 26 * 3600000,  initials: "MR", room: "318", complaint: "Sepsis, source unclear" },
@@ -353,7 +356,7 @@
         { id: uid("ma"), at: now() - 50 * 3600000,  initials: "TK", room: "205", complaint: "Diabetic ketoacidosis" },
       ],
 
-      sent: [
+      sent: isLive() ? [] : [
         { id: uid("s"), initials: "MJ", provider: "Dr. Amir Patel",  complaint: "NSTEMI, troponin trending", consultants: ["Cardiology"],  time: "Today · 08:41",     day: "Today",     status: "accepted" },
         { id: uid("s"), initials: "RV", provider: "Dr. Maria Lopez", complaint: "COPD exacerbation",          consultants: ["Pulmonology"], time: "Today · 07:55",     day: "Today",     status: "sent" },
         { id: uid("s"), initials: "DK", provider: "Dr. Sarah Chen",  complaint: "Syncope, workup",            consultants: [],              time: "Yesterday · 21:10", day: "Yesterday", status: "accepted" },
@@ -382,7 +385,7 @@
       team: null,
       candidates: [],
 
-      board: [
+      board: isLive() ? [] : [
         { id: uid("b"), initials: "RM", room: "318", dept: "MED",  issue: "Acute abdominal pain, 2-day onset", status: "admitted",
           attending: { name: "Dr. Sarah Chen", avatar: "SC" }, unit: [{ avatar: "JW", role: "PA" }], consultants: ["GI"], er: { name: "Dr. Reyes", avatar: "Re" } },
         { id: uid("b"), initials: "TK", room: "205", dept: "ICU",  issue: "Diabetic ketoacidosis", status: "observation",
@@ -420,6 +423,7 @@
       // registered consultants/PAs/NPs appear automatically. Empty = use the
       // component's demo fallback offline.
       directory: [],
+      orgPeople: {},
       // Soft, muted role palette — distinct hues that stay legible as text on a
       // light tint and as small dots (easier to read than saturated primaries).
       roleColors: {
@@ -607,6 +611,15 @@
     } catch (e) { return null; }
   }
 
+  // The kit's demo state regardless of DT_LIVE — for the labelled local demo
+  // only (api-bridge: a synthetic server that has become unreachable). A live
+  // page never shows these rows otherwise.
+  function demoSeed() {
+    var was = typeof window !== "undefined" ? window.DT_LIVE : undefined;
+    try { if (typeof window !== "undefined") window.DT_LIVE = false; return seed(); }
+    finally { if (typeof window !== "undefined") window.DT_LIVE = was; }
+  }
+
   var state = load() || seed();
   var listeners = new Set();
   var clockListeners = new Set();
@@ -768,11 +781,13 @@
   function actorName(s) { return (s.session && s.session.name) || s.me.name; }
 
   // Clinical (or PHI-quoting) slices that must not outlive a session. Reset to
-  // FRESH SEED values rather than empty arrays so the offline/demo fallback
-  // still has something to render if the backend is unreachable at next login;
-  // a real login overwrites them from the server.
+  // FRESH SEED values: empty on a live page (api-bridge loaded — the next
+  // sign-in reads them from its own server), the kit's demo rows offline. The
+  // labelled local demo re-applies DT.demoSeed() itself.
   var PHI_SLICES = [
-    "conversations", "board", "myPatients", "myAdmissions", "pending",
+    "conversations", "board", "myPatients", "myAdmissions", "pending", "acceptedToday",
+    // the previous person's org roster (names, census, shifts)
+    "providers", "directory", "orgPeople",
     "sent", "admissions", "broadcasts", "notifications",
     "audit", "phiLog",
   ];
@@ -1420,7 +1435,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts, demoSeed: demoSeed };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;
