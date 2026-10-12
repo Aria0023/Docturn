@@ -3,15 +3,25 @@ import { deviceTokenSchema } from "@shared/schema";
 import { logPhiAccess } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { storage } from "../storage.js";
+import { getVapidPublicKey } from "../services/push.js";
 
 /**
- * Mobile endpoints: public org lookup (safe fields only, for QR onboarding),
- * compact assignment payloads, and FCM device-token registration.
+ * Mobile endpoints: the caller's own org (safe fields only), compact
+ * assignment payloads, and FCM device-token registration.
  */
 export function registerMobileRoutes(app: Express) {
-  app.get("/api/mobile/org/:code", async (req, res) => {
-    const org = await storage().getOrganizationByCode(req.params.code);
-    if (!org) return res.status(404).json({ error: "not_found" });
+  // Members only, and only their OWN org (A.CON-SHO-11). This used to be a
+  // public lookup for QR onboarding, which made it an anonymous org-code
+  // oracle (any code → name + timezone, including the platform org) — the
+  // very thing /api/login and /api/register are built not to be. Nothing calls
+  // it before sign-in (the mobile login takes the code typed and lets
+  // /api/login answer), so it now answers a signed-in user for their own org
+  // and one indistinguishable 404 for every other code: another tenant, the
+  // operator tenant, or none at all.
+  app.get("/api/mobile/org/:code", requireAuth, async (req, res) => {
+    const me = currentUser(req);
+    const org = await storage().getOrganizationByCode(String(req.params.code ?? ""));
+    if (!org || org.id !== me.organizationId) return res.status(404).json({ error: "not_found" });
     // Safe fields only.
     res.json({
       id: org.id,
@@ -45,6 +55,13 @@ export function registerMobileRoutes(app: Express) {
         };
       }),
     );
+  });
+
+  // Public key browsers need to create a Web Push subscription (PWA + web).
+  app.get("/api/push/vapid-key", requireAuth, (_req, res) => {
+    const key = getVapidPublicKey();
+    if (!key) return res.status(503).json({ error: "push_unavailable" });
+    res.json({ key });
   });
 
   app.post("/api/mobile/device-tokens", requireAuth, async (req, res) => {

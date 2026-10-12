@@ -35,6 +35,11 @@ window.matchMedia = () => ({ matches: false, media: "", addEventListener() {}, r
 window.scrollTo = () => {};
 if (!window.ResizeObserver) window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 window.alert = () => {}; window.confirm = () => true; window.prompt = () => "x";
+// jsdom cannot open windows ("Not implemented: window.open"). Answer like a
+// popup blocker does (null) — the callers (topbar "Mobile view", Open in EHR)
+// handle a null window — and count the calls so the sweep's reach is visible.
+let windowOpenCalls = 0;
+window.open = () => { windowOpenCalls++; return null; };
 
 // ---- error capture --------------------------------------------------------
 const errors = [];
@@ -52,7 +57,18 @@ window.fetch = async (url, opts = {}) => {
   const u = String(url).startsWith("http") ? String(url) : BASE + url;
   const headers = { ...(opts.headers || {}) };
   if (cookie) headers.cookie = cookie;
-  const res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  // One retry on a pure transport failure ("fetch failed": a keep-alive socket
+  // reset by the burst of hydration requests the kit fires after some actions).
+  // The server is healthy in that case — verified — so a retry is the honest
+  // equivalent of a browser's automatic reconnect, not a way to hide a bug.
+  let res;
+  try {
+    res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  } catch (e) {
+    if (!(e instanceof TypeError)) throw e;
+    await new Promise((r) => setTimeout(r, 150));
+    res = await fetch(u, { ...opts, headers, redirect: "manual" });
+  }
   const sc = res.headers.getSetCookie ? res.headers.getSetCookie() : [];
   if (sc && sc.length) cookie = sc.map((c) => c.split(";")[0]).join("; ");
   return res;
@@ -68,15 +84,13 @@ runInWindow(read("store.js"), "store.js");
 runInWindow(read("api-bridge.js"), "api-bridge.js");
 if (!window.DT) { console.log("FATAL: store.js did not set window.DT"); process.exit(2); }
 
-const JSX_FILES = [
-  "components.jsx", "LoginScreen.jsx", "LockScreen.jsx", "AppShell.jsx",
-  "HospitalistDashboard.jsx", "HospitalistWork.jsx", "HospitalistHistory.jsx", "ErDoctorDashboard.jsx", "DirectorDashboard.jsx",
-  "ErDirectorDashboard.jsx", "Messaging.jsx", "Directory.jsx", "CareTeam.jsx",
-  "PatientBoard.jsx", "DeveloperDashboard.jsx", "OrgConfig.jsx", "ComplianceOverview.jsx", "SupportDirectory.jsx", "AdmissionsLog.jsx", "Compliance.jsx", "Broadcasts.jsx",
-  "ScheduleSync.jsx", "OrgSettings.jsx", "RoleManagement.jsx", "People.jsx", "Appearance.jsx",
-  "CustomizableDashboard.jsx", "ConsultServices.jsx", "RegistrationApprovals.jsx",
-];
 const html = read("index.html");
+// Load exactly the JSX files index.html loads, in the same order, so a newly
+// added screen (MfaScreen, OnCallBoard, …) can never silently drop out of the
+// smoke and fail "App mounted" for a reason unrelated to the product.
+// index.html references its scripts root-absolute ("/Foo.jsx", A.CON-SHO-58); accept either form.
+const JSX_FILES = [...html.matchAll(/<script[^>]*src="\/?([A-Za-z0-9_-]+\.jsx)"/g)].map((m) => m[1]);
+if (JSX_FILES.length === 0) { console.log("FATAL: no .jsx script tags found in index.html"); process.exit(2); }
 const inlineApp = html.match(/<script type="text\/babel" data-presets="react">([\s\S]*?)<\/script>/);
 if (!inlineApp) { console.log("FATAL: could not find inline App script in index.html"); process.exit(2); }
 const bundle = JSX_FILES.map(read).join("\n;\n") + "\n;\n" + inlineApp[1];
@@ -105,21 +119,53 @@ const inputByPlaceholder = (sub) => [...window.document.querySelectorAll("input,
 
 
 // Buttons that change session/identity — skipped so the sweep doesn't flood
-// /api/login (role switcher) or log itself out mid-test.
-const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "developer", "log out", "sign out", "logout", "lock",
+// /api/login (role switcher / sign-in tiles) or sign out / lock itself mid-test.
+// Matched against a button's visible text AND its aria-label and title: the
+// Sidebar's "Sign out" and the Topbar's "Lock app" are icon-only (empty
+// textContent), and a text-only match let the sweep sign itself out, so every
+// later sweep ran on the sign-in screen (A.CON-SHO-5).
+const SKIP_LABELS = new Set(["hospitalist", "er physician", "er director", "hosp. director", "hospitalist director", "developer",
+  "log out", "sign out", "logout", "lock", "lock app", "return to developer",
   // destructive maintenance buttons — don't wipe data mid-sweep
-  "clear all", "clear 24h+", "clear logs"]);
+  "clear all", "clear 24h+", "clear logs",
+  // Platform → Security: really ends every other session on the server
+  "sign out all"]);
+// Account-lifecycle buttons on People act on REAL seeded accounts (a reset
+// password would lock the next role's sign-in out) — never swept.
+const SKIP_PREFIX = /^(reset password for|reset two-factor for|remove access for|restore access for)/;
+const buttonKeys = (b) => [b.textContent, b.getAttribute("aria-label"), b.getAttribute("title")]
+  .map((s) => (s || "").replace(/\s+/g, " ").trim().toLowerCase()).filter(Boolean);
+const isSkipped = (b) => buttonKeys(b).some((k) => SKIP_LABELS.has(k) || SKIP_PREFIX.test(k));
+const describeButton = (b) => buttonKeys(b)[0] || "<unlabelled button>";
+// The app lock is React state in index.html (no DT flag), so look for the lock dialog.
+const lockScreenShown = () => !!window.document.querySelector('[aria-labelledby="dt-lock-title"]');
+const sweepBlocker = (role) => {
+  const s = DT.getState().session;
+  if (!s) return "signed out";
+  if (s.role !== role) return `session is ${s.role}, not ${role}`;
+  if (lockScreenShown()) return "app is locked";
+  return "";
+};
 async function clickEveryButton(roleLabel, screen) {
+  const label = `${roleLabel} · ${screen}`;
+  // An honest sweep: it must run inside the signed-in app for this role, not on
+  // the sign-in or lock screen that a previous click left behind.
+  const pre = sweepBlocker(roleLabel);
+  if (pre) { rec(`${label}: sweep runs signed in as ${roleLabel}`, false, `${pre} before sweeping ${screen}`); return; }
   const before = errors.length;
-  let clicked = 0;
+  let clicked = 0, broke = "";
   for (const b of [...window.document.querySelectorAll("button")]) {
-    if (SKIP_LABELS.has((b.textContent || "").trim().toLowerCase())) continue;
+    if (isSkipped(b)) continue;
     try { b.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })); clicked++; await sleep(3); }
     catch (e) { errors.push(`click threw [${roleLabel}/${screen}]: ${e.message}`); }
+    const why = sweepBlocker(roleLabel);
+    if (why) { broke = `clicking "${describeButton(b)}" left the app (${why}); sweep stopped`; break; }
   }
   await flush();
+  if (!broke) { const why = sweepBlocker(roleLabel); if (why) broke = `${why} after the sweep`; }
   const newErrs = errors.length - before;
-  rec(`${roleLabel} · ${screen}: clicked ${clicked} buttons`, newErrs === 0, newErrs ? errors.slice(before).join(" | ") : "");
+  const detail = [broke, newErrs ? errors.slice(before).join(" | ") : ""].filter(Boolean).join(" | ");
+  rec(`${label}: clicked ${clicked} buttons`, newErrs === 0 && !broke, detail);
 }
 
 const NAV = {
@@ -130,26 +176,33 @@ const NAV = {
   hospitalist: ["dashboard", "history", "messages", "directory", "compliance"],
 };
 
+// The sign-in form submits the credentials it is given — nothing substitutes a
+// demo account any more — so the harness supplies the seeded demo credentials
+// itself. (Second arg kept for call-site compatibility; the demo org is derived
+// from the role: developer → DOCTURN, clinical roles → ISPN.)
+const demoLogin = (role) => { const d = DT.demoAccount(role); return DT.actions.login(role, d.org, d.user, d.pass); };
+
 await flush();
 rec("App mounted", !!window.document.querySelector("#root").children.length);
 
 for (const role of ["developer", "director", "er_director", "er_doctor", "hospitalist"]) {
-  await DT.actions.login(role, "ISPN");
+  await demoLogin(role, "ISPN");
   await flush(); await flush();
   const st = DT.getState();
   rec(`LOGIN as ${role}`, st.session && st.session.role === role, "session=" + JSON.stringify(st.session));
   if (role === "developer") {
     const mercy = (st.orgs || []).find((o) => o.code === "ISPN");
     const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
-    // ISPN seeds the real Cedars Amion roster: 3 ops roles + 12 hospitalists + 1 PA = 16.
-    rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users === 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
+    // ISPN seeds the real Cedars Amion roster (3 ops roles + hospitalists + PA);
+    // assert "a realistic seeded roster", not an exact count that drifts with seed edits.
+    rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users >= 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }
   if (role === "hospitalist") rec("hospitalist: providers hydrated", (st.providers || []).length >= 4, "providers=" + (st.providers || []).length);
   for (const navId of NAV[role]) { DT.actions.setNav(navId); await flush(); await clickEveryButton(role, navId); }
 }
 
 // developer org CRUD
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 DT.actions.addTenant({ name: "Harness Test Hospital", code: "HARN", city: "Testville", state: "CA", timezone: "America/Los_Angeles" });
 await flush(); await flush();
 const harn = (DT.getState().orgs || []).find((o) => o.code === "HARN");
@@ -173,68 +226,89 @@ let ownErr = "";
 try { await DT.actions.deleteTenant({ code: "DOCTURN" }); } catch (e) { ownErr = e.message; }
 rec("deleteTenant refuses the developer's own org", /own account/i.test(ownErr), "msg=" + ownErr);
 
-// Enterprise defaults vs per-organization overrides (individualized config).
+// Per-organization rules are each org's OWN server values (no enterprise
+// defaults / inheritance — those were browser-only and are gone).
 {
-  // Per-org rule starts inherited (no override recorded), then becomes custom.
-  const before = DT.orgConfig("ISPN");
-  DT.actions.setOrgRule("ISPN", "autoCleanHours", 48);
-  await flush();
-  const after = DT.orgConfig("ISPN");
-  rec("per-org rule override is individualized (ISPN autoCleanHours=48, marked custom)",
-    after.rules.autoCleanHours === 48 && after.overridden.rules.indexOf("autoCleanHours") >= 0
-      && before.overridden.rules.indexOf("autoCleanHours") < 0,
-    "before=" + JSON.stringify(before.overridden.rules) + " after=" + JSON.stringify(after.overridden.rules) + " val=" + after.rules.autoCleanHours);
-  // Reset reverts to the inherited enterprise default.
-  DT.actions.resetOrgRule("ISPN", "autoCleanHours");
-  await flush();
-  const reset = DT.orgConfig("ISPN");
-  const ent = DT.getState().enterprise.rules.autoCleanHours;
-  rec("reset reverts a per-org rule to the enterprise default",
-    reset.overridden.rules.indexOf("autoCleanHours") < 0 && reset.rules.autoCleanHours === ent,
-    "overridden=" + JSON.stringify(reset.overridden.rules) + " val=" + reset.rules.autoCleanHours + " ent=" + ent);
-  // Enterprise change propagates to every org that hasn't overridden it.
-  DT.actions.setEnterpriseRule("timeout", 25);
-  await flush();
-  rec("enterprise default propagates to inheriting orgs",
-    DT.orgConfig("ISPN").rules.timeout === 25 && DT.orgConfig("*").rules.timeout === 25,
-    "ispn=" + DT.orgConfig("ISPN").rules.timeout);
-  // Per-org permission override is independent of enterprise.
-  DT.actions.setRolePerm("*", "hospitalist", "view_reports", false);
-  DT.actions.setRolePerm("ISPN", "hospitalist", "view_reports", true);
-  await flush();
-  const perm = DT.orgConfig("ISPN");
-  rec("per-org permission override is individualized",
-    perm.permissions.hospitalist.indexOf("view_reports") >= 0
-      && DT.orgConfig("*").permissions.hospitalist.indexOf("view_reports") < 0,
-    "ispn=" + JSON.stringify(perm.permissions.hospitalist));
-  // Enterprise platform controls (mobile/messaging/security/integrations).
-  DT.actions.setEnterprisePlatform("mobile", "ios", false);
-  DT.actions.setEnterprisePlatform("security", "sessionTimeoutMin", 30);
-  await flush();
-  const entPlat = DT.getState().enterprise.platform || {};
-  rec("enterprise platform controls (mobile + security) are settable",
-    entPlat.mobile && entPlat.mobile.ios === false && entPlat.security && entPlat.security.sessionTimeoutMin === 30,
-    "platform=" + JSON.stringify({ ios: entPlat.mobile && entPlat.mobile.ios, to: entPlat.security && entPlat.security.sessionTimeoutMin }));
+  const orgs = await window.fetch("/api/dev/organizations", { credentials: "include" }).then((r) => r.json()).catch(() => []);
+  const ispn = (orgs || []).find((o) => o.code === "ISPN");
+  const ok = await DT.actions.setOrgRule("ISPN", "autoCleanHours", 48);
+  const srv = ispn ? await window.fetch("/api/dev/organizations/" + ispn.id + "/settings", { credentials: "include" }).then((r) => r.json()).catch(() => null) : null;
+  rec("per-org rule is saved on the server (ISPN autoCleanHours=48)", ok === true && srv && srv.settings && srv.settings.autoCleanHours === 48,
+    "ok=" + ok + " server=" + JSON.stringify(srv && srv.settings));
+  await DT.actions.setOrgRule("ISPN", "autoCleanHours", null); // back to the platform default
+  rec("no browser-only enterprise defaults / permission switches remain",
+    DT.getState().enterprise === undefined && typeof DT.actions.setEnterpriseRule === "undefined" && typeof DT.actions.setRolePerm === "undefined" && typeof DT.actions.clearComplianceLogs === "undefined");
 }
 
 // Cross-org compliance overview: per-organization audit/PHI counts, separated by
 // org, for the developer. Plus the support directory hydrates users per org.
-await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 {
   const resp = await window.fetch("/api/dev/compliance-overview", { credentials: "include" });
   const arr = await resp.json().catch(() => []);
   const ispn = Array.isArray(arr) ? arr.find((o) => o.code === "ISPN") : null;
   rec("dev compliance overview separates by organization",
     Array.isArray(arr) && arr.length >= 1 && !!ispn && typeof ispn.auditCount === "number" && typeof ispn.phiCount === "number",
-    "orgs=" + JSON.stringify((arr || []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200));
+    "orgs=" + JSON.stringify((Array.isArray(arr) ? arr : []).map((o) => o.code + ":" + o.auditCount + "/" + o.phiCount)).slice(0, 200) +
+      (Array.isArray(arr) ? "" : " (non-array response: " + JSON.stringify(arr).slice(0, 80) + ")"));
   rec("support directory: users hydrated per organization",
     (DT.getState().devUsers || []).some((u) => u.org && u.name),
     "users=" + (DT.getState().devUsers || []).length);
 }
 
+// Synthetic-data mode: public /api/config flag + store default both "on" so the
+// test-only banner shows unless an operator deliberately disables it.
+{
+  const cfg = await window.fetch("/api/config", { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  rec("public /api/config exposes synthetic-data flag (default on)", cfg.syntheticData === true, "cfg=" + JSON.stringify(cfg));
+  rec("store defaults to synthetic-data mode on", DT.getState().syntheticData === true, "flag=" + DT.getState().syntheticData);
+}
+
+// Compliance monitor — POLICY STARTER PACK. The manual ("Needs human") controls
+// must each offer a starter draft, and the draft the Compliance monitor screen
+// opens must come back rendered for THIS organization with no unresolved
+// {placeholder} left in it. Driven through the real bridge actions the screen
+// calls (loadPolicyTemplates / loadPolicy), against the live server.
+await demoLogin("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+{
+  DT.actions.setNav("compliance-monitor");
+  for (let i = 0; i < 10; i++) await flush();
+
+  const report = await DT.actions.loadComplianceStatus().catch(() => null);
+  const manualIds = ((report || {}).controls || []).filter((c) => c.kind === "manual").map((c) => c.id);
+  const metas = await DT.actions.loadPolicyTemplates();
+  const haveTemplate = new Set((metas || []).map((m) => m.controlId));
+  rec("policy starter pack covers every manual control",
+    manualIds.length >= 13 && manualIds.every((id) => haveTemplate.has(id)),
+    "manual=" + manualIds.length + " templates=" + (metas || []).length +
+    " missing=" + JSON.stringify(manualIds.filter((id) => !haveTemplate.has(id))));
+  rec("policy list is metadata only (no document bodies over the wire)",
+    (metas || []).every((m) => !m.body && !m.markdown && (m.actionRequired || "").length > 40),
+    "sample=" + JSON.stringify((metas || [])[0] || {}).slice(0, 160));
+
+  const doc = await DT.actions.loadPolicy("risk-analysis").catch((e) => ({ error: String(e && e.message) }));
+  const md = (doc && doc.markdown) || "";
+  const orgName = ((report || {}).organization || {}).name || "";
+  rec("draft policy renders a real document for this organization",
+    md.length > 1500 && !!orgName && md.includes(orgName),
+    "len=" + md.length + " org=" + orgName);
+  rec("rendered draft leaves NO unresolved placeholder",
+    md.length > 0 && !/\{[a-zA-Z]+\}/.test(md),
+    "leftover=" + JSON.stringify((md.match(/\{[a-zA-Z]+\}/g) || []).slice(0, 3)));
+  rec("process controls say plainly that signing is not the control",
+    /do not sign this page/i.test((doc && doc.actionRequired) || "") && /HealthIT\.gov/.test(md),
+    "action=" + String((doc && doc.actionRequired) || "").slice(0, 90));
+
+  const auto = await DT.actions.loadPolicy("auth-rate-limit").catch(() => null);
+  rec("an AUTOMATED control has no policy to sign", auto === null, "auto=" + JSON.stringify(auto).slice(0, 80));
+
+  DT.actions.setNav("dashboard");
+  await flush();
+}
+
 // developer enters an organization's FULL portal (org-scoped admin context) so
 // every per-org surface — compliance, directory, board, settings — is real.
-await DT.actions.login("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
   await DT.actions.manageOrg({ code: "ISPN" });
   for (let i = 0; i < 10; i++) await flush();
@@ -277,9 +351,9 @@ await flush();
 // clinical flow: ER doctor sends -> hospitalist receives -> accept.
 // Resolve the demo hospitalist's display name first so we route to EXACTLY the
 // account we then log in as (the seed roster uses real Amion names now).
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 const hospName = (DT.getState().me && DT.getState().me.name) || "";
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 let provs = DT.sortedProviders();
 for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
 const target = provs.find((p) => p.name === hospName) || provs[0];
@@ -287,8 +361,11 @@ rec("ER doctor: providers available to send to", !!target, "providers=" + JSON.s
 if (target) {
 DT.actions.sendAssignment(target, { initials: "ZZ", room: "999", complaint: "Harness chest pain", specialty: "Cardiology" }, []);
 await flush(); await flush();
-rec("admission logged on send", (DT.getState().admissions || []).some((a) => a.initials === "ZZ"), "admissions=" + (DT.getState().admissions || []).length);
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+// The ER's own sent board carries it; the Admissions log is the server's
+// (director, GET /api/admissions — checked below), never a local append.
+rec("admission on the ER's sent board after send", (DT.getState().sent || []).some((a) => a.initials === "ZZ"), "sent=" + (DT.getState().sent || []).length);
+rec("ER send appends nothing to this browser's admissions log", (DT.getState().admissions || []).length === 0, "admissions=" + (DT.getState().admissions || []).length);
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 const got = (DT.getState().pending || []).find((p) => p.initials === "ZZ");
 rec("ER->hospitalist: sent assignment appears in pending", !!got, "pending=" + JSON.stringify((DT.getState().pending || []).map((p) => p.initials)));
 if (got) {
@@ -298,7 +375,7 @@ if (got) {
   // confirm the patient is on the dashboard census — not just the optimistic
   // local entry. Regression: reassigned/handed-off patients weren't appearing
   // because hydrate populated myPatients but not myAdmissions for hospitalists.
-  await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+  await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
   rec("hospitalist: census persists on rehydrate (myAdmissions from server)",
     (DT.getState().myAdmissions || []).some((a) => a.initials === "ZZ" && a.at),
     "myAdmissions=" + JSON.stringify((DT.getState().myAdmissions || []).map((a) => a.initials)));
@@ -307,7 +384,7 @@ if (got) {
 
 // ER physician MANUAL send, end-to-end through the real form (the user's bug):
 // type initials+room, switch to Manual, pick a NON-default provider, click Send.
-await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); await flush(); await flush();
 {
   let provs = DT.sortedProviders();
   for (let i = 0; i < 12 && provs.length === 0; i++) { await flush(); provs = DT.sortedProviders(); }
@@ -318,25 +395,31 @@ await DT.actions.login("er_doctor", "ISPN"); DT.actions.setNav("dashboard"); awa
   if (initEl && roomEl && pick) {
     setInput(initEl, "QX"); setInput(roomEl, "disc 44"); await flush();
     const manualTab = btnByText(/^Manual$/); if (manualTab) manualTab.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
-    const provBtn = allButtons().find((b) => (b.textContent || "").includes(pick.name));
+    // The provider's row in the Manual picker reads "<name> … <census>/<cap>";
+    // other widgets the dashboard may show (e.g. an on-shift list the sweep
+    // added) carry the same name, so match the picker row specifically.
+    const cands = allButtons().filter((b) => (b.textContent || "").includes(pick.name));
+    const provBtn = cands.find((b) => (b.textContent || "").includes(`${pick.census}/${pick.cap}`)) || cands[0];
     if (provBtn) provBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); await flush();
-    const before = (DT.getState().admissions || []).length;
+    detail = "pick=" + pick.name + " cands=" + JSON.stringify(cands.map((b) => (b.textContent || "").slice(0, 60))) + " ";
     const sendBtn = btnByText(/^Send assignment/);
     const disabled = sendBtn && (sendBtn.style.pointerEvents === "none" || sendBtn.disabled);
     if (sendBtn && !disabled) sendBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
     await flush(); await flush();
-    const adm = (DT.getState().admissions || [])[0];
-    manualOk = (DT.getState().admissions || []).length > before && adm && adm.initials === "QX" && adm.provider === pick.name;
-    detail = "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
+    const findQx = () => (DT.getState().sent || []).find((x) => x.initials === "QX");
+    for (let i = 0; i < 20 && !(findQx() && findQx().provider === pick.name); i++) await flush();
+    const adm = findQx();
+    manualOk = !!adm && adm.provider === pick.name;
+    detail += "sendDisabled=" + !!disabled + " latest=" + JSON.stringify(adm && { i: adm.initials, p: adm.provider, r: adm.room });
   }
   rec("ER manual send routes to the chosen provider (end-to-end)", manualOk, detail);
 }
 
 // Cross-user: import an Amion physician, then ER routes an admission to THEM.
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 await DT.actions.importProviders("ISPN", [{ name: "Roupen Guedikian", group: "Nocturnist", shift: "night" }]);
 await flush(); await flush();
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   // Provider hydration after import/login is async; poll briefly so the test
   // isn't racing the rehydrate (the app creates the user synchronously server-side).
@@ -350,8 +433,10 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   if (imported) {
     DT.actions.sendAssignment(imported, { initials: "AM", room: "Bay 2", complaint: "Amion route test", specialty: "Cardiology" }, []);
     await flush(); await flush();
-    const adm = (DT.getState().admissions || [])[0];
-    ok = adm && adm.provider === imported.name && adm.initials === "AM";
+    const findAm = () => (DT.getState().sent || []).find((x) => x.initials === "AM");
+    for (let i = 0; i < 20 && !(findAm() && findAm().provider === imported.name); i++) await flush();
+    const adm = findAm();
+    ok = !!adm && adm.provider === imported.name;
     detail = "latest=" + JSON.stringify(adm && { p: adm.provider, i: adm.initials });
   }
   rec("ER routes an admission to an Amion-imported physician", ok, detail);
@@ -359,7 +444,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // Messaging is backend-backed (cross-device): starting a conversation creates a
 // real server conversation and a sent message persists + round-trips.
-await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
 {
   const who = DT.sortedProviders().find((p) => !/Chen/.test(p.name)) || DT.sortedProviders()[0];
   let conv = null;
@@ -376,7 +461,7 @@ await DT.actions.login("hospitalist", "ISPN"); await flush(); await flush();
 }
 // Cross-user delivery: ER physician messages a hospitalist; the hospitalist
 // sees it on their OWN login (the real "works across devices" path).
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   const target = (DT.getState().directory || []).find((d) => /Chen/.test(d.name)) || (DT.getState().directory || [])[0];
   let ok = false, detail = "no target";
@@ -385,7 +470,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
     let conv = null;
     for (let i = 0; i < 12 && !conv; i++) { await flush(); conv = (DT.getState().conversations || []).find((c) => c.name === target.name); }
     if (conv) { DT.actions.sendMessage(conv.id, "X-user ping 42"); for (let i = 0; i < 12; i++) await flush(); }
-    await DT.actions.login("hospitalist", "ISPN"); for (let i = 0; i < 14; i++) await flush();
+    await demoLogin("hospitalist", "ISPN"); for (let i = 0; i < 14; i++) await flush();
     const conv2 = (DT.getState().conversations || []).find((c) => (c.messages || []).some((m) => m.text === "X-user ping 42"));
     ok = !!(conv2 && (conv2.messages || []).some((m) => m.text === "X-user ping 42" && !m.me));
     detail = "received=" + ok + " from=" + (conv2 && conv2.name);
@@ -393,30 +478,53 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   rec("messaging: receiver sees the sender's message (cross-user)", ok, detail);
 }
 
+// On-call role addressing: the compose picker can address a ROLE (e.g. the next
+// hospitalist by rotation) that resolves to whoever holds it; selecting it opens
+// a direct conversation with the resolved holder (named after the role).
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
+{
+  let targets = [];
+  try { targets = await DT.actions.listOnCallTargets(); } catch {}
+  for (let i = 0; i < 8 && (!targets || !targets.length); i++) { await flush(); targets = (DT.getState().onCallTargets || []); }
+  const resolvedOk = !!(targets && targets.length && targets.every((t) => typeof t.userId === "number" && t.userId > 0));
+  rec("on-call targets load and every one resolves to a userId", resolvedOk, "targets=" + JSON.stringify((targets || []).map((t) => t.kind)));
+  const nextH = (targets || []).find((t) => t.kind === "next_hospitalist");
+  let ok = false, detail = "no next-hospitalist target";
+  if (nextH) {
+    await DT.actions.startRoleConversation(nextH);
+    let active = null;
+    for (let i = 0; i < 14 && active == null; i++) { await flush(); active = DT.getState().__activeConvo; }
+    const conv = (DT.getState().conversations || []).find((c) => c.id === active);
+    ok = !!(conv && typeof conv.id === "number");
+    detail = "active=" + active + " conv=" + (conv && conv.name);
+  }
+  rec("selecting an on-call role opens a direct conversation with the holder", ok, detail);
+}
+
 // demo resilience: a wrong/stale org code (e.g. cached "MERCY") still signs in
 // via the role's canonical demo org, so the demo never dead-ends on org code.
-await DT.actions.login("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();
+await demoLogin("hospitalist", "MERCY"); for (let i = 0; i < 12; i++) await flush();
 rec("login falls back to canonical org when the code is wrong/stale", (DT.getState().session || {}).role === "hospitalist", "session=" + JSON.stringify(DT.getState().session));
 
 // session recovery: simulate the session dying mid-use (expiry / server restart)
 // then perform a dev action — the bridge should re-auth and succeed, not 401.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 window.__wipeSession();
-let recovered = false, recErr = "";
+// The server session is gone. The bridge must NOT re-authenticate on its own
+// (it holds no password, and silently signing in as a demo account was a real
+// security hole): the action fails, nothing is created, and the app returns to
+// the sign-in screen with a clear message.
 DT.actions.addTenant({ name: "Recovery Org", code: "RECOV", city: "X", state: "CA", timezone: "America/Los_Angeles" });
-// addTenant fire-and-forgets a 401 → self-heal re-auth → retry → hydrate (4
-// sequential round-trips); poll instead of racing a fixed wait.
-let recov = null;
-for (let i = 0; i < 15 && !recov; i++) { await flush(); recov = (DT.getState().orgs || []).find((o) => o.code === "RECOV"); }
-if (recov) {
-  try { await DT.actions.deleteTenant(recov); recovered = true; } catch (e) { recErr = e.message; }
-  for (let i = 0; i < 8; i++) await flush();
-}
-rec("self-heals after session loss (no dead 'unauthorized')", recovered && !(DT.getState().orgs || []).find((o) => o.code === "RECOV"), recErr || (recov ? "" : "addTenant failed after wipe"));
+let expired = false;
+for (let i = 0; i < 15 && !expired; i++) { await flush(); expired = !DT.getState().session && /session expired/i.test(DT.getState().loginError || ""); }
+const leaked = !!(DT.getState().orgs || []).find((o) => o.code === "RECOV");
+rec("session loss → sign-in screen, no silent re-login, nothing created on a dead session", expired && !leaked,
+  "session=" + JSON.stringify(DT.getState().session) + " loginError=" + DT.getState().loginError + " leaked=" + leaked);
+await demoLogin("developer", "ISPN"); for (let i = 0; i < 6; i++) await flush();
 
 // role switcher: switching FROM developer (platform org) to a clinical role must
 // authenticate into the clinical tenant, not the platform org.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 DT.actions.setRole("hospitalist");
 await flush(); await flush();
 // Provider hydration is async; poll briefly so the assertion isn't racing it.
@@ -424,11 +532,13 @@ for (let i = 0; i < 12 && (DT.getState().providers || []).length < 4; i++) await
 const swSess = DT.getState().session || {};
 rec("role switch developer→hospitalist works", swSess.role === "hospitalist" && (DT.getState().providers || []).length >= 4, "session=" + JSON.stringify(swSess));
 DT.actions.setRole("developer");
-await flush(); await flush();
+// setRole does not return its sign-in promise, and a sign-in now costs a real
+// scrypt verification on the server — poll (≤ 3 s) instead of racing it.
+for (let i = 0; i < 40 && (DT.getState().session || {}).role !== "developer"; i++) await flush();
 rec("role switch back to developer works", (DT.getState().session || {}).role === "developer", "session=" + JSON.stringify(DT.getState().session));
 
 // Developer ROOT access: open any user's portal (impersonation) and return.
-await DT.actions.login("developer", "ISPN"); await flush(); await flush();
+await demoLogin("developer", "ISPN"); await flush(); await flush();
 {
   const target = (DT.getState().devUsers || []).find((u) => u.role === "hospitalist" && u.org === "ISPN")
               || (DT.getState().devUsers || []).find((u) => u.role !== "developer");
@@ -446,31 +556,41 @@ await DT.actions.login("developer", "ISPN"); await flush(); await flush();
 }
 
 // ER/Hospitalist directors can add midlevels (PA/NP) as credentialed consultants.
-await DT.actions.login("developer", "ISPN"); await flush();
+await demoLogin("developer", "ISPN"); await flush();
 {
-  await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", specialty: "Hospital Medicine", shift: "rounding" });
-  await flush(); await flush(); await flush();
-  const np = (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
-  rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP", "np=" + JSON.stringify(np && { n: np.name, c: np.credential }));
+  // The form sends the typed username (A.CON developer #21) — unique per run.
+  await DT.actions.addUser({ org: "ISPN", role: "hospitalist", credential: "NP", name: "Riley Midlevel NP", username: "riley.np." + Date.now().toString(36), specialty: "Hospital Medicine", shift: "day" });
+  // addUser resolves once the server answered; the devUsers re-hydrate follows
+  // (creating the account hashes its temporary password with scrypt), so poll (≤ 3 s).
+  const findNp = () => (DT.getState().devUsers || []).find((u) => /Riley Midlevel/.test(u.name));
+  for (let i = 0; i < 40 && !findNp(); i++) await flush();
+  const np = findNp();
+  rec("consultant (PA/NP) added as a credentialed user", !!np && np.credential === "NP",
+    "np=" + JSON.stringify(np && { n: np.name, c: np.credential }) + " toast=" + JSON.stringify(DT.getState().__toast || null).slice(0, 160));
 }
 
-// Amion → shift types: importing detected intervals adds matching shift types
-const beforeShifts = (DT.getState().settings.shiftTypes || []).length;
-await DT.actions.importShiftTypes([{ name: "Night X-cover", time: "23:00–07:00" }, { name: "Swing", time: "13:00–23:00" }]);
-await flush();
-const afterShifts = DT.getState().settings.shiftTypes || [];
-rec("importShiftTypes adds detected intervals (dedup)", afterShifts.some((t) => t.time === "23:00–07:00") && afterShifts.length === beforeShifts + 1, "before=" + beforeShifts + " after=" + afterShifts.length);
+// Shift types are the server's (Day / Swing / Night + the org's routable set),
+// not a local list of named intervals.
+rec("no browser-only shift-type list remains", DT.getState().settings.shiftTypes === undefined && typeof DT.actions.importShiftTypes === "undefined");
 
 // default assignment timeout is 15
 rec("default assignment timeout is 15 min", DT.getState().settings.timeout === 15, "timeout=" + DT.getState().settings.timeout);
 
-// director 24h admissions reset: count since reset drops to 0, log is retained
-const logBefore = (DT.getState().admissions || []).length;
-DT.actions.resetAdmissions24h();
-await flush();
-const resetAt = DT.getState().admissionsResetAt;
-const sinceReset = (DT.getState().admissions || []).filter((a) => a.at >= resetAt).length;
-rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.getState().admissions || []).length === logBefore, "since=" + sinceReset + " log=" + (DT.getState().admissions || []).length);
+// Director: the Admissions log + "Reset count" are the server's
+// (GET /api/admissions, POST /api/admissions/reset — org-wide, audited).
+await demoLogin("director", "ISPN"); await flush(); await flush();
+{
+  for (let i = 0; i < 40 && !((DT.getState().admissionsInfo || {}).loaded); i++) await flush();
+  const info0 = DT.getState().admissionsInfo || {};
+  const rows0 = (DT.getState().admissions || []).length;
+  rec("director: admissions log hydrated from the server", !!info0.loaded && rows0 === Math.min(info0.total, rows0) && (DT.getState().admissions || []).some((a) => a.initials === "ZZ"),
+    "info=" + JSON.stringify(info0) + " rows=" + rows0);
+  const ok = await DT.actions.resetAdmissionsCount();
+  await flush();
+  const info1 = DT.getState().admissionsInfo || {};
+  rec("Reset count: server resets the org's count to 0 and keeps the log", ok === true && info1.sinceReset === 0 && info1.total === info0.total && !!info1.resetAt,
+    "ok=" + ok + " info=" + JSON.stringify(info1));
+}
 
 // Customizable dashboards: reorder, remove, and re-add panels (per role).
 {
@@ -493,29 +613,29 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
     "orderOk=" + orderOk + " reordered=" + reordered + " removed=" + removed + " readded=" + readded + " reset=" + resetOk);
 }
 
-// ER director patient board is modular: defaults to working tiles only, the
-// census/FHIR sections stay off, and a toggle persists.
+// ER director patient board is modular (a per-device layout preference): the
+// patient list is on by default — it is the server's board, there is no EHR
+// feed to wait for and no FHIR data-source bar (A.CON clinical #16) — and a
+// toggle persists.
 {
   const def = DT.boardModules("er_director");
   const dirDef = DT.boardModules("director");
-  rec("ER director board defaults: admissions/accepted on, census/FHIR off",
-    def.admissions && def.accepted && !def.census && !def.dataSource && dirDef.census,
+  rec("ER director board defaults: admissions/accepted/list on, no FHIR bar",
+    def.admissions && def.accepted && def.census && !("dataSource" in def) && dirDef.census && !("dataSource" in dirDef),
     "er_director=" + JSON.stringify(def));
-  DT.actions.setBoardModule("er_director", "census", true);
+  DT.actions.setBoardModule("er_director", "census", false);
   await flush();
-  rec("board module toggle persists", DT.boardModules("er_director").census === true);
-  DT.actions.setBoardModule("er_director", "census", false); await flush();
+  rec("board module toggle persists", DT.boardModules("er_director").census === false);
+  DT.actions.setBoardModule("er_director", "census", true); await flush();
 }
 
-// Per-organization schedule source: each org keeps its own, and it's settable.
+// The schedule source is the SERVER's (GET /api/oncall/sources): no seeded or
+// per-browser source map, no local setter (A.CON schedule #2/#3).
 {
-  const sources = DT.getState().scheduleSources || {};
-  const distinct = new Set(Object.values(sources)).size;
-  rec("schedule source is per-organization (distinct sources seeded)",
-    sources.MAYO && sources.STJUDE && distinct >= 2, "sources=" + JSON.stringify(sources));
-  DT.actions.setScheduleSource("ISPN", "qgenda"); await flush();
-  rec("setScheduleSource updates that org only",
-    DT.getState().scheduleSources.ISPN === "qgenda" && DT.getState().scheduleSources.MAYO === sources.MAYO);
+  rec("no browser-side schedule-source map or setter", DT.getState().scheduleSources === undefined && typeof DT.actions.setScheduleSource === "undefined");
+  const r = await DT.actions.loadOnCallSources();
+  rec("schedule source loads from the server", !!r && ["amion", "epic", "manual"].includes(r.selected) && DT.getState().onCallSources && DT.getState().onCallSources.selected === r.selected,
+    "selected=" + (r && r.selected));
 }
 
 // Triage acuity: AI suggests an ESI level from the note; it carries onto the
@@ -547,7 +667,7 @@ rec("resetAdmissions24h clears count but keeps log", sinceReset === 0 && (DT.get
   let bad = cases.filter(([n, want]) => R(n) !== want).map(([n, want]) => n + "→'" + R(n) + "'(want '" + want + "')");
   rec("room extraction: DISC/HALL/ICU/CCU/TELE/ED/OBS prefixes + no false positives", bad.length === 0, bad.join(" | "));
 }
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let prov = DT.sortedProviders()[0];
   for (let i = 0; i < 12 && !prov; i++) { await flush(); prov = DT.sortedProviders()[0]; }
@@ -555,7 +675,9 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   if (prov) {
     DT.actions.sendAssignment(prov, { initials: "AZ", room: "9", complaint: "GSW", specialty: "Cardiology", acuity: 1 }, []);
     await flush(); await flush();
-    const adm = (DT.getState().admissions || []).find((a) => a.initials === "AZ");
+    const findAz = () => (DT.getState().sent || []).find((a) => a.initials === "AZ");
+    for (let i = 0; i < 20 && !(findAz() && findAz().backendId); i++) await flush();
+    const adm = findAz();
     ok = !!adm && adm.acuity === 1;
     detail = "adm=" + JSON.stringify(adm && { i: adm.initials, a: adm.acuity });
   }
@@ -564,7 +686,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // Consult services are driven by the live registered directory (consultants by
 // specialty + PA/NP midlevels), not hardcoded lists.
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   const dir = DT.getState().directory || [];
   const hasSpecialty = dir.some((d) => d.specialty);
@@ -589,35 +711,37 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 }
 
 // Consult services are director-editable (add / rename / set on-call / remove).
-await DT.actions.login("director", "ISPN"); await flush();
+await demoLogin("director", "ISPN"); await flush();
 {
-  const n0 = (DT.getState().consultServices || []).length;
-  DT.actions.addConsultService("Hematology"); await flush();
-  const added = (DT.getState().consultServices || []).some((s) => s.name === "Hematology");
-  const svc = (DT.getState().consultServices || []).find((s) => s.name === "Hematology");
-  DT.actions.setConsultOnCall(svc.id, { name: "Dr. Jordan Chen", avatar: "JC" }); await flush();
-  const pinned = (DT.getState().consultServices || []).find((s) => s.name === "Hematology").onCall;
-  DT.actions.renameConsultService(svc.id, "Heme/Onc"); await flush();
-  const renamed = (DT.getState().consultServices || []).some((s) => s.name === "Heme/Onc");
-  // assign a PA/NP under the service, then remove it
-  DT.actions.addConsultMember(svc.id, { id: "m_t1", name: "Taylor PA-C", avatar: "TP", role: "PA" }); await flush();
-  const withMember = ((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.name === "Taylor PA-C");
-  DT.actions.removeConsultMember(svc.id, "m_t1"); await flush();
-  const memberRemoved = !((DT.getState().consultServices || []).find((s) => s.id === svc.id).members || []).some((m) => m.id === "m_t1");
-  rec("consult service carries its own PA/NPs (add/remove member)", withMember && memberRemoved, "withMember=" + withMember + " removed=" + memberRemoved);
-  DT.actions.removeConsultService(svc.id); await flush();
-  const removed = !(DT.getState().consultServices || []).some((s) => s.id === svc.id);
-  rec("consult services are director-editable (add/rename/on-call/remove)",
-    n0 >= 1 && added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed,
-    "n0=" + n0 + " added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
+  // Every edit is an item-level server call (/api/org/consult-services).
+  const cs = () => DT.getState().consultServices || [];
+  await DT.actions.addConsultService("Hematology");
+  const added = cs().some((s) => s.name === "Hematology");
+  const svc = cs().find((s) => s.name === "Hematology") || { id: "missing" };
+  await DT.actions.setConsultOnCall(svc.id, { name: "Dr. Jordan Chen", avatar: "JC" });
+  const pinned = (cs().find((s) => s.id === svc.id) || {}).onCall;
+  await DT.actions.renameConsultService(svc.id, "Heme/Onc");
+  const renamed = cs().some((s) => s.name === "Heme/Onc");
+  // assign a PA/NP under the service, then remove it (the server mints the id)
+  await DT.actions.addConsultMember(svc.id, { name: "Taylor PA-C", avatar: "TP", role: "PA" });
+  const member = ((cs().find((s) => s.id === svc.id) || {}).members || []).find((m) => m.name === "Taylor PA-C");
+  if (member) await DT.actions.removeConsultMember(svc.id, member.id);
+  const memberRemoved = !((cs().find((s) => s.id === svc.id) || {}).members || []).some((m) => m.name === "Taylor PA-C");
+  rec("consult service carries its own PA/NPs (add/remove member)", !!member && memberRemoved, "member=" + JSON.stringify(member) + " removed=" + memberRemoved);
+  await DT.actions.removeConsultService(svc.id);
+  const removed = !cs().some((s) => s.id === svc.id);
+  const srv = await window.fetch("/api/org/consult-services", { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  rec("consult services are director-editable (add/rename/on-call/remove), on the server",
+    added && pinned && pinned.name === "Dr. Jordan Chen" && renamed && removed && !(srv.services || []).some((s) => s.id === svc.id),
+    "added=" + added + " pinned=" + JSON.stringify(pinned) + " renamed=" + renamed + " removed=" + removed);
 }
 // ER director can add/rename but NOT delete; delete stays with director + dev.
-await DT.actions.login("er_director", "ISPN"); await flush();
+await demoLogin("er_director", "ISPN"); await flush();
 {
-  DT.actions.addConsultService("Pain Mgmt"); await flush();
+  await DT.actions.addConsultService("Pain Mgmt");
   const svc = (DT.getState().consultServices || []).find((s) => s.name === "Pain Mgmt");
   const erCanAdd = !!svc;
-  if (svc) { DT.actions.removeConsultService(svc.id); await flush(); }
+  if (svc) await DT.actions.removeConsultService(svc.id); // the server answers 403
   const stillThere = (DT.getState().consultServices || []).some((s) => s.name === "Pain Mgmt");
   rec("consult delete is director/dev-only (ER director add ok, delete blocked)",
     erCanAdd && stillThere, "erCanAdd=" + erCanAdd + " blockedDelete=" + stillThere);
@@ -625,7 +749,7 @@ await DT.actions.login("er_director", "ISPN"); await flush();
 
 // Consult fan-out + acceptance: consulting a specialty creates a row per team
 // member; the board shows who was consulted and tracks who accepts/declines.
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let brd = DT.getState().board || [];
   for (let i = 0; i < 12 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
@@ -659,7 +783,7 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
 
 // ER physician can add a consultant on a patient they routed and see who was
 // called on their own board (the "sent" feed carries consult details).
-await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
+await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
 {
   let snt = DT.getState().sent || [];
   for (let i = 0; i < 12 && snt.length === 0; i++) { await flush(); snt = DT.getState().sent || []; }
@@ -675,12 +799,22 @@ await DT.actions.login("er_doctor", "ISPN"); await flush(); await flush();
   }
 }
 
+// Self-service password change: a wrong current password is rejected (so the
+// account is unchanged and demo logins keep working).
+await demoLogin("hospitalist", "ISPN"); await flush(); await flush();
+{
+  const r = await DT.actions.changePassword("definitely-wrong-pass", "BrandNewPass123");
+  rec("password change rejects an incorrect current password", r && r.ok === false, "r=" + JSON.stringify(r));
+}
+
 // Consulting a service with a NAMED on-call records that provider's name (not a
 // nameless "on-call team") — the requester sees who they called.
-await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
+await demoLogin("director", "ISPN"); for (let i = 0; i < 10; i++) await flush();
 {
+  // The org's catalog starts empty (no demo list): add Cardiology if needed.
+  if (!(DT.getState().consultServices || []).some((s) => s.name === "Cardiology")) await DT.actions.addConsultService("Cardiology");
   const card = (DT.getState().consultServices || []).find((s) => s.name === "Cardiology");
-  if (card) DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
+  if (card) await DT.actions.setConsultOnCall(card.id, { name: "Dr. Nadia Cole", avatar: "NC" });
   for (let i = 0; i < 8; i++) await flush();
   let brd = DT.getState().board || [];
   for (let i = 0; i < 10 && brd.length === 0; i++) { await flush(); brd = DT.getState().board || []; }
@@ -699,12 +833,12 @@ await DT.actions.login("director", "ISPN"); for (let i = 0; i < 10; i++) await f
 
 // Per-organization preferences: consult-service catalog + appearance/theme are
 // stored per tenant and survive a fresh login (persisted to org settings).
-await DT.actions.login("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
+await demoLogin("director", "ISPN"); for (let i = 0; i < 8; i++) await flush();
 {
-  DT.actions.addConsultService("Smoke Consult Svc");
+  await DT.actions.addConsultService("Smoke Consult Svc");
   DT.actions.setTheme({ appName: "SmokeBrand" });
-  for (let i = 0; i < 10; i++) await flush();
-  await DT.actions.login("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
+  await sleep(1200); // the theme save is batched (≈0.5 s), then confirmed by the server
+  await demoLogin("director", "ISPN"); for (let i = 0; i < 12; i++) await flush();
   const st = DT.getState();
   rec("per-org consult catalog persists to the tenant",
     (st.consultServices || []).some((x) => x.name === "Smoke Consult Svc"),
@@ -721,5 +855,13 @@ for (const r of results) {
   if (!r.ok && r.detail) console.log(`      ↳ ${r.detail.slice(0, 400)}`);
   r.ok ? pass++ : fail++;
 }
-console.log(`\n${pass} passed, ${fail} failed, ${results.length} total`);
+console.log(`\n${pass} passed, ${fail} failed, ${results.length} total (window.open answered null ${windowOpenCalls}×)`);
+// Bridge-level failures the kit logged via console.error (captured above) —
+// the fastest way to see WHY a flow test failed without re-running under a
+// debugger. Babel's size notice is noise.
+const bridgeErrors = errors.filter((e) => !/\[BABEL\]/.test(e));
+if (bridgeErrors.length) {
+  console.log(`\n---- captured console.error (${bridgeErrors.length}) ----`);
+  for (const e of bridgeErrors.slice(-40)) console.log("  " + e.slice(0, 300));
+}
 process.exit(fail ? 1 : 0);

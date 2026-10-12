@@ -2,16 +2,42 @@
    Director. Gives a director the same core hospitalist functionality (accept
    incoming admissions, carry a census, request consults, message) when they're
    also seeing patients. Opt-in: a director starts taking patients with one tap,
-   which gives them a rotation profile so admissions can route to them. */
+   which gives them a rotation profile so admissions can route to them.
+   A director on another clinician's care team (marked On call) also gets
+   that clinician's requests here, with or without a profile, and may accept
+   them FOR the owner (the server's rule); only the owner can decline. */
 
-function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, onConsultRespond, consultServices, onMessage }) {
+function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome, onAccept, onDecline, onConsult, onConsultRespond, consultServices, onMessagePatient }) {
   const [busy, setBusy] = React.useState(false);
   const incoming = pending || [];
   const since = (function () { const d = new Date(); d.setHours(7, 0, 0, 0); if (Date.now() < d.getTime()) d.setDate(d.getDate() - 1); return d.getTime(); })();
   const mine = (myAdmissions || []).slice().sort((a, b) => b.at - a.at);
 
+  const incomingNode = (
+      <div>
+        <SectionTitle action={<Badge variant="secondary">{incoming.length}</Badge>}>Incoming admissions</SectionTitle>
+        <Card style={{ padding: 0, overflow: "visible" }}>
+          {incoming.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No incoming admissions right now.</div>}
+          {incoming.map((p, i) => (
+            <div key={p.id} data-pending-id={p.id} data-pending-for={p.onBehalfOf ? p.onBehalfOf.userId : undefined} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              <Avatar initials={p.initials} size={34} tint="amber" />
+              <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {p.initials} · Room {p.room}{p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}</div>
+                <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.complaint} · from {p.from}</div>
+                {p.onBehalfOf && <div data-pending-obo style={{ fontSize: 12, color: "var(--primary-ink, #1D4ED8)", fontWeight: 600, marginTop: 2 }}>For {p.onBehalfOf.name} (your care team) — accepting puts the patient on their census; only they can decline.</div>}
+              </div>
+              {!p.onBehalfOf && <Button variant="outline" size="sm" icon="x" onClick={() => onDecline && onDecline(p.id)}>Decline</Button>}
+              <Button size="sm" icon="check" onClick={() => onAccept && onAccept(p.id)}>{p.onBehalfOf ? "Accept for " + String(p.onBehalfOf.name).split(",")[0] : "Accept"}</Button>
+            </div>
+          ))}
+        </Card>
+      </div>
+  );
+
   if (!hasProfile) {
     return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {incoming.length > 0 && incomingNode}
       <Card style={{ padding: 28, textAlign: "center" }}>
         <span style={{ width: 46, height: 46, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name="stethoscope" size={22} /></span>
         <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>Take patients as a hospitalist</div>
@@ -20,29 +46,14 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
         </div>
         <Button icon="play" onClick={() => { setBusy(true); Promise.resolve(onBecome && onBecome()).finally(() => setBusy(false)); }} style={{ opacity: busy ? 0.6 : 1, pointerEvents: busy ? "none" : "auto" }}>{busy ? "Starting…" : "Start taking patients"}</Button>
       </Card>
+      </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* Incoming admissions to accept */}
-      <div>
-        <SectionTitle action={<Badge variant="secondary">{incoming.length}</Badge>}>Incoming admissions</SectionTitle>
-        <Card style={{ padding: 0, overflow: "visible" }}>
-          {incoming.length === 0 && <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No incoming admissions right now.</div>}
-          {incoming.map((p, i) => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-              <Avatar initials={p.initials} size={34} tint="amber" />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {p.initials} · Room {p.room}{p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}</div>
-                <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.complaint} · from {p.from}</div>
-              </div>
-              <Button variant="outline" size="sm" icon="x" onClick={() => onDecline && onDecline(p.id)}>Decline</Button>
-              <Button size="sm" icon="check" onClick={() => onAccept && onAccept(p.id)}>Accept</Button>
-            </div>
-          ))}
-        </Card>
-      </div>
+      {incomingNode}
 
       {/* My census */}
       <div>
@@ -61,7 +72,8 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
                   </div>
                 </div>
                 {onConsult && p.patientId != null && <ConsultAdd services={consultServices} onPick={(spec) => onConsult(p.patientId, spec)} />}
-                <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessage && onMessage({ name: "Patient " + p.initials + " · care", role: "Room " + p.room, avatar: p.initials, tint: "blue" })}>Message</Button>
+                {/* The patient's care-team thread on the server (A.CON clinical #5). */}
+                {onMessagePatient && p.patientId != null && window.patientThreadsEnabled && window.patientThreadsEnabled() && <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessagePatient(p.patientId)}>Message team</Button>}
               </div>
               {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
             </div>

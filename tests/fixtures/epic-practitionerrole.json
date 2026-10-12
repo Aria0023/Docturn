@@ -1,0 +1,151 @@
+{
+  "resourceType": "Bundle",
+  "type": "searchset",
+  "total": 4,
+  "link": [
+    { "relation": "self", "url": "https://fhir.example-epic.test/api/FHIR/R4/PractitionerRole?active=true&_include=PractitionerRole:practitioner" }
+  ],
+  "entry": [
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/PractitionerRole/pr-day-1",
+      "resource": {
+        "resourceType": "PractitionerRole",
+        "id": "pr-day-1",
+        "active": true,
+        "period": { "start": "2026-09-03T00:00:00Z", "end": "2026-09-04T00:00:00Z" },
+        "practitioner": { "reference": "Practitioner/prac-alyesh", "display": "Alyesh, Nathan" },
+        "organization": { "reference": "Organization/org-tarzana", "display": "ISP North" },
+        "code": [ { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/practitioner-role", "code": "doctor", "display": "Hospitalist Day 1" } ] } ],
+        "specialty": [ { "coding": [ { "system": "http://snomed.info/sct", "code": "419192003", "display": "Hospital Medicine" } ] } ],
+        "availableTime": [ { "daysOfWeek": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "availableStartTime": "07:00:00", "availableEndTime": "19:00:00" } ]
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/PractitionerRole/pr-night-triage",
+      "resource": {
+        "resourceType": "PractitionerRole",
+        "id": "pr-night-triage",
+        "active": true,
+        "practitioner": { "reference": "Practitioner/prac-kohan" },
+        "organization": { "reference": "Organization/org-tarzana", "display": "ISP North" },
+        "code": [ { "text": "Night Triage" } ],
+        "specialty": [ { "text": "Hospital Medicine" } ],
+        "availableTime": [ { "availableStartTime": "19:00:00", "availableEndTime": "07:00:00" } ]
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/PractitionerRole/pr-expired",
+      "resource": {
+        "resourceType": "PractitionerRole",
+        "id": "pr-expired",
+        "active": true,
+        "period": { "start": "2026-09-01T00:00:00Z", "end": "2026-09-02T00:00:00Z" },
+        "practitioner": { "reference": "Practitioner/prac-lou" },
+        "code": [ { "text": "Hospitalist Day 2" } ],
+        "specialty": [ { "text": "Hospital Medicine" } ]
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/PractitionerRole/pr-inactive",
+      "resource": {
+        "resourceType": "PractitionerRole",
+        "id": "pr-inactive",
+        "active": false,
+        "practitioner": { "reference": "Practitioner/prac-lou" },
+        "code": [ { "text": "Hospitalist Day 3" } ]
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Practitioner/prac-alyesh",
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "prac-alyesh",
+        "active": true,
+        "name": [ { "use": "official", "family": "Alyesh", "given": ["Nathan"], "prefix": ["Dr."] } ]
+      },
+      "search": { "mode": "include" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Practitioner/prac-kohan",
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "prac-kohan",
+        "name": [ { "text": "Salar Kohan" } ]
+      },
+      "search": { "mode": "include" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Practitioner/prac-lou",
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "prac-lou",
+        "name": [ { "family": "Lou", "given": ["May"] } ]
+      },
+      "search": { "mode": "include" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Practitioner/prac-george",
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "prac-george",
+        "name": [ { "use": "usual", "family": "George", "given": ["Sharon"] } ]
+      },
+      "search": { "mode": "include" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Schedule/sched-cards",
+      "resource": {
+        "resourceType": "Schedule",
+        "id": "sched-cards",
+        "active": true,
+        "serviceType": [ { "text": "Cardiology On Call" } ],
+        "specialty": [ { "text": "Cardiology" } ],
+        "actor": [
+          { "reference": "Practitioner/prac-george", "display": "George, Sharon" },
+          { "reference": "Organization/org-tarzana", "display": "ISP North" }
+        ]
+      },
+      "search": { "mode": "include" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Slot/slot-cards-today",
+      "resource": {
+        "resourceType": "Slot",
+        "id": "slot-cards-today",
+        "schedule": { "reference": "Schedule/sched-cards" },
+        "status": "busy",
+        "start": "2026-09-03T07:00:00Z",
+        "end": "2026-09-03T19:00:00Z"
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Slot/slot-cards-tomorrow",
+      "resource": {
+        "resourceType": "Slot",
+        "id": "slot-cards-tomorrow",
+        "schedule": { "reference": "Schedule/sched-cards" },
+        "status": "busy",
+        "start": "2026-09-04T07:00:00Z",
+        "end": "2026-09-04T19:00:00Z"
+      },
+      "search": { "mode": "match" }
+    },
+    {
+      "fullUrl": "https://fhir.example-epic.test/api/FHIR/R4/Slot/slot-free",
+      "resource": {
+        "resourceType": "Slot",
+        "id": "slot-free",
+        "schedule": { "reference": "Schedule/sched-cards" },
+        "status": "free",
+        "start": "2026-09-03T07:00:00Z",
+        "end": "2026-09-03T19:00:00Z"
+      },
+      "search": { "mode": "match" }
+    }
+  ]
+}

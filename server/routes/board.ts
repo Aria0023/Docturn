@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createConsultSchema, updateConsultSchema, type PatientConsult } from "@shared/schema";
-import { logPhiAccess } from "../audit.js";
+import { appendAudit, logPhiAccess } from "../audit.js";
+import { parseId } from "../params.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -120,12 +121,34 @@ export function registerBoardRoutes(app: Express) {
     },
   );
 
-  // Consults feed the board's Consultants column.
-  app.get("/api/patients/:id/consults", requireAuth, async (req, res) => {
-    const me = currentUser(req);
-    const patientId = Number(req.params.id);
-    res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
-  });
+  // Consults feed the board's Consultants column. Same audience as the board
+  // itself: clinical roles only — platform operators don't read tenant PHI.
+  app.get(
+    "/api/patients/:id/consults",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      // Validate, then prove ownership, and only THEN account the read: a
+      // malformed, foreign or unknown id discloses nothing, so it must not
+      // leave a §164.528 row behind (and NaN must never reach the database,
+      // where it used to throw and hang the request). The app-wide :id guard
+      // (server/params.ts) answers a malformed id with 404 before this runs;
+      // re-checked here so the handler is safe on its own.
+      const patientId = parseId(req.params.id);
+      if (patientId === null) return res.status(404).json({ error: "not_found" });
+      const patient = await storage().getPatient(me.organizationId, patientId);
+      // Cross-tenant and nonexistent look identical — no existence oracle.
+      if (!patient) return res.status(404).json({ error: "not_found" });
+      // Consults are clinical content about a named patient — audited per read,
+      // with the patient identified so §164.528 accounting can be answered.
+      await logPhiAccess(req, "patient-consults", {
+        resourceId: patientId,
+        patientId,
+      });
+      res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
+    },
+  );
 
   app.post(
     "/api/patients/:id/consults",
@@ -138,6 +161,17 @@ export function registerBoardRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const patient = await storage().getPatient(me.organizationId, patientId);
       if (!patient) return res.status(404).json({ error: "not_found" });
+
+      // A named consultant must be an ACTIVE account of THIS org: a userId
+      // from another tenant (or a deactivated one) is refused, never stored
+      // or alerted (A.CON clinical #19/#20).
+      const namedIds = new Set<number>();
+      if (parsed.data.consultantUserId != null) namedIds.add(parsed.data.consultantUserId);
+      for (const t of parsed.data.consultants ?? []) if (t.userId != null) namedIds.add(t.userId);
+      for (const id of namedIds) {
+        const u = await storage().getUser(me.organizationId, id);
+        if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
+      }
 
       // Record WHO is being consulted, each as its own row, so we can track who
       // accepts and who doesn't. Priority: an explicit team (the consult service's
@@ -209,6 +243,42 @@ export function registerBoardRoutes(app: Express) {
         type: "CONSULT_UPDATED",
         patientId,
       });
+      // Alert every consultant who HAS an account (A.CON clinical #23): a
+      // live in-app frame plus a content-free push wake-up (the push
+      // transport honours the org's integration.push switch). Ids only — no
+      // specialty, initials or room leave in either. A placeholder ("<Spec>
+      // on-call", or a name with no account) alerts nobody; the requester's
+      // screen says so from these rows (consultantUserId null).
+      const alerted = [...new Set(created.map((c) => c.consultantUserId).filter((id): id is number => id != null && id !== me.id))];
+      if (alerted.length) {
+        try {
+          notificationDeps().ws.sendToUsers(alerted, {
+            type: "CONSULT_REQUESTED",
+            patientId,
+            consultIds: created.map((c) => c.id),
+          });
+        } catch (err) {
+          console.error("[consult] ws alert failed", err);
+        }
+        for (const userId of alerted) {
+          try {
+            await notificationDeps().push.send(userId, { title: "New consult request" });
+          } catch (err) {
+            console.error("[consult] push failed", err);
+          }
+        }
+      }
+      if (created.length) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "consult.request",
+          resourceType: "patient",
+          resourceId: patientId,
+          details: { created: created.length, alerted: alerted.length },
+          riskLevel: "low",
+        });
+      }
       res.status(201).json(created);
     },
   );
