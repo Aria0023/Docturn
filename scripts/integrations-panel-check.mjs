@@ -145,17 +145,45 @@ for (const w of WIDTHS) {
   const storageOn = (await server()).credentialStorage.available;
   if (storageOn) {
     await page.locator('[data-int-sheet="amion"] input').first().fill(`https://www.amion.com/cgi-bin/ocs?Lo=${SECRET}`);
+    // The server's own answer to the save (PUT …/credentials) is what the card
+    // must show; capture it so a later server-side change can be told apart.
+    const putWait = page.waitForResponse((r) => r.request().method() === "PUT" && /\/api\/integrations\/amion\/credentials/.test(r.url()), { timeout: 10000 }).catch(() => null);
     await page.locator('[data-int-sheet="amion"] [data-int-save]').click();
+    const putRes = await putWait;
+    const putText = putRes ? await putRes.text().catch(() => "") : "";
     await page.waitForSelector('[data-int-sheet="amion"] [data-int-current]', { timeout: 10000 }).catch(() => {});
     const cur = await page.evaluate(() => { const el = document.querySelector('[data-int-sheet="amion"] [data-int-current]'); return el ? el.textContent : ""; });
     const html = await page.content();
     const apiBody = (await api("GET", "/api/integrations")).text;
     const inputVals = await page.evaluate(() => [...document.querySelectorAll('[data-int-sheet="amion"] input')].map((i) => i.value).join("|"));
     rec(`${tag}: saved credentials show only "Saved · updated by …" + host`, /Saved/.test(cur) && /Dana Director/.test(cur) && /www\.amion\.com/.test(cur), cur.slice(0, 120));
-    rec(`${tag}: the saved secret is in neither the page nor any API response`, !html.includes(SECRET) && !apiBody.includes(SECRET) && !inputVals.includes(SECRET));
+    rec(`${tag}: the saved secret is in neither the page nor any API response`, !!putText && !putText.includes(SECRET) && !html.includes(SECRET) && !apiBody.includes(SECRET) && !inputVals.includes(SECRET));
+    const amionPut = (() => { try { return JSON.parse(putText).integration || null; } catch { return null; } })();
     const amionNow = JSON.parse(apiBody).integrations.find((c) => c.id === "amion");
     const amionUi = (await ui()).find((c) => c.id === "amion");
-    rec(`${tag}: Amion card follows the server after saving`, amionUi.status === amionNow.status && amionNow.configSource === "organization", `ui=${amionUi.status} server=${amionNow.status}`);
+    // The card shows the server's answer to the save. The server may change its
+    // word right after (a scheduled Amion pull — e.g. the boot-time pull 5 s
+    // after start — tries the feed just saved and records the result); such a
+    // difference is accepted only when it IS a pull recorded after the save,
+    // and only once a re-read of the panel shows the server's new status.
+    let follows = !!amionPut && amionUi.status === amionPut.status && amionNow.configSource === "organization";
+    let note = `ui=${amionUi.status} put=${amionPut ? amionPut.status : "?"} server=${amionNow.status}`;
+    if (follows && amionNow.status !== amionPut.status) {
+      const putAt = amionPut.lastCheck ? amionPut.lastCheck.at : "";
+      const pulledAfter = !!amionNow.lastCheck && amionNow.lastCheck.kind === "sync" && amionNow.lastCheck.at > putAt;
+      await page.locator('[data-int-sheet="amion"] [data-int-close]').click();
+      await page.evaluate(() => window.DT.actions.setNav("dashboard"));
+      await sleep(300);
+      await page.evaluate(() => window.DT.actions.setNav("settings"));
+      await page.waitForSelector('[data-integrations-panel] [data-integration="amion"]', { timeout: 20000 });
+      await page.waitForFunction((st) => { const el = document.querySelector('[data-integrations-panel] [data-integration="amion"]'); return !!el && el.getAttribute("data-status") === st; }, amionNow.status, { timeout: 10000 }).catch(() => {});
+      const reread = (await ui()).find((c) => c.id === "amion");
+      follows = pulledAfter && reread.status === amionNow.status;
+      note += ` · a pull recorded after the save (${amionNow.lastCheck ? amionNow.lastCheck.at : "none"}: ${amionNow.statusText.slice(0, 60)}) → re-read ui=${reread.status}`;
+      await page.locator('[data-integration="amion"] [data-int-setup]').click();
+      await page.waitForSelector('[data-int-sheet="amion"] [data-int-current]', { timeout: 10000 });
+    }
+    rec(`${tag}: Amion card follows the server after saving`, follows, note);
     await page.locator('[data-int-sheet="amion"] [data-int-clear]').click();
     await page.waitForFunction(() => !document.querySelector('[data-int-sheet="amion"] [data-int-current]'), null, { timeout: 10000 }).catch(() => {});
     const after = JSON.parse((await api("GET", "/api/integrations")).text).integrations.find((c) => c.id === "amion");
