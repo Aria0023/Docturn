@@ -37,12 +37,34 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | C2 | Per-org feature flags | ✅ |
 | C3 | Adaptive suggestions (analyze → propose with evidence → human accept) | ✅ |
 | v2 | Care-team on-call units + fan-out/accept-lock, patient board, consults, census override, dev provisioning | ✅ |
+| Notes | **Multi-EHR clinical-note plugin**: SMART on FHIR launch, context assembler, pluggable knowledge connectors, versioned locked-template note generation, clipboard / DocumentReference export, licensing | ✅ |
 
 The full build plan is implemented. The design system and high-fidelity UI kits live in
 [`design/`](design/).
 
-`npm test` is green (37 tests: auth, assignment state machine, messaging, realtime WebSocket, MFA,
-notification escalation, and the v2/platform features).
+`npm test` is green (55 tests: auth, assignment state machine, messaging, realtime WebSocket, MFA,
+notification escalation, the v2/platform features, and the notes plugin end to end against an
+in-process mock EHR).
+
+## Clinical-note plugin (SMART on FHIR)
+
+DocTurn Notes is a multi-tenant SMART on FHIR app that launches from Epic, Oracle Health,
+athenahealth, MEDITECH or any SMART-enabled EHR, assembles a minimum-necessary context package
+from standard FHIR R4 resources, enriches it through pluggable clinical-knowledge connectors
+(UpToDate, BAA-covered LLM, Doximity/OpenEvidence-style sources, optional Metriport
+aggregator), runs the clinician's **versioned locked H&P template** (HARD_LOCK rules enforced
+in code), and exports the reviewed note by clipboard or FHIR `DocumentReference` write-back.
+Note content is never stored; only action metadata is audited. Licensing is enforced before
+generation and export.
+
+```bash
+npm run dev                      # then sign in (chen / docturn) and open http://localhost:3000/notes.html
+                                 # "Simulate EHR launch" runs the full flow against the built-in mock EHR
+```
+
+Architecture, data model, SMART flow, FHIR mapping, module + connector interfaces, admin
+examples and the security checklist: [`docs/notes-plugin/`](docs/notes-plugin/README.md).
+Code: `server/notes/`, `server/routes/notes.ts`, `webapp/notes.html`, `tests/notes.test.ts`.
 
 ## Web client
 
@@ -129,7 +151,8 @@ server/
   app.ts  index.ts    # Express app factory + bootstrap
   seed.ts             # deterministic seed (shared with tests)
   services/           # rotation, assignments (state machine), expiry, ai-intake, notifications
-  routes/             # health, auth, providers, patients, assignments, messaging, org, settings
+  notes/              # SMART on FHIR notes plugin: smart/, fhir/, context/, connectors/, generation/, export/, licensing, mock EHR
+  routes/             # health, auth, providers, patients, assignments, messaging, org, settings, notes (+ /smart/*)
 tests/                # Vitest + Supertest: auth, assignments, messaging
 design/               # full design-system handoff + UI kits the client is built from
 ```

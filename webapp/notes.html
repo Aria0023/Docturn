@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocTurn Notes — SMART on FHIR</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font-sans, system-ui, sans-serif); color: var(--foreground, #0b1220); background: var(--muted, #f4f7fb); -webkit-font-smoothing: antialiased; }
+  header { background: var(--card, #fff); border-bottom: 1px solid var(--border, #e3e8ef); padding: 12px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 700; }
+  header .meta { color: var(--muted-foreground, #5b6b82); font-size: 13px; }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--secondary, #eef3fa); color: var(--foreground, #0b1220); }
+  .pill.ok { background: #e6f6ec; color: #116b35; }
+  .pill.warn { background: #fff4e0; color: #8a5300; }
+  main { max-width: 1240px; margin: 0 auto; padding: 18px 16px 60px; display: grid; grid-template-columns: 1fr; gap: 16px; }
+  @media (min-width: 980px) { main.active { grid-template-columns: 380px 1fr; } }
+  .card { background: var(--card, #fff); border: 1px solid var(--border, #e3e8ef); border-radius: var(--radius-lg, 12px); padding: 16px; box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,.04)); }
+  .card h2 { font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, #5b6b82); }
+  .card h3 { font-size: 13px; margin: 14px 0 6px; }
+  button { font: inherit; border: 1px solid var(--border, #e3e8ef); background: var(--card, #fff); color: var(--foreground); border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+  button.primary { background: var(--primary, #2563eb); color: var(--primary-foreground, #fff); border-color: transparent; font-weight: 600; }
+  button.danger { color: var(--destructive, #b42318); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  label.inline { font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+  textarea, input[type=text], select { width: 100%; font: inherit; border: 1px solid var(--input, #e3e8ef); border-radius: 8px; padding: 8px 10px; background: #fff; }
+  textarea { min-height: 70px; resize: vertical; }
+  textarea.note { min-height: 520px; font-family: var(--font-mono, ui-monospace, Menlo, monospace); font-size: 13px; line-height: 1.45; white-space: pre; }
+  .list { font-size: 13px; margin: 0; padding-left: 0; list-style: none; }
+  .list li { padding: 3px 0; border-bottom: 1px dashed var(--border, #e3e8ef); }
+  .list li:last-child { border-bottom: 0; }
+  .small { font-size: 12px; color: var(--muted-foreground, #5b6b82); }
+  .warnings { font-size: 12px; color: #8a5300; background: #fff8ea; border: 1px solid #ffe2a8; border-radius: 8px; padding: 8px; margin-top: 8px; white-space: pre-wrap; }
+  .toast { position: fixed; right: 16px; bottom: 16px; background: #0b1220; color: #fff; padding: 10px 14px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .launch { text-align: center; padding: 40px 20px; }
+  .launch h2 { text-transform: none; letter-spacing: 0; font-size: 20px; color: var(--foreground); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+  details summary { cursor: pointer; font-size: 13px; font-weight: 600; }
+  code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; background: var(--secondary); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DocTurn Notes</h1>
+  <span class="meta" id="hdr-user"></span>
+  <span class="pill" id="hdr-session">no EHR session</span>
+  <span class="pill" id="hdr-template"></span>
+  <span style="flex:1"></span>
+  <button id="btn-end" class="danger" hidden>End session &amp; discard</button>
+  <a href="/" class="small">← DocTurn</a>
+</header>
+
+<main id="main">
+  <!-- Launch panel (no SMART session) -->
+  <section class="card launch" id="panel-launch">
+    <h2>Launch from your EHR</h2>
+    <p class="small">This app is opened by Epic, Oracle Health, athenahealth, MEDITECH or any SMART-enabled EHR with a patient already selected. You can also start here and pick the patient in the EHR.</p>
+    <div id="launch-options"></div>
+    <p class="small" id="launch-error" style="color:#b42318"></p>
+    <details style="text-align:left;max-width:640px;margin:16px auto 0">
+      <summary>How the EHR launch works</summary>
+      <p class="small">EHR → <code>/smart/launch?iss=&lt;fhir base&gt;&amp;launch=&lt;token&gt;</code> → authorize at the EHR (PKCE) → <code>/smart/callback</code> → this page with patient and encounter context. Tokens stay in the server session and are discarded when you end the session.</p>
+    </details>
+  </section>
+
+  <!-- Left column: context + visit input -->
+  <section id="panel-left" hidden>
+    <div class="card">
+      <h2>1 · Patient context</h2>
+      <div class="small" id="ctx-ids"></div>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="opt-knowledge" checked> Clinical knowledge connectors</label>
+        <label class="inline"><input type="checkbox" id="opt-external"> Include external records (on-demand)</label>
+      </div>
+      <div class="row"><button class="primary" id="btn-context">Assemble context from EHR</button><span class="small" id="ctx-status"></span></div>
+      <div id="ctx-summary" hidden>
+        <h3>Problems</h3><ul class="list" id="ctx-problems"></ul>
+        <h3>Medications (generic)</h3><ul class="list" id="ctx-meds"></ul>
+        <h3>Allergies</h3><ul class="list" id="ctx-allergies"></ul>
+        <h3>Latest vitals &amp; labs (unit-free)</h3><ul class="list" id="ctx-data"></ul>
+        <h3>Prior notes (summaries)</h3><ul class="list" id="ctx-notes"></ul>
+        <h3>Knowledge</h3><ul class="list" id="ctx-knowledge"></ul>
+        <p class="small" id="ctx-provenance"></p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>2 · Today's visit</h2>
+      <div class="grid2">
+        <div><label class="small">Chief complaint</label><input type="text" id="v-cc"></div>
+        <div><label class="small">Admission status</label>
+          <select id="v-status"><option value="inpatient">Inpatient (two-midnight)</option><option value="observation">Observation</option><option value="unspecified">Unspecified</option></select></div>
+      </div>
+      <label class="small">HPI</label><textarea id="v-hpi"></textarea>
+      <label class="small">Exam</label><textarea id="v-exam"></textarea>
+      <label class="small">Assessment</label><textarea id="v-assess"></textarea>
+      <label class="small">Plan (one item per line)</label><textarea id="v-plan"></textarea>
+      <div class="row"><button class="primary" id="btn-generate" disabled>Generate note</button><span class="small" id="gen-status"></span></div>
+      <div class="row">
+        <input type="text" id="ask-q" placeholder="Ask the knowledge connectors a question…" style="flex:1">
+        <button id="btn-ask" disabled>Ask</button>
+      </div>
+      <div class="small" id="ask-answer"></div>
+    </div>
+  </section>
+
+  <!-- Right column: draft -->
+  <section id="panel-right" hidden>
+    <div class="card">
+      <h2>3 · Review &amp; export</h2>
+      <div class="row">
+        <button id="btn-copy" disabled>Copy to clipboard (Word/Epic-ready)</button>
+        <button id="btn-writeback" class="primary" disabled>Write back as DocumentReference</button>
+        <span class="small" id="exp-status"></span>
+      </div>
+      <textarea class="note" id="note" spellcheck="false" placeholder="The generated draft appears here. Edit freely before exporting."></textarea>
+      <div class="warnings" id="warnings" hidden></div>
+      <p class="small">Draft is held only in this browser tab and your server session. Nothing is stored after you end the session; only an audit event (who / what / when / patient reference) is kept.</p>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const state = { session: null, context: null, note: null };
+  const toast = (m) => { const t = $("toast"); t.textContent = m; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); };
+  const api = async (method, url, body) => {
+    const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, credentials: "same-origin" });
+    let data = null; try { data = await r.json(); } catch {}
+    if (!r.ok) throw Object.assign(new Error((data && (data.error + (data.reason ? ": " + data.reason : "") + (data.detail ? " — " + data.detail : ""))) || r.statusText), { status: r.status, data });
+    return data;
+  };
+  const li = (ul, items, render) => { ul.innerHTML = ""; if (!items.length) { ul.innerHTML = '<li class="small">none</li>'; return; } for (const it of items) { const el = document.createElement("li"); el.textContent = render(it); ul.appendChild(el); } };
+
+  async function loadSession() {
+    const err = new URLSearchParams(location.search).get("error");
+    if (err) $("launch-error").textContent = "EHR authorization failed: " + err;
+    let s;
+    try { s = await api("GET", "/api/notes/session"); }
+    catch (e) {
+      if (e.status === 401) {
+        $("launch-options").innerHTML = '<p class="small">Sign in to DocTurn first, or launch directly from your EHR.</p><p><a href="/">Go to sign-in</a></p>';
+        return;
+      }
+      throw e;
+    }
+    state.session = s;
+    $("hdr-user").textContent = s.user ? `${s.user.displayName} · ${s.user.role}` : "";
+    if (!s.active) {
+      $("hdr-session").textContent = "no EHR session"; $("hdr-session").className = "pill warn";
+      const opts = $("launch-options"); opts.innerHTML = "";
+      for (const c of s.connections || []) {
+        const b = document.createElement("button"); b.className = "primary"; b.style.margin = "4px";
+        b.textContent = `Standalone launch · ${c.name}`;
+        b.onclick = () => { location.href = `/smart/standalone?connection=${c.id}`; };
+        opts.appendChild(b);
+        if (c.vendor === "mock" && s.mockEhr) {
+          const b2 = document.createElement("button"); b2.style.margin = "4px";
+          b2.textContent = "Simulate EHR launch (demo sandbox)";
+          b2.onclick = () => { location.href = `/smart/launch?iss=${encodeURIComponent(location.origin + "/mock-ehr/fhir")}&launch=demo-launch-token`; };
+          opts.appendChild(b2);
+        }
+      }
+      if (!(s.connections || []).length) opts.innerHTML = '<p class="small">No EHR connection is configured for your organization yet. An administrator adds one under Settings → EHR connections (no code required).</p>';
+      return;
+    }
+    $("panel-launch").hidden = true; $("panel-left").hidden = false; $("panel-right").hidden = false; $("btn-end").hidden = false;
+    $("main").classList.add("active");
+    $("hdr-session").textContent = `${s.connection ? s.connection.name : "EHR"} · ${s.patientId ? "Patient " + s.patientId : "no patient"}${s.encounterId ? " · Encounter " + s.encounterId : ""}`;
+    $("hdr-session").className = "pill ok";
+    $("hdr-template").textContent = s.template ? `template: ${s.template.name} v${s.template.version}` : "no active template";
+    $("ctx-ids").textContent = `Launched as ${s.fhirUser || s.user.username}. Scope: ${s.scope}. Write-back ${s.writeBack ? "available" : "not granted"}.`;
+    $("btn-writeback").disabled = !s.writeBack;
+  }
+
+  $("btn-context").onclick = async () => {
+    $("ctx-status").textContent = "pulling FHIR resources…";
+    try {
+      const r = await api("POST", "/api/notes/context", { includeKnowledge: $("opt-knowledge").checked, includeExternal: $("opt-external").checked });
+      const c = state.context = r.context;
+      li($("ctx-problems"), c.problems, (p) => `${p.display}${p.poa ? ` (POA ${p.poa})` : ""}`);
+      li($("ctx-meds"), c.medications, (m) => [m.genericName, m.dose, m.route, m.frequency].filter(Boolean).join(" ") + (m.source === "external" ? " [external]" : ""));
+      li($("ctx-allergies"), c.allergies, (a) => `${a.substance}${a.reaction ? ` — ${a.reaction}` : ""}`);
+      li($("ctx-data"), [...c.vitals, ...c.labs], (o) => `${o.display}: ${o.value}${o.flag ? ` (${o.flag})` : ""}`);
+      li($("ctx-notes"), c.priorNotes, (n) => `${n.date ? n.date.slice(0, 10) + " " : ""}${n.type || ""}: ${n.summary}`);
+      li($("ctx-knowledge"), c.knowledge, (k) => `[${k.connector}] ${k.title}`);
+      $("ctx-provenance").textContent = `Sources: ${c.provenance.sources.join(", ")}. Connectors run: ${r.knowledge.ran.join(", ") || "none"}${r.knowledge.errors.length ? "; errors: " + r.knowledge.errors.map(e => e.connector).join(", ") : ""}. External: ${r.external.ran.join(", ") || "not requested"}.${c.provenance.warnings.length ? " Warnings: " + c.provenance.warnings.join("; ") : ""}`;
+      $("ctx-summary").hidden = false; $("ctx-status").textContent = "ready";
+      $("btn-generate").disabled = false; $("btn-ask").disabled = false;
+      if (!$("v-cc").value && c.encounter && c.encounter.reasonDisplay) $("v-cc").value = c.encounter.reasonDisplay;
+    } catch (e) { $("ctx-status").textContent = e.message; }
+  };
+
+  $("btn-generate").onclick = async () => {
+    $("gen-status").textContent = "generating…";
+    try {
+      const visit = { chiefComplaint: $("v-cc").value || undefined, hpi: $("v-hpi").value || undefined, exam: $("v-exam").value || undefined, assessment: $("v-assess").value || undefined, plan: $("v-plan").value || undefined, admissionStatus: $("v-status").value };
+      const r = await api("POST", "/api/notes/generate", { context: state.context, visit });
+      state.note = r; $("note").value = r.text;
+      $("gen-status").textContent = `${r.templateName} v${r.templateVersion} · engine ${r.engine}`;
+      $("warnings").hidden = !r.warnings.length; $("warnings").textContent = r.warnings.length ? "Hard-lock corrections applied: " + r.warnings.join(", ") : "";
+      $("btn-copy").disabled = false; if (state.session.writeBack) $("btn-writeback").disabled = false;
+    } catch (e) { $("gen-status").textContent = e.status === 402 ? "License: " + (e.data && e.data.reason) : e.message; }
+  };
+
+  $("btn-ask").onclick = async () => {
+    const q = $("ask-q").value.trim(); if (!q) return;
+    $("ask-answer").textContent = "asking…";
+    try { const r = await api("POST", "/api/notes/ask", { question: q, context: state.context }); $("ask-answer").textContent = `[${r.connector}] ${r.answer}`; }
+    catch (e) { $("ask-answer").textContent = e.message; }
+  };
+
+  $("btn-copy").onclick = async () => {
+    try {
+      const r = await api("POST", "/api/notes/export", { mode: "clipboard", note: $("note").value });
+      await navigator.clipboard.writeText(r.text); toast("Copied — paste into Word or the EHR note editor."); $("exp-status").textContent = "copied";
+    } catch (e) { $("exp-status").textContent = e.message; }
+  };
+
+  $("btn-writeback").onclick = async () => {
+    if (!confirm("Write this draft to the EHR as a preliminary DocumentReference? You will sign it in the EHR.")) return;
+    $("exp-status").textContent = "writing…";
+    try { const r = await api("POST", "/api/notes/export", { mode: "documentreference", note: $("note").value }); $("exp-status").textContent = `written: DocumentReference/${r.documentReferenceId}`; toast("Note written to the EHR."); }
+    catch (e) { $("exp-status").textContent = e.message; }
+  };
+
+  $("btn-end").onclick = async () => {
+    await api("DELETE", "/api/notes/session"); state.context = null; state.note = null; $("note").value = "";
+    location.href = "/notes.html";
+  };
+
+  loadSession().catch((e) => { $("launch-error").textContent = e.message; });
+})();
+</script>
+</body>
+</html>
