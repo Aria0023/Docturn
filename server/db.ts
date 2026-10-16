@@ -457,4 +457,82 @@ CREATE TABLE IF NOT EXISTS sms_history (
   carrier TEXT NOT NULL DEFAULT 'console',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- Notes plugin (configuration + metadata only; no note text, no tokens).
+CREATE TABLE IF NOT EXISTS ehr_connections (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  name TEXT NOT NULL,
+  vendor TEXT NOT NULL DEFAULT 'other',
+  iss TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  client_secret_enc TEXT,
+  scopes TEXT NOT NULL DEFAULT 'launch launch/patient openid fhirUser offline_access patient/Patient.read patient/Encounter.read patient/Condition.read patient/MedicationRequest.read patient/MedicationStatement.read patient/AllergyIntolerance.read patient/Observation.read patient/DocumentReference.read patient/DocumentReference.write',
+  write_back BOOLEAN NOT NULL DEFAULT TRUE,
+  jit_provisioning BOOLEAN NOT NULL DEFAULT TRUE,
+  jit_role TEXT NOT NULL DEFAULT 'hospitalist',
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ehr_connections_org_iss_uniq ON ehr_connections(organization_id, iss);
+
+CREATE TABLE IF NOT EXISTS ehr_user_links (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  ehr_connection_id INTEGER NOT NULL REFERENCES ehr_connections(id),
+  fhir_user TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ehr_user_links_conn_fhiruser_uniq ON ehr_user_links(ehr_connection_id, fhir_user);
+
+CREATE TABLE IF NOT EXISTS note_template_versions (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER REFERENCES organizations(id),
+  name TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  module JSONB NOT NULL,
+  checksum TEXT NOT NULL,
+  changelog TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  activated_by INTEGER REFERENCES users(id),
+  activated_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS org_connectors (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  connector_key TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'knowledge',
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  priority INTEGER NOT NULL DEFAULT 100,
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_connectors_org_key_uniq ON org_connectors(organization_id, connector_key);
+
+CREATE TABLE IF NOT EXISTS licenses (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL UNIQUE REFERENCES organizations(id),
+  plan TEXT NOT NULL DEFAULT 'trial',
+  status TEXT NOT NULL DEFAULT 'active',
+  seats INTEGER,
+  usage_cap INTEGER,
+  period_start TIMESTAMP NOT NULL DEFAULT NOW(),
+  period_end TIMESTAMP,
+  billing_ref TEXT,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS license_usage (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  period_key TEXT NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  generations INTEGER NOT NULL DEFAULT 0,
+  exports INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS license_usage_org_period_user_uniq ON license_usage(organization_id, period_key, user_id);
 `;

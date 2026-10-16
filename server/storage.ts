@@ -11,11 +11,17 @@ import {
   conversations,
   departments,
   deviceTokens,
+  ehrConnections,
+  ehrUserLinks,
   emergencyBroadcasts,
   equipment,
   featureFlags,
   hospitalists,
   landingPageSettings,
+  licenseUsage,
+  licenses,
+  noteTemplateVersions,
+  orgConnectors,
   mfaBackupCodes,
   mfaCredentials,
   messageDeliveryStatus,
@@ -39,13 +45,19 @@ import {
   type Conversation,
   type Department,
   type DeviceToken,
+  type EhrConnection,
+  type EhrUserLink,
   type EmergencyBroadcast,
   type Equipment,
   type FeatureFlag,
   type Hospitalist,
   type InsertHospitalist,
+  type License,
+  type LicenseUsage,
   type Message,
   type MessageDeliveryStatus,
+  type NoteTemplateVersion,
+  type OrgConnector,
   type Organization,
   type PatientConsult,
   type PendingRegistration,
@@ -1257,6 +1269,234 @@ export class DatabaseStorage implements IStorage {
         .insert(table)
         .values({ organizationId: orgId, ...value } as never);
     }
+  }
+  // ── Notes plugin: EHR connections ────────────────────────────────────────────
+  async listEhrConnections(orgId: number): Promise<EhrConnection[]> {
+    return this.db
+      .select()
+      .from(ehrConnections)
+      .where(eq(ehrConnections.organizationId, orgId))
+      .orderBy(asc(ehrConnections.id));
+  }
+  async getEhrConnection(orgId: number, id: number): Promise<EhrConnection | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(ehrConnections)
+      .where(and(eq(ehrConnections.organizationId, orgId), eq(ehrConnections.id, id)));
+    return row;
+  }
+  /** Resolve a SMART `iss` to its connection(s). Cross-tenant by design: the
+   *  launch has no session yet, so the EHR endpoint identifies the tenant. */
+  async findEhrConnectionsByIss(iss: string): Promise<EhrConnection[]> {
+    return this.db
+      .select()
+      .from(ehrConnections)
+      .where(and(eq(ehrConnections.iss, iss), eq(ehrConnections.enabled, true)));
+  }
+  async findEhrConnectionsByVendor(vendor: EhrConnection["vendor"]): Promise<EhrConnection[]> {
+    return this.db
+      .select()
+      .from(ehrConnections)
+      .where(and(eq(ehrConnections.vendor, vendor), eq(ehrConnections.enabled, true)));
+  }
+  async createEhrConnection(row: Omit<EhrConnection, "id" | "createdAt">): Promise<EhrConnection> {
+    const [created] = await this.db.insert(ehrConnections).values(row).returning();
+    return created!;
+  }
+  async updateEhrConnection(
+    orgId: number,
+    id: number,
+    patch: Partial<EhrConnection>,
+  ): Promise<EhrConnection | undefined> {
+    const [row] = await this.db
+      .update(ehrConnections)
+      .set(patch)
+      .where(and(eq(ehrConnections.organizationId, orgId), eq(ehrConnections.id, id)))
+      .returning();
+    return row;
+  }
+  async getEhrUserLink(connectionId: number, fhirUser: string): Promise<EhrUserLink | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(ehrUserLinks)
+      .where(and(eq(ehrUserLinks.ehrConnectionId, connectionId), eq(ehrUserLinks.fhirUser, fhirUser)));
+    return row;
+  }
+  async createEhrUserLink(row: Omit<EhrUserLink, "id" | "createdAt">): Promise<EhrUserLink> {
+    const [created] = await this.db.insert(ehrUserLinks).values(row).returning();
+    return created!;
+  }
+
+  // ── Notes plugin: template versions ──────────────────────────────────────────
+  /** Org-scoped versions plus the platform defaults (organization_id IS NULL). */
+  async listTemplateVersions(orgId: number): Promise<NoteTemplateVersion[]> {
+    return this.db
+      .select()
+      .from(noteTemplateVersions)
+      .where(
+        sql`${noteTemplateVersions.organizationId} = ${orgId} OR ${noteTemplateVersions.organizationId} IS NULL`,
+      )
+      .orderBy(desc(noteTemplateVersions.createdAt));
+  }
+  async getTemplateVersion(orgId: number, id: number): Promise<NoteTemplateVersion | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(noteTemplateVersions)
+      .where(
+        and(
+          eq(noteTemplateVersions.id, id),
+          sql`(${noteTemplateVersions.organizationId} = ${orgId} OR ${noteTemplateVersions.organizationId} IS NULL)`,
+        ),
+      );
+    return row;
+  }
+  /** The org's active version, else the platform's active default, else undefined. */
+  async getActiveTemplateVersion(orgId: number): Promise<NoteTemplateVersion | undefined> {
+    const [own] = await this.db
+      .select()
+      .from(noteTemplateVersions)
+      .where(and(eq(noteTemplateVersions.organizationId, orgId), eq(noteTemplateVersions.status, "active")))
+      .orderBy(desc(noteTemplateVersions.version))
+      .limit(1);
+    if (own) return own;
+    const [platform] = await this.db
+      .select()
+      .from(noteTemplateVersions)
+      .where(and(isNull(noteTemplateVersions.organizationId), eq(noteTemplateVersions.status, "active")))
+      .orderBy(desc(noteTemplateVersions.version))
+      .limit(1);
+    return platform;
+  }
+  async nextTemplateVersionNumber(orgId: number | null, name: string): Promise<number> {
+    const [row] = await this.db
+      .select({ max: sql<number>`coalesce(max(${noteTemplateVersions.version}), 0)` })
+      .from(noteTemplateVersions)
+      .where(
+        and(
+          orgId == null ? isNull(noteTemplateVersions.organizationId) : eq(noteTemplateVersions.organizationId, orgId),
+          eq(noteTemplateVersions.name, name),
+        ),
+      );
+    return Number(row?.max ?? 0) + 1;
+  }
+  async createTemplateVersion(
+    row: Omit<NoteTemplateVersion, "id" | "createdAt" | "activatedAt" | "activatedBy">,
+  ): Promise<NoteTemplateVersion> {
+    const [created] = await this.db.insert(noteTemplateVersions).values(row).returning();
+    return created!;
+  }
+  /** Atomically retire the scope's current active version and activate `id`. */
+  async activateTemplateVersion(
+    orgId: number | null,
+    id: number,
+    byUserId: number,
+  ): Promise<NoteTemplateVersion | undefined> {
+    return this.db.transaction(async (tx) => {
+      const scope =
+        orgId == null ? isNull(noteTemplateVersions.organizationId) : eq(noteTemplateVersions.organizationId, orgId);
+      const [target] = await tx
+        .select()
+        .from(noteTemplateVersions)
+        .where(and(scope, eq(noteTemplateVersions.id, id)));
+      if (!target) return undefined;
+      await tx
+        .update(noteTemplateVersions)
+        .set({ status: "retired" })
+        .where(and(scope, eq(noteTemplateVersions.status, "active")));
+      const [activated] = await tx
+        .update(noteTemplateVersions)
+        .set({ status: "active", activatedAt: new Date(), activatedBy: byUserId })
+        .where(eq(noteTemplateVersions.id, id))
+        .returning();
+      return activated;
+    });
+  }
+
+  // ── Notes plugin: connectors ─────────────────────────────────────────────────
+  async listOrgConnectors(orgId: number): Promise<OrgConnector[]> {
+    return this.db
+      .select()
+      .from(orgConnectors)
+      .where(eq(orgConnectors.organizationId, orgId))
+      .orderBy(asc(orgConnectors.priority), asc(orgConnectors.id));
+  }
+  async upsertOrgConnector(row: {
+    organizationId: number;
+    connectorKey: string;
+    kind: OrgConnector["kind"];
+    enabled: boolean;
+    priority: number;
+    config: Record<string, unknown>;
+    updatedBy: number | null;
+  }): Promise<OrgConnector> {
+    const [saved] = await this.db
+      .insert(orgConnectors)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [orgConnectors.organizationId, orgConnectors.connectorKey],
+        set: {
+          kind: row.kind,
+          enabled: row.enabled,
+          priority: row.priority,
+          config: row.config,
+          updatedBy: row.updatedBy,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return saved!;
+  }
+
+  // ── Notes plugin: licensing ──────────────────────────────────────────────────
+  async getLicense(orgId: number): Promise<License | undefined> {
+    const [row] = await this.db.select().from(licenses).where(eq(licenses.organizationId, orgId));
+    return row;
+  }
+  async upsertLicense(row: {
+    organizationId: number;
+    plan: License["plan"];
+    status: License["status"];
+    seats: number | null;
+    usageCap: number | null;
+    periodEnd: Date | null;
+    billingRef: string | null;
+  }): Promise<License> {
+    const [saved] = await this.db
+      .insert(licenses)
+      .values(row)
+      .onConflictDoUpdate({
+        target: licenses.organizationId,
+        set: { ...row, updatedAt: new Date() },
+      })
+      .returning();
+    return saved!;
+  }
+  async listLicenseUsage(orgId: number, periodKey: string): Promise<LicenseUsage[]> {
+    return this.db
+      .select()
+      .from(licenseUsage)
+      .where(and(eq(licenseUsage.organizationId, orgId), eq(licenseUsage.periodKey, periodKey)));
+  }
+  async incrementLicenseUsage(
+    orgId: number,
+    periodKey: string,
+    userId: number,
+    field: "generations" | "exports",
+  ): Promise<void> {
+    const col = field === "generations" ? licenseUsage.generations : licenseUsage.exports;
+    await this.db
+      .insert(licenseUsage)
+      .values({
+        organizationId: orgId,
+        periodKey,
+        userId,
+        generations: field === "generations" ? 1 : 0,
+        exports: field === "exports" ? 1 : 0,
+      })
+      .onConflictDoUpdate({
+        target: [licenseUsage.organizationId, licenseUsage.periodKey, licenseUsage.userId],
+        set: { [field]: sql`${col} + 1` },
+      });
   }
 }
 

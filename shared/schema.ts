@@ -502,6 +502,161 @@ export const smsHistory = pgTable("sms_history", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/* ── Notes plugin: multi-EHR SMART on FHIR clinical-note product ─────────────
+ * These tables hold CONFIGURATION and METADATA only. Note text, assembled
+ * patient context, and EHR access tokens are never persisted — they live in
+ * the clinician's session and are discarded when it ends.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const EHR_VENDOR = ["epic", "cerner", "athena", "meditech", "other", "mock"] as const;
+export type EhrVendor = (typeof EHR_VENDOR)[number];
+export const TEMPLATE_STATUS = ["draft", "active", "retired"] as const;
+export const CONNECTOR_KIND = ["knowledge", "aggregator", "engine"] as const;
+export const LICENSE_PLAN = ["trial", "seat", "usage"] as const;
+export const LICENSE_STATUS = ["active", "suspended", "expired"] as const;
+
+/** One row per (organization, EHR endpoint). Onboarding a health system = one row. */
+export const ehrConnections = pgTable(
+  "ehr_connections",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    name: text("name").notNull(),
+    vendor: text("vendor", { enum: EHR_VENDOR }).notNull().default("other"),
+    /** FHIR R4 base URL. SMART's `iss` launch parameter must equal this exactly. */
+    iss: text("iss").notNull(),
+    clientId: text("client_id").notNull(),
+    /** Encrypted at rest (server/notes/secrets.ts). Null = public client (PKCE only). */
+    clientSecretEnc: text("client_secret_enc"),
+    scopes: text("scopes")
+      .notNull()
+      .default(
+        "launch launch/patient openid fhirUser offline_access patient/Patient.read patient/Encounter.read patient/Condition.read patient/MedicationRequest.read patient/MedicationStatement.read patient/AllergyIntolerance.read patient/Observation.read patient/DocumentReference.read patient/DocumentReference.write",
+      ),
+    /** Allow DocumentReference write-back (also requires the EHR to grant the scope). */
+    writeBack: boolean("write_back").notNull().default(true),
+    /** Auto-create a DocTurn user the first time an unknown `fhirUser` launches. */
+    jitProvisioning: boolean("jit_provisioning").notNull().default(true),
+    jitRole: text("jit_role", { enum: ROLES }).notNull().default("hospitalist"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    issPerOrg: uniqueIndex("ehr_connections_org_iss_uniq").on(t.organizationId, t.iss),
+  }),
+);
+
+/** Maps an EHR identity (`fhirUser`, e.g. Practitioner/123) to a DocTurn user. */
+export const ehrUserLinks = pgTable(
+  "ehr_user_links",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    ehrConnectionId: integer("ehr_connection_id")
+      .notNull()
+      .references(() => ehrConnections.id),
+    fhirUser: text("fhir_user").notNull(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    linkUniq: uniqueIndex("ehr_user_links_conn_fhiruser_uniq").on(t.ehrConnectionId, t.fhirUser),
+  }),
+);
+
+/**
+ * Versioned note-generation modules. `organizationId` null = platform default
+ * (ours); an org row overrides it. Exactly one `active` row per scope is
+ * resolved at generation time — activating a version never requires a deploy.
+ */
+export const noteTemplateVersions = pgTable("note_template_versions", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id").references(() => organizations.id),
+  name: text("name").notNull(),
+  version: integer("version").notNull(),
+  status: text("status", { enum: TEMPLATE_STATUS }).notNull().default("draft"),
+  /** The module itself (see server/notes/generation/template.ts for the schema). */
+  module: jsonb("module").$type<Record<string, unknown>>().notNull(),
+  checksum: text("checksum").notNull(),
+  changelog: text("changelog"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  activatedBy: integer("activated_by").references(() => users.id),
+  activatedAt: timestamp("activated_at"),
+});
+
+/** Per-org connector enablement + config. Secrets inside `config` are encrypted. */
+export const orgConnectors = pgTable(
+  "org_connectors",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    connectorKey: text("connector_key").notNull(),
+    kind: text("kind", { enum: CONNECTOR_KIND }).notNull().default("knowledge"),
+    enabled: boolean("enabled").notNull().default(false),
+    /** Lower runs first; results merge in this order. */
+    priority: integer("priority").notNull().default(100),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    updatedBy: integer("updated_by").references(() => users.id),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    keyPerOrg: uniqueIndex("org_connectors_org_key_uniq").on(t.organizationId, t.connectorKey),
+  }),
+);
+
+/** Commercial license per organization. Enforced before generate and export. */
+export const licenses = pgTable("licenses", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id)
+    .unique(),
+  plan: text("plan", { enum: LICENSE_PLAN }).notNull().default("trial"),
+  status: text("status", { enum: LICENSE_STATUS }).notNull().default("active"),
+  /** Seat plans: max distinct users per period. Null = unlimited. */
+  seats: integer("seats"),
+  /** Usage plans: max note generations per period. Null = unlimited. */
+  usageCap: integer("usage_cap"),
+  periodStart: timestamp("period_start").notNull().defaultNow(),
+  periodEnd: timestamp("period_end"),
+  /** Opaque billing-provider customer/subscription reference (e.g. Stripe). */
+  billingRef: text("billing_ref"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/** Metered usage: one row per (org, period, user). No PHI. */
+export const licenseUsage = pgTable(
+  "license_usage",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    periodKey: text("period_key").notNull(), // YYYY-MM
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    generations: integer("generations").notNull().default(0),
+    exports: integer("exports").notNull().default(0),
+  },
+  (t) => ({
+    usageUniq: uniqueIndex("license_usage_org_period_user_uniq").on(
+      t.organizationId,
+      t.periodKey,
+      t.userId,
+    ),
+  }),
+);
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Relations
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -584,6 +739,13 @@ export type EmergencyBroadcast = typeof emergencyBroadcasts.$inferSelect;
 export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
 export type DeviceToken = typeof deviceTokens.$inferSelect;
 export type SmsHistory = typeof smsHistory.$inferSelect;
+
+export type EhrConnection = typeof ehrConnections.$inferSelect;
+export type EhrUserLink = typeof ehrUserLinks.$inferSelect;
+export type NoteTemplateVersion = typeof noteTemplateVersions.$inferSelect;
+export type OrgConnector = typeof orgConnectors.$inferSelect;
+export type License = typeof licenses.$inferSelect;
+export type LicenseUsage = typeof licenseUsage.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
@@ -743,3 +905,44 @@ export const orgConfigSchema = z
   .refine((v) => Object.keys(v).length > 0, {
     message: "at least one field is required",
   });
+
+/* ── Notes plugin request schemas ──────────────────────────────────────────── */
+
+export const upsertEhrConnectionSchema = z.object({
+  id: z.number().int().positive().optional(),
+  name: z.string().min(1),
+  vendor: z.enum(EHR_VENDOR).default("other"),
+  iss: z.string().url(),
+  clientId: z.string().min(1),
+  /** Plaintext on input only; stored encrypted, never returned. */
+  clientSecret: z.string().optional(),
+  scopes: z.string().min(1).optional(),
+  writeBack: z.boolean().optional(),
+  jitProvisioning: z.boolean().optional(),
+  jitRole: z.enum(ROLES).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const createTemplateVersionSchema = z.object({
+  name: z.string().min(1),
+  module: z.record(z.unknown()),
+  changelog: z.string().optional(),
+  /** Activate immediately (same as POST /activate afterwards). */
+  activate: z.boolean().optional(),
+});
+
+export const upsertConnectorSchema = z.object({
+  connectorKey: z.string().min(1),
+  enabled: z.boolean(),
+  priority: z.number().int().min(0).max(1000).optional(),
+  config: z.record(z.unknown()).optional(),
+});
+
+export const setLicenseSchema = z.object({
+  plan: z.enum(LICENSE_PLAN),
+  status: z.enum(LICENSE_STATUS).optional(),
+  seats: z.number().int().positive().nullable().optional(),
+  usageCap: z.number().int().positive().nullable().optional(),
+  periodEnd: z.string().datetime().nullable().optional(),
+  billingRef: z.string().nullable().optional(),
+});

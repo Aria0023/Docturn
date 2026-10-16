@@ -12,6 +12,7 @@ import { registerHealthRoutes } from "./health.js";
 import { registerMessagingRoutes } from "./messaging.js";
 import { registerMfaRoutes } from "./mfa.js";
 import { registerMobileRoutes } from "./mobile.js";
+import { registerNotesRoutes } from "./notes.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
@@ -40,4 +41,5 @@ export function registerRoutes(app: Express) {
   registerDevRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);
+  registerNotesRoutes(app);
 }

@@ -1,6 +1,9 @@
 import { hashPassword } from "./auth.js";
 import { getHandle } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
+import { DEFAULT_TEMPLATE_MODULE, DEFAULT_TEMPLATE_NAME } from "./notes/generation/default-template.js";
+import { templateChecksum } from "./notes/generation/template.js";
+import { MOCK_CLIENT_ID } from "./notes/mock-ehr.js";
 
 const DEV_PASSWORD = "docturn";
 
@@ -175,6 +178,12 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     bedCapacity: 24,
   });
 
+  // Notes plugin: platform default template (ours), a trial license, the
+  // in-process mock EHR as the demo org's EHR connection, and the UpToDate
+  // connector enabled in stub mode so the end-to-end flow runs with no secrets.
+  await ensureNotesPlugin(storage);
+  await ensureNotesDemoOrg(storage, org.id, userIds["dev"] ?? null);
+
   return {
     orgId: org.id,
     platformOrgId: platform.id,
@@ -278,7 +287,72 @@ export async function ensurePlatform(storage: DatabaseStorage): Promise<boolean>
     });
     changed = true;
   }
+  if (await ensureNotesPlugin(storage)) changed = true;
   return changed;
+}
+
+/** Platform-level: make sure an ACTIVE default note template exists. Idempotent. */
+export async function ensureNotesPlugin(storage: DatabaseStorage): Promise<boolean> {
+  const active = await storage.getActiveTemplateVersion(0); // org 0 never exists → platform default only
+  if (active) return false;
+  const platform = await storage.getOrganizationByCode(PLATFORM_ORG.code);
+  const dev = platform ? await storage.getUserByUsername(platform.id, "dev") : undefined;
+  const row = await storage.createTemplateVersion({
+    organizationId: null,
+    name: DEFAULT_TEMPLATE_NAME,
+    version: await storage.nextTemplateVersionNumber(null, DEFAULT_TEMPLATE_NAME),
+    status: "draft",
+    module: DEFAULT_TEMPLATE_MODULE as unknown as Record<string, unknown>,
+    checksum: templateChecksum(DEFAULT_TEMPLATE_MODULE),
+    changelog: "Initial locked H&P rules (platform default).",
+    createdBy: dev?.id ?? null,
+  });
+  await storage.activateTemplateVersion(null, row.id, dev?.id ?? 0);
+  return true;
+}
+
+/** Demo-org level: trial license + mock EHR connection + UpToDate stub. Idempotent. */
+export async function ensureNotesDemoOrg(storage: DatabaseStorage, orgId: number, byUserId: number | null): Promise<void> {
+  if (!(await storage.getLicense(orgId))) {
+    await storage.upsertLicense({
+      organizationId: orgId,
+      plan: "trial",
+      status: "active",
+      seats: null,
+      usageCap: null,
+      periodEnd: null,
+      billingRef: null,
+    });
+  }
+  const conns = await storage.listEhrConnections(orgId);
+  if (!conns.some((c) => c.vendor === "mock")) {
+    await storage.createEhrConnection({
+      organizationId: orgId,
+      name: "Demo EHR (in-process SMART sandbox)",
+      vendor: "mock",
+      iss: `${process.env.PUBLIC_URL?.replace(/\/+$/, "") ?? "http://localhost:3000"}/mock-ehr/fhir`,
+      clientId: MOCK_CLIENT_ID,
+      clientSecretEnc: null,
+      scopes:
+        "launch launch/patient openid fhirUser patient/Patient.read patient/Encounter.read patient/Condition.read patient/MedicationRequest.read patient/MedicationStatement.read patient/AllergyIntolerance.read patient/Observation.read patient/DocumentReference.read patient/DocumentReference.write",
+      writeBack: true,
+      jitProvisioning: true,
+      jitRole: "hospitalist",
+      enabled: true,
+    });
+  }
+  const connectors = await storage.listOrgConnectors(orgId);
+  if (!connectors.some((c) => c.connectorKey === "uptodate")) {
+    await storage.upsertOrgConnector({
+      organizationId: orgId,
+      connectorKey: "uptodate",
+      kind: "knowledge",
+      enabled: true,
+      priority: 10,
+      config: { maxItems: 6 },
+      updatedBy: byUserId,
+    });
+  }
 }
 
 // CLI entrypoint: wipe-and-reseed the persistent dev database. Normalize
