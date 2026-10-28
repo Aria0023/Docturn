@@ -315,6 +315,119 @@ function EndShiftDialog({ status, onClose }) {
   );
 }
 
+// Quick responses (PerfectServe parity #6, module messaging.templates). The
+// user's PERSONAL templates — the same rows the composer's Templates picker
+// and phone chips insert — managed here; there is no second store. Every
+// write is one server call followed by a re-read, so the list is the
+// server's. The organization's templates are shown read-only (directors
+// manage those from the composer's Templates picker).
+const QR_PRIORITY = { routine: ["Routine", "var(--muted-foreground)"], urgent: ["Urgent", "#B45309"], stat: ["STAT", "#B91C1C"] };
+function QuickResponses() {
+  const st = useStore();
+  const a = useActions();
+  const on = (id) => (window.DT && DT.moduleOn ? DT.moduleOn(id) : true);
+  const modOn = on("messaging.templates");
+  const prioOn = on("messaging.priority");
+  const [loaded, setLoaded] = React.useState(false);
+  const [editing, setEditing] = React.useState(null); // null | "new" | template id
+  const [form, setForm] = React.useState({ title: "", body: "", priority: "routine" });
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (!modOn || !a.listTemplates) return;
+    Promise.resolve(a.listTemplates()).finally(() => setLoaded(true));
+  }, [modOn]);
+  const all = st.templates || [];
+  const mine = all.filter((t) => t.scope === "mine");
+  const org = all.filter((t) => t.scope !== "mine");
+  const startNew = () => { setForm({ title: "", body: "", priority: "routine" }); setEditing("new"); };
+  const startEdit = (t) => { setForm({ title: t.title, body: t.body, priority: t.priority || "routine" }); setEditing(t.id); };
+  const save = () => {
+    const title = form.title.trim(), body = form.body.trim();
+    if (!title || !body || busy) return;
+    setBusy(true);
+    const priority = prioOn ? form.priority : "routine";
+    const p = editing === "new"
+      ? a.createTemplate({ title, body, priority, scope: "mine" })
+      : a.updateTemplate(editing, { title, body, priority });
+    Promise.resolve(p).then((r) => { if (r) setEditing(null); }).finally(() => setBusy(false));
+  };
+  const remove = (t) => {
+    if (busy || !window.confirm('Delete the quick response "' + t.title + '"?')) return;
+    setBusy(true);
+    Promise.resolve(a.deleteTemplate(t.id)).finally(() => setBusy(false));
+  };
+  const pill = (pr) => <span style={{ fontSize: 12, fontWeight: 700, padding: "1px 7px", borderRadius: 4, color: QR_PRIORITY[pr] ? QR_PRIORITY[pr][1] : "var(--muted-foreground)", border: "1px solid var(--border)", flex: "none" }}>{QR_PRIORITY[pr] ? QR_PRIORITY[pr][0] : pr}</span>;
+  const back = <ShiftBtn data-qr-back onClick={() => a.setNav("account")}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Icon name="arrow-left" size={15} />Settings</span></ShiftBtn>;
+  if (!modOn) {
+    return (
+      <div data-quick-responses-page="off" style={{ maxWidth: 640 }}>
+        <div style={{ marginBottom: 14 }}>{back}</div>
+        <SettingsGroup title="Quick responses">
+          <SettingsRow icon="message-square-text" title="Switched off for your organization" wrapSub sub="Message templates and quick responses are switched off by the DocTurn operator for your organization." />
+        </SettingsGroup>
+      </div>
+    );
+  }
+  const row = (t, editable) => (
+    <div key={t.id} data-qr-item={t.id} data-qr-scope={t.scope} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "#fff", minWidth: 0 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{t.title}</span>
+          {pill(t.priority || "routine")}
+        </div>
+        <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 2, overflowWrap: "anywhere" }}>{t.body}</div>
+      </div>
+      {editable && (
+        <span style={{ display: "inline-flex", gap: 6, flex: "none" }}>
+          <ShiftBtn data-qr-edit={t.id} aria-label={"Edit " + t.title} disabled={busy} onClick={() => startEdit(t)}><Icon name="pencil" size={15} /></ShiftBtn>
+          <ShiftBtn data-qr-delete={t.id} aria-label={"Delete " + t.title} disabled={busy} onClick={() => remove(t)}><Icon name="trash-2" size={15} /></ShiftBtn>
+        </span>
+      )}
+    </div>
+  );
+  return (
+    <div data-quick-responses-page="on" style={{ maxWidth: 640 }}>
+      <div style={{ marginBottom: 14 }}>{back}</div>
+      <div style={{ fontSize: 13, color: "var(--muted-foreground)", marginBottom: 14, lineHeight: 1.45 }}>
+        Tap one above the message box (on a phone) or pick it from Templates to insert it into your message. Stored on the DocTurn server for your account — the same as your personal templates. Keep patient details out of them.
+      </div>
+      <SettingsGroup title="My quick responses">
+        {!loaded && mine.length === 0 && <SettingsRow icon="loader" title="Loading…" />}
+        {loaded && mine.length === 0 && editing !== "new" && <SettingsRow icon="message-square-text" title="None yet" wrapSub sub="Add the replies you send most — e.g. “On my way”, “Call me back”." />}
+        {mine.map((t) => (editing === t.id ? null : row(t, true)))}
+        {editing != null && (
+          <div data-qr-form={editing === "new" ? "new" : editing} style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
+            <Field label="Title" value={form.title} onChange={(v) => setForm({ ...form, title: v })} placeholder="Shown on the chip, e.g. On my way" inputProps={{ maxLength: 120, "data-qr-title": "" }} />
+            <Field label="Message" textarea rows={2} value={form.body} onChange={(v) => setForm({ ...form, body: v })} placeholder="The text inserted into your message. No patient details." inputProps={{ maxLength: 2000, "data-qr-body": "" }} />
+            {prioOn && (
+              <div role="radiogroup" aria-label="Priority" style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: "var(--muted-foreground)", marginRight: 2 }}>Sets priority</span>
+                {Object.keys(QR_PRIORITY).map((id) => (
+                  <button key={id} type="button" role="radio" aria-checked={form.priority === id} data-qr-priority={id} onClick={() => setForm({ ...form, priority: id })}
+                    style={{ minHeight: 44, minWidth: 44, padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit",
+                      color: form.priority === id ? "#fff" : QR_PRIORITY[id][1], background: form.priority === id ? QR_PRIORITY[id][1] : "transparent", border: "1px solid " + (form.priority === id ? QR_PRIORITY[id][1] : "var(--border)") }}>{QR_PRIORITY[id][0]}</button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <ShiftBtn data-qr-cancel disabled={busy} onClick={() => setEditing(null)}>Cancel</ShiftBtn>
+              <ShiftBtn primary data-qr-save disabled={busy || !form.title.trim() || !form.body.trim()} onClick={save}>{busy ? "Saving…" : editing === "new" ? "Add" : "Save"}</ShiftBtn>
+            </div>
+          </div>
+        )}
+        {editing == null && (
+          <SettingsRow icon="plus" title="Add quick response" rowProps={{ "data-qr-add": "" }} onClick={startNew} />
+        )}
+      </SettingsGroup>
+      {org.length > 0 && (
+        <SettingsGroup title="From your organization">
+          {org.map((t) => row(t, false))}
+        </SettingsGroup>
+      )}
+    </div>
+  );
+}
+
 function AccountSettings({ onLock }) {
   const st = useStore();
   const a = useActions();
@@ -472,6 +585,12 @@ function AccountSettings({ onLock }) {
             )}
           </React.Fragment>
         )}
+        {/* Quick responses = my personal message templates (messaging.templates). */}
+        {on("messaging.templates") && (
+          <SettingsRow icon="message-square-text" title="Quick responses" wrapSub rowProps={{ "data-qr-row": "" }}
+            sub="Your saved replies — one tap inserts them above the message box"
+            onClick={() => a.setNav("quick-responses")} />
+        )}
         <SettingsRow icon="smartphone" title={standalone ? "Installed on this device" : "Install as an app"}
           sub={standalone ? "Running as a home-screen app" : "iPhone: Share → Add to Home Screen · Android: Install app"} />
       </SettingsGroup>
@@ -508,4 +627,4 @@ function AccountSettings({ onLock }) {
   );
 }
 
-Object.assign(window, { AccountSettings, EnableAlertsCard });
+Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses });

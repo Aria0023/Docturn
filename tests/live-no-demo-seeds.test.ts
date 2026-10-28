@@ -136,7 +136,7 @@ describe("live client: no demo clinical rows", () => {
   // PerfectServe-parity per-user / per-org slices: empty before the server
   // answers (live or offline seed — there are no kit demo rows for them), and
   // emptied on sign-out so the next person never sees the previous one's.
-  const PARITY_SLICES = ["roleContacts", "favorites", "recents"];
+  const PARITY_SLICES = ["roleContacts", "favorites", "recents", "templates"];
   it("parity slices (role contacts, favorites, recents …) start empty and are emptied on sign-out", async () => {
     const h = await boot({ syntheticData: false });
     for (const k of PARITY_SLICES) expect(h.state()[k], k).toEqual([]);

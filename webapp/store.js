@@ -317,6 +317,9 @@
       // Unread-message reminder (GET /api/messaging/unread-reminder): my
       // opt-in + interval from the server — null until it answers / module off.
       reminderPrefs: null,
+      // Quick responses = message templates (GET /api/messaging/templates):
+      // org-wide + MY personal ones, from the server only.
+      templates: [],
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -829,6 +832,8 @@
     "phiAccessCount", "auditScope", "auditError", "presence",
     // the previous person's Directory: their org's role contacts and holders
     "roleContacts", "onCallTargets", "favorites", "recents",
+    // the previous person's quick responses (their personal templates)
+    "templates",
     // the previous person's shift status and reminder preference
     "shiftStatus", "reminderPrefs"];
   function clearPhiSlices(s) {
@@ -1137,6 +1142,7 @@
     startShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve({ ok: false }); },
     loadReminderPrefs: function () { set(function (s) { s.reminderPrefs = null; return s; }); return Promise.resolve(null); },
     setReminderPrefs: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    listTemplates: function () { set(function (s) { s.templates = []; return s; }); return Promise.resolve([]); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

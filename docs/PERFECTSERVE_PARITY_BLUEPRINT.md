@@ -743,3 +743,31 @@ is the web app / PWA.
   injected clock), tests/client-reminder.test.ts; check:
   scripts/unread-reminder-check.mjs (with `TIMER=1` it also waits for the
   real server's own timer to fire).
+
+### #6 Quick responses — the existing module `messaging.templates`
+- No second store and no new route: quick responses ARE the user's message
+  templates (`GET` / `POST` / `PATCH` / `DELETE /api/messaging/templates`,
+  `message_templates`, already gated by `requireModule("messaging.templates")`).
+  A personal template is its owner's alone — another user of the same org
+  gets 403 on edit / delete and never sees it listed; another tenant's id
+  answers 404 exactly like an unknown one. The audit rows
+  (`message.template_create` / `_update` / `_delete`, low) carry the id and
+  scope only, never the title or text.
+- Phone composer: a sideways-scrolling strip of 44px chips above the message
+  box — mine first, then the organization's; one tap inserts the text through
+  the Templates picker's own path (an urgent / STAT template presets that
+  priority while `messaging.priority` is on). No request is made by a tap.
+  The last chip opens Settings → Quick responses ("Add quick response" when
+  there are none — a fresh tenant has none and no demo rows).
+- Settings → Notifications → Quick responses: my personal templates (add /
+  edit / delete, each one server call followed by a re-read, so the list is
+  the server's), the organization's shown read-only. Directors still manage
+  the org's templates from the composer's Templates picker. The page warns to
+  keep patient details out of them.
+- Module off: no chips, no Settings row, the page says it is switched off;
+  a refused call names the feature and re-reads the module map. `templates`
+  is emptied on sign-out / identity switch.
+- Tests: tests/quick-responses.test.ts (regression pins of the existing
+  server rules — the server did not change, so these passed on the old
+  server too), tests/client-quick-responses.test.ts (failed on the HEAD
+  client); check: scripts/quick-responses-check.mjs.

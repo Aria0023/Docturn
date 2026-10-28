@@ -345,6 +345,7 @@ const TOP = {
   broadcasts: ["Emergency broadcasts", "Targeted alerts with acknowledgement tracking"],
   compliance: ["Audit & compliance", "The organization's HIPAA audit trail and PHI-access log, from the server"],
   account:    ["Settings", "Your profile, availability, notifications and security"],
+  "quick-responses": ["Quick responses", "Your saved replies — one tap inserts them into a message"],
   "compliance-monitor": ["Compliance monitor", "Continuous control checks against live system state, plus the auditor evidence pack"],
   approvals:  ["Approvals", "Review and approve people who registered with your org code"],
   oncall:     ["Who's on call", "Every role and service with its current holder — from Amion, Epic or the manual list"],
@@ -636,6 +637,7 @@ function App() {
   }
   else if (nav === "broadcasts") screen = <Broadcasts onSend={a.sendBroadcast} broadcasts={st.broadcasts} />;
   else if (nav === "account") screen = <AccountSettings onLock={lockByHand} />;
+  else if (nav === "quick-responses") screen = <QuickResponses />;
   else if (nav === "compliance-monitor") screen = <ComplianceMonitor />;
   else if (nav === "compliance" && role === "developer") screen = <ComplianceOverview onOpenOrg={(code) => { a.selectOrg(code); a.setNav("settings"); }} />;
   else if (nav === "compliance") screen = <Compliance audit={st.audit} phiLog={st.phiLog} auditCount={st.auditCount} phiCount={st.phiAccessCount} scope={st.auditScope || (role === "director" || role === "er_director" ? "org" : "mine")} error={st.auditError} onLoad={a.loadComplianceTrail} onExport={a.exportAuditTrail} />;

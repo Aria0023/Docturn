@@ -88,7 +88,7 @@
       // board, census, admissions log, ER roster and diversion state, care
       // team …): the new identity's hydrate reads its own. Emptied, never
       // reset to the kit's demo seed rows.
-      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents"].forEach(function (k) { s[k] = []; });
+      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents", "templates"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
         "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs"].forEach(function (k) { s[k] = null; });
     }
@@ -3391,16 +3391,42 @@
   };
 
   // ---- message templates (org-wide + personal canned messages) -------------
+  // Quick responses (PerfectServe parity #6) ARE these templates: the phone
+  // composer's tap-to-insert chips and Settings → Quick responses read and
+  // write the same GET/POST/PATCH/DELETE /api/messaging/templates — there is
+  // no second store, so every list on screen is the server's. Module off
+  // (messaging.templates): no request, no rows; a refusal while the page was
+  // open re-reads the switches.
   DT.actions.listTemplates = function () {
+    if (DT.moduleOn && !DT.moduleOn("messaging.templates")) {
+      DT.set(function (s) { s.templates = []; return s; });
+      return Promise.resolve([]);
+    }
+    var epoch = authEpoch;
     return get("/api/messaging/templates").then(function (rows) {
-      var list = rows || [];
-      DT.set(function (s) { s.templates = list; return s; });
+      var list = Array.isArray(rows) ? rows : [];
+      if (epoch === authEpoch) DT.set(function (s) { s.templates = list; return s; });
       return list;
-    }).catch(function () { DT.set(function (s) { s.templates = s.templates || []; return s; }); return []; });
+    }).catch(function (e) {
+      if (moduleRefused(e)) {
+        refreshModulesAfterRefusal();
+        if (epoch === authEpoch) DT.set(function (s) { s.templates = []; return s; });
+        return [];
+      }
+      if (epoch === authEpoch) DT.set(function (s) { s.templates = s.templates || []; return s; });
+      return (DT.getState().templates || []);
+    });
   };
   function templateErrorToast(e, title) {
     var why = String((e && e.message) || "");
-    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: /forbidden/.test(why) ? "Only directors can manage organization templates." : /module_disabled/.test(why) ? "Templates are switched off for your organization." : "Try again." }; return s; });
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = /forbidden/.test(why) ? "Only directors can manage organization templates."
+      : moduleRefused(e) ? "Quick responses and templates are switched off for your organization."
+      : /not_found/.test(why) ? "That quick response no longer exists."
+      : /validation_error/.test(why) ? "A title and a message (up to 2000 characters) are required."
+      : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — nothing was changed."
+      : "Nothing was changed — try again.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
   }
   DT.actions.createTemplate = function (data) {
     return api("POST", "/api/messaging/templates", { title: data.title, body: data.body, priority: data.priority || "routine", scope: data.scope === "org" ? "org" : "mine" })
@@ -3410,12 +3436,12 @@
   DT.actions.updateTemplate = function (id, patch) {
     return api("PATCH", "/api/messaging/templates/" + id, patch)
       .then(function (t) { return DT.actions.listTemplates().then(function () { return t; }); })
-      .catch(function (e) { templateErrorToast(e, "Couldn't update template"); return null; });
+      .catch(function (e) { templateErrorToast(e, "Couldn't update template"); return DT.actions.listTemplates().then(function () { return null; }); });
   };
   DT.actions.deleteTemplate = function (id) {
     return api("DELETE", "/api/messaging/templates/" + id)
       .then(function () { return DT.actions.listTemplates(); })
-      .catch(function (e) { templateErrorToast(e, "Couldn't delete template"); return null; });
+      .catch(function (e) { templateErrorToast(e, "Couldn't delete template"); return DT.actions.listTemplates().then(function () { return null; }); });
   };
 
   // ---- away message (shown to senders while I'm DND / off shift) -----------

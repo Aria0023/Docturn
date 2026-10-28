@@ -223,3 +223,37 @@ describe("web client: a request refused by a switched-off module (A.CON-SHO-40)"
     await until(() => h.w.DT.moduleOn("messaging.patientThreads") === false);
   });
 });
+
+/**
+ * PerfectServe-parity modules (docs/PERFECTSERVE_PARITY_BLUEPRINT.md §8): one
+ * row per module. The switch flips after the page loaded; the server refuses
+ * the stale call with 404 {error:"module_disabled", module}; the client says
+ * WHICH feature is off (where the action shows a message) and re-reads
+ * GET /api/modules at once, so the control goes away.
+ */
+type ParityRow = { module: string; method: string; path: RegExp; act: (h: Harness) => Promise<unknown>; msg?: string };
+const PARITY_ROWS: ParityRow[] = [
+  { module: "routing.roleMessaging", method: "GET", path: /^\/api\/messaging\/role-contacts$/, act: (h) => h.w.DT.actions.listRoleContacts() },
+  { module: "directory.favorites", method: "POST", path: /^\/api\/directory\/favorites$/, act: (h) => h.w.DT.actions.toggleFavorite("user", 12), msg: "Favorites are switched off for your organization." },
+  { module: "messaging.done", method: "PUT", path: /^\/api\/messaging\/conversations\/1\/done$/, act: (h) => h.w.DT.actions.setConversationDone(1, true), msg: "Done is switched off for your organization." },
+  { module: "shift.handoff", method: "POST", path: /^\/api\/shift\/end$/, act: (h) => h.w.DT.actions.endShift({}), msg: "End shift is switched off for your organization." },
+  { module: "messaging.unreadReminder", method: "PUT", path: /^\/api\/messaging\/unread-reminder$/, act: (h) => h.w.DT.actions.setReminderPrefs(true, 5), msg: "Unread-message reminders are switched off for your organization." },
+  { module: "messaging.templates", method: "POST", path: /^\/api\/messaging\/templates$/, act: (h) => h.w.DT.actions.createTemplate({ title: "On my way", body: "On my way." }), msg: "Quick responses and templates are switched off for your organization." },
+];
+
+describe("web client: PerfectServe-parity modules refused mid-session", () => {
+  for (const row of PARITY_ROWS) {
+    it(`${row.module}: the refusal ${row.msg ? "names the feature and " : ""}re-reads the module map once`, async () => {
+      const h = await boot();
+      const before = moduleGets(h);
+      h.modules = { [row.module]: false };
+      h.routes.off = (req) => (row.path.test(req.path.split("?")[0]!) && req.method === row.method ? { status: 404, body: { error: "module_disabled", module: row.module } } : undefined);
+      await row.act(h);
+      if (row.msg) expect(h.state().__toast && h.state().__toast.msg).toBe(row.msg);
+      await until(() => moduleGets(h) > before);
+      await until(() => h.w.DT.moduleOn(row.module) === false);
+      await sleep(250);
+      expect(moduleGets(h) - before).toBe(1);
+    });
+  }
+});

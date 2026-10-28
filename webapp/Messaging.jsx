@@ -565,6 +565,12 @@ function Messaging() {
   // Composer templates (org-wide + mine): loaded when the picker opens.
   const templates = st.templates || [];
   React.useEffect(() => { if (tplOpen && a.listTemplates) a.listTemplates(); }, [tplOpen]);
+  // Quick responses (PerfectServe parity #6): on a phone the same templates
+  // sit above the message box as tap-to-insert chips — mine first, then the
+  // organization's. Read from the server when Messaging opens (module on).
+  const tplModOn = modOn("messaging.templates");
+  React.useEffect(() => { if (isMobile && tplModOn && a.listTemplates) a.listTemplates(); }, [isMobile, tplModOn]);
+  const quickResponses = templates.filter((t) => t.scope === "mine").concat(templates.filter((t) => t.scope !== "mine"));
   const insertTemplate = (t) => {
     setDraft((d) => (d && d.trim() ? d.replace(/\s+$/, "") + " " : "") + t.body);
     if (prioOn && (t.priority === "urgent" || t.priority === "stat")) setPriority(t.priority);
@@ -973,6 +979,24 @@ function Messaging() {
             with a small manage view — anchored above the composer. */}
         {tplOpen && !conv.broadcast && modOn("messaging.templates") && (
           <TemplatePicker templates={templates} onPick={insertTemplate} onClose={() => setTplOpen(false)} canManageOrg={canManageOrgTemplates} actions={a} isMobile={isMobile} />
+        )}
+        {/* Quick responses: one tap inserts the text (and presets an urgent /
+            STAT priority) through the same path as the Templates picker. The
+            strip scrolls sideways inside itself — never the page. */}
+        {isMobile && !conv.broadcast && !recording && tplModOn && (
+          <div data-quick-responses role="toolbar" aria-label="Quick responses" style={{ flex: "none", padding: "8px 12px 0", background: "#fff", display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", minWidth: 0, maxWidth: "100%", scrollbarWidth: "none" }}>
+            {quickResponses.map((t) => (
+              <button key={t.id} type="button" data-quick-response={t.id} onClick={() => insertTemplate(t)} title={t.body}
+                style={{ flex: "none", minHeight: 44, maxWidth: 220, padding: "0 14px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  color: t.priority === "stat" ? "#B91C1C" : t.priority === "urgent" ? "#B45309" : "var(--foreground)", background: t.scope === "mine" ? "#EFF6FF" : "var(--secondary)", border: "1px solid " + (t.priority === "stat" ? "#FCA5A5" : t.priority === "urgent" ? "#FCD34D" : "var(--border)") }}>
+                {t.title}
+              </button>
+            ))}
+            <button type="button" data-quick-response-manage onClick={() => a.setNav("quick-responses")} aria-label="Edit quick responses"
+              style={{ flex: "none", minHeight: 44, minWidth: 44, padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5, color: "var(--primary)", background: "transparent", border: "1px dashed var(--border)" }}>
+              <Icon name={quickResponses.length ? "pencil" : "plus"} size={14} />{quickResponses.length ? "Edit" : "Add quick response"}
+            </button>
+          </div>
         )}
         {/* Priority chips + Templates. Each control appears only while its org
             module is on (A.CON-SHO-40). The row WRAPS instead of widening the
