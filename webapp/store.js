@@ -304,6 +304,9 @@
       // only (and the labelled local demo's — DT.demoSeed()).
       me: isLive() ? { name: "", avatar: "", role: "" } : { name: "Dr. Jordan Chen", avatar: "JC", role: "MD" },
       rotation: null, // server "Next up" (GET /api/rotation/next); see nextUp()
+      // Directory role contacts (GET /api/messaging/role-contacts). Server
+      // rows only — no kit demo roles, live or offline.
+      roleContacts: [],
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -803,7 +806,9 @@
     // the previous operator's cross-tenant view (developer console)
     "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount",
     // the previous person's trail sizes and their org's live presence
-    "phiAccessCount", "auditScope", "auditError", "presence"];
+    "phiAccessCount", "auditScope", "auditError", "presence",
+    // the previous person's Directory: their org's role contacts and holders
+    "roleContacts", "onCallTargets"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1101,6 +1106,7 @@
     // no resolvable roster, so return an empty set and start a plainly-named
     // local thread if asked.
     listOnCallTargets: function () { set(function (s) { s.onCallTargets = []; return s; }); return Promise.resolve([]); },
+    listRoleContacts: function () { set(function (s) { s.roleContacts = []; return s; }); return Promise.resolve([]); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

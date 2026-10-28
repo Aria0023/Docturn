@@ -40,6 +40,7 @@
     s.providers = []; s.board = []; s.sent = []; s.pending = [];
     s.myPatients = []; s.myAdmissions = []; s.acceptedToday = 0;
     s.directory = []; s.orgPeople = {};
+    s.roleContacts = [];
     if (!s.session) s.me = { name: "", avatar: "", role: "" };
     return s;
   });
@@ -87,7 +88,7 @@
       // board, census, admissions log, ER roster and diversion state, care
       // team …): the new identity's hydrate reads its own. Emptied, never
       // reset to the kit's demo seed rows.
-      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates"].forEach(function (k) { s[k] = []; });
+      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
         "auditCount", "phiAccessCount", "auditScope", "auditError", "presence"].forEach(function (k) { s[k] = null; });
     }
@@ -3218,6 +3219,28 @@
       DT.set(function (s) { s.onCallTargets = list; return s; });
       return list;
     }).catch(function () { DT.set(function (s) { s.onCallTargets = []; return s; }); return []; });
+  };
+  // Directory role contacts (PerfectServe parity #1): the server's
+  // resolveOnCallTargets grouped by role — label, everyone reachable on it
+  // now, and the ONE target its Message button opens through
+  // startRoleConversation (the DND-aware holder, exactly as the role picker).
+  // Module off (routing.roleMessaging, or the oncall.board it requires): no
+  // request, no rows; a refusal while the page was open re-reads the switches.
+  DT.actions.listRoleContacts = function () {
+    if (DT.moduleOn && !DT.moduleOn("routing.roleMessaging")) {
+      DT.set(function (s) { s.roleContacts = []; return s; });
+      return Promise.resolve([]);
+    }
+    var epoch = authEpoch;
+    return get("/api/messaging/role-contacts").then(function (rows) {
+      var list = Array.isArray(rows) ? rows : [];
+      if (epoch === authEpoch) DT.set(function (s) { s.roleContacts = list; return s; });
+      return list;
+    }).catch(function (e) {
+      if (/module_disabled/.test(String((e && e.message) || ""))) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.roleContacts = []; return s; });
+      return [];
+    });
   };
   // Availability of a 1:1 peer (DND + covering + on-shift) for the thread's
   // auto-response banner. Cached per userId in s.peerAvail.

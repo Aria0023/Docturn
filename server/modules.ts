@@ -111,6 +111,8 @@ export const GATE_TABLE: readonly GateRule[] = [
   // The consult-service catalog editor (Directory → Consult services).
   { path: /^\/api\/org\/consult-services(\/|$)/, module: "routing.consults" },
   { path: /^\/api\/messaging\/on-call-targets(\/|$)/, module: "routing.roleMessaging" },
+  // Directory role contacts (resolveOnCallTargets grouped by role).
+  { path: /^\/api\/messaging\/role-contacts$/, module: "routing.roleMessaging" },
   // Rotation "Next up" preview (server/routes/oncall.ts) — part of admission routing.
   { path: /^\/api\/rotation(\/|$)/, module: "routing.assignments" },
   // Messaging

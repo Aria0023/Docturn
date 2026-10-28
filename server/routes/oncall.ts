@@ -74,6 +74,10 @@ export function configureOnCallSources(opts: { epic?: EpicClientDeps } = {}) {
   registry = null;
   registryFor = null;
 }
+/** The schedule-source registry the board reads (shared with role messaging). */
+export function onCallSourceRegistry(): SourceRegistry {
+  return sources();
+}
 function sources(): SourceRegistry {
   const db = storage();
   if (!registry || registryFor !== db) {

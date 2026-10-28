@@ -133,6 +133,21 @@ describe("live client: no demo clinical rows", () => {
     expect(JSON.stringify(h.state().providers || [])).not.toMatch(/Ada Prior/);
   });
 
+  // PerfectServe-parity per-user / per-org slices: empty before the server
+  // answers (live or offline seed — there are no kit demo rows for them), and
+  // emptied on sign-out so the next person never sees the previous one's.
+  const PARITY_SLICES = ["roleContacts"];
+  it("parity slices (role contacts …) start empty and are emptied on sign-out", async () => {
+    const h = await boot({ syntheticData: false });
+    for (const k of PARITY_SLICES) expect(h.state()[k], k).toEqual([]);
+    await h.w.DT.actions.login("er_doctor", "LAKE", "er.doc", "pw-123456789");
+    await sleep(80);
+    h.w.DT.set((s: any) => { for (const k of PARITY_SLICES) s[k] = [{ marker: "previous person's row" }]; return s; });
+    await h.w.DT.actions.logout();
+    await sleep(30);
+    for (const k of PARITY_SLICES) expect(h.state()[k], k).toEqual([]);
+  });
+
   it("the labelled local demo (synthetic server, then unreachable) still has the kit's demo rows", async () => {
     const h = await boot({ syntheticData: true });
     h.net.online = false;

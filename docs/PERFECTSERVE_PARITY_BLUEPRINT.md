@@ -574,3 +574,41 @@ Build these, in priority order, and nothing gated:
 real push, schema-enforced cascades + retention reconciliation, a versioned
 migration/backfill strategy, and per-ingress webhook hardening + the prod
 `RATE_LIMIT` default. These are prerequisites, not polish.
+
+---
+
+## 8. Built — PerfectServe-parity feature set
+
+Every feature below is a per-org module (shared/modules.ts) the developer can
+switch per organization (`PATCH /api/dev/modules/:orgId`), gated server-side
+(server/modules.ts `GATE_TABLE` / `requireModule`) with a client refusal path.
+Every per-user table is cascaded by the tenant delete (one transaction), the
+user delete and — for Done rows — the patient purge; tests/dev-audit.test.ts
+proves a tenant with rows in every one of them still deletes cleanly.
+
+Tables (shared/schema.ts + server/db.ts): `directory_favorites`,
+`conversation_done`, `user_reminder_prefs`, `user_sound_prefs`, `user_pins`.
+
+Out of scope (not built, stated here only): VoIP calling and a call log, an
+Apple Watch app, and the Expo native app (`mobile-app/`) — the iPhone surface
+is the web app / PWA.
+
+### #1 Role contacts — module `routing.roleMessaging` (now requires `oncall.board`)
+- `GET /api/messaging/role-contacts`: `resolveOnCallTargets` (the ONE role
+  resolution path — the role picker and forward use it too) grouped by role.
+  It now also resolves the org's schedule-source slots (Amion / Epic / manual,
+  the same slots the on-call board shows), joined to real in-org users by
+  `providerUserId` only. Each contact: role label, everyone reachable on it
+  (DND holders shown with their covering provider; DND with no covering is
+  unreachable and left out; never yourself), and one Message target that the
+  existing `startRoleConversation` flow opens — the DND-aware current holder.
+- Only roles that resolve are listed; an org with no schedule data, consult
+  catalog or rotation shows no section at all. The admissions round-robin
+  appears as "Next hospitalist (round-robin)": messaging it opens a thread
+  with the next-up hospitalist and routes nothing (no cursor move, no
+  assignment). The caller's personal care-team on-call flags are people, not
+  org roles, and stay out of the list.
+- Directory → Role contacts shows live presence from `/api/presence`
+  (unknown, not "offline", when the process has no realtime hub).
+- Tests: tests/role-contacts.test.ts, tests/client-directory.test.ts;
+  check: scripts/role-contacts-check.mjs.

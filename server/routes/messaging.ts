@@ -23,6 +23,8 @@ import {
 } from "../services/covering.js";
 import { notificationDeps } from "../services/notifications.js";
 import { previewNext } from "../services/rotation.js";
+import { fetchSelectedSlots } from "../services/schedule-sources/index.js";
+import { onCallSourceRegistry } from "./oncall.js";
 import {
   AttachmentStoreError,
   attachmentStoreFor,
@@ -351,14 +353,25 @@ function conversationView<T extends Conversation>(c: T) {
 }
 
 /** A single addressable on-call / role target the compose picker can message. */
-interface OnCallTarget {
+export interface OnCallTarget {
   id: string;
   label: string;
-  kind: "consult_service" | "next_hospitalist" | "care_team";
+  kind: "schedule" | "consult_service" | "next_hospitalist" | "care_team";
+  /** Who a message actually reaches (the covering provider when the holder is DND). */
   userId: number;
   /** Display name of the user who currently holds this on-call role (after any
    *  DND→covering redirect), so a "who's on call now" view can name the person. */
   holder: string;
+  /** The ROLE this target belongs to: several targets (one per person on a
+   *  schedule slot) share one role key. Directory role contacts group by it,
+   *  and a role favorite stores it. */
+  role: string;
+  /** The role's own label (no holder name), e.g. "Tarzana 7", "On-call Cardiology". */
+  roleLabel: string;
+  /** The person the schedule / catalog / rotation names (before DND redirect). */
+  onCallUserId: number;
+  /** True when the holder is DND and `userId` is their covering provider. */
+  covering: boolean;
 }
 
 /**
@@ -385,10 +398,13 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
     id: string,
     label: string,
     userId: number | null | undefined,
+    role: { key: string; label: string } = { key: id, label },
   ) {
     // Must resolve to a real in-org user, must not be the caller (messaging
     // yourself as "the on-call X" is meaningless), and de-duped per target.
     if (userId == null || userId === me.id || !byId.has(userId)) return;
+    const onCallUserId = userId;
+    let covering = false;
     // DND-aware: if the holder is do-not-disturb, address their designated
     // covering provider instead; with no covering, the role is unreachable
     // and is excluded rather than silently routing into a muted inbox.
@@ -401,9 +417,13 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
       if (coveringId == null || coveringId === me.id) return;
       const cu = byId.get(coveringId);
       userId = coveringId;
+      covering = true;
       label = label + (cu ? " · covering: " + cu.displayName : " · covering");
     }
-    const key = kind + ":" + userId;
+    // A schedule role can carry several people (and one person several
+    // roles), so its de-dupe is per role + person; the other kinds keep their
+    // original per-recipient de-dupe.
+    const key = kind === "schedule" ? kind + ":" + role.key + ":" + onCallUserId : kind + ":" + userId;
     if (seen.has(key)) return;
     seen.add(key);
     targets.push({
@@ -412,6 +432,10 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
       kind,
       userId,
       holder: byId.get(userId)?.displayName ?? "",
+      role: role.key,
+      roleLabel: role.label,
+      onCallUserId,
+      covering,
     });
   }
 
@@ -452,6 +476,9 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
       "next_hospitalist",
       u ? "Next hospitalist (" + u.displayName + ")" : "Next hospitalist",
       next.userId,
+      // The admissions round-robin's NEXT pick (read-only preview: messaging
+      // it never advances the rotation or creates an assignment).
+      { key: "next_hospitalist", label: "Next hospitalist (round-robin)" },
     );
   }
 
@@ -471,7 +498,74 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
     );
   }
 
+  // 4) Schedule slots from the org's selected source (Amion / Epic / manual) —
+  //    the same slots the on-call board shows. A slot's person is addressable
+  //    ONLY through its providerUserId, and only when that is a real user of
+  //    THIS org (add() checks the org roster); a published name that matched
+  //    nobody is never guessed at here. Switched-off sources serve no slots
+  //    (services/schedule-sources), and routing.roleMessaging requires
+  //    oncall.board, so the board and this list can never disagree.
+  const { slots } = await fetchSelectedSlots(storage(), onCallSourceRegistry(), me.organizationId);
+  for (const sl of slots) {
+    const roleKey = "schedule:" + sl.slot;
+    await add("schedule", roleKey + ":" + (sl.providerUserId ?? ""), sl.slot, sl.providerUserId, {
+      key: roleKey,
+      label: sl.slot,
+    });
+  }
+
   return targets;
+}
+
+/** A Directory role contact: one role, everyone reachable on it now, one Message target. */
+export interface RoleContact {
+  role: string;
+  label: string;
+  kind: OnCallTarget["kind"];
+  /** The admissions round-robin entry point (messaging it routes nothing). */
+  roundRobin: boolean;
+  holders: Array<{
+    userId: number;
+    name: string;
+    dnd: boolean;
+    covering: { userId: number; name: string } | null;
+    /** Who a message to this person reaches. */
+    messageUserId: number;
+    /** This person's own role-picker target id (forward roleTarget). */
+    targetId: string;
+  }>;
+  /** What the role's Message button addresses: its first reachable target. */
+  target: OnCallTarget;
+}
+
+/**
+ * Role contacts = resolveOnCallTargets grouped by role (no second resolution
+ * path). The caller's personal care-team on-call flags are people, not org
+ * roles, and stay out of the Directory's role list.
+ */
+export async function buildRoleContacts(me: User): Promise<RoleContact[]> {
+  const targets = await resolveOnCallTargets(me);
+  const users = await storage().listUsers(me.organizationId);
+  const nameById = new Map(users.map((u) => [u.id, u.displayName]));
+  const byRole = new Map<string, RoleContact>();
+  for (const t of targets) {
+    if (t.kind === "care_team") continue;
+    let rc = byRole.get(t.role);
+    if (!rc) {
+      rc = { role: t.role, label: t.roleLabel, kind: t.kind, roundRobin: t.kind === "next_hospitalist", holders: [], target: t };
+      byRole.set(t.role, rc);
+    }
+    if (rc.holders.some((h) => h.userId === t.onCallUserId)) continue;
+    rc.holders.push({
+      userId: t.onCallUserId,
+      name: nameById.get(t.onCallUserId) ?? "",
+      dnd: t.covering,
+      covering: t.covering ? { userId: t.userId, name: nameById.get(t.userId) ?? "" } : null,
+      messageUserId: t.userId,
+      targetId: t.id,
+    });
+  }
+  return Array.from(byRole.values());
 }
 
 /**
@@ -599,6 +693,14 @@ const TEMPLATE_ORG_ROLES = new Set<string>(["director", "er_director", "develope
 export function registerMessagingRoutes(app: Express) {
   app.get("/api/messaging/on-call-targets", requireAuth, async (req, res) => {
     res.json(await resolveOnCallTargets(currentUser(req)));
+  });
+
+  // Directory role contacts (PerfectServe parity #1) — gated with
+  // on-call-targets under routing.roleMessaging (which requires oncall.board).
+  // Names + ids only: no patient data is involved.
+  app.get("/api/messaging/role-contacts", requireAuth, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await buildRoleContacts(currentUser(req)));
   });
 
   // Who in my org is online right now: users holding a live realtime socket

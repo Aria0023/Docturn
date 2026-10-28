@@ -1,34 +1,62 @@
 /* DocTurn web-app UI kit — provider directory (compact single-row list) */
 
-// "On call right now" — the live roster of addressable roles / consult services
-// resolved to whoever holds each one this minute (DND already redirected to the
-// covering provider by the server). Both TigerConnect and PerfectServe sell this
-// at-a-glance "who's on call" view. Read-only; one tap opens a thread addressed
-// to the role. Hidden when nothing is resolvable.
-function OnCallNow() {
+// Role contacts (PerfectServe parity #1): every on-call ROLE the server
+// resolves right now (GET /api/messaging/role-contacts — the same single
+// resolution path the role picker and forward use), with everyone reachable on
+// it, their live presence (GET /api/presence + USER_PRESENCE_CHANGED; unknown
+// when there is no realtime hub, never "offline") and ONE Message button that
+// opens the role's target through startRoleConversation — the DND-aware
+// current holder, as the role picker does. A role nobody reachable holds is
+// not listed, and an org with no schedule data shows no section at all.
+// The admissions round-robin entry is labelled as such: messaging it only
+// opens a thread with the next-up hospitalist; it routes nothing.
+const ROLE_KIND_ICON = { schedule: "calendar-clock", consult_service: "stethoscope", next_hospitalist: "repeat" };
+function presenceOf(presence, userId) {
+  if (!presence || !presence.live) return null;
+  return presence.online && presence.online[userId] ? "online" : "offline";
+}
+function RoleContactRow({ rc, first, presence, mobile, onMessage, star }) {
+  return (
+    <div data-role-contact={rc.role} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: first ? "none" : "1px solid var(--border)" }}>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <Icon name={ROLE_KIND_ICON[rc.kind] || "users"} size={17} />
+      </span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span data-role-label style={{ fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{rc.label}</span>
+          {rc.roundRobin && <Badge variant="secondary">Round-robin</Badge>}
+        </div>
+        {(rc.holders || []).map((h) => {
+          const p = presenceOf(presence, h.userId);
+          return (
+            <div key={h.userId} data-role-holder={h.userId} data-presence={p || "unknown"} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 3, minWidth: 0 }}>
+              {p ? <span title={p === "online" ? "Online now" : "Not connected"} style={{ display: "flex" }}><StatusDot status={p} /></span> : null}
+              <span style={{ overflowWrap: "anywhere" }}>{h.name}{h.covering ? " · DND, covering: " + h.covering.name : ""}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 6, flex: "none" }}>
+        {star}
+        <Button size={mobile ? "icon" : "sm"} variant="outline" icon="message-square" title={"Message " + rc.label} aria-label={"Message " + rc.label} style={mobile ? { width: 44, height: 44 } : null} onClick={() => onMessage(rc)}>{mobile ? null : "Message"}</Button>
+      </div>
+    </div>
+  );
+}
+function RoleContacts({ renderStar }) {
   const st = useStore();
   const a = useActions();
-  const targets = st.onCallTargets || [];
-  React.useEffect(() => { if (a.listOnCallTargets) a.listOnCallTargets(); }, []);
-  if (!targets.length) return null;
-  const KIND_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
-  const openRole = (t) => { if (!a.startRoleConversation) return; Promise.resolve(a.startRoleConversation(t)).then(() => a.setNav && a.setNav("messages")); };
+  const mobile = useIsMobile();
+  const on = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("routing.roleMessaging");
+  React.useEffect(() => { if (on && a.listRoleContacts) a.listRoleContacts(); }, [on]);
+  const list = on ? (st.roleContacts || []) : [];
+  if (!list.length) return null;
+  const openRole = (rc) => { if (!a.startRoleConversation || !rc.target) return; Promise.resolve(a.startRoleConversation(rc.target)).then(() => a.setNav && a.setNav("messages")); };
   return (
-    <div style={{ marginBottom: 18 }}>
-      <SectionTitle>On call right now</SectionTitle>
+    <div data-role-contacts style={{ marginBottom: 18 }}>
+      <SectionTitle>Role contacts</SectionTitle>
       <Card style={{ padding: 0, overflow: "hidden" }}>
-        {targets.map((t, i) => (
-          <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
-            <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-              <Icon name={KIND_ICON[t.kind] || "user"} size={17} />
-            </span>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.label}</div>
-              {t.holder ? <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.holder}</div> : null}
-            </div>
-            <Button size="sm" variant="outline" icon="message-square" onClick={() => openRole(t)}>Message</Button>
-          </div>
-        ))}
+        {list.map((rc, i) => <RoleContactRow key={rc.role} rc={rc} first={i === 0} presence={st.presence} mobile={mobile} onMessage={openRole} star={renderStar ? renderStar(rc) : null} />)}
       </Card>
     </div>
   );
@@ -55,7 +83,7 @@ function Directory({ providers, onMessage }) {
   const search = <Field icon="search" placeholder="Search name or specialty…" value={q} onChange={setQ} />;
   return (
     <PageWrap>
-      <OnCallNow />
+      <RoleContacts />
       <SectionTitle action={!mobile && <div style={{ width: 240 }}>{search}</div>}>
         Provider directory
       </SectionTitle>
@@ -133,4 +161,4 @@ function DirectoryHub({ providers, onMessage, domainRoles }) {
   );
 }
 
-Object.assign(window, { Directory, DirectoryHub });
+Object.assign(window, { Directory, DirectoryHub, RoleContacts });
