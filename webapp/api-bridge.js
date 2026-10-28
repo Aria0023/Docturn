@@ -40,7 +40,7 @@
     s.providers = []; s.board = []; s.sent = []; s.pending = [];
     s.myPatients = []; s.myAdmissions = []; s.acceptedToday = 0;
     s.directory = []; s.orgPeople = {};
-    s.roleContacts = [];
+    s.roleContacts = []; s.favorites = []; s.recents = [];
     if (!s.session) s.me = { name: "", avatar: "", role: "" };
     return s;
   });
@@ -88,7 +88,7 @@
       // board, census, admissions log, ER roster and diversion state, care
       // team …): the new identity's hydrate reads its own. Emptied, never
       // reset to the kit's demo seed rows.
-      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets"].forEach(function (k) { s[k] = []; });
+      ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
         "auditCount", "phiAccessCount", "auditScope", "auditError", "presence"].forEach(function (k) { s[k] = null; });
     }
@@ -3198,7 +3198,10 @@
       });
   };
   DT.actions.startConversation = function (participant) {
-    var other = (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });
+    // A server user id (favorites, recently contacted, people who are not in
+    // the hospitalist directory) is used as-is; otherwise match by name.
+    var other = participant && participant.userId != null ? { id: participant.userId }
+      : (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });
     if (!other || meId == null) { if (origStartConversation) origStartConversation(participant); return; } // not a registered user → local only
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(other.id) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
@@ -3240,6 +3243,52 @@
       if (/module_disabled/.test(String((e && e.message) || ""))) refreshModulesAfterRefusal();
       if (epoch === authEpoch) DT.set(function (s) { s.roleContacts = []; return s; });
       return [];
+    });
+  };
+  // Directory favorites + recently contacted (PerfectServe parity #2, module
+  // directory.favorites). Both lists are the server's: favorites come back
+  // resolved (a person, or a role's current contact — null when nobody
+  // reachable holds it now); recents are derived from my own conversations.
+  // A star is a server write; the list is re-read after it, so the star on
+  // screen is always the stored one.
+  DT.actions.loadDirectoryLists = function () {
+    if (DT.moduleOn && !DT.moduleOn("directory.favorites")) {
+      DT.set(function (s) { s.favorites = []; s.recents = []; return s; });
+      return Promise.resolve();
+    }
+    var epoch = authEpoch;
+    var off = function (e) { if (/module_disabled/.test(String((e && e.message) || ""))) refreshModulesAfterRefusal(); return null; };
+    return Promise.all([
+      get("/api/directory/favorites").catch(off),
+      get("/api/directory/recents").catch(off),
+    ]).then(function (r) {
+      if (epoch !== authEpoch) return;
+      DT.set(function (s) {
+        s.favorites = (r[0] && Array.isArray(r[0].favorites)) ? r[0].favorites : [];
+        s.recents = (r[1] && Array.isArray(r[1].recents)) ? r[1].recents : [];
+        return s;
+      });
+    });
+  };
+  DT.actions.toggleFavorite = function (kind, targetId) {
+    var id = String(targetId);
+    var starred = (DT.getState().favorites || []).some(function (f) { return f.targetKind === kind && f.targetId === id; });
+    var req = starred
+      ? api("DELETE", "/api/directory/favorites/" + encodeURIComponent(kind) + "/" + encodeURIComponent(id))
+      : api("POST", "/api/directory/favorites", { targetKind: kind, targetId: id });
+    return req.then(function () {
+      return DT.actions.loadDirectoryLists().then(function () { return true; });
+    }, function (e) {
+      var why = String((e && e.message) || "");
+      if (/module_disabled/.test(why)) refreshModulesAfterRefusal();
+      var msg = /module_disabled/.test(why) ? (/roleMessaging/.test(JSON.stringify((e && e.body) || {})) ? "Role contacts are switched off for your organization." : "Favorites are switched off for your organization.")
+        : /role_not_found/.test(why) ? "Nobody reachable holds that role right now."
+        : /user_disabled/.test(why) ? "That account is deactivated."
+        : /not_found/.test(why) ? (starred ? "That favorite was already removed." : "That person is not in your organization.")
+        : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — nothing was changed."
+        : "Nothing was changed — try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: starred ? "Couldn't remove favorite" : "Couldn't add favorite", msg: msg }; return s; });
+      return DT.actions.loadDirectoryLists().then(function () { return false; });
     });
   };
   // Availability of a 1:1 peer (DND + covering + on-shift) for the thread's

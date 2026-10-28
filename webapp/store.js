@@ -307,6 +307,10 @@
       // Directory role contacts (GET /api/messaging/role-contacts). Server
       // rows only — no kit demo roles, live or offline.
       roleContacts: [],
+      // Directory favorites (GET /api/directory/favorites, resolved rows) and
+      // recently contacted (GET /api/directory/recents, derived server-side).
+      favorites: [],
+      recents: [],
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -808,7 +812,7 @@
     // the previous person's trail sizes and their org's live presence
     "phiAccessCount", "auditScope", "auditError", "presence",
     // the previous person's Directory: their org's role contacts and holders
-    "roleContacts", "onCallTargets"];
+    "roleContacts", "onCallTargets", "favorites", "recents"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1107,6 +1111,8 @@
     // local thread if asked.
     listOnCallTargets: function () { set(function (s) { s.onCallTargets = []; return s; }); return Promise.resolve([]); },
     listRoleContacts: function () { set(function (s) { s.roleContacts = []; return s; }); return Promise.resolve([]); },
+    loadDirectoryLists: function () { set(function (s) { s.favorites = []; s.recents = []; return s; }); return Promise.resolve(); },
+    toggleFavorite: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

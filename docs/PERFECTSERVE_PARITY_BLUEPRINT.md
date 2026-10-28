@@ -612,3 +612,25 @@ is the web app / PWA.
   (unknown, not "offline", when the process has no realtime hub).
 - Tests: tests/role-contacts.test.ts, tests/client-directory.test.ts;
   check: scripts/role-contacts-check.mjs.
+
+### #2 Favorites + recently contacted — module `directory.favorites`
+- `directory_favorites` keyed (organization, user, target kind `user`|`role`,
+  target id). `GET/POST /api/directory/favorites`,
+  `DELETE /api/directory/favorites/:kind/:targetId` (server/routes/directory.ts,
+  gated in `GATE_TABLE`). A person must be an active user of the caller's
+  org (another tenant's id answers 404 like an unknown one; never yourself);
+  a role must be one the org resolves now (and starring a role needs
+  `routing.roleMessaging`). The list comes back resolved: a starred role
+  nobody reachable holds right now resolves to `null` — the star is kept, the
+  client draws no empty "on call" card. Add / remove are audited (`low`,
+  target kind + user id only, never a name or role label).
+- `GET /api/directory/recents`: derived on every read from the caller's own
+  direct conversations by newest message (one row per person, at most 10) —
+  names and times only, no message content, nothing stored.
+- Directory opens with Favorites, Recently contacted, Role contacts, then the
+  searchable provider list; a star toggle on person and role rows is a server
+  write followed by a re-read (the star shows the stored state), and a
+  refusal says why. Message on a favorite / recent person opens the direct
+  thread by user id.
+- Tests: tests/favorites.test.ts, tests/client-directory.test.ts;
+  check: scripts/favorites-check.mjs.

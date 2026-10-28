@@ -125,6 +125,8 @@ export const GATE_TABLE: readonly GateRule[] = [
   // edited here, so downgrading is not an option — reject is explicit.
   { path: /^\/api\/messaging\/send$/, module: "messaging.priority", methods: ["POST"], when: nonRoutinePriority, status: 400 },
   { path: /^\/api\/broadcasts(\/|$)/, module: "broadcasts" },
+  // Directory favorites + recently contacted (server/routes/directory.ts).
+  { path: /^\/api\/directory\/(favorites|recents)(\/|$)/, module: "directory.favorites" },
   // Schedule
   { path: /^\/api\/amion(\/|$)/, module: "schedule.amion" },
   { path: /^\/api\/oncall(\/|$)/, module: "oncall.board" },

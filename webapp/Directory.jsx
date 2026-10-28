@@ -62,6 +62,92 @@ function RoleContacts({ renderStar }) {
   );
 }
 
+// Favorites + recently contacted (PerfectServe parity #2, module
+// directory.favorites). The star is a server write (POST / DELETE
+// /api/directory/favorites) and shows the STORED state: the list is re-read
+// after every toggle, and a refusal says why. Recently contacted is the
+// server's, derived from my own direct conversations (people + time only).
+function favoritesOn() { return !window.DT || !window.DT.moduleOn || window.DT.moduleOn("directory.favorites"); }
+function StarToggle({ kind, id, label, mobile }) {
+  const st = useStore();
+  const a = useActions();
+  const [busy, setBusy] = React.useState(false);
+  if (!favoritesOn() || !a.toggleFavorite || id == null) return null;
+  const key = String(id);
+  const starred = (st.favorites || []).some((f) => f.targetKind === kind && f.targetId === key);
+  const what = (starred ? "Remove " : "Add ") + label + (starred ? " from favorites" : " to favorites");
+  const size = mobile ? 44 : 36;
+  return (
+    <button type="button" data-favorite={kind + ":" + key} aria-pressed={starred} aria-label={what} title={what} disabled={busy}
+      onClick={() => { setBusy(true); Promise.resolve(a.toggleFavorite(kind, key)).then(() => setBusy(false), () => setBusy(false)); }}
+      style={{ width: size, height: size, minWidth: size, flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: busy ? "default" : "pointer", fontSize: 20, lineHeight: 1, color: starred ? "var(--status-pending-fg, #B45309)" : "var(--muted-foreground)", opacity: busy ? 0.6 : 1, padding: 0 }}>
+      <span aria-hidden="true">{starred ? "\u2605" : "\u2606"}</span>
+    </button>
+  );
+}
+const DIR_ROLE_LABEL = { hospitalist: "Hospitalist", consultant: "Consultant", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Developer" };
+function PersonRow({ person, first, presence, mobile, onMessage, sub }) {
+  const p = presenceOf(presence, person.userId);
+  const initials = (window.dtFmt && window.dtFmt.initialsOf) ? window.dtFmt.initialsOf(person.displayName) : "";
+  return (
+    <div data-person-row={person.userId} style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderTop: first ? "none" : "1px solid var(--border)" }}>
+      <div style={{ position: "relative", flex: "none" }}>
+        <Avatar initials={initials} size={34} tint={p === "online" ? "emerald" : "slate"} />
+        {p && <span data-presence={p} title={p === "online" ? "Online now" : "Not connected"} style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p} /></span>}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{person.displayName}</div>
+        <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>{[person.credential, DIR_ROLE_LABEL[person.role] || person.role].filter(Boolean).join(" · ")}{sub ? " · " + sub : ""}</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 6, flex: "none" }}>
+        <StarToggle kind="user" id={person.userId} label={person.displayName} mobile={mobile} />
+        <Button size="icon" variant="outline" icon="message-square" title={"Message " + person.displayName} aria-label={"Message " + person.displayName} style={mobile ? { width: 44, height: 44 } : null} onClick={() => onMessage && onMessage({ userId: person.userId, name: person.displayName })} />
+      </div>
+    </div>
+  );
+}
+function sinceLabel(at) {
+  const t = new Date(at).getTime();
+  if (!t) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+}
+function FavoritesAndRecents({ onMessage }) {
+  const st = useStore();
+  const a = useActions();
+  const mobile = useIsMobile();
+  const on = favoritesOn();
+  React.useEffect(() => { if (on && a.loadDirectoryLists) a.loadDirectoryLists(); }, [on]);
+  if (!on) return null;
+  const openRole = (rc) => { if (!a.startRoleConversation || !rc.target) return; Promise.resolve(a.startRoleConversation(rc.target)).then(() => a.setNav && a.setNav("messages")); };
+  // A favorite whose person left / was deactivated, or whose role nobody
+  // reachable holds now, is kept on the server but not drawn.
+  const favs = (st.favorites || []).filter((f) => (f.targetKind === "user" ? f.user && f.user.active : !!f.role));
+  const recents = (st.recents || []).filter((r) => r.active);
+  return (
+    <React.Fragment>
+      {favs.length > 0 && (
+        <div data-favorites style={{ marginBottom: 18 }}>
+          <SectionTitle>Favorites</SectionTitle>
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            {favs.map((f, i) => f.targetKind === "user"
+              ? <PersonRow key={"u" + f.targetId} person={f.user} first={i === 0} presence={st.presence} mobile={mobile} onMessage={onMessage} />
+              : <RoleContactRow key={"r" + f.targetId} rc={f.role} first={i === 0} presence={st.presence} mobile={mobile} onMessage={openRole} star={<StarToggle kind="role" id={f.role.role} label={f.role.label} mobile={mobile} />} />)}
+          </Card>
+        </div>
+      )}
+      {recents.length > 0 && (
+        <div data-recents style={{ marginBottom: 18 }}>
+          <SectionTitle>Recently contacted</SectionTitle>
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            {recents.map((r, i) => <PersonRow key={r.userId} person={r} first={i === 0} presence={st.presence} mobile={mobile} onMessage={onMessage} sub={sinceLabel(r.lastMessageAt)} />)}
+          </Card>
+        </div>
+      )}
+    </React.Fragment>
+  );
+}
+
 // Presence dot pinned to the avatar's bottom-right rim. display:flex (not an
 // inline line box) is what makes the 9px dot actually sit at bottom:-1/right:-1
 // instead of ~10px high inside a 23px text line.
@@ -83,7 +169,8 @@ function Directory({ providers, onMessage }) {
   const search = <Field icon="search" placeholder="Search name or specialty…" value={q} onChange={setQ} />;
   return (
     <PageWrap>
-      <RoleContacts />
+      <FavoritesAndRecents onMessage={onMessage} />
+      <RoleContacts renderStar={(rc) => <StarToggle kind="role" id={rc.role} label={rc.label} mobile={mobile} />} />
       <SectionTitle action={!mobile && <div style={{ width: 240 }}>{search}</div>}>
         Provider directory
       </SectionTitle>
@@ -96,7 +183,7 @@ function Directory({ providers, onMessage }) {
               <Icon name="users" size={13} /> {p.census}/{p.cap}
             </span>
           );
-          const message = <Button size="icon" variant="outline" icon="message-square" title={"Message " + p.name} style={mobile ? { width: 44, height: 44 } : null} onClick={() => onMessage && onMessage({ name: p.name, role: p.specialty, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" })} />;
+          const message = <Button size="icon" variant="outline" icon="message-square" title={"Message " + p.name} style={mobile ? { width: 44, height: 44 } : null} onClick={() => onMessage && onMessage({ userId: p.userId, name: p.name, role: p.specialty, specialty: p.specialty, avatar: p.avatar, working: p.working, tint: p.working ? "emerald" : "slate" })} />;
           return (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <PresenceAvatar initials={p.avatar} size={34} working={p.working} />
@@ -107,7 +194,8 @@ function Directory({ providers, onMessage }) {
             </div>
             {!mobile && pill}
             {!mobile && census}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6, flex: "none" }}>
+            <div style={{ marginLeft: "auto", display: "flex", flexDirection: mobile ? "column" : "row", gap: 6, flex: "none" }}>
+              <StarToggle kind="user" id={p.userId} label={p.name} mobile={mobile} />
               {message}
             </div>
           </div>
@@ -161,4 +249,4 @@ function DirectoryHub({ providers, onMessage, domainRoles }) {
   );
 }
 
-Object.assign(window, { Directory, DirectoryHub, RoleContacts });
+Object.assign(window, { Directory, DirectoryHub, RoleContacts, StarToggle });
