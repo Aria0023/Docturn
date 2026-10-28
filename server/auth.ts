@@ -14,7 +14,7 @@ import {
 } from "@shared/schema";
 import { storage } from "./storage.js";
 import { appendAudit } from "./audit.js";
-import { getModules } from "./modules.js";
+import { getModules, isModuleEnabled } from "./modules.js";
 import { normalizeUsername, usernameKey } from "./usernames.js";
 import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, SESSION_POLICY, clientIpKey, getRateLimitState } from "./config.js";
 
@@ -173,6 +173,9 @@ const APP_LOCK_EXEMPT: readonly RegExp[] = [
   /^\/user\/?$/,
   /^\/session\/?$/,
   /^\/session\/lock\/?$/,
+  // PIN unlock (security.pin): re-opens THIS locked session. Exempt — not a
+  // passthrough — so an expired lock is still ended above before it runs.
+  /^\/session\/unlock-pin\/?$/,
   /^\/config\/?$/,
 ];
 
@@ -187,6 +190,8 @@ interface AppLockHandle {
   lock(at: number): Promise<void>;
   /** Sign this session (or token) out. */
   end(): Promise<void>;
+  /** Lift the lock on this same session (PIN unlock only — never a sign-in). */
+  unlock(): Promise<void>;
   /** What this session's live sockets carry as their session id. */
   connectionId: string | null;
 }
@@ -206,7 +211,7 @@ function appLockOf(req: Request, res: Response): AppLockHandle | null {
   if (!me) return null;
   const bearer = bearerCredentialOf(res);
   if (bearer) {
-    if (!bearer.lockedAt || !bearer.lock || !bearer.end) return null;
+    if (!bearer.lockedAt || !bearer.lock || !bearer.end || !bearer.unlock) return null;
     return {
       lockedAt: () => bearer.lockedAt!(),
       lock: async (at) => bearer.lock!(at),
@@ -214,6 +219,7 @@ function appLockOf(req: Request, res: Response): AppLockHandle | null {
         bearer.end!();
         (req as unknown as { user?: unknown }).user = undefined;
       },
+      unlock: async () => bearer.unlock!(),
       connectionId: bearer.connectionId,
     };
   }
@@ -235,8 +241,42 @@ function appLockOf(req: Request, res: Response): AppLockHandle | null {
         // passport's logOut regenerates the session: the locked one is gone.
         req.logout((err) => (err ? reject(err) : resolve()));
       }),
+    unlock: () =>
+      new Promise<void>((resolve, reject) => {
+        delete req.session.appLock;
+        req.session.save((err) => (err ? reject(err) : resolve()));
+      }),
     connectionId: req.sessionID ?? null,
   };
+}
+
+/**
+ * PIN unlock (security.pin) — the pieces of the lock the PIN route needs.
+ * `key`: a SHA-256 of this session's id (or the demo token's connection id),
+ * the per-session key the wrong-PIN counter is stored under — never the id.
+ * Null when the request has no lockable credential.
+ */
+export function appLockForPin(
+  req: Request,
+  res: Response,
+): { lockedAt: number | null; key: string; unlock: () => Promise<void> } | null {
+  const lock = appLockOf(req, res);
+  if (!lock || !lock.connectionId) return null;
+  return {
+    lockedAt: lock.lockedAt(),
+    key: createHash("sha256").update("pin-session:" + lock.connectionId).digest("hex"),
+    unlock: () => lock.unlock(),
+  };
+}
+
+/** May this locked session be re-opened with a PIN right now? (module on, PIN set, not disabled here) */
+export async function pinUnlockAvailable(req: Request, res: Response): Promise<boolean> {
+  const me = req.user as unknown as User | undefined;
+  const lock = appLockForPin(req, res);
+  if (!me || !lock || lock.lockedAt == null) return false;
+  if (!(await isModuleEnabled(me.organizationId, "security.pin"))) return false;
+  if (!(await storage().getUserPin(me.organizationId, me.id))) return false;
+  return !(await storage().pinDisabledFor(me.organizationId, me.id, lock.key));
 }
 
 /** Epoch ms this request's session (or token) was locked at, or null. */
@@ -884,6 +924,8 @@ export interface BearerCredential {
   lock?(at: number): void;
   /** Revoke this credential (its lock outlived the idle window). */
   end?(): void;
+  /** Lift this credential's lock (PIN unlock). */
+  unlock?(): void;
 }
 
 export function bearerCredentialOf(res: Response): BearerCredential | undefined {
@@ -1429,7 +1471,11 @@ export function registerAuthRoutes(app: Express) {
     // every browser-side trace of the lock (A.CON-SHO-7).
     if (appLockedAt(req, res) != null) {
       const org = await storage().getOrganization(me.organizationId);
-      return { ...body, locked: true as const, orgCode: org?.code ?? null };
+      // pinUnlock: the lock screen may offer the PIN (security.pin on, a PIN
+      // set, not disabled for this session). Only on the locked body — the
+      // browser never stores it.
+      const pin = (await pinUnlockAvailable(req, res)) ? { pinUnlock: true as const } : {};
+      return { ...body, locked: true as const, orgCode: org?.code ?? null, ...pin };
     }
     return body;
   }

@@ -783,11 +783,19 @@ CREATE TABLE IF NOT EXISTS user_pins (
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
   pin_hash TEXT NOT NULL,
-  failed_attempts INTEGER NOT NULL DEFAULT 0,
-  failed_session TEXT,
-  pin_disabled_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_pins_user_uniq ON user_pins(user_id);
+-- Wrong-PIN counter per (user, session hash) — see shared/schema.ts.
+CREATE TABLE IF NOT EXISTS pin_unlock_failures (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  session_hash TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  disabled_at TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS pin_unlock_failures_session_uniq ON pin_unlock_failures(user_id, session_hash);
 `;

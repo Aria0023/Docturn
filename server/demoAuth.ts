@@ -109,6 +109,10 @@ export function demoTokenAuth() {
             tokens.delete(token);
             lockedTokens.delete(token);
           },
+          // PIN unlock (security.pin) lifts this token's lock — and only it.
+          unlock: () => {
+            lockedTokens.delete(token);
+          },
         };
         (res.locals as { bearerCredential?: BearerCredential }).bearerCredential = credential;
       }

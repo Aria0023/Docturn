@@ -918,9 +918,6 @@ export const userSoundPrefs = pgTable(
 /**
  * PIN unlock (module security.pin, default off): a scrypt hash (the password
  * hasher) that re-opens an authenticated, LOCKED session — never a sign-in.
- * failed_attempts counts wrong PINs for the session identified by
- * failed_session (a hash of its id, never the id); at the limit the PIN is
- * disabled for that session (pin_disabled_at) and the password is required.
  */
 export const userPins = pgTable(
   "user_pins",
@@ -933,14 +930,38 @@ export const userPins = pgTable(
       .notNull()
       .references(() => users.id),
     pinHash: text("pin_hash").notNull(),
-    failedAttempts: integer("failed_attempts").notNull().default(0),
-    failedSession: text("failed_session"),
-    pinDisabledAt: timestamp("pin_disabled_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (t) => ({
     pinPerUser: uniqueIndex("user_pins_user_uniq").on(t.userId),
+  }),
+);
+
+/**
+ * Wrong-PIN counter, one row per (user, SESSION) — the session is identified
+ * by a SHA-256 of its id (or of a demo bearer token's connection id), never
+ * the id itself. Per session by construction: one session's failures never
+ * reset or spend another's. At PIN_MAX_FAILURES the PIN is disabled for that
+ * session (disabled_at) and only the password re-opens it.
+ */
+export const pinUnlockFailures = pgTable(
+  "pin_unlock_failures",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    sessionHash: text("session_hash").notNull(),
+    failedAttempts: integer("failed_attempts").notNull().default(0),
+    disabledAt: timestamp("disabled_at"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    pinFailurePerSession: uniqueIndex("pin_unlock_failures_session_uniq").on(t.userId, t.sessionHash),
   }),
 );
 
@@ -1032,6 +1053,7 @@ export type ConversationDone = typeof conversationDone.$inferSelect;
 export type UserReminderPrefs = typeof userReminderPrefs.$inferSelect;
 export type UserSoundPrefs = typeof userSoundPrefs.$inferSelect;
 export type UserPin = typeof userPins.$inferSelect;
+export type PinUnlockFailure = typeof pinUnlockFailures.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;

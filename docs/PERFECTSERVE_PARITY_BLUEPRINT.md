@@ -771,3 +771,48 @@ is the web app / PWA.
   server rules — the server did not change, so these passed on the old
   server too), tests/client-quick-responses.test.ts (failed on the HEAD
   client); check: scripts/quick-responses-check.mjs.
+
+### #7 PIN unlock — module `security.pin` (default off)
+- A PIN re-opens an authenticated, LOCKED session; it is not
+  authentication. Routes (server/routes/pin.ts, gated in `GATE_TABLE`):
+  `GET` / `PUT` `{ currentPassword, pin }` / `DELETE /api/security/pin` (the
+  caller's own row; set / change only with the account password re-entered —
+  a wrong one is 403 `wrong_password`, nothing stored) and
+  `POST /api/session/unlock-pin` `{ pin }`. Tables: `user_pins` (scrypt hash
+  from the password hasher) and `pin_unlock_failures` (one row per user +
+  session hash). Both cascade in the tenant delete and the user delete.
+- Unlock goes through the existing 423 lock gate: the route is in
+  `APP_LOCK_EXEMPT` (not the passthrough list), so an expired lock has
+  already ended the session (401). It needs a signed-in, locked session
+  (else 401 / 409 `not_locked`), a PIN (409 `pin_not_set`), and lifts the
+  lock on that same session (cookie: the session's `appLock`; demo bearer
+  token: its own lock) — no new session, no `/api/login`.
+- Failures: the attempt is spent atomically BEFORE the hash is checked
+  (`reservePinAttempt`, an upsert of the per-session counter), so parallel
+  guesses cannot exceed the limit; 403 `wrong_pin` + `attemptsLeft`; the 5th
+  wrong PIN → 403 `pin_disabled` `passwordRequired: true` for that session
+  (even the right PIN is then refused). A password sign-in replaces the
+  session, so the new one may use the PIN again. One session's failures never
+  touch another's. The auth limiter (failures only) also covers both routes.
+- Audited: `pin.set` / `pin.remove` (low), `auth.pin_failed` (low, attempt
+  number), `auth.pin_disabled` (medium), `auth.unlock { method: "pin" }`
+  (low) — never digits or passwords.
+- PIN policy (judgment call): 4–8 digits, not one repeated digit, not a
+  straight ascending / descending run.
+- The idle auto-lock is unchanged — it back-dates the lock a full idle window
+  and so is still an automatic logoff that no PIN re-opens. The PIN re-opens
+  a lock the user started (Lock button, another tab) within 15 minutes.
+- Lock screen: the locked `GET /api/user` body carries `pinUnlock: true` when
+  the module is on, a PIN is set and it is not disabled for this session; the
+  screen asks each time it opens (after the lock call has landed) and offers
+  the PIN first with "Use password instead". A wrong PIN says how many
+  attempts are left; disabled / session ended / module off fall back to the
+  password. On success the tab's lock flag is cleared and the normal session
+  restore re-opens the socket and data. Nothing about the PIN is stored in
+  the browser.
+- Settings → Security → PIN unlock: Set PIN / Change / Remove (the dialog
+  takes the password, the PIN and the PIN again). `pinStatus` is cleared on
+  sign-out / identity switch.
+- Tests: tests/pin-unlock.test.ts (13, all failed on the old server),
+  tests/client-pin.test.ts (7, failed on the HEAD client); check:
+  scripts/pin-unlock-check.mjs.

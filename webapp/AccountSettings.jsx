@@ -315,6 +315,43 @@ function EndShiftDialog({ status, onClose }) {
   );
 }
 
+// PIN unlock (PerfectServe parity #7, module security.pin). Set / change is
+// ONE PUT /api/security/pin with the account password re-entered — the server
+// checks it and stores a scrypt hash; nothing about the PIN is kept here.
+function PinDialog({ changing, onClose }) {
+  const a = useActions();
+  const [pw, setPw] = React.useState("");
+  const [pin, setPin] = React.useState("");
+  const [pin2, setPin2] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const digits = (v) => v.replace(/\D/g, "").slice(0, 8);
+  const mismatch = pin2.length > 0 && pin !== pin2;
+  const ok = pw && pin.length >= 4 && pin === pin2 && !busy;
+  function submit() {
+    if (!ok) return;
+    setBusy(true);
+    Promise.resolve(a.setPin(pw, pin)).then((done) => { if (done) onClose(); else setPw(""); }).finally(() => setBusy(false));
+  }
+  const pinInput = { type: "password", inputMode: "numeric", pattern: "[0-9]*", autoComplete: "off", maxLength: 8 };
+  return (
+    <Modal title={changing ? "Change PIN" : "Set a PIN"} subtitle="A PIN re-opens this account after you lock it. It is not a sign-in." icon="key-round" onClose={onClose}
+      children={
+        <div data-pin-dialog style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ fontSize: 13.5, lineHeight: 1.45, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--secondary)" }}>
+            4–8 digits, not one repeated digit or a straight run like 1234. Checked by the DocTurn server; <b>five wrong PINs and the password is required</b>. The idle auto-lock still signs you out — the PIN only re-opens a lock you started, within 15 minutes.
+          </div>
+          <Field label="Your password" type="password" value={pw} onChange={setPw} autoComplete="current-password" inputProps={{ "data-pin-password": "" }} />
+          <Field label={changing ? "New PIN" : "PIN"} value={pin} onChange={(v) => setPin(digits(v))} inputProps={{ ...pinInput, "data-pin-new": "" }} />
+          <Field label="PIN again" value={pin2} onChange={(v) => setPin2(digits(v))} error={mismatch ? "The PINs do not match." : undefined} inputProps={{ ...pinInput, "data-pin-confirm": "" }} />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+            <ShiftBtn onClick={onClose}>Cancel</ShiftBtn>
+            <ShiftBtn primary onClick={submit} disabled={!ok} data-pin-save>{busy ? "Saving…" : changing ? "Change PIN" : "Set PIN"}</ShiftBtn>
+          </div>
+        </div>
+      } />
+  );
+}
+
 // Quick responses (PerfectServe parity #6, module messaging.templates). The
 // user's PERSONAL templates — the same rows the composer's Templates picker
 // and phone chips insert — managed here; there is no second store. Every
@@ -467,6 +504,16 @@ function AccountSettings({ onLock }) {
   const reminderOn = on("messaging.unreadReminder");
   const reminder = st.reminderPrefs || null;
   React.useEffect(() => { if (reminderOn && a.loadReminderPrefs) a.loadReminderPrefs(); }, [reminderOn]);
+  const pinOn = on("security.pin");
+  const pinStatus = st.pinStatus || null;
+  const [pinOpen, setPinOpen] = React.useState(false);
+  const [pinBusy, setPinBusy] = React.useState(false);
+  React.useEffect(() => { if (pinOn && a.loadPin) a.loadPin(); }, [pinOn]);
+  const removePin = () => {
+    if (pinBusy || !window.confirm("Remove your PIN? Unlocking will need your password.")) return;
+    setPinBusy(true);
+    Promise.resolve(a.removePin()).finally(() => setPinBusy(false));
+  };
 
   // The ONLY place the app asks for notification permission (A.CON-SHO-62 /
   // A.CON-NEE-1): a.enablePush() runs synchronously inside this tap, which is
@@ -602,8 +649,16 @@ function AccountSettings({ onLock }) {
           right={user && user.twoFactorEnabled
             ? <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><Badge status="accepted">On</Badge><Button size="sm" variant="outline" onClick={() => setMfaOpen(true)}>Manage</Button></span>
             : <Button size="sm" variant="outline" onClick={() => setMfaOpen(true)}>Set up</Button>} />
-        {onLock && <SettingsRow icon="lock" title="Lock app now" sub="Require your password to continue" onClick={onLock} />}
+        {pinOn && (
+          <SettingsRow icon="key-round" title="PIN unlock" wrapSub rowProps={{ "data-pin-row": pinStatus ? (pinStatus.set ? "set" : "unset") : "loading" }}
+            sub={!pinStatus ? "Checking…" : pinStatus.set ? "On — your PIN re-opens a locked session; 5 wrong PINs require the password" : "Off — set a 4–8 digit PIN to re-open a locked session"}
+            right={pinStatus && (pinStatus.set
+              ? <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}><ShiftBtn data-pin-change onClick={() => setPinOpen(true)}>Change</ShiftBtn><ShiftBtn data-pin-remove disabled={pinBusy} onClick={removePin}>Remove</ShiftBtn></span>
+              : <ShiftBtn data-pin-set onClick={() => setPinOpen(true)}>Set PIN</ShiftBtn>)} />
+        )}
+        {onLock && <SettingsRow icon="lock" title="Lock app now" sub={pinOn && pinStatus && pinStatus.set ? "Require your PIN or password to continue" : "Require your password to continue"} onClick={onLock} />}
       </SettingsGroup>
+      {pinOpen && <PinDialog changing={!!(pinStatus && pinStatus.set)} onClose={() => setPinOpen(false)} />}
 
       {isDirector && (
         <SettingsGroup title="Organization">

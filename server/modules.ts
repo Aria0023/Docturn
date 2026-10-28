@@ -123,6 +123,10 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Unread-message reminder preference (server/routes/reminders.ts); the
   // sweep (services/unread-reminder.ts) checks the same switch per org.
   { path: /^\/api\/messaging\/unread-reminder$/, module: "messaging.unreadReminder" },
+  // PIN unlock (server/routes/pin.ts): the PIN itself and the lock-exempt
+  // unlock route. Off by default.
+  { path: /^\/api\/security\/pin$/, module: "security.pin" },
+  { path: /^\/api\/session\/unlock-pin$/, module: "security.pin" },
   { path: /^\/api\/messaging\/attachments(\/|$)/, module: "messaging.attachments" },
   { path: /^\/api\/messaging\/availability(\/|$)/, module: "messaging.dnd" },
   { path: /^\/api\/messaging\/messages\/[^/]+$/, module: "messaging.recall", methods: ["DELETE"] },

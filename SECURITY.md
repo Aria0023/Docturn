@@ -91,6 +91,26 @@ automatically uses encrypted Postgres instead of the local file database.
   never sent while the user is DND, deactivated, or their org has push off.
   The sweep is a per-process timer (several instances can each send one per
   interval); its log lines carry a count only.
+- **PIN unlock: a PIN re-opens an authenticated, locked session; it is not
+  authentication** (module `security.pin`, off by default). It never signs
+  anyone in: `POST /api/session/unlock-pin` needs a session that is signed in
+  AND locked (signed out → 401, not locked → 409) and lifts that session's own
+  server lock. The PIN (4–8 digits; one repeated digit or a straight run such
+  as 1234 refused) is stored only as a scrypt hash from the password hasher,
+  and is set / changed only with the account password re-entered. Wrong PINs
+  are counted per session (`pin_unlock_failures`, keyed by a SHA-256 of the
+  session id) and each attempt is spent before the hash is checked, so a burst
+  of parallel guesses cannot exceed the limit: 5 wrong PINs disable it for
+  that session and only the password re-opens it (`auth.pin_failed` low,
+  `auth.pin_disabled` medium; never the digits). The same failure-counting
+  auth rate limiter as sign-in also applies. The unlock route is lock-exempt,
+  not a passthrough, so the idle auto-lock (back-dated a full idle window)
+  is still an automatic logoff that no PIN re-opens — the PIN only re-opens a
+  lock the user started, within 15 minutes. Nothing about the PIN (digits or
+  whether one is set) is kept in browser storage. Honest limit: scrypt slows
+  online guessing, but a 4–8 digit space is small enough to search offline if
+  the database leaked — the per-session cap and the lock's own 15-minute end
+  are the controls, not the hash.
 
 ---
 

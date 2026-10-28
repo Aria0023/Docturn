@@ -90,7 +90,7 @@
       // reset to the kit's demo seed rows.
       ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents", "templates"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
-        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs"].forEach(function (k) { s[k] = null; });
+        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs", "pinStatus"].forEach(function (k) { s[k] = null; });
     }
     return s;
   }
@@ -112,7 +112,7 @@
   // no socket — so a locked tab neither renews the session nor pulls data
   // into memory. A 423 from the server (or a 4423 socket close) engages the
   // lock here too, even if the browser's own flag was deleted.
-  var LOCK_ALLOWED = /^\/api\/(login|logout|session|session\/lock|user|config|2fa\/complete-login|2fa\/request-sms)(\?|$)/;
+  var LOCK_ALLOWED = /^\/api\/(login|logout|session|session\/lock|session\/unlock-pin|user|config|2fa\/complete-login|2fa\/request-sms)(\?|$)/;
   // True once THIS page load has the server's word that the session is live
   // and unlocked (sign-in, restore, demo-token bootstrap). A session object
   // restored from the persisted snapshot is only a display hint: nothing is
@@ -3879,6 +3879,87 @@
     });
   };
 
+  // PIN unlock (PerfectServe parity #7, module security.pin, default off).
+  // A PIN re-opens THIS authenticated, locked session; it is not a sign-in.
+  // The server holds the scrypt hash and the per-session failure count; this
+  // side keeps nothing — not the PIN, not whether one is set — in storage.
+  // Settings: GET / PUT (password re-entered) / DELETE /api/security/pin.
+  // Lock screen: GET /api/user (lock-exempt) says whether the PIN may be used
+  // for this session; POST /api/session/unlock-pin lifts the server's lock.
+  function applyPin(s, v) { s.pinStatus = { set: !!(v && v.set), minLength: (v && v.minLength) || 4, maxLength: (v && v.maxLength) || 8 }; return s; }
+  DT.actions.loadPin = function () {
+    if (DT.moduleOn && !DT.moduleOn("security.pin")) {
+      DT.set(function (s) { s.pinStatus = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/security/pin").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { return applyPin(s, v); });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.pinStatus = null; return s; });
+      return null;
+    });
+  };
+  function pinRefusal(e, title) {
+    var why = String((e && e.message) || "");
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = moduleRefused(e) ? "PIN unlock is switched off for your organization."
+      : why === "wrong_password" ? "That password is not right — nothing was changed."
+      : why === "weak_pin" ? "Use 4–8 digits that are not one repeated digit or a straight run like 1234."
+      : why === "validation_error" ? "A PIN is 4–8 digits, and your password is required."
+      : (e && e.status === 429) ? "Too many attempts — wait a minute and try again."
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : "The server refused it — nothing was changed.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+  }
+  DT.actions.setPin = function (currentPassword, pin) {
+    return api("PUT", "/api/security/pin", { currentPassword: String(currentPassword || ""), pin: String(pin || "") }).then(function (v) {
+      DT.set(function (s) {
+        var had = s.pinStatus && s.pinStatus.set;
+        applyPin(s, v);
+        s.__toast = { tone: "accepted", title: had ? "PIN changed" : "PIN set", msg: "Your PIN re-opens this account when it is locked. Five wrong PINs and the password is required." };
+        return s;
+      });
+      return true;
+    }, function (e) { pinRefusal(e, "PIN not saved"); return false; });
+  };
+  DT.actions.removePin = function () {
+    return api("DELETE", "/api/security/pin").then(function (v) {
+      DT.set(function (s) { applyPin(s, v); s.__toast = { tone: "accepted", title: "PIN removed", msg: "Unlocking needs your password." }; return s; });
+      return true;
+    }, function (e) { pinRefusal(e, "PIN not removed"); return false; });
+  };
+  // Lock screen: may this locked session be re-opened with a PIN? Asked of the
+  // server each time the lock screen opens (never remembered).
+  // The lock screen opens before POST /api/session/lock has landed, so the
+  // question waits for that call first (the server only says pinUnlock for a
+  // session it has locked).
+  DT.actions.pinUnlockAvailable = function () {
+    return Promise.resolve(lockInFlight).then(function () {
+      return rawApi("GET", "/api/user");
+    }).then(function (u) { return !!(u && u.locked && u.pinUnlock); }, function () { return false; });
+  };
+  // Re-open the locked session with the PIN. On success the server lifted its
+  // lock on this same session: clear the tab's lock flag and re-establish
+  // everything the lock dropped (socket, data) through the normal restore.
+  // Resolves { ok } or { ok:false, error, attemptsLeft?, passwordRequired? }.
+  DT.actions.unlockWithPin = function (pin) {
+    return rawApi("POST", "/api/session/unlock-pin", { pin: String(pin || "") }).then(function () {
+      try { if (window.__dtLock) window.__dtLock.clear(); } catch (e) {}
+      return Promise.resolve(restoreSession()).then(function () { return { ok: true }; });
+    }, function (e) {
+      var b = (e && e.body) || {};
+      if (e && e.status === 401) return { ok: false, error: "signed_out", passwordRequired: true };
+      if (e && e.status === 429) return { ok: false, error: "rate_limited" };
+      if (moduleRefused(e)) return { ok: false, error: "module_disabled", passwordRequired: true };
+      if (isNetworkError(e)) return { ok: false, error: "network" };
+      return { ok: false, error: String((e && e.message) || "refused"), attemptsLeft: typeof b.attemptsLeft === "number" ? b.attemptsLeft : undefined, passwordRequired: !!b.passwordRequired };
+    });
+  };
+
   // End shift / Start shift (PerfectServe parity #4, module shift.handoff).
   // ONE server action each (POST /api/shift/end | /start, one transaction on
   // the server); the screen shows the server's answer — shiftStatus, my
@@ -4784,10 +4865,14 @@
   // goes first so no event can trigger a fetch meanwhile. A failure (offline,
   // session already gone) leaves the local lock in place; the next restore
   // re-sends it.
+  var lockInFlight = null; // the lock call, so the lock screen asks about the PIN after it landed
   DT.actions.lockSession = function (idleMs) {
     dropSocket();
     var idle = Math.max(0, Number(idleMs) || 0);
-    return rawApi("POST", "/api/session/lock", { idleMs: idle }).catch(function () { return null; });
+    var p = rawApi("POST", "/api/session/lock", { idleMs: idle }).catch(function () { return null; });
+    lockInFlight = p;
+    p.then(function () { if (lockInFlight === p) lockInFlight = null; });
+    return p;
   };
   if (!DEMO_TOKEN) restoreSession();
   // Re-run the restore on demand: the shell calls this when the app lock is

@@ -239,6 +239,7 @@ const PARITY_ROWS: ParityRow[] = [
   { module: "shift.handoff", method: "POST", path: /^\/api\/shift\/end$/, act: (h) => h.w.DT.actions.endShift({}), msg: "End shift is switched off for your organization." },
   { module: "messaging.unreadReminder", method: "PUT", path: /^\/api\/messaging\/unread-reminder$/, act: (h) => h.w.DT.actions.setReminderPrefs(true, 5), msg: "Unread-message reminders are switched off for your organization." },
   { module: "messaging.templates", method: "POST", path: /^\/api\/messaging\/templates$/, act: (h) => h.w.DT.actions.createTemplate({ title: "On my way", body: "On my way." }), msg: "Quick responses and templates are switched off for your organization." },
+  { module: "security.pin", method: "PUT", path: /^\/api\/security\/pin$/, act: (h) => h.w.DT.actions.setPin("pw", "4826"), msg: "PIN unlock is switched off for your organization." },
 ];
 
 describe("web client: PerfectServe-parity modules refused mid-session", () => {

@@ -27,6 +27,7 @@ import { registerOrgRoutes } from "./org.js";
 import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
 import { registerReminderRoutes } from "./reminders.js";
+import { registerPinRoutes } from "./pin.js";
 import { registerResourceRoutes } from "./resources.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
@@ -44,6 +45,7 @@ export function registerRoutes(app: Express) {
   registerMessagingRoutes(app);
   registerDirectoryRoutes(app);
   registerReminderRoutes(app);
+  registerPinRoutes(app);
   registerMetricsRoutes(app);
   registerReportsRoutes(app);
   registerOrgRoutes(app);

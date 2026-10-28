@@ -42,6 +42,7 @@ import {
   smsHistory,
   suggestions,
   userPins,
+  pinUnlockFailures,
   userPreferences,
   userReminderPrefs,
   userSoundPrefs,
@@ -2222,6 +2223,7 @@ export class DatabaseStorage implements IStorage {
         [userReminderPrefs, userReminderPrefs.organizationId, userReminderPrefs.userId],
         [userSoundPrefs, userSoundPrefs.organizationId, userSoundPrefs.userId],
         [userPins, userPins.organizationId, userPins.userId],
+        [pinUnlockFailures, pinUnlockFailures.organizationId, pinUnlockFailures.userId],
       ] as const) {
         await tx.delete(t).where(userIds.length ? or(eq(orgCol, id), inArray(userCol, userIds))! : eq(orgCol, id));
       }
@@ -2294,6 +2296,7 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(userReminderPrefs).where(eq(userReminderPrefs.userId, id));
     await this.db.delete(userSoundPrefs).where(eq(userSoundPrefs.userId, id));
     await this.db.delete(userPins).where(eq(userPins.userId, id));
+    await this.db.delete(pinUnlockFailures).where(eq(pinUnlockFailures.userId, id));
     await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, id));
     await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, id));
     await this.db.delete(hospitalists).where(eq(hospitalists.userId, id));
@@ -3226,34 +3229,98 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)));
     return row;
   }
-  /** Set / replace the PIN hash; clears any failure state. */
+  /** Set / replace the PIN hash; a new PIN starts with no failures anywhere. */
   async setUserPin(orgId: number, userId: number, pinHash: string): Promise<UserPin> {
     const now = new Date();
-    const reset = { pinHash, failedAttempts: 0, failedSession: null, pinDisabledAt: null, updatedAt: now };
-    const [row] = await this.db
-      .insert(userPins)
-      .values({ organizationId: orgId, userId, ...reset })
-      .onConflictDoUpdate({ target: [userPins.userId], set: { ...reset, organizationId: orgId } })
-      .returning();
-    return row!;
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(userPins)
+        .values({ organizationId: orgId, userId, pinHash, updatedAt: now })
+        .onConflictDoUpdate({ target: [userPins.userId], set: { pinHash, organizationId: orgId, updatedAt: now } })
+        .returning();
+      await tx.delete(pinUnlockFailures).where(eq(pinUnlockFailures.userId, userId));
+      return row!;
+    });
   }
-  /** Persist the failure counters (the route decides the policy). */
-  async updatePinFailureState(
+  /**
+   * Spend one PIN attempt for this (user, session) BEFORE the hash is checked
+   * — one atomic upsert, so parallel guesses cannot all see the same count.
+   * Returns the attempt number (1-based) and whether the session is already
+   * past the limit / disabled (then the hash must not be checked at all).
+   * Rows a day old are pruned (a lock lives at most one idle window).
+   */
+  async reservePinAttempt(
     orgId: number,
     userId: number,
-    state: Pick<UserPin, "failedAttempts" | "failedSession" | "pinDisabledAt">,
-  ): Promise<void> {
+    sessionHash: string,
+    limit: number,
+  ): Promise<{ attempt: number; disabled: boolean }> {
+    const now = new Date();
     await this.db
-      .update(userPins)
-      .set({ ...state, updatedAt: new Date() })
-      .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)));
+      .delete(pinUnlockFailures)
+      .where(and(eq(pinUnlockFailures.userId, userId), lt(pinUnlockFailures.updatedAt, new Date(now.getTime() - 24 * 3600 * 1000))));
+    const [row] = await this.db
+      .insert(pinUnlockFailures)
+      .values({ organizationId: orgId, userId, sessionHash, failedAttempts: 1, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [pinUnlockFailures.userId, pinUnlockFailures.sessionHash],
+        set: { failedAttempts: sql`${pinUnlockFailures.failedAttempts} + 1`, updatedAt: now },
+      })
+      .returning();
+    return { attempt: row!.failedAttempts, disabled: row!.failedAttempts > limit || row!.disabledAt != null };
+  }
+  /** The session reached the failure limit: the PIN is off for it. */
+  async markPinDisabled(orgId: number, userId: number, sessionHash: string): Promise<void> {
+    await this.db
+      .update(pinUnlockFailures)
+      .set({ disabledAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(pinUnlockFailures.organizationId, orgId),
+          eq(pinUnlockFailures.userId, userId),
+          eq(pinUnlockFailures.sessionHash, sessionHash),
+          isNull(pinUnlockFailures.disabledAt),
+        ),
+      );
+  }
+  /** Is the PIN disabled for this session (it hit the failure limit)? */
+  async pinDisabledFor(orgId: number, userId: number, sessionHash: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ disabledAt: pinUnlockFailures.disabledAt })
+      .from(pinUnlockFailures)
+      .where(
+        and(
+          eq(pinUnlockFailures.organizationId, orgId),
+          eq(pinUnlockFailures.userId, userId),
+          eq(pinUnlockFailures.sessionHash, sessionHash),
+        ),
+      );
+    return !!row?.disabledAt;
+  }
+  /** A correct PIN: this session's failure count starts again. */
+  async clearPinFailures(orgId: number, userId: number, sessionHash: string): Promise<void> {
+    await this.db
+      .delete(pinUnlockFailures)
+      .where(
+        and(
+          eq(pinUnlockFailures.organizationId, orgId),
+          eq(pinUnlockFailures.userId, userId),
+          eq(pinUnlockFailures.sessionHash, sessionHash),
+          isNull(pinUnlockFailures.disabledAt),
+        ),
+      );
   }
   async deleteUserPin(orgId: number, userId: number): Promise<boolean> {
-    const rows = await this.db
-      .delete(userPins)
-      .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)))
-      .returning({ id: userPins.id });
-    return rows.length > 0;
+    return this.db.transaction(async (tx) => {
+      await tx
+        .delete(pinUnlockFailures)
+        .where(and(eq(pinUnlockFailures.organizationId, orgId), eq(pinUnlockFailures.userId, userId)));
+      const rows = await tx
+        .delete(userPins)
+        .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)))
+        .returning({ id: userPins.id });
+      return rows.length > 0;
+    });
   }
 }
 

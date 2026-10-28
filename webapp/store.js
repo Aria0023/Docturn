@@ -320,6 +320,9 @@
       // Quick responses = message templates (GET /api/messaging/templates):
       // org-wide + MY personal ones, from the server only.
       templates: [],
+      // PIN unlock (GET /api/security/pin): { set } from the server — null
+      // until it answers and while security.pin is off. Never the PIN.
+      pinStatus: null,
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -835,7 +838,9 @@
     // the previous person's quick responses (their personal templates)
     "templates",
     // the previous person's shift status and reminder preference
-    "shiftStatus", "reminderPrefs"];
+    "shiftStatus", "reminderPrefs",
+    // whether the previous person had a PIN
+    "pinStatus"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1143,6 +1148,12 @@
     loadReminderPrefs: function () { set(function (s) { s.reminderPrefs = null; return s; }); return Promise.resolve(null); },
     setReminderPrefs: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     listTemplates: function () { set(function (s) { s.templates = []; return s; }); return Promise.resolve([]); },
+    loadPin: function () { set(function (s) { s.pinStatus = null; return s; }); return Promise.resolve(null); },
+    setPin: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    removePin: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    // No server, no PIN unlock: only the server can lift its own lock.
+    pinUnlockAvailable: function () { return Promise.resolve(false); },
+    unlockWithPin: function () { return Promise.resolve({ ok: false, error: "offline" }); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

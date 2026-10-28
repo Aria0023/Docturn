@@ -248,6 +248,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     app.post("/api/login", accountLimiter);
     app.use("/api/register", authLimiter);
     app.use("/api/2fa", authLimiter);
+    // PIN unlock: wrong PINs (and wrong passwords when setting one) spend the
+    // same failure budget as a wrong sign-in, on top of the per-session cap.
+    app.use("/api/session/unlock-pin", authLimiter);
+    app.put("/api/security/pin", authLimiter);
     app.use("/api", generalLimiter);
   }
 
