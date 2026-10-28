@@ -351,6 +351,9 @@ function AccountSettings({ onLock }) {
   // My shift truth (pending / accepted counts) from the server, re-read when
   // my On shift changes.
   React.useEffect(() => { if (shiftOn && myProv && a.loadShift) a.loadShift(); }, [shiftOn, !!myProv, myProv && myProv.working]);
+  const reminderOn = on("messaging.unreadReminder");
+  const reminder = st.reminderPrefs || null;
+  React.useEffect(() => { if (reminderOn && a.loadReminderPrefs) a.loadReminderPrefs(); }, [reminderOn]);
 
   // The ONLY place the app asks for notification permission (A.CON-SHO-62 /
   // A.CON-NEE-1): a.enablePush() runs synchronously inside this tap, which is
@@ -443,6 +446,32 @@ function AccountSettings({ onLock }) {
         <SettingsRow icon="bell" title="Push notifications" wrapSub rowProps={{ "data-push-row": pushState }}
           sub={pushOff ? "Switched off for your organization — a director can turn push notifications back on in Settings → Integrations" : (PUSH_SUB[pushState] || PUSH_SUB.default)}
           right={pushRight} />
+        {/* Unread-message reminder (module messaging.unreadReminder): stored
+            on the server, sent by the server's sweep — content-free, never
+            while DND. The row says when a push could not reach this device. */}
+        {on("messaging.unreadReminder") && reminder && (
+          <React.Fragment>
+            <SettingsRow icon="bell-ring" title="Unread-message reminder" wrapSub rowProps={{ "data-reminder-row": reminder.enabled ? "on" : "off" }}
+              sub={(reminder.enabled
+                  ? "On — a push every " + reminder.intervalMin + " min while messages stay unread (not while do not disturb is on). The push says only that you have unread messages."
+                  : "Off — no reminders. Turn on to get a content-free push while messages stay unread.") +
+                (pushOff ? " Push is switched off for your organization, so no reminder can reach you." : reminder.enabled && pushState !== "granted" ? " Push is not on for this device — turn on Push notifications above to receive it here." : "")}
+              right={<Switch on={!!reminder.enabled} busy={!!st.reminderSaving} onChange={() => a.setReminderPrefs(!reminder.enabled, reminder.intervalMin)} label="Unread-message reminder" />} />
+            {reminder.enabled && (
+              <div data-reminder-intervals style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "8px 14px 12px 60px", borderTop: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginRight: 4 }}>Remind every</span>
+                {(reminder.intervals || [5, 10, 15, 30]).map((n) => (
+                  <button key={n} type="button" data-reminder-interval={n} aria-pressed={reminder.intervalMin === n}
+                    onClick={() => (st.reminderSaving || reminder.intervalMin === n ? null : a.setReminderPrefs(true, n))}
+                    style={{ minWidth: 44, minHeight: 44, padding: "0 12px", borderRadius: "var(--radius-md)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer",
+                      border: "1px solid " + (reminder.intervalMin === n ? "var(--primary)" : "var(--border)"), background: reminder.intervalMin === n ? "#EFF6FF" : "#fff", color: reminder.intervalMin === n ? "var(--primary)" : "var(--foreground)" }}>
+                    {n} min
+                  </button>
+                ))}
+              </div>
+            )}
+          </React.Fragment>
+        )}
         <SettingsRow icon="smartphone" title={standalone ? "Installed on this device" : "Install as an app"}
           sub={standalone ? "Running as a home-screen app" : "iPhone: Share → Add to Home Screen · Android: Install app"} />
       </SettingsGroup>

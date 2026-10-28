@@ -26,6 +26,7 @@ import { registerAdmissionsRoutes } from "./admissions.js";
 import { registerOrgRoutes } from "./org.js";
 import { registerPatientRoutes } from "./patients.js";
 import { registerProviderRoutes } from "./providers.js";
+import { registerReminderRoutes } from "./reminders.js";
 import { registerResourceRoutes } from "./resources.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
@@ -42,6 +43,7 @@ export function registerRoutes(app: Express) {
   registerAdmissionsRoutes(app);
   registerMessagingRoutes(app);
   registerDirectoryRoutes(app);
+  registerReminderRoutes(app);
   registerMetricsRoutes(app);
   registerReportsRoutes(app);
   registerOrgRoutes(app);

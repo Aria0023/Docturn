@@ -14,6 +14,7 @@ import { startExpiryLoop, startAutoCleanLoop } from "./services/expiry.js";
 import { startAmionSyncLoop } from "./services/amion.js";
 import { startEpicSyncLoop } from "./services/schedule-sources/epic-fhir.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
+import { startUnreadReminderLoop } from "./services/unread-reminder.js";
 import { startRetentionLoop } from "./services/retention.js";
 import { initWebPush, LivePushTransport } from "./services/push.js";
 import { configureNotifications } from "./services/notifications.js";
@@ -141,6 +142,8 @@ async function main() {
   // STAT non-response loop: unacked STAT → re-alert (2 min) → covering-provider
   // escalation (5 min). Tunable via STAT_REALERT_MS / STAT_ESCALATE_MS.
   startStatEscalationLoop();
+  // Unread-message reminders (per-process timer — see services/unread-reminder.ts).
+  startUnreadReminderLoop();
   // Per-org message retention purge (org setting messageRetentionDays; hourly).
   startRetentionLoop();
   // Real push: web-push (VAPID; generated + persisted on first boot) for the

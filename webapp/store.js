@@ -314,6 +314,9 @@
       // End shift / Start shift (GET /api/shift): my shift truth from the
       // server — null until it answers, and while shift.handoff is off.
       shiftStatus: null,
+      // Unread-message reminder (GET /api/messaging/unread-reminder): my
+      // opt-in + interval from the server — null until it answers / module off.
+      reminderPrefs: null,
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -826,8 +829,8 @@
     "phiAccessCount", "auditScope", "auditError", "presence",
     // the previous person's Directory: their org's role contacts and holders
     "roleContacts", "onCallTargets", "favorites", "recents",
-    // the previous person's shift status
-    "shiftStatus"];
+    // the previous person's shift status and reminder preference
+    "shiftStatus", "reminderPrefs"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1132,6 +1135,8 @@
     loadShift: function () { set(function (s) { s.shiftStatus = null; return s; }); return Promise.resolve(null); },
     endShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve({ ok: false }); },
     startShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve({ ok: false }); },
+    loadReminderPrefs: function () { set(function (s) { s.reminderPrefs = null; return s; }); return Promise.resolve(null); },
+    setReminderPrefs: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

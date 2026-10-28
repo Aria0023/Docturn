@@ -90,7 +90,7 @@
       // reset to the kit's demo seed rows.
       ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
-        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus"].forEach(function (k) { s[k] = null; });
+        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs"].forEach(function (k) { s[k] = null; });
     }
     return s;
   }
@@ -3802,6 +3802,57 @@
       return false;
     });
   };
+  // Unread-message reminder (PerfectServe parity #5, module
+  // messaging.unreadReminder): my opt-in + interval live on the server, which
+  // sends the content-free reminder itself (a sweep — not this tab). The
+  // screen shows only what the server stored.
+  function applyReminder(s, v) {
+    s.reminderPrefs = { enabled: !!(v && v.enabled), intervalMin: (v && v.intervalMin) || 10, intervals: (v && Array.isArray(v.intervals)) ? v.intervals : [5, 10, 15, 30] };
+    return s;
+  }
+  DT.actions.loadReminderPrefs = function () {
+    if (DT.moduleOn && !DT.moduleOn("messaging.unreadReminder")) {
+      DT.set(function (s) { s.reminderPrefs = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/messaging/unread-reminder").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { return applyReminder(s, v); });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.reminderPrefs = null; return s; });
+      return null;
+    });
+  };
+  var reminderBusy = false;
+  DT.actions.setReminderPrefs = function (enabled, intervalMin) {
+    if (reminderBusy) return Promise.resolve(false);
+    reminderBusy = true;
+    DT.set(function (s) { s.reminderSaving = true; return s; });
+    return api("PUT", "/api/messaging/unread-reminder", { enabled: !!enabled, intervalMin: Number(intervalMin) }).then(function (v) {
+      reminderBusy = false;
+      DT.set(function (s) {
+        s.reminderSaving = false;
+        applyReminder(s, v);
+        s.__toast = s.reminderPrefs.enabled
+          ? { tone: "accepted", title: "Unread reminder on", msg: "While messages stay unread, the server sends a push every " + s.reminderPrefs.intervalMin + " min (never while do not disturb is on)." }
+          : { tone: "accepted", title: "Unread reminder off", msg: "No more reminder pushes." };
+        return s;
+      });
+      return true;
+    }, function (e) {
+      reminderBusy = false;
+      var msg = moduleRefused(e) ? "Unread-message reminders are switched off for your organization."
+        : isNetworkError(e) ? "No connection — nothing was changed."
+        : "The server refused it — nothing was changed.";
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      DT.set(function (s) { s.reminderSaving = false; s.__toast = { tone: "rejected", title: "Reminder not changed", msg: msg }; return s; });
+      return false;
+    });
+  };
+
   // End shift / Start shift (PerfectServe parity #4, module shift.handoff).
   // ONE server action each (POST /api/shift/end | /start, one transaction on
   // the server); the screen shows the server's answer — shiftStatus, my

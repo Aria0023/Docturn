@@ -710,3 +710,36 @@ is the web app / PWA.
 - Tests: tests/shift-handoff.test.ts, tests/client-shift.test.ts,
   tests/client-comms-account.test.ts (switch = module-off variant);
   check: scripts/shift-handoff-check.mjs.
+
+### #5 Unread-message reminder — module `messaging.unreadReminder`
+- `GET` / `PUT /api/messaging/unread-reminder` `{ enabled, intervalMin }`
+  (server/routes/reminders.ts, gated in `GATE_TABLE`): the caller's own
+  `user_reminder_prefs` row (organization + user from the session, never the
+  body; `.strict()` — no extra fields). Off until the user opts in; the
+  interval is one of 5 / 10 / 15 / 30 minutes (default 10). A change is
+  audited `reminder.prefs_update` (low; the flag and interval only).
+- The sweep (server/services/unread-reminder.ts), modelled on the STAT
+  re-alert loop: every 60 s, for every org in its own try/catch (one
+  tenant's failure is logged by org id and never stops another's), each
+  opted-in user whose OLDEST unread live message is at least their interval
+  old — and who was not reminded within the last interval — gets ONE push:
+  "You have unread messages in DocTurn". No count, no names, no message
+  text: push vendors sign no BAA. Then `last_reminded_at` is stamped.
+- Skipped, before any side effect: the module off for the org, push off for
+  the org (`integration.push`, so nothing is marked either), DND, a
+  deactivated account, and a Done thread while `messaging.done` is on (the
+  conversation list's own rule: a newer message re-opens it and its unread
+  messages count again). The user's own messages never count.
+- **Per-process timer**: the loop runs inside each server process. With N
+  instances an opted-in user can receive up to N reminders per interval —
+  `last_reminded_at` narrows that race but does not close it. A
+  multi-instance deployment should run the sweep on one instance (or move it
+  to a shared scheduler). The loop logs only a count when it sends.
+- Settings → Notifications: "Unread-message reminder" switch and, while on,
+  5 / 10 / 15 / 30 min chips (44px); each change is one PUT and the screen
+  shows the server's stored answer. The row says when no reminder can reach
+  this device (push off for the org, or not enabled on this device).
+- Tests: tests/unread-reminder.test.ts (the sweep is driven directly with an
+  injected clock), tests/client-reminder.test.ts; check:
+  scripts/unread-reminder-check.mjs (with `TIMER=1` it also waits for the
+  real server's own timer to fire).

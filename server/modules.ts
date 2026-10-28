@@ -120,6 +120,9 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Done (per-user conversation state). The list/sync routes honour the same
   // switch themselves: with it off nothing is reported done.
   { path: /^\/api\/messaging\/conversations\/[^/]+\/done$/, module: "messaging.done", methods: ["PUT", "DELETE"] },
+  // Unread-message reminder preference (server/routes/reminders.ts); the
+  // sweep (services/unread-reminder.ts) checks the same switch per org.
+  { path: /^\/api\/messaging\/unread-reminder$/, module: "messaging.unreadReminder" },
   { path: /^\/api\/messaging\/attachments(\/|$)/, module: "messaging.attachments" },
   { path: /^\/api\/messaging\/availability(\/|$)/, module: "messaging.dnd" },
   { path: /^\/api\/messaging\/messages\/[^/]+$/, module: "messaging.recall", methods: ["DELETE"] },

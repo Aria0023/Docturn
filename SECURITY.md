@@ -85,6 +85,12 @@ automatically uses encrypted Postgres instead of the local file database.
   impersonated). The audit row carries ids and flags only — never the
   away-message text. DND and an away message are refused while `messaging.dnd`
   is off rather than stored as a promise nothing keeps.
+- **Unread-message reminders are content-free** (module
+  `messaging.unreadReminder`, opt-in per user): the push says only "You have
+  unread messages in DocTurn" — no count, sender, patient or text — and is
+  never sent while the user is DND, deactivated, or their org has push off.
+  The sweep is a per-process timer (several instances can each send one per
+  interval); its log lines carry a count only.
 
 ---
 

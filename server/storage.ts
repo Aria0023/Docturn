@@ -3056,6 +3056,42 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * The creation time of the user's OLDEST unread live message created at or
+   * before `notAfter` (the unread-reminder sweep's read), or null. With
+   * `respectDone`, a thread the user marked Done counts for nothing while its
+   * newest live message is still the one it was done through — the same rule
+   * the conversation list applies; a newer message re-opens it and every
+   * unread message in it counts again. Ids / times only.
+   */
+  async oldestUnreadFor(orgId: number, userId: number, notAfter: Date, respectDone: boolean): Promise<Date | null> {
+    const doneClause = respectDone
+      ? sql`AND NOT EXISTS (
+          SELECT 1 FROM ${conversationDone} cd
+          WHERE cd.organization_id = ${orgId} AND cd.user_id = ${userId}
+            AND cd.conversation_id = ${messages.conversationId}
+            AND cd.through_message_id IS NOT NULL
+            AND cd.through_message_id >= (
+              SELECT max(m2.id) FROM ${messages} m2
+              WHERE m2.conversation_id = ${messages.conversationId} AND m2.deleted_at IS NULL))`
+      : sql``;
+    const [row] = await this.db
+      .select({ oldest: sql<Date | string | null>`min(${messages.createdAt})` })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messages.id, messageDeliveryStatus.messageId))
+      .where(
+        sql`${messages.organizationId} = ${orgId}
+          AND ${messageDeliveryStatus.userId} = ${userId}
+          AND ${messageDeliveryStatus.readAt} IS NULL
+          AND ${messages.deletedAt} IS NULL
+          AND ${messages.senderId} <> ${userId}
+          AND ${messages.createdAt} <= ${notAfter}
+          ${doneClause}`,
+      );
+    const v = row?.oldest;
+    return v == null ? null : new Date(v);
+  }
+
+  /**
    * End shift (module shift.handoff) — ONE transaction: the caller's pending
    * incoming requests are handed to the covering provider's rotation profile
    * (each released as `expired`, re-offered `pending` / `manual`, exactly the
