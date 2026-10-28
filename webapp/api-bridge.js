@@ -90,7 +90,7 @@
       // reset to the kit's demo seed rows.
       ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents", "templates"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
-        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs", "pinStatus"].forEach(function (k) { s[k] = null; });
+        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs"].forEach(function (k) { s[k] = null; });
     }
     return s;
   }
@@ -1595,7 +1595,7 @@
             return s;
           });
         }
-        else if (ev.type === "MESSAGE_RECEIVED") applyIncoming(ev.message);
+        else if (ev.type === "MESSAGE_RECEIVED") { applyIncoming(ev.message); alertSoundFor(ev.message); }
         // Done marked / un-marked on another of my devices.
         else if (ev.type === "CONVERSATION_DONE_CHANGED" && ev.conversationId != null) applyDone(ev);
         // A STAT/urgent message was acknowledged — patch that recipient's row.
@@ -3879,6 +3879,120 @@
     });
   };
 
+  // Priority alert sounds (PerfectServe parity #8, module messaging.alertSounds).
+  // The server stores my tone per priority (GET / PUT
+  // /api/messaging/alert-sounds); THIS open app plays it when a live message
+  // from someone else arrives. The tones are synthesised with WebAudio — no
+  // audio files, nothing fetched, nothing for the CSP to allow. It is an
+  // in-app sound only: an iPhone lock-screen notification (Web Push) plays the
+  // system sound, and Settings says so. Nothing plays before the server has
+  // answered with my choice, while I am do-not-disturb, or for my own
+  // messages; a burst of messages plays one sound.
+  var ALERT_TONES = {
+    // [frequency Hz, start s, duration s, waveform, peak gain]
+    siren: [[960, 0, 0.16, "square", 0.16], [770, 0.18, 0.16, "square", 0.16], [960, 0.36, 0.16, "square", 0.16], [770, 0.54, 0.16, "square", 0.16], [960, 0.72, 0.16, "square", 0.16], [770, 0.9, 0.16, "square", 0.16]],
+    alarm: [[880, 0, 0.12, "triangle", 0.3], [880, 0.2, 0.12, "triangle", 0.3], [880, 0.4, 0.12, "triangle", 0.3]],
+    chime: [[660, 0, 0.28, "sine", 0.35], [880, 0.22, 0.4, "sine", 0.3]],
+    ping: [[1046, 0, 0.2, "sine", 0.3]],
+    soft: [[523, 0, 0.35, "sine", 0.18]],
+    none: [],
+  };
+  var audioCtx = null;
+  function getAudio(create) {
+    if (audioCtx || !create) return audioCtx;
+    var AC = (typeof window !== "undefined") && (window.AudioContext || window.webkitAudioContext);
+    if (!AC) return null;
+    try { audioCtx = new AC(); } catch (e) { audioCtx = null; }
+    return audioCtx;
+  }
+  // Browsers (iPhone Safari above all) only let a page make sound after a
+  // tap: create / resume the context on the first gesture, once.
+  function unlockAudio() {
+    if (DT.moduleOn && !DT.moduleOn("messaging.alertSounds")) return;
+    var c = getAudio(true);
+    try { if (c && c.state === "suspended" && c.resume) c.resume(); } catch (e) {}
+  }
+  if (typeof window !== "undefined" && window.addEventListener) {
+    ["pointerdown", "touchend", "keydown"].forEach(function (t) { window.addEventListener(t, unlockAudio, { capture: true, passive: true }); });
+  }
+  function playTone(name) {
+    var notes = ALERT_TONES[name];
+    if (!notes || !notes.length) return false;
+    var c = getAudio(true);
+    if (!c) return false;
+    try {
+      if (c.state === "suspended" && c.resume) c.resume();
+      var t0 = c.currentTime + 0.02;
+      notes.forEach(function (n) {
+        var osc = c.createOscillator(), g = c.createGain();
+        osc.type = n[3];
+        osc.frequency.setValueAtTime(n[0], t0 + n[1]);
+        g.gain.setValueAtTime(0.0001, t0 + n[1]);
+        g.gain.exponentialRampToValueAtTime(n[4], t0 + n[1] + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + n[1] + n[2]);
+        osc.connect(g); g.connect(c.destination);
+        osc.start(t0 + n[1]); osc.stop(t0 + n[1] + n[2] + 0.02);
+      });
+      return true;
+    } catch (e) { return false; }
+  }
+  DT.alertTones = Object.keys(ALERT_TONES);
+  var lastAlertAt = 0;
+  function alertSoundFor(raw) {
+    if (!raw || raw.id == null || meId == null || raw.senderId === meId || recalled[raw.id]) return;
+    if (DT.moduleOn && !DT.moduleOn("messaging.alertSounds")) return;
+    var st = DT.getState();
+    var prefs = st.soundPrefs;
+    if (!prefs) return; // the server has not told us my choice
+    if (st.myPrefs && st.myPrefs.dnd) return;
+    var pr = raw.priority === "stat" || raw.priority === "urgent" ? raw.priority : "routine";
+    var now = Date.now();
+    if (now - lastAlertAt < 1500) return;
+    if (playTone(prefs[pr])) lastAlertAt = now;
+  }
+  function applySounds(s, v) {
+    if (!v || typeof v.stat !== "string") return s;
+    s.soundPrefs = { stat: v.stat, urgent: v.urgent, routine: v.routine, sounds: Array.isArray(v.sounds) ? v.sounds : DT.alertTones, defaults: v.defaults || null };
+    return s;
+  }
+  DT.actions.loadSoundPrefs = function () {
+    if (DT.moduleOn && !DT.moduleOn("messaging.alertSounds")) {
+      DT.set(function (s) { s.soundPrefs = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/messaging/alert-sounds").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { return applySounds(s, v); });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.soundPrefs = null; return s; });
+      return null;
+    });
+  };
+  // One priority changed: ONE PUT of all three (the server's row), then the
+  // screen shows the server's answer.
+  DT.actions.setSoundPref = function (priority, tone) {
+    var cur = DT.getState().soundPrefs;
+    if (!cur || !(priority in { stat: 1, urgent: 1, routine: 1 })) return Promise.resolve(false);
+    var body = { stat: cur.stat, urgent: cur.urgent, routine: cur.routine };
+    body[priority] = tone;
+    return api("PUT", "/api/messaging/alert-sounds", body).then(function (v) {
+      DT.set(function (s) { return applySounds(s, v); });
+      return true;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      var msg = moduleRefused(e) ? "Alert sounds are switched off for your organization."
+        : isNetworkError(e) ? "No connection — nothing was changed."
+        : "The server refused it — nothing was changed.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Sound not changed", msg: msg }; return s; });
+      return false;
+    });
+  };
+  // Settings' Preview button (a tap, so the browser lets it play).
+  DT.actions.previewSound = function (tone) { unlockAudio(); return playTone(tone); };
+
   // PIN unlock (PerfectServe parity #7, module security.pin, default off).
   // A PIN re-opens THIS authenticated, locked session; it is not a sign-in.
   // The server holds the scrypt hash and the per-session failure count; this
@@ -4901,7 +5015,16 @@
     return rawApi("GET", "/api/modules").then(function (r) {
       if (!r) return;
       DT.set(function (s) { s.modules = r.modules || {}; s.moduleRegistry = r.registry || []; return s; });
+      followSoundModule();
     }).catch(function () {});
+  }
+  // Alert sounds follow the module map (re-read on every identity change and
+  // each minute): switched on → read my choice once; off → forget it.
+  function followSoundModule() {
+    var st = DT.getState();
+    if (!st.session || lockActive()) return;
+    if (!DT.moduleOn("messaging.alertSounds")) { if (st.soundPrefs) DT.set(function (s) { s.soundPrefs = null; return s; }); return; }
+    if (!st.soundPrefs) DT.actions.loadSoundPrefs();
   }
   function moduleOrgId(orgRef) {
     if (typeof orgRef === "number") return orgRef;

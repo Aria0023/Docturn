@@ -127,6 +127,9 @@ export const GATE_TABLE: readonly GateRule[] = [
   // unlock route. Off by default.
   { path: /^\/api\/security\/pin$/, module: "security.pin" },
   { path: /^\/api\/session\/unlock-pin$/, module: "security.pin" },
+  // Priority alert sounds (server/routes/alert-sounds.ts): the user's choice
+  // of in-app tone per priority.
+  { path: /^\/api\/messaging\/alert-sounds$/, module: "messaging.alertSounds" },
   { path: /^\/api\/messaging\/attachments(\/|$)/, module: "messaging.attachments" },
   { path: /^\/api\/messaging\/availability(\/|$)/, module: "messaging.dnd" },
   { path: /^\/api\/messaging\/messages\/[^/]+$/, module: "messaging.recall", methods: ["DELETE"] },

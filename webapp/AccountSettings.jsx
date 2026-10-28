@@ -352,6 +352,42 @@ function PinDialog({ changing, onClose }) {
   );
 }
 
+// Priority alert sounds (PerfectServe parity #8, module messaging.alertSounds).
+// The tone per priority is stored on the server (one PUT per change, the row
+// shows the server's answer); THIS open app plays it — WebAudio, no files.
+const TONE_LABEL = { siren: "Siren", alarm: "Alarm", chime: "Chime", ping: "Ping", soft: "Soft", none: "None (silent)" };
+const SOUND_ROWS = [["stat", "STAT", "#B91C1C"], ["urgent", "Urgent", "#B45309"], ["routine", "Routine", "var(--foreground)"]];
+function AlertSounds({ prefs }) {
+  const a = useActions();
+  const [busy, setBusy] = React.useState(null);
+  const tones = (prefs.sounds && prefs.sounds.length ? prefs.sounds : Object.keys(TONE_LABEL));
+  const change = (pr, tone) => {
+    if (busy || prefs[pr] === tone) return;
+    setBusy(pr);
+    Promise.resolve(a.setSoundPref(pr, tone)).finally(() => setBusy(null));
+  };
+  return (
+    <SettingsGroup title="Alert sounds">
+      <div data-sound-label style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 14px", fontSize: 12.5, lineHeight: 1.45, color: "var(--muted-foreground)" }}>
+        <Icon name="volume-2" size={16} color="var(--muted-foreground)" style={{ flex: "none", marginTop: 1 }} />
+        <span>In-app sound — iPhone lock-screen notifications use the system sound. Plays only while DocTurn is open on this device (not while do not disturb is on), for messages from others.</span>
+      </div>
+      {SOUND_ROWS.map(([pr, label, color]) => (
+        <div key={pr} data-sound-row={pr} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "#fff" }}>
+          <span style={{ flex: "1 1 90px", minWidth: 0, fontSize: 14, fontWeight: 700, color }}>{label}</span>
+          <select aria-label={label + " sound"} data-sound-select={pr} value={prefs[pr]} disabled={!!busy} onChange={(e) => change(pr, e.target.value)}
+            style={{ flex: "1 1 140px", minWidth: 0, maxWidth: 220, minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontFamily: "inherit", color: "var(--foreground)" }}>
+            {tones.map((t) => <option key={t} value={t}>{TONE_LABEL[t] || t}</option>)}
+          </select>
+          <ShiftBtn data-sound-preview={pr} aria-label={"Preview " + label + " sound"} disabled={prefs[pr] === "none"} onClick={() => a.previewSound(prefs[pr])}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Icon name="play" size={14} />Preview</span>
+          </ShiftBtn>
+        </div>
+      ))}
+    </SettingsGroup>
+  );
+}
+
 // Quick responses (PerfectServe parity #6, module messaging.templates). The
 // user's PERSONAL templates — the same rows the composer's Templates picker
 // and phone chips insert — managed here; there is no second store. Every
@@ -504,6 +540,7 @@ function AccountSettings({ onLock }) {
   const reminderOn = on("messaging.unreadReminder");
   const reminder = st.reminderPrefs || null;
   React.useEffect(() => { if (reminderOn && a.loadReminderPrefs) a.loadReminderPrefs(); }, [reminderOn]);
+  React.useEffect(() => { if (on("messaging.alertSounds") && !st.soundPrefs && a.loadSoundPrefs) a.loadSoundPrefs(); }, [on("messaging.alertSounds")]);
   const pinOn = on("security.pin");
   const pinStatus = st.pinStatus || null;
   const [pinOpen, setPinOpen] = React.useState(false);
@@ -641,6 +678,8 @@ function AccountSettings({ onLock }) {
         <SettingsRow icon="smartphone" title={standalone ? "Installed on this device" : "Install as an app"}
           sub={standalone ? "Running as a home-screen app" : "iPhone: Share → Add to Home Screen · Android: Install app"} />
       </SettingsGroup>
+
+      {on("messaging.alertSounds") && st.soundPrefs && <AlertSounds prefs={st.soundPrefs} />}
 
       <SettingsGroup title="Security">
         <SettingsRow icon="key-round" title="Change password" sub="Choose a new password for your account" right={typeof ChangePasswordButton === "function" ? <ChangePasswordButton /> : null} />

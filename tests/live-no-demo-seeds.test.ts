@@ -150,7 +150,7 @@ describe("live client: no demo clinical rows", () => {
 
   // Per-user parity state that is a single server answer, not a list: null
   // until the server answers, and null again after sign-out.
-  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus"];
+  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs"];
   it("parity status slices (shift, unread reminder …) start null and are cleared on sign-out", async () => {
     const h = await boot({ syntheticData: false });
     for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();

@@ -323,6 +323,9 @@
       // PIN unlock (GET /api/security/pin): { set } from the server — null
       // until it answers and while security.pin is off. Never the PIN.
       pinStatus: null,
+      // Priority alert sounds (GET /api/messaging/alert-sounds): my tone per
+      // priority from the server — null until it answers / module off.
+      soundPrefs: null,
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -840,7 +843,9 @@
     // the previous person's shift status and reminder preference
     "shiftStatus", "reminderPrefs",
     // whether the previous person had a PIN
-    "pinStatus"];
+    "pinStatus",
+    // the previous person's alert-sound choice
+    "soundPrefs"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1154,6 +1159,9 @@
     // No server, no PIN unlock: only the server can lift its own lock.
     pinUnlockAvailable: function () { return Promise.resolve(false); },
     unlockWithPin: function () { return Promise.resolve({ ok: false, error: "offline" }); },
+    loadSoundPrefs: function () { set(function (s) { s.soundPrefs = null; return s; }); return Promise.resolve(null); },
+    setSoundPref: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    previewSound: function () { return false; },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

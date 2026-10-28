@@ -587,7 +587,8 @@ user delete and — for Done rows — the patient purge; tests/dev-audit.test.ts
 proves a tenant with rows in every one of them still deletes cleanly.
 
 Tables (shared/schema.ts + server/db.ts): `directory_favorites`,
-`conversation_done`, `user_reminder_prefs`, `user_sound_prefs`, `user_pins`.
+`conversation_done`, `user_reminder_prefs`, `user_sound_prefs`, `user_pins`,
+`pin_unlock_failures` (added with #7).
 
 Out of scope (not built, stated here only): VoIP calling and a call log, an
 Apple Watch app, and the Expo native app (`mobile-app/`) — the iPhone surface
@@ -816,3 +817,32 @@ is the web app / PWA.
 - Tests: tests/pin-unlock.test.ts (13, all failed on the old server),
   tests/client-pin.test.ts (7, failed on the HEAD client); check:
   scripts/pin-unlock-check.mjs.
+
+### #8 Priority alert sounds — module `messaging.alertSounds`
+- `GET` / `PUT /api/messaging/alert-sounds` `{ stat, urgent, routine }`
+  (server/routes/alert-sounds.ts, gated in `GATE_TABLE`): the caller's own
+  `user_sound_prefs` row (organization + user from the session; `.strict()`;
+  each value one of `siren | alarm | chime | ping | soft | none`). Until the
+  user chooses, the built-in defaults are served (STAT siren, urgent alarm,
+  routine ping); nothing is stored. A change is audited
+  `sound.prefs_update` (low; the three tone names). Module off: 404
+  `module_disabled`, the stored choice is kept for when it comes back.
+- **In-app only**, and labelled so in Settings: "In-app sound — iPhone
+  lock-screen notifications use the system sound". The open app plays the
+  tone when a live `MESSAGE_RECEIVED` from someone else arrives: never for my
+  own messages, never while I am do-not-disturb, never before the server has
+  answered with my choice, one sound per burst (1.5 s), nothing for `none`.
+  A locked tab has no socket, so it plays nothing either.
+- Tones are synthesised with WebAudio oscillators in the bridge — no audio
+  files, nothing fetched, nothing for the CSP to allow. The AudioContext is
+  created / resumed on the first tap (iPhone Safari plays nothing before a
+  gesture), so a sound can be silent until the user has touched the page
+  once after opening it. Settings has a Preview per priority.
+- Settings → Alert sounds: one select (16px, 44px) and Preview per priority;
+  each change is one PUT of all three, the selects show the server's answer.
+  `soundPrefs` follows the module map (read when switched on, dropped when
+  off) and is cleared on sign-out / identity switch.
+- Tests: tests/alert-sounds.test.ts (4/4 failed on the old server),
+  tests/client-alert-sounds.test.ts (6/6 failed on the HEAD client, with a
+  recording AudioContext); check: scripts/alert-sounds-check.mjs (Chromium
+  with autoplay allowed and the page's oscillators recorded).

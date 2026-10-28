@@ -111,6 +111,11 @@ automatically uses encrypted Postgres instead of the local file database.
   online guessing, but a 4–8 digit space is small enough to search offline if
   the database leaked — the per-session cap and the lock's own 15-minute end
   are the controls, not the hash.
+- **Alert sounds fetch nothing** (module `messaging.alertSounds`): the tones
+  are synthesised by WebAudio in the page — no audio files, no third-party
+  host, no CSP change. The server stores only the tone names per priority.
+  They are in-app sounds; Web Push notifications stay content-free and use
+  the system sound.
 
 ---
 
