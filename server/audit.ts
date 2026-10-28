@@ -69,6 +69,16 @@ function attribute(row: AuditInput, ctx: ActorContext | undefined): AuditInput {
 }
 
 /**
+ * The row appendAudit() would store, attributed to the current request's
+ * actor (impersonation included) — for a storage method that writes its audit
+ * row INSIDE its own transaction (e.g. End shift), so the action and its trail
+ * entry commit or roll back together.
+ */
+export function attributedAuditRow(row: AuditInput): AuditInput {
+  return attribute(row, currentActor());
+}
+
+/**
  * Append a security-relevant action to the HIPAA audit trail. Never throws.
  * Returns the stored row (so a caller can cross-reference it, e.g. into the
  * retained archive), or undefined when the write failed.

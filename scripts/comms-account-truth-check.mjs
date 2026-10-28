@@ -134,6 +134,12 @@ const chenH = hosps.find((h) => h.userId === idOf("chen"));
 rec("(setup) director reads accounts + chen's rotation profile", !!chenH && !!idOf("patel"), "chen h=" + (chenH && chenH.id));
 
 // ── #1 On shift (t1) ──
+// The bare On shift switch is the shift.handoff-OFF variant (with the module
+// on, Settings offers End shift / Start shift — scripts/shift-handoff-check.mjs),
+// so #1 runs with it off and switches it back on after the wu case.
+const DevS = await open(BASE, 390, "DOCTURN", "dev");
+const ispnOrg = ((await DevS.api("GET", "/api/dev/organizations")).json || []).find((o) => o.code === "ISPN");
+await DevS.api("PATCH", `/api/dev/modules/${ispnOrg.id}`, { id: "shift.handoff", enabled: false });
 const C1 = await open(BASE, 375, "ISPN", "chen");
 await nav(C1.page, "account", 1500);
 const sw = (page) => page.evaluate(() => { const b = document.querySelector('button[aria-label="On shift"]'); return b ? { pressed: b.getAttribute("aria-pressed"), w: b.getBoundingClientRect().width, h: b.getBoundingClientRect().height, row: (document.querySelector("[data-onshift-row]") || {}).innerText || "" } : null; });
@@ -185,6 +191,8 @@ const W = await open(BASE, 430, "ISPN", "wu");
 await nav(W.page, "account", 1500);
 const wuRow = await W.page.evaluate(() => { const r = document.querySelector("[data-onshift-row]"); return r ? { kind: r.getAttribute("data-onshift-row"), sw: !!document.querySelector('button[aria-label="On shift"]') } : null; });
 rec("#1 wu (no rotation profile): told so, no switch", wuRow && wuRow.kind === "none" && !wuRow.sw, JSON.stringify(wuRow));
+await DevS.api("PATCH", `/api/dev/modules/${ispnOrg.id}`, { id: "shift.handoff", enabled: true });
+await DevS.ctx.close();
 
 // ── #9 clinician's own trail (t2 / t8) ──
 for (const P of [C1, W]) {
@@ -391,9 +399,11 @@ if (REAL) {
   await RD.ctx.close();
   const RH = await open(REAL, 430, "PINE", "pv.hosp", NEWPW);
   await nav(RH.page, "account", 1500);
-  const rs = await RH.page.evaluate(() => { const b = document.querySelector('button[aria-label="On shift"]'); return b ? b.getAttribute("aria-pressed") : null; });
+  // shift.handoff is on by default: the End shift / Start shift row is the
+  // rotation profile's working flag (the bare switch is the module-off variant).
+  const rs = await RH.page.evaluate(() => { const r = document.querySelector("[data-shift-row]"); return r ? String(r.getAttribute("data-shift-row") === "on") : null; });
   const rh = ((await RH.api("GET", "/api/hospitalists")).json || [])[0];
-  rec("R hospitalist On shift = their rotation profile", rh && rs === String(!!rh.working), `switch=${rs} server=${rh && rh.working}`);
+  rec("R hospitalist End shift / Start shift = their rotation profile", rh && rs === String(!!rh.working), `row on=${rs} server=${rh && rh.working}`);
   const rb = ((await RH.api("GET", "/api/broadcasts")).json || []).find((b) => /Pine drill/.test(b.message));
   rec("R the hospitalist received the targeted broadcast", !!rb && rb.recipient === true);
   await nav(RH.page, "compliance", 1500);

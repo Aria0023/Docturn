@@ -53,6 +53,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface Server {
   synthetic: boolean;
+  /** Module switches served by /api/modules (default: none set = registry defaults). */
+  modules?: Record<string, boolean>;
   hospitalists: any[];
   candidates: any[];
   prefs: { dnd: boolean; coveringUserId: number | null };
@@ -146,7 +148,7 @@ async function boot(opts: { role?: Role; server?: Partial<Server>; mobile?: bool
     if (p === "/api/user") return { status: 200, body: me };
     if (p === "/api/session") return { status: 200, body: { authenticated: true, user: me } };
     if (p === "/api/config") return { status: 200, body: { syntheticData: server.synthetic } };
-    if (p === "/api/modules") return { status: 200, body: { modules: {}, registry: [] } };
+    if (p === "/api/modules") return { status: 200, body: { modules: { ...(server.modules || {}) }, registry: [] } };
     if (p === "/api/settings" && req.method === "GET") return { status: 200, body: { me: server.prefs, org: { assignmentTimeoutMin: 15, statSmsFallback: true, autoReassignOnDecline: false } } };
     if (p === "/api/settings/me" && req.method === "PATCH") { (server.prefs as any)[req.body.key] = req.body.value; return { status: 200, body: { ok: true } }; }
     if (p === "/api/org/config") return { status: 200, body: { name: "Sweep General", code: "SWPGEN", timezone: "America/Chicago", roundRobinShiftTypes: ["day", "night"], consultServices: [], consultServicesVersion: 0, theme: null, shifts: [] } };
@@ -249,9 +251,21 @@ async function openNav(h: Harness, nav: string) { h.w.DT.actions.setNav(nav); aw
 const onShiftSwitch = (h: Harness) => h.w.document.querySelector('button[aria-label="On shift"]');
 
 // ── #1 On shift ─────────────────────────────────────────────────────────────
+// The bare On shift switch is the shift.handoff-OFF variant: with the module
+// on, Settings offers End shift / Start shift instead (tests/client-shift.test.ts,
+// scripts/shift-handoff-check.mjs).
+const SWITCH_VARIANT = { "shift.handoff": false };
 describe("#1 Settings → On shift is the rotation profile on the server", () => {
+  it("with shift.handoff on, End shift replaces the bare switch", async () => {
+    const h = await boot({ role: "hospitalist" });
+    await openNav(h, "account");
+    await until(() => !!h.w.document.querySelector('[data-shift-row="on"]'), 6000, "End shift row");
+    expect(onShiftSwitch(h)).toBeNull();
+    expect(h.text()).toMatch(/End shift/);
+  });
+
   it("reads the server's working flag; a tap is PATCH working-status and the switch follows the answer", async () => {
-    const h = await boot({ role: "hospitalist", server: { hospitalists: [{ id: 1, userId: 5, specialty: "Hospital Medicine", currentPatientCount: 3, patientCap: 12, working: false, shiftType: "day", inRotation: true }] } });
+    const h = await boot({ role: "hospitalist", server: { modules: SWITCH_VARIANT, hospitalists: [{ id: 1, userId: 5, specialty: "Hospital Medicine", currentPatientCount: 3, patientCap: 12, working: false, shiftType: "day", inRotation: true }] } });
     await openNav(h, "account");
     await until(() => !!onShiftSwitch(h), 6000, "switch");
     // The server says OFF: the switch says off, whatever this device held.
@@ -269,7 +283,7 @@ describe("#1 Settings → On shift is the rotation profile on the server", () =>
   });
 
   it("a refused change leaves the switch where the server is and says so", async () => {
-    const h = await boot({ role: "hospitalist" });
+    const h = await boot({ role: "hospitalist", server: { modules: SWITCH_VARIANT } });
     await openNav(h, "account");
     await until(() => !!onShiftSwitch(h), 6000, "switch");
     expect(onShiftSwitch(h).getAttribute("aria-pressed")).toBe("true");

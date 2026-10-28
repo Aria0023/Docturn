@@ -76,6 +76,15 @@ automatically uses encrypted Postgres instead of the local file database.
   a slow or hostile vendor cannot hold a request or another hospital's sync.
   Only a director (or the operator) can switch, test or set up integrations;
   an ER director sees them read-only.
+- **End shift is one transaction with its own audit row** (module
+  `shift.handoff`): going off shift, handing pending requests to the covering
+  provider (a same-org, active user — another tenant's id answers like an
+  unknown one), the covering / DND / away-message preferences and the
+  `shift.end` audit row commit or roll back together (the row is inserted
+  inside the transaction, attributed to the real operator when the session is
+  impersonated). The audit row carries ids and flags only — never the
+  away-message text. DND and an away message are refused while `messaging.dnd`
+  is off rather than stored as a promise nothing keeps.
 
 ---
 

@@ -229,6 +229,92 @@ function EnableAlertsCard() {
   );
 }
 
+// A 44px action button that carries data-* hooks (Button does not forward them).
+function ShiftBtn({ primary, onClick, disabled, children, ...rest }) {
+  return (
+    <button type="button" onClick={disabled ? undefined : onClick} aria-disabled={disabled ? "true" : undefined} {...rest}
+      style={{ minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-md)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
+        cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
+        border: primary ? "1px solid var(--primary)" : "1px solid var(--border)", background: primary ? "var(--primary)" : "#fff", color: primary ? "#fff" : "var(--foreground)" }}>
+      {children}
+    </button>
+  );
+}
+
+// End shift confirm (PerfectServe parity #4, module shift.handoff). States the
+// server's rule before the one POST /api/shift/end: accepted patients stay
+// with you (never re-routed); pending requests go to the covering provider you
+// pick — required while any are pending, and they must be on shift. DND and
+// the away message are offered only while messaging.dnd is on.
+function EndShiftDialog({ status, onClose }) {
+  const st = useStore();
+  const a = useActions();
+  const on = (id) => (window.DT && DT.moduleOn ? DT.moduleOn(id) : true);
+  const pending = (status && status.pendingCount) || 0;
+  const accepted = (status && status.acceptedCount) || 0;
+  const meId = st.me && st.me.id;
+  const [cover, setCover] = React.useState(status && status.coveringUserId != null ? status.coveringUserId : null);
+  const [dnd, setDnd] = React.useState(false);
+  const [away, setAway] = React.useState((status && status.awayMessage) || "");
+  const [q, setQ] = React.useState("");
+  const dndOn = on("messaging.dnd");
+  // Pending requests can only be handed to someone in the rotation who is on
+  // shift (the server refuses anyone else); with none pending, any colleague.
+  const people = (st.directory || []).filter((d) => d.id !== meId && (!pending || d.working) &&
+    (!q || (d.name || "").toLowerCase().includes(q.toLowerCase())));
+  const coverValid = cover == null || people.some((d) => d.id === cover) || !pending;
+  const canEnd = !st.shiftSaving && (!pending || (cover != null && coverValid));
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+  function submit() {
+    if (!canEnd) return;
+    Promise.resolve(a.endShift({ coveringUserId: cover, dnd: dndOn && dnd, awayMessage: dndOn ? away : undefined }))
+      .then((r) => { if (r && r.ok) onClose(); });
+  }
+  return (
+    <Modal title="End shift" subtitle="Takes you off shift — round-robin stops sending you new admissions." icon="log-out" onClose={onClose}
+      children={
+        <div data-end-shift-dialog style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div data-shift-rule style={{ fontSize: 13.5, lineHeight: 1.45, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--secondary)" }}>
+            <b>Accepted patients stay with you</b> — ending a shift never re-routes them{accepted ? " (" + plural(accepted, "accepted patient") + " on your census)" : ""}.
+            {pending
+              ? <span> You have <b data-shift-pending>{plural(pending, "pending request")}</b>: {pending === 1 ? "it goes" : "they go"} to the covering provider you choose, who must be on shift.</span>
+              : <span> You have no pending requests.</span>}
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Covering provider{pending ? " (required)" : " (optional)"}</div>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search colleagues…" aria-label="Search colleagues"
+            style={{ fontSize: 16, minHeight: 44, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+          <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+            {people.map((d) => (
+              <button key={d.id} type="button" data-shift-cover={d.id} aria-pressed={cover === d.id} onClick={() => setCover(cover === d.id && !pending ? null : d.id)}
+                style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "6px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (cover === d.id ? "var(--primary)" : "var(--border)"), background: cover === d.id ? "#EFF6FF" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{d.name}</span>
+                  <span style={{ display: "block", fontSize: 12, color: "var(--muted-foreground)" }}>{d.specialty || "Provider"}{d.working ? " · on shift" : " · off shift"}</span>
+                </span>
+                {cover === d.id && <Icon name="check" size={16} color="var(--primary)" />}
+              </button>
+            ))}
+            {people.length === 0 && <div data-shift-no-cover style={{ padding: 12, fontSize: 13, color: "var(--muted-foreground)", textAlign: "center" }}>{pending ? "Nobody else in the rotation is on shift, so your pending requests cannot be handed over yet." : "No colleagues found."}</div>}
+          </div>
+          {dndOn && (
+            <React.Fragment>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, fontSize: 14, cursor: "pointer" }}>
+                <input type="checkbox" data-shift-dnd checked={dnd} onChange={(e) => setDnd(e.target.checked)} style={{ width: 22, height: 22 }} />
+                Turn on do not disturb{cover != null ? " — messages forward to your covering provider" : ""}
+              </label>
+              <input value={away} onChange={(e) => setAway(e.target.value.slice(0, 280))} placeholder="Away message (optional)" aria-label="Away message" data-shift-away
+                style={{ fontSize: 16, minHeight: 44, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+            </React.Fragment>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+            <ShiftBtn onClick={onClose}>Cancel</ShiftBtn>
+            <ShiftBtn primary onClick={submit} disabled={!canEnd} data-shift-confirm>{st.shiftSaving ? "Ending…" : "End shift"}</ShiftBtn>
+          </div>
+        </div>
+      } />
+  );
+}
+
 function AccountSettings({ onLock }) {
   const st = useStore();
   const a = useActions();
@@ -259,6 +345,12 @@ function AccountSettings({ onLock }) {
   const isDirector = role === "director" || role === "er_director";
   const isClinical = role === "hospitalist" || role === "er_doctor";
   const myProv = st.myProvider || null;
+  const shiftOn = on("shift.handoff");
+  const shift = st.shiftStatus || null;
+  const [endOpen, setEndOpen] = React.useState(false);
+  // My shift truth (pending / accepted counts) from the server, re-read when
+  // my On shift changes.
+  React.useEffect(() => { if (shiftOn && myProv && a.loadShift) a.loadShift(); }, [shiftOn, !!myProv, myProv && myProv.working]);
 
   // The ONLY place the app asks for notification permission (A.CON-SHO-62 /
   // A.CON-NEE-1): a.enablePush() runs synchronously inside this tap, which is
@@ -317,7 +409,24 @@ function AccountSettings({ onLock }) {
           round-robin reads (A.CON comms-account #1). The switch moves when
           the server answers. A hospitalist with no rotation profile (e.g. a
           PA on a care team) is told so instead of being given a switch. */}
-      {role === "hospitalist" && (myProv || st.isProvider === false) && (
+      {/* End shift / Start shift (module shift.handoff) replaces the bare
+          switch for anyone with a rotation profile — hospitalist or a
+          director who takes patients: one server action that hands pending
+          requests to a covering provider and never re-routes accepted ones. */}
+      {shiftOn && myProv && (
+        <SettingsGroup title="Rotation">
+          <SettingsRow icon={myProv.working ? "log-out" : "log-in"} title={myProv.working ? "End shift" : "Start shift"} wrapSub
+            rowProps={{ "data-shift-row": myProv.working ? "on" : "off" }}
+            sub={myProv.working
+              ? "On shift" + (shift && shift.pendingCount ? " · " + shift.pendingCount + " pending request" + (shift.pendingCount === 1 ? "" : "s") + " — a covering provider takes them when you end" : "") + ". Accepted patients stay with you."
+              : "Off shift — round-robin skips you" + (prefs.dnd ? " · do not disturb is on (Start shift turns it off)" : "")}
+            right={myProv.working
+              ? <ShiftBtn data-shift-action="end" disabled={!!st.shiftSaving} onClick={() => { a.loadShift(); setEndOpen(true); }}>End shift</ShiftBtn>
+              : <ShiftBtn primary data-shift-action="start" disabled={!!st.shiftSaving} onClick={() => a.startShift()}>{st.shiftSaving ? "Starting…" : "Start shift"}</ShiftBtn>} />
+        </SettingsGroup>
+      )}
+      {endOpen && <EndShiftDialog status={shift} onClose={() => setEndOpen(false)} />}
+      {!(shiftOn && myProv) && (role === "hospitalist" || myProv) && (myProv || st.isProvider === false) && (
         <SettingsGroup title="Rotation">
           {myProv
             ? <SettingsRow icon="activity" title="On shift" wrapSub rowProps={{ "data-onshift-row": myProv.working ? "on" : "off" }}

@@ -311,6 +311,9 @@
       // recently contacted (GET /api/directory/recents, derived server-side).
       favorites: [],
       recents: [],
+      // End shift / Start shift (GET /api/shift): my shift truth from the
+      // server — null until it answers, and while shift.handoff is off.
+      shiftStatus: null,
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
@@ -822,7 +825,9 @@
     // the previous person's trail sizes and their org's live presence
     "phiAccessCount", "auditScope", "auditError", "presence",
     // the previous person's Directory: their org's role contacts and holders
-    "roleContacts", "onCallTargets", "favorites", "recents"];
+    "roleContacts", "onCallTargets", "favorites", "recents",
+    // the previous person's shift status
+    "shiftStatus"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1124,6 +1129,9 @@
     setConversationDone: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     loadDirectoryLists: function () { set(function (s) { s.favorites = []; s.recents = []; return s; }); return Promise.resolve(); },
     toggleFavorite: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
+    loadShift: function () { set(function (s) { s.shiftStatus = null; return s; }); return Promise.resolve(null); },
+    endShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve({ ok: false }); },
+    startShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve({ ok: false }); },
     startRoleConversation: function (target) {
       if (!target) return;
       set(function (s) {

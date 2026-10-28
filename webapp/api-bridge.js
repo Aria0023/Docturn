@@ -90,7 +90,7 @@
       // reset to the kit's demo seed rows.
       ["board", "myPatients", "myAdmissions", "pending", "sent", "admissions", "broadcasts", "audit", "phiLog", "candidates", "roleContacts", "onCallTargets", "favorites", "recents"].forEach(function (k) { s[k] = []; });
       ["admissionsInfo", "erDiversion", "erDiversionError", "erRoster", "erRosterError", "erReport", "erReportError", "team", "myProvider", "opsReport", "commsMetrics",
-        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence"].forEach(function (k) { s[k] = null; });
+        "auditCount", "phiAccessCount", "auditScope", "auditError", "presence", "shiftStatus"].forEach(function (k) { s[k] = null; });
     }
     return s;
   }
@@ -3800,6 +3800,114 @@
       });
       rehydrate();
       return false;
+    });
+  };
+  // End shift / Start shift (PerfectServe parity #4, module shift.handoff).
+  // ONE server action each (POST /api/shift/end | /start, one transaction on
+  // the server); the screen shows the server's answer — shiftStatus, my
+  // profile's On shift, my DND / covering / away message — never a guess.
+  function applyShift(s, v) {
+    s.shiftStatus = { hasProfile: !!v.hasProfile, working: !!v.working, pendingCount: v.pendingCount | 0, acceptedCount: v.acceptedCount | 0,
+      coveringUserId: v.coveringUserId != null ? v.coveringUserId : null, dnd: !!v.dnd, awayMessage: v.awayMessage || "" };
+    if (s.myProvider) s.myProvider = Object.assign({}, s.myProvider, { working: !!v.working });
+    var p = Object.assign({}, s.myPrefs);
+    p.dnd = !!v.dnd; p.coveringUserId = s.shiftStatus.coveringUserId; p.awayMessage = s.shiftStatus.awayMessage;
+    s.myPrefs = p;
+    return s;
+  }
+  var SHIFT_REFUSALS = {
+    covering_required: function (b) { var n = (b && b.pendingCount) | 0; return "You have " + n + " pending request" + (n === 1 ? "" : "s") + " — choose a covering provider to hand " + (n === 1 ? "it" : "them") + " to."; },
+    covering_not_in_rotation: function () { return "Your pending requests can only go to someone in the rotation — choose a covering provider with a rotation profile."; },
+    covering_off_shift: function () { return "That covering provider is off shift, so they could not answer your pending requests — choose someone on shift."; },
+    covering_not_found: function () { return "That covering provider is not in your organization."; },
+    covering_inactive: function () { return "That account is deactivated — choose another covering provider."; },
+    covering_is_self: function () { return "Choose someone other than yourself to cover."; },
+    not_on_shift: function () { return "You are already off shift."; },
+    already_on_shift: function () { return "You are already on shift."; },
+    no_rotation_profile: function () { return "You have no rotation profile — a director adds you to the rotation."; },
+  };
+  function shiftRefused(e, title) {
+    var why = String((e && e.message) || "");
+    var body = e && e.body;
+    var msg = moduleRefused(e)
+      ? (body && body.module === "messaging.dnd" ? "Do not disturb is switched off for your organization — end the shift without it." : "End shift is switched off for your organization.")
+      : SHIFT_REFUSALS[why] ? SHIFT_REFUSALS[why](body)
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : "The server refused it — nothing was changed.";
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+    return { ok: false, error: why };
+  }
+  DT.actions.loadShift = function () {
+    if (DT.moduleOn && !DT.moduleOn("shift.handoff")) {
+      DT.set(function (s) { s.shiftStatus = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/shift").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { return applyShift(s, v); });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.shiftStatus = null; return s; });
+      return null;
+    });
+  };
+  var shiftBusy = false;
+  DT.actions.endShift = function (opts) {
+    if (shiftBusy) return Promise.resolve({ ok: false, error: "busy" });
+    var o = opts || {};
+    var body = {};
+    if (o.coveringUserId != null) body.coveringUserId = Number(o.coveringUserId);
+    // DND and the away message are messaging.dnd's: never sent while it is off.
+    var dndOn = !DT.moduleOn || DT.moduleOn("messaging.dnd");
+    if (dndOn && o.dnd === true) body.dnd = true;
+    if (dndOn && typeof o.awayMessage === "string" && o.awayMessage.trim()) body.awayMessage = o.awayMessage.trim().slice(0, 280);
+    shiftBusy = true;
+    DT.set(function (s) { s.shiftSaving = true; return s; });
+    return api("POST", "/api/shift/end", body).then(function (v) {
+      shiftBusy = false;
+      var moved = (v && v.handedOff) | 0, kept = (v && v.acceptedKept) | 0;
+      DT.set(function (s) {
+        s.shiftSaving = false;
+        applyShift(s, v || {});
+        s.__toast = { tone: "accepted", title: "Shift ended",
+          msg: "You're off shift — round-robin skips you." +
+            (moved ? " " + moved + " pending request" + (moved === 1 ? "" : "s") + " handed to your covering provider." : "") +
+            (kept ? " " + kept + " accepted patient" + (kept === 1 ? "" : "s") + " stay with you." : "") };
+        return s;
+      });
+      rehydrate();
+      return { ok: true, handedOff: moved, acceptedKept: kept };
+    }, function (e) {
+      shiftBusy = false;
+      DT.set(function (s) { s.shiftSaving = false; return s; });
+      var out = shiftRefused(e, "Shift not ended");
+      DT.actions.loadShift();
+      return out;
+    });
+  };
+  DT.actions.startShift = function () {
+    if (shiftBusy) return Promise.resolve({ ok: false, error: "busy" });
+    shiftBusy = true;
+    DT.set(function (s) { s.shiftSaving = true; return s; });
+    return api("POST", "/api/shift/start", {}).then(function (v) {
+      shiftBusy = false;
+      DT.set(function (s) {
+        s.shiftSaving = false;
+        applyShift(s, v || {});
+        s.__toast = { tone: "accepted", title: "Shift started", msg: "You're on shift and do not disturb is off — round-robin can send you new admissions." };
+        return s;
+      });
+      rehydrate();
+      return { ok: true };
+    }, function (e) {
+      shiftBusy = false;
+      DT.set(function (s) { s.shiftSaving = false; return s; });
+      var out = shiftRefused(e, "Shift not started");
+      DT.actions.loadShift();
+      return out;
     });
   };
   DT.actions.adjustCap = function (id, d) {

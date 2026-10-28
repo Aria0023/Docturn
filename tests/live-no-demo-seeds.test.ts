@@ -148,6 +148,20 @@ describe("live client: no demo clinical rows", () => {
     for (const k of PARITY_SLICES) expect(h.state()[k], k).toEqual([]);
   });
 
+  // Per-user parity state that is a single server answer, not a list: null
+  // until the server answers, and null again after sign-out.
+  const PARITY_NULL_SLICES = ["shiftStatus"];
+  it("parity status slices (shift …) start null and are cleared on sign-out", async () => {
+    const h = await boot({ syntheticData: false });
+    for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();
+    await h.w.DT.actions.login("er_doctor", "LAKE", "er.doc", "pw-123456789");
+    await sleep(80);
+    h.w.DT.set((s: any) => { for (const k of PARITY_NULL_SLICES) s[k] = { marker: "previous person's state" }; return s; });
+    await h.w.DT.actions.logout();
+    await sleep(30);
+    for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();
+  });
+
   it("the labelled local demo (synthetic server, then unreachable) still has the kit's demo rows", async () => {
     const h = await boot({ syntheticData: true });
     h.net.online = false;

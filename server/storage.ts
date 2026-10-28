@@ -3055,6 +3055,113 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(userReminderPrefs.organizationId, orgId), eq(userReminderPrefs.userId, userId)));
   }
 
+  /**
+   * End shift (module shift.handoff) — ONE transaction: the caller's pending
+   * incoming requests are handed to the covering provider's rotation profile
+   * (each released as `expired`, re-offered `pending` / `manual`, exactly the
+   * shape a director's re-route of a pending request takes), the profile goes
+   * off shift, the covering / DND / away-message preferences are written and
+   * the one audit row is inserted. Accepted assignments are never touched.
+   * Refusals discovered inside the transaction (already off shift; pending
+   * requests but nobody to hand them to) roll everything back.
+   */
+  async endShift(input: {
+    orgId: number;
+    userId: number;
+    hospitalistId: number;
+    /** Written as the covering preference when a number; left alone otherwise. */
+    coveringUserId?: number;
+    /** The covering provider's rotation profile (required when requests are pending). */
+    handOffToHospitalistId: number | null;
+    timeoutMin: number;
+    dnd?: boolean;
+    awayMessage?: string;
+    audit: (outcome: { handedOff: number; acceptedKept: number }) => AuditInput;
+  }): Promise<
+    | { ok: true; handedOff: Assignment[]; released: number[]; acceptedKept: number }
+    | { ok: false; error: "not_on_shift" | "covering_required"; pendingCount: number }
+  > {
+    const { orgId, userId, hospitalistId } = input;
+    class Refused extends Error {
+      constructor(readonly error: "not_on_shift" | "covering_required", readonly pendingCount: number) {
+        super(error);
+      }
+    }
+    try {
+      return await this.db.transaction(async (tx) => {
+        const pending = await tx
+          .select()
+          .from(assignments)
+          .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, hospitalistId), eq(assignments.status, "pending")));
+        const [off] = await tx
+          .update(hospitalists)
+          .set({ working: false })
+          .where(and(eq(hospitalists.organizationId, orgId), eq(hospitalists.id, hospitalistId), eq(hospitalists.working, true)))
+          .returning({ id: hospitalists.id });
+        if (!off) throw new Refused("not_on_shift", pending.length);
+        const target = input.handOffToHospitalistId;
+        if (pending.length && target == null) throw new Refused("covering_required", pending.length);
+        const now = new Date();
+        const handedOff: Assignment[] = [];
+        for (const a of pending) {
+          await tx.update(assignments).set({ status: "expired", resolvedAt: now }).where(and(eq(assignments.organizationId, orgId), eq(assignments.id, a.id)));
+          const [created] = await tx
+            .insert(assignments)
+            .values({
+              organizationId: orgId,
+              patientId: a.patientId,
+              hospitalistId: target!,
+              erDoctorId: a.erDoctorId,
+              status: "pending",
+              via: "manual",
+              acceptedByUserId: null,
+              expiresAt: new Date(now.getTime() + input.timeoutMin * 60_000),
+            })
+            .returning();
+          handedOff.push(created!);
+        }
+        const [{ n: acceptedKept } = { n: 0 }] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(assignments)
+          .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, hospitalistId), eq(assignments.status, "accepted")));
+        const prefs: Array<[string, unknown]> = [];
+        if (input.coveringUserId !== undefined) prefs.push(["coveringUserId", input.coveringUserId]);
+        if (input.dnd !== undefined) prefs.push(["dnd", input.dnd]);
+        if (input.awayMessage !== undefined) prefs.push(["awayMessage", input.awayMessage]);
+        for (const [key, value] of prefs) {
+          await tx
+            .insert(userPreferences)
+            .values({ organizationId: orgId, userId, key, value })
+            .onConflictDoUpdate({ target: [userPreferences.userId, userPreferences.key], set: { value } });
+        }
+        const row = input.audit({ handedOff: handedOff.length, acceptedKept: Number(acceptedKept) });
+        await tx.insert(auditLogs).values({ ...row, impersonatorUserId: row.impersonatorUserId ?? null });
+        return { ok: true as const, handedOff, released: pending.map((a) => a.id), acceptedKept: Number(acceptedKept) };
+      });
+    } catch (err) {
+      if (err instanceof Refused) return { ok: false, error: err.error, pendingCount: err.pendingCount };
+      throw err;
+    }
+  }
+
+  /** Start shift — the inverse, one transaction: on shift, DND off, one audit row. */
+  async startShift(input: { orgId: number; userId: number; hospitalistId: number; audit: AuditInput }): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [on] = await tx
+        .update(hospitalists)
+        .set({ working: true })
+        .where(and(eq(hospitalists.organizationId, input.orgId), eq(hospitalists.id, input.hospitalistId), eq(hospitalists.working, false)))
+        .returning({ id: hospitalists.id });
+      if (!on) return false;
+      await tx
+        .insert(userPreferences)
+        .values({ organizationId: input.orgId, userId: input.userId, key: "dnd", value: false })
+        .onConflictDoUpdate({ target: [userPreferences.userId, userPreferences.key], set: { value: false } });
+      await tx.insert(auditLogs).values({ ...input.audit, impersonatorUserId: input.audit.impersonatorUserId ?? null });
+      return true;
+    });
+  }
+
   async getSoundPrefs(orgId: number, userId: number): Promise<UserSoundPrefs | undefined> {
     const [row] = await this.db
       .select()

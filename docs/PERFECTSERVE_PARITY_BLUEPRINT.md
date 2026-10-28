@@ -663,3 +663,50 @@ is the web app / PWA.
   total (nav badge, app badge) for a done thread.
 - Tests: tests/done.test.ts, tests/client-done.test.ts;
   check: scripts/done-check.mjs.
+
+### #4 End shift / Start shift — module `shift.handoff`
+- `GET /api/shift` (the caller's truth: rotation profile, on shift, pending /
+  accepted counts, covering, DND, away message), `POST /api/shift/end`
+  `{ coveringUserId?, dnd?, awayMessage? }`, `POST /api/shift/start`
+  (server/routes/shift.ts, gated in `GATE_TABLE`; roles hospitalist and
+  director — the roles that can hold a rotation profile; no profile → 409
+  `no_rotation_profile`, and the UI shows the truthful "Not in the rotation"
+  row instead of a button). No new table: `hospitalists.working` plus the
+  existing `coveringUserId` / `dnd` / `awayMessage` user preferences.
+- End shift is ONE transaction (`storage.endShift`): the profile goes off
+  shift, every pending incoming request is handed to the covering provider's
+  rotation profile (released `expired`, re-offered `pending` / `manual` with a
+  fresh timeout — the shape a director's re-route of a pending request
+  takes), the preferences are written and one `shift.end` audit row is
+  inserted (ids / counts / flags only; `medium` when requests were handed
+  over, else `low`). A failure at any step — the audit insert included —
+  rolls all of it back (tested).
+- The covering provider is required while requests are pending
+  (409 `covering_required` with the count); it must be an active user of the
+  caller's org (another tenant's id → 404 like an unknown one; yourself → 400;
+  deactivated → 409) and, to take pending requests, on shift in the rotation
+  (409 `covering_not_in_rotation` / `covering_off_shift`). With nothing
+  pending it is optional and the stored covering preference is kept.
+- **Accepted patients are never re-routed** — they stay on the caller's
+  census; the confirm dialog states this rule with the server's accepted and
+  pending counts before the one write. After commit the covering provider's
+  unit gets the normal assignment alert, the handed-off requests' re-push
+  timers stop, and every session re-reads rotation and assignments.
+- DND / away message belong to `messaging.dnd`: refused (404
+  `module_disabled`, nothing changed) while it is off, and the dialog does
+  not offer them then.
+- Start shift is the inverse in one transaction: on shift, DND off, one
+  `shift.start` audit row; the covering preference and away message are kept
+  (they are standing preferences).
+- Settings → Rotation: with the module on, End shift / Start shift replaces
+  the bare On shift switch for anyone with a rotation profile (a director who
+  takes patients included). With it off, the old switch is back.
+- Not covered by this rule (judgment call, stated): the director's
+  `PATCH /api/hospitalists/:id/working-status` (and the self switch while
+  `shift.handoff` is off) still take a provider off shift without a hand-off;
+  requests left pending expire and re-route on the normal timeout path. If
+  that should close too, the shape is: module on + self + `working:false` +
+  pending → 409 `covering_required`.
+- Tests: tests/shift-handoff.test.ts, tests/client-shift.test.ts,
+  tests/client-comms-account.test.ts (switch = module-off variant);
+  check: scripts/shift-handoff-check.mjs.

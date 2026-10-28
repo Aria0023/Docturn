@@ -131,6 +131,8 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Directory favorites + recently contacted (server/routes/directory.ts).
   { path: /^\/api\/directory\/(favorites|recents)(\/|$)/, module: "directory.favorites" },
   // Schedule
+  // End shift / Start shift (server/routes/shift.ts).
+  { path: /^\/api\/shift(\/|$)/, module: "shift.handoff" },
   { path: /^\/api\/amion(\/|$)/, module: "schedule.amion" },
   { path: /^\/api\/oncall(\/|$)/, module: "oncall.board" },
   // Operations
