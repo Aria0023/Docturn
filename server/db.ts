@@ -721,4 +721,70 @@ CREATE TABLE IF NOT EXISTS compliance_attestations (
   updated_by INTEGER REFERENCES users(id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS compliance_attestations_org_control_uniq ON compliance_attestations(organization_id, control_id);
+
+-- PerfectServe-parity tables (docs/PERFECTSERVE_PARITY_BLUEPRINT.md). Every
+-- one is per-org + per-user and cascaded by the tenant delete. Mirrors
+-- shared/schema.ts.
+-- Directory favorites: a person (target_id = user id as text) or an on-call
+-- role (target_id = the role key). No FK on target_id (a role is not a row).
+CREATE TABLE IF NOT EXISTS directory_favorites (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS directory_favorites_uniq
+  ON directory_favorites(organization_id, user_id, target_kind, target_id);
+
+-- Per-user Done state: done while done_at >= the thread's newest message.
+CREATE TABLE IF NOT EXISTS conversation_done (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id),
+  done_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_done_user_convo_uniq
+  ON conversation_done(user_id, conversation_id);
+
+-- Unread-message reminder opt-in (off by default) + the sweep's last send.
+CREATE TABLE IF NOT EXISTS user_reminder_prefs (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  interval_min INTEGER NOT NULL DEFAULT 10,
+  last_reminded_at TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_reminder_prefs_user_uniq ON user_reminder_prefs(user_id);
+
+-- In-app alert sound per priority (NULL = built-in default tone).
+CREATE TABLE IF NOT EXISTS user_sound_prefs (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  stat_sound TEXT,
+  urgent_sound TEXT,
+  routine_sound TEXT,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_sound_prefs_user_uniq ON user_sound_prefs(user_id);
+
+-- PIN unlock: scrypt hash + per-session failure state (failed_session is a
+-- hash of the session id, never the id).
+CREATE TABLE IF NOT EXISTS user_pins (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  pin_hash TEXT NOT NULL,
+  failed_attempts INTEGER NOT NULL DEFAULT 0,
+  failed_session TEXT,
+  pin_disabled_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_pins_user_uniq ON user_pins(user_id);
 `;

@@ -799,6 +799,150 @@ export const complianceAttestations = pgTable(
 );
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * PerfectServe-parity tables (docs/PERFECTSERVE_PARITY_BLUEPRINT.md). Every
+ * row is per-organization AND per-user, same-org validated on write, and
+ * cascaded by the tenant delete (server/storage.ts deleteOrganization) and the
+ * user delete. Mirrored as idempotent DDL in server/db.ts SCHEMA_SQL.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const FAVORITE_TARGET_KINDS = ["user", "role"] as const;
+export type FavoriteTargetKind = (typeof FAVORITE_TARGET_KINDS)[number];
+
+/**
+ * Directory favorites (module directory.favorites): a person (target_id = the
+ * in-org user id, as text) or an on-call role (target_id = the role key
+ * resolveOnCallTargets serves). No FK on target_id: a role is not a row, and a
+ * favorited user who is deleted is removed by deleteUser.
+ */
+export const directoryFavorites = pgTable(
+  "directory_favorites",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    targetKind: text("target_kind", { enum: FAVORITE_TARGET_KINDS }).notNull(),
+    targetId: text("target_id").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    favoriteUniq: uniqueIndex("directory_favorites_uniq").on(
+      t.organizationId,
+      t.userId,
+      t.targetKind,
+      t.targetId,
+    ),
+  }),
+);
+
+/**
+ * Per-user "Done" state of a conversation (module messaging.done). A thread is
+ * done for that user while done_at >= its newest message's created_at — a new
+ * message re-opens it without any write.
+ */
+export const conversationDone = pgTable(
+  "conversation_done",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    conversationId: integer("conversation_id")
+      .notNull()
+      .references(() => conversations.id),
+    doneAt: timestamp("done_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    donePerUser: uniqueIndex("conversation_done_user_convo_uniq").on(
+      t.userId,
+      t.conversationId,
+    ),
+  }),
+);
+
+/** Unread-message reminder opt-in (module messaging.unreadReminder). Off by default. */
+export const REMINDER_INTERVALS_MIN = [5, 10, 15, 30] as const;
+export const userReminderPrefs = pgTable(
+  "user_reminder_prefs",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    enabled: boolean("enabled").notNull().default(false),
+    intervalMin: integer("interval_min").notNull().default(10),
+    /** When the sweep last reminded this user (null: never). */
+    lastRemindedAt: timestamp("last_reminded_at"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    reminderPerUser: uniqueIndex("user_reminder_prefs_user_uniq").on(t.userId),
+  }),
+);
+
+/**
+ * In-app alert sound per priority (module messaging.alertSounds). NULL = the
+ * built-in default tone for that priority. Played by the open app only.
+ */
+export const userSoundPrefs = pgTable(
+  "user_sound_prefs",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    statSound: text("stat_sound"),
+    urgentSound: text("urgent_sound"),
+    routineSound: text("routine_sound"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    soundPerUser: uniqueIndex("user_sound_prefs_user_uniq").on(t.userId),
+  }),
+);
+
+/**
+ * PIN unlock (module security.pin, default off): a scrypt hash (the password
+ * hasher) that re-opens an authenticated, LOCKED session — never a sign-in.
+ * failed_attempts counts wrong PINs for the session identified by
+ * failed_session (a hash of its id, never the id); at the limit the PIN is
+ * disabled for that session (pin_disabled_at) and the password is required.
+ */
+export const userPins = pgTable(
+  "user_pins",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    pinHash: text("pin_hash").notNull(),
+    failedAttempts: integer("failed_attempts").notNull().default(0),
+    failedSession: text("failed_session"),
+    pinDisabledAt: timestamp("pin_disabled_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    pinPerUser: uniqueIndex("user_pins_user_uniq").on(t.userId),
+  }),
+);
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Relations
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -881,6 +1025,11 @@ export type BroadcastAck = typeof broadcastAcknowledgments.$inferSelect;
 export type DeviceToken = typeof deviceTokens.$inferSelect;
 export type SmsHistory = typeof smsHistory.$inferSelect;
 export type ComplianceAttestation = typeof complianceAttestations.$inferSelect;
+export type DirectoryFavorite = typeof directoryFavorites.$inferSelect;
+export type ConversationDone = typeof conversationDone.$inferSelect;
+export type UserReminderPrefs = typeof userReminderPrefs.$inferSelect;
+export type UserSoundPrefs = typeof userSoundPrefs.$inferSelect;
+export type UserPin = typeof userPins.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;

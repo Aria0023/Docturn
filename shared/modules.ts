@@ -44,17 +44,24 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "messaging.patientThreads", label: "Patient-linked threads",       group: "Messaging", default: true,  blurb: "A care-team conversation bound to a patient." },
   { id: "messaging.dnd",          label: "Do-not-disturb & covering",      group: "Messaging", default: true,  blurb: "DND with a covering provider; senders see an availability message." },
   { id: "messaging.recall",       label: "Message recall",                 group: "Messaging", default: true,  blurb: "Sender can recall an unread message (audited)." },
+  // PerfectServe parity (docs/PERFECTSERVE_PARITY_BLUEPRINT.md).
+  { id: "messaging.done",         label: "Done (archive a thread)",        group: "Messaging", default: true,  blurb: "Mark a conversation Done for yourself: it leaves your main list (and the unread count) until a new message re-opens it. Synced to your other devices." },
+  { id: "messaging.unreadReminder", label: "Unread-message reminder",      group: "Messaging", default: true,  blurb: "Per-user opt-in: a content-free push reminder every N minutes while messages stay unread (respects DND). Off = no reminders and the setting is hidden." },
+  { id: "messaging.alertSounds",  label: "Priority alert sounds",          group: "Messaging", default: true,  blurb: "Per-user in-app sound per priority (STAT / urgent / routine), played by the open app only. iPhone lock-screen notifications use the system sound." },
+  { id: "directory.favorites",    label: "Favorites & recently contacted", group: "Messaging", default: true,  blurb: "Star people and on-call roles in the Directory; recently contacted is derived from your own conversations." },
   { id: "broadcasts",             label: "Emergency broadcasts",           group: "Messaging", default: true,  blurb: "Org-wide broadcast with per-recipient acknowledgement." },
 
   // ---- Routing
   { id: "routing.assignments",    label: "Admission routing",              group: "Routing",   default: true,  blurb: "ER → hospitalist assignment with round-robin, caps, expiry re-route." },
   { id: "routing.consults",       label: "Consult services",               group: "Routing",   default: true,  blurb: "Specialty consult fan-out to the on-call team." },
-  { id: "routing.roleMessaging",  label: "Message the on-call role",       group: "Routing",   default: true,  blurb: "Address a role/service; resolves to whoever is on now." },
+  { id: "routing.roleMessaging",  label: "Message the on-call role",       group: "Routing",   default: true,  blurb: "Address a role/service; resolves to whoever is on now. The Directory lists these role contacts with everyone on them.", requires: ["oncall.board"] },
 
   // ---- Schedule
   { id: "oncall.board",           label: "Who's on call board",            group: "Schedule",  default: true,  blurb: "Every role/service and its current holder, from the configured schedule source." },
   { id: "schedule.amion",         label: "Amion schedule sync",            group: "Schedule",  default: true,  blurb: "Automated pull of the Amion on-call grid — the hospital's own OCS feed (Settings → Integrations) or the operator's AMION_OCS_URL." },
   { id: "schedule.epic",          label: "Epic on-call (FHIR)",            group: "Schedule",  default: false, blurb: "On-call from Epic via FHIR R4 — the hospital's own Epic backend-app credentials (Settings → Integrations) or the operator's EPIC_* env." },
+
+  { id: "shift.handoff",          label: "End shift / Start shift",        group: "Schedule",  default: true,  blurb: "One action ends a shift: off rotation, a covering provider (required while requests are pending), optional away message / DND, audited. Accepted patients are never re-routed." },
 
   // ---- EHR
   { id: "ehr.deepLinks",          label: "Open in EHR",                    group: "EHR",       default: false, blurb: "Deep-link a patient into Epic Haiku/Canto or Cerner from any patient row." },
@@ -66,6 +73,8 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Security
   { id: "security.mfaRequired",   label: "Require MFA for privileged roles", group: "Security", default: false, blurb: "Directors / ER directors / developers must enrol MFA before privileged access." },
+
+  { id: "security.pin",           label: "PIN unlock",                     group: "Security", default: false, blurb: "Re-open a locked session with a personal PIN (server-verified scrypt hash; 5 wrong PINs require the password). A PIN never signs anyone in." },
 
   // ---- Integrations — third-party connections (server/integrations/registry.ts).
   // Default ON so an org that never touched them behaves exactly as before:

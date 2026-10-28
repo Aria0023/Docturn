@@ -15,7 +15,9 @@ import {
   contactPageSettings,
   conversations,
   departments,
+  conversationDone,
   deviceTokens,
+  directoryFavorites,
   emergencyBroadcasts,
   equipment,
   featureFlags,
@@ -39,8 +41,16 @@ import {
   securityIncidents,
   smsHistory,
   suggestions,
+  userPins,
   userPreferences,
+  userReminderPrefs,
+  userSoundPrefs,
   users,
+  type DirectoryFavorite,
+  type FavoriteTargetKind,
+  type UserPin,
+  type UserReminderPrefs,
+  type UserSoundPrefs,
   type Assignment,
   type AuditLog,
   type Bed,
@@ -794,6 +804,7 @@ export class DatabaseStorage implements IStorage {
           await tx.delete(messages).where(inArray(messages.id, msgIds));
           messageCount = msgIds.length;
         }
+        await tx.delete(conversationDone).where(inArray(conversationDone.conversationId, convoIds));
         await tx.delete(conversations).where(inArray(conversations.id, convoIds));
       }
       const accepted = await tx
@@ -2178,6 +2189,14 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(admissionEvents).where(eq(admissionEvents.organizationId, id));
       await tx.delete(patientConsults).where(eq(patientConsults.organizationId, id));
       await tx.delete(messages).where(eq(messages.organizationId, id));
+      // Per-user Done rows reference conversations AND users.
+      await tx
+        .delete(conversationDone)
+        .where(
+          userIds.length
+            ? or(eq(conversationDone.organizationId, id), inArray(conversationDone.userId, userIds))!
+            : eq(conversationDone.organizationId, id),
+        );
       await tx.delete(conversations).where(eq(conversations.organizationId, id));
       await tx.delete(emergencyBroadcasts).where(eq(emergencyBroadcasts.organizationId, id));
       // Composer templates reference organizations AND (personal ones) users.
@@ -2196,6 +2215,16 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(careTeamMembers).where(eq(careTeamMembers.organizationId, id));
       await tx.delete(deviceTokens).where(eq(deviceTokens.organizationId, id));
       await tx.delete(userPreferences).where(eq(userPreferences.organizationId, id));
+      // PerfectServe-parity per-user rows (favorites, reminder / sound prefs,
+      // PIN): by org, and by user in case a row's org ever disagreed.
+      for (const [t, orgCol, userCol] of [
+        [directoryFavorites, directoryFavorites.organizationId, directoryFavorites.userId],
+        [userReminderPrefs, userReminderPrefs.organizationId, userReminderPrefs.userId],
+        [userSoundPrefs, userSoundPrefs.organizationId, userSoundPrefs.userId],
+        [userPins, userPins.organizationId, userPins.userId],
+      ] as const) {
+        await tx.delete(t).where(userIds.length ? or(eq(orgCol, id), inArray(userCol, userIds))! : eq(orgCol, id));
+      }
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -2256,6 +2285,15 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(careTeamMembers).where(eq(careTeamMembers.memberUserId, id));
     await this.db.delete(deviceTokens).where(eq(deviceTokens.userId, id));
     await this.db.delete(userPreferences).where(eq(userPreferences.userId, id));
+    await this.db.delete(directoryFavorites).where(eq(directoryFavorites.userId, id));
+    // Other people's favorites of this user point at nothing once it is gone.
+    await this.db
+      .delete(directoryFavorites)
+      .where(and(eq(directoryFavorites.targetKind, "user"), eq(directoryFavorites.targetId, String(id))));
+    await this.db.delete(conversationDone).where(eq(conversationDone.userId, id));
+    await this.db.delete(userReminderPrefs).where(eq(userReminderPrefs.userId, id));
+    await this.db.delete(userSoundPrefs).where(eq(userSoundPrefs.userId, id));
+    await this.db.delete(userPins).where(eq(userPins.userId, id));
     await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, id));
     await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, id));
     await this.db.delete(hospitalists).where(eq(hospitalists.userId, id));
@@ -2893,6 +2931,175 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(eq(messageTemplates.organizationId, orgId), eq(messageTemplates.id, id)),
       );
+  }
+
+  // ── PerfectServe parity: per-user rows (all scoped by org AND user) ───────
+  // Callers validate that every referenced id is in `orgId` before writing.
+
+  /** The caller's directory favorites, oldest first. */
+  async listFavorites(orgId: number, userId: number): Promise<DirectoryFavorite[]> {
+    return this.db
+      .select()
+      .from(directoryFavorites)
+      .where(and(eq(directoryFavorites.organizationId, orgId), eq(directoryFavorites.userId, userId)))
+      .orderBy(asc(directoryFavorites.createdAt), asc(directoryFavorites.id));
+  }
+  /** Idempotent: returns true when a new row was written. */
+  async addFavorite(orgId: number, userId: number, targetKind: FavoriteTargetKind, targetId: string): Promise<boolean> {
+    const rows = await this.db
+      .insert(directoryFavorites)
+      .values({ organizationId: orgId, userId, targetKind, targetId })
+      .onConflictDoNothing()
+      .returning({ id: directoryFavorites.id });
+    return rows.length > 0;
+  }
+  async removeFavorite(orgId: number, userId: number, targetKind: FavoriteTargetKind, targetId: string): Promise<boolean> {
+    const rows = await this.db
+      .delete(directoryFavorites)
+      .where(
+        and(
+          eq(directoryFavorites.organizationId, orgId),
+          eq(directoryFavorites.userId, userId),
+          eq(directoryFavorites.targetKind, targetKind),
+          eq(directoryFavorites.targetId, targetId),
+        ),
+      )
+      .returning({ id: directoryFavorites.id });
+    return rows.length > 0;
+  }
+
+  /** conversationId → done_at for the caller's Done rows among `conversationIds`. */
+  async doneStatesFor(orgId: number, userId: number, conversationIds: number[]): Promise<Map<number, Date>> {
+    const out = new Map<number, Date>();
+    if (!conversationIds.length) return out;
+    const rows = await this.db
+      .select()
+      .from(conversationDone)
+      .where(
+        and(
+          eq(conversationDone.organizationId, orgId),
+          eq(conversationDone.userId, userId),
+          inArray(conversationDone.conversationId, conversationIds),
+        ),
+      );
+    for (const r of rows) out.set(r.conversationId, r.doneAt);
+    return out;
+  }
+  async setConversationDone(orgId: number, userId: number, conversationId: number, at: Date = new Date()): Promise<Date> {
+    const [row] = await this.db
+      .insert(conversationDone)
+      .values({ organizationId: orgId, userId, conversationId, doneAt: at })
+      .onConflictDoUpdate({
+        target: [conversationDone.userId, conversationDone.conversationId],
+        set: { doneAt: at, organizationId: orgId },
+      })
+      .returning();
+    return row!.doneAt;
+  }
+  async clearConversationDone(orgId: number, userId: number, conversationId: number): Promise<boolean> {
+    const rows = await this.db
+      .delete(conversationDone)
+      .where(
+        and(
+          eq(conversationDone.organizationId, orgId),
+          eq(conversationDone.userId, userId),
+          eq(conversationDone.conversationId, conversationId),
+        ),
+      )
+      .returning({ id: conversationDone.id });
+    return rows.length > 0;
+  }
+
+  async getReminderPrefs(orgId: number, userId: number): Promise<UserReminderPrefs | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(userReminderPrefs)
+      .where(and(eq(userReminderPrefs.organizationId, orgId), eq(userReminderPrefs.userId, userId)));
+    return row;
+  }
+  async setReminderPrefs(
+    orgId: number,
+    userId: number,
+    patch: { enabled: boolean; intervalMin: number },
+  ): Promise<UserReminderPrefs> {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(userReminderPrefs)
+      .values({ organizationId: orgId, userId, ...patch, updatedAt: now })
+      .onConflictDoUpdate({ target: [userReminderPrefs.userId], set: { ...patch, organizationId: orgId, updatedAt: now } })
+      .returning();
+    return row!;
+  }
+  /** Every opted-in user of one org (the reminder sweep's per-org read). */
+  async listReminderOptIns(orgId: number): Promise<UserReminderPrefs[]> {
+    return this.db
+      .select()
+      .from(userReminderPrefs)
+      .where(and(eq(userReminderPrefs.organizationId, orgId), eq(userReminderPrefs.enabled, true)));
+  }
+  async markReminded(orgId: number, userId: number, at: Date): Promise<void> {
+    await this.db
+      .update(userReminderPrefs)
+      .set({ lastRemindedAt: at })
+      .where(and(eq(userReminderPrefs.organizationId, orgId), eq(userReminderPrefs.userId, userId)));
+  }
+
+  async getSoundPrefs(orgId: number, userId: number): Promise<UserSoundPrefs | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(userSoundPrefs)
+      .where(and(eq(userSoundPrefs.organizationId, orgId), eq(userSoundPrefs.userId, userId)));
+    return row;
+  }
+  async setSoundPrefs(
+    orgId: number,
+    userId: number,
+    patch: Partial<Pick<UserSoundPrefs, "statSound" | "urgentSound" | "routineSound">>,
+  ): Promise<UserSoundPrefs> {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(userSoundPrefs)
+      .values({ organizationId: orgId, userId, ...patch, updatedAt: now })
+      .onConflictDoUpdate({ target: [userSoundPrefs.userId], set: { ...patch, organizationId: orgId, updatedAt: now } })
+      .returning();
+    return row!;
+  }
+
+  async getUserPin(orgId: number, userId: number): Promise<UserPin | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(userPins)
+      .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)));
+    return row;
+  }
+  /** Set / replace the PIN hash; clears any failure state. */
+  async setUserPin(orgId: number, userId: number, pinHash: string): Promise<UserPin> {
+    const now = new Date();
+    const reset = { pinHash, failedAttempts: 0, failedSession: null, pinDisabledAt: null, updatedAt: now };
+    const [row] = await this.db
+      .insert(userPins)
+      .values({ organizationId: orgId, userId, ...reset })
+      .onConflictDoUpdate({ target: [userPins.userId], set: { ...reset, organizationId: orgId } })
+      .returning();
+    return row!;
+  }
+  /** Persist the failure counters (the route decides the policy). */
+  async updatePinFailureState(
+    orgId: number,
+    userId: number,
+    state: Pick<UserPin, "failedAttempts" | "failedSession" | "pinDisabledAt">,
+  ): Promise<void> {
+    await this.db
+      .update(userPins)
+      .set({ ...state, updatedAt: new Date() })
+      .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)));
+  }
+  async deleteUserPin(orgId: number, userId: number): Promise<boolean> {
+    const rows = await this.db
+      .delete(userPins)
+      .where(and(eq(userPins.organizationId, orgId), eq(userPins.userId, userId)))
+      .returning({ id: userPins.id });
+    return rows.length > 0;
   }
 }
 

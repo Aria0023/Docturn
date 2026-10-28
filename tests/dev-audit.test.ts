@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import supertest from "supertest";
 import speakeasy from "speakeasy";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   auditLogs,
+  conversationDone,
+  directoryFavorites,
   messageTemplates,
   messages,
   orgSettings,
   phiAccessLogs,
+  userPins,
+  userReminderPrefs,
+  userSoundPrefs,
   users,
 } from "@shared/schema";
 import { createServer } from "node:http";
@@ -622,5 +627,39 @@ describe("A.CON-SHO-32 — tenant delete is atomic and complete", () => {
     await dev.delete("/api/dev/organizations/" + org.id + "?force=true").expect(204);
     expect(await ctx.storage.getOrganization(org.id)).toBeUndefined();
     expect(await ctx.storage.countRetainedComplianceRecords(org.id)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("cascades every PerfectServe-parity per-user table (favorites, Done, reminder, sound, PIN)", async () => {
+    const { agent: dev } = await devLogin();
+    const { org, user } = await makeDoomedTenant();
+    const peer = await ctx.storage.createUser({
+      organizationId: org.id, username: "doomed.peer", passwordHash: "x", role: "hospitalist",
+      displayName: "Doomed Peer", credential: "MD", phone: null, twoFactorEnabled: false,
+    });
+    const convo = await ctx.storage.createConversation({
+      organizationId: org.id, type: "direct", name: null, participantIds: [user.id, peer.id], patientId: null,
+    });
+    await ctx.storage.createMessage({
+      organizationId: org.id, conversationId: convo.id, senderId: peer.id, content: "x", priority: "routine",
+    });
+    expect(await ctx.storage.addFavorite(org.id, user.id, "user", String(peer.id))).toBe(true);
+    expect(await ctx.storage.addFavorite(org.id, user.id, "role", "next_hospitalist")).toBe(true);
+    await ctx.storage.setConversationDone(org.id, user.id, convo.id);
+    await ctx.storage.setReminderPrefs(org.id, user.id, { enabled: true, intervalMin: 15 });
+    await ctx.storage.setSoundPrefs(org.id, user.id, { statSound: "siren" });
+    await ctx.storage.setUserPin(org.id, user.id, "scrypt$placeholder");
+    const ids = [user.id, peer.id];
+    const count = async () =>
+      (await ctx.handle.db.select().from(directoryFavorites).where(inArray(directoryFavorites.userId, ids))).length +
+      (await ctx.handle.db.select().from(conversationDone).where(inArray(conversationDone.userId, ids))).length +
+      (await ctx.handle.db.select().from(userReminderPrefs).where(inArray(userReminderPrefs.userId, ids))).length +
+      (await ctx.handle.db.select().from(userSoundPrefs).where(inArray(userSoundPrefs.userId, ids))).length +
+      (await ctx.handle.db.select().from(userPins).where(inArray(userPins.userId, ids))).length;
+    expect(await count()).toBe(6);
+
+    await dev.delete("/api/dev/organizations/" + org.id + "?force=true").expect(204);
+
+    expect(await ctx.storage.getOrganization(org.id)).toBeUndefined();
+    expect(await count()).toBe(0);
   });
 });
