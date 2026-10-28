@@ -840,8 +840,9 @@ export const directoryFavorites = pgTable(
 
 /**
  * Per-user "Done" state of a conversation (module messaging.done). A thread is
- * done for that user while done_at >= its newest message's created_at — a new
- * message re-opens it without any write.
+ * done for that user while its newest live message id is <= through_message_id
+ * (the newest message when it was marked; NULL = it had none) — a new message
+ * re-opens it without any write, and no clock is compared.
  */
 export const conversationDone = pgTable(
   "conversation_done",
@@ -857,6 +858,7 @@ export const conversationDone = pgTable(
       .notNull()
       .references(() => conversations.id),
     doneAt: timestamp("done_at").notNull().defaultNow(),
+    throughMessageId: integer("through_message_id"),
   },
   (t) => ({
     donePerUser: uniqueIndex("conversation_done_user_convo_uniq").on(

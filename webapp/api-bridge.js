@@ -912,8 +912,20 @@
       patientId: c.patientId != null ? c.patientId : null,
       typing: prev ? !!prev.typing : false,
       participantIds: c.participantIds || [],
+      // Done (messaging.done): the server's per-user state, through its newest
+      // message at the time — DT.convoDone() re-opens on anything newer.
+      doneAt: doneFieldsOf(c, prev).doneAt,
+      doneThrough: doneFieldsOf(c, prev).doneThrough,
       messages: mergeOutbox(c.id, list),
     };
+  }
+  // A server row / sync summary / frame that carries Done fields sets them;
+  // anything else keeps what this device knew.
+  function doneFieldsOf(x, prev) {
+    if (x && Object.prototype.hasOwnProperty.call(x, "done")) {
+      return x.done ? { doneAt: x.doneAt || null, doneThrough: x.doneThroughMessageId != null ? x.doneThroughMessageId : null } : { doneAt: null, doneThrough: null };
+    }
+    return { doneAt: (prev && prev.doneAt) || null, doneThrough: prev && prev.doneThrough != null ? prev.doneThrough : null };
   }
 
   // ---- live message state (A.CON-SHO-65) ----------------------------------
@@ -1144,6 +1156,7 @@
       (DT.getState().conversations || []).forEach(function (c) {
         var sum = summary[c.id];
         if (!sum || Math.max(0, (sum.unreadCount || 0) - unreadOf(serverMsgs(c))) !== (c.unreadEarlier || 0)) changed = true;
+        else if (doneFieldsOf(sum, c).doneAt !== (c.doneAt || null)) changed = true; // marked / un-marked Done elsewhere
       });
     }
     if (changed) {
@@ -1169,7 +1182,8 @@
           win = win.filter(function (m) { return !gone[m.id]; }).sort(byTime);
           var sum = summary && summary[c.id];
           var ue = sum ? Math.max(0, (sum.unreadCount || 0) - unreadOf(win)) : (c.unreadEarlier || 0);
-          return Object.assign({}, c, { messages: mergeOutbox(c.id, win), unreadEarlier: ue, unread: ue + unreadOf(win), loaded: stale ? false : c.loaded });
+          var df = doneFieldsOf(sum, c);
+          return Object.assign({}, c, { messages: mergeOutbox(c.id, win), unreadEarlier: ue, unread: ue + unreadOf(win), loaded: stale ? false : c.loaded, doneAt: df.doneAt, doneThrough: df.doneThrough });
         });
         return s;
       });
@@ -1577,6 +1591,8 @@
           });
         }
         else if (ev.type === "MESSAGE_RECEIVED") applyIncoming(ev.message);
+        // Done marked / un-marked on another of my devices.
+        else if (ev.type === "CONVERSATION_DONE_CHANGED" && ev.conversationId != null) applyDone(ev);
         // A STAT/urgent message was acknowledged — patch that recipient's row.
         else if (ev.type === "MESSAGE_ACK" && ev.messageId != null) applyAck(ev);
         else if (ev.type === "MESSAGE_RECALLED" && ev.messageId != null) applyRecall(ev);
@@ -3222,6 +3238,34 @@
       DT.set(function (s) { s.onCallTargets = list; return s; });
       return list;
     }).catch(function () { DT.set(function (s) { s.onCallTargets = []; return s; }); return []; });
+  };
+  // Done (PerfectServe parity #3, module messaging.done): the SERVER's
+  // per-user state. A done thread leaves the main list into the Done filter
+  // and stops counting as unread (DT.convoDone, store.js); any newer message
+  // re-opens it; the other devices get CONVERSATION_DONE_CHANGED.
+  function applyDone(x) {
+    var df = doneFieldsOf(x, null);
+    DT.set(function (s) {
+      s.conversations = (s.conversations || []).map(function (c) { return c.id === x.conversationId ? Object.assign({}, c, { doneAt: df.doneAt, doneThrough: df.doneThrough }) : c; });
+      return s;
+    });
+  }
+  DT.actions.setConversationDone = function (id, done) {
+    if (id == null || typeof id !== "number") return Promise.resolve(false);
+    return api(done ? "PUT" : "DELETE", "/api/messaging/conversations/" + id + "/done").then(function (r) {
+      applyDone(r && r.conversationId != null ? r : { conversationId: id, done: !!done, doneAt: null, doneThroughMessageId: null });
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: done ? "Moved to Done" : "Back in your inbox", msg: done ? "A new message will bring it back." : "" }; return s; });
+      return true;
+    }, function (e) {
+      var why = String((e && e.message) || "");
+      if (/module_disabled/.test(why)) refreshModulesAfterRefusal();
+      var msg = /module_disabled/.test(why) ? "Done is switched off for your organization."
+        : /not_found/.test(why) ? "That conversation is no longer available."
+        : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — nothing was changed."
+        : "Nothing was changed — try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: done ? "Couldn't mark done" : "Couldn't move back", msg: msg }; return s; });
+      return false;
+    });
   };
   // Directory role contacts (PerfectServe parity #1): the server's
   // resolveOnCallTargets grouped by role — label, everyone reachable on it

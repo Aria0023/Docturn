@@ -154,9 +154,9 @@ describe("GET /api/messaging/sync (reconnect resync)", () => {
     expect(r.body.messages).toEqual([]);
     expect(r.body.recalled).toEqual([]);
     expect(r.body.more).toBe(false);
-    // PHI-free summary: ids and counters only.
+    // PHI-free summary: ids, counters and this user's Done state only.
     const mine = r.body.conversations.find((c: any) => c.id === convoId);
-    expect(mine).toEqual({ id: convoId, lastMessageId: ids[1], unreadCount: 2 });
+    expect(mine).toEqual({ id: convoId, lastMessageId: ids[1], unreadCount: 2, done: false, doneAt: null, doneThroughMessageId: null });
     expect(JSON.stringify(r.body)).not.toMatch(/"content"|m1|m2/);
     expect((await phiRows()).length).toBe(before);
   });

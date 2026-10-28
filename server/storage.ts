@@ -2968,9 +2968,13 @@ export class DatabaseStorage implements IStorage {
     return rows.length > 0;
   }
 
-  /** conversationId → done_at for the caller's Done rows among `conversationIds`. */
-  async doneStatesFor(orgId: number, userId: number, conversationIds: number[]): Promise<Map<number, Date>> {
-    const out = new Map<number, Date>();
+  /** conversationId → the caller's Done row (when, and through which message) among `conversationIds`. */
+  async doneStatesFor(
+    orgId: number,
+    userId: number,
+    conversationIds: number[],
+  ): Promise<Map<number, { doneAt: Date; throughMessageId: number | null }>> {
+    const out = new Map<number, { doneAt: Date; throughMessageId: number | null }>();
     if (!conversationIds.length) return out;
     const rows = await this.db
       .select()
@@ -2982,16 +2986,23 @@ export class DatabaseStorage implements IStorage {
           inArray(conversationDone.conversationId, conversationIds),
         ),
       );
-    for (const r of rows) out.set(r.conversationId, r.doneAt);
+    for (const r of rows) out.set(r.conversationId, { doneAt: r.doneAt, throughMessageId: r.throughMessageId });
     return out;
   }
-  async setConversationDone(orgId: number, userId: number, conversationId: number, at: Date = new Date()): Promise<Date> {
+  /** Mark done through `throughMessageId` (the thread's newest message now; null = none). */
+  async setConversationDone(
+    orgId: number,
+    userId: number,
+    conversationId: number,
+    throughMessageId: number | null = null,
+  ): Promise<Date> {
+    const doneAt = new Date();
     const [row] = await this.db
       .insert(conversationDone)
-      .values({ organizationId: orgId, userId, conversationId, doneAt: at })
+      .values({ organizationId: orgId, userId, conversationId, doneAt, throughMessageId })
       .onConflictDoUpdate({
         target: [conversationDone.userId, conversationDone.conversationId],
-        set: { doneAt: at, organizationId: orgId },
+        set: { doneAt, throughMessageId, organizationId: orgId },
       })
       .returning();
     return row!.doneAt;

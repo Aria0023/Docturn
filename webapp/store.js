@@ -726,7 +726,17 @@
     var nx = nextUp();
     return Promise.resolve({ source: state.rotation ? state.rotation.source : "local", next: nx, capRelief: rotationStatus().capRelief, specialty: specialty || "" });
   }
-  function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (c.unread || 0); }, 0); }
+  // Done (messaging.done): the server marked this thread done for me through
+  // message `doneThrough` and nothing newer has arrived since. Off → never.
+  function convoDone(c) {
+    if (!c || !c.doneAt) return false;
+    if (state.modules && state.modules["messaging.done"] === false) return false;
+    var top = null;
+    (c.messages || []).forEach(function (m) { if (!m.local && m.id != null && (top === null || m.id > top)) top = m.id; });
+    return top === null || (c.doneThrough != null && top <= c.doneThrough);
+  }
+  // A done thread does not count as unread.
+  function unreadMessages() { return state.conversations.reduce(function (a, c) { return a + (convoDone(c) ? 0 : (c.unread || 0)); }, 0); }
   function unreadNotifs() { return state.notifications.filter(function (n) { return !n.read; }).length; }
 
   // Patient-board sections a role shows ON THIS DEVICE (a per-browser layout
@@ -1111,6 +1121,7 @@
     // local thread if asked.
     listOnCallTargets: function () { set(function (s) { s.onCallTargets = []; return s; }); return Promise.resolve([]); },
     listRoleContacts: function () { set(function (s) { s.roleContacts = []; return s; }); return Promise.resolve([]); },
+    setConversationDone: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     loadDirectoryLists: function () { set(function (s) { s.favorites = []; s.recents = []; return s; }); return Promise.resolve(); },
     toggleFavorite: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     startRoleConversation: function (target) {
@@ -1447,7 +1458,7 @@
   }
 
   /* ---- expose ------------------------------------------------------------ */
-  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts, demoSeed: demoSeed };
+  window.DT = { getState: getState, subscribe: subscribe, actions: actions, set: set, seed: seed, purgePersisted: purgePersisted, sortedProviders: sortedProviders, rotationList: rotationList, nextUp: nextUp, rotationQueue: rotationQueue, rotationStatus: rotationStatus, previewRotation: previewRotation, unreadMessages: unreadMessages, convoDone: convoDone, unreadNotifs: unreadNotifs, extractIntake: extractIntake, suggestAcuity: suggestAcuity, boardModules: boardModulesFor, dashLayout: dashLayoutFor, statLayout: statLayoutFor, customStats: customStatsFor, defaultShifts: defaultShifts, demoSeed: demoSeed };
   window.useStore = useStore;
   window.useActions = function () { return actions; };
   window.useClock = useClock;

@@ -117,6 +117,9 @@ export const GATE_TABLE: readonly GateRule[] = [
   { path: /^\/api\/rotation(\/|$)/, module: "routing.assignments" },
   // Messaging
   { path: /^\/api\/messaging\/patient-thread(\/|$)/, module: "messaging.patientThreads" },
+  // Done (per-user conversation state). The list/sync routes honour the same
+  // switch themselves: with it off nothing is reported done.
+  { path: /^\/api\/messaging\/conversations\/[^/]+\/done$/, module: "messaging.done", methods: ["PUT", "DELETE"] },
   { path: /^\/api\/messaging\/attachments(\/|$)/, module: "messaging.attachments" },
   { path: /^\/api\/messaging\/availability(\/|$)/, module: "messaging.dnd" },
   { path: /^\/api\/messaging\/messages\/[^/]+$/, module: "messaging.recall", methods: ["DELETE"] },

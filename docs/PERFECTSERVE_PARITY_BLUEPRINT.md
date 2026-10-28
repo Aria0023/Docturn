@@ -634,3 +634,24 @@ is the web app / PWA.
   thread by user id.
 - Tests: tests/favorites.test.ts, tests/client-directory.test.ts;
   check: scripts/favorites-check.mjs.
+
+### #3 Done — module `messaging.done`
+- `PUT` / `DELETE /api/messaging/conversations/:id/done` (participants only —
+  anyone else, another tenant included, gets the same 404 as a missing
+  thread; gated in `GATE_TABLE`). A `conversation_done` row records the
+  newest live message the thread was marked done THROUGH: the thread is done
+  for that user while nothing newer exists, so any new message (from either
+  side) re-opens it with no write and no clock comparison.
+- `GET /api/messaging/conversations` and the reconnect `GET /api/messaging/sync`
+  summary carry `done`, `doneAt`, `doneThroughMessageId`; a done thread is
+  served with `unreadCount: 0` for that user. Read receipts are never faked —
+  the sender still sees the messages unread. With the module off nothing is
+  reported done (stored rows are kept and come back when it is switched on).
+- `CONVERSATION_DONE_CHANGED` goes to the user's own sockets, so their other
+  devices follow without a reload. Audited `conversation.done` /
+  `conversation.undone` (low, conversation id only).
+- Messages: Inbox / Done filter, a header toggle ("Mark done" / "Move back to
+  inbox", 44px on phones), no unread badge and no contribution to the unread
+  total (nav badge, app badge) for a done thread.
+- Tests: tests/done.test.ts, tests/client-done.test.ts;
+  check: scripts/done-check.mjs.

@@ -350,7 +350,16 @@ function Messaging() {
   React.useEffect(() => { if (peerId != null && a.loadPeerAvailability) a.loadPeerAvailability(peerId); }, [peerId]);
   const peerAvail = peerId != null ? (st.peerAvail || {})[peerId] : null;
 
-  const list = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
+  // Done (messaging.done): the server's per-user state. A done thread lives
+  // in the Done filter, not the main list, and shows no unread badge; any
+  // newer message re-opens it (DT.convoDone).
+  const doneOn = modOn("messaging.done");
+  const [box, setBox] = React.useState("inbox"); // inbox | done
+  const isDone = (c) => doneOn && !!(window.DT && window.DT.convoDone && window.DT.convoDone(c));
+  const matching = convos.filter((c) => c.name.toLowerCase().includes(q.toLowerCase()) || (c.role || "").toLowerCase().includes(q.toLowerCase()));
+  const doneCount = doneOn ? convos.filter(isDone).length : 0;
+  const shownBox = doneOn ? box : "inbox";
+  const list = matching.filter((c) => (shownBox === "done" ? isDone(c) : !isDone(c)));
 
   // On a phone, show exactly one pane at a time (list OR thread/compose).
   const showList = !isMobile || (!composing && mobileView === "list");
@@ -597,13 +606,22 @@ function Messaging() {
             <Button size="icon" variant={composing ? "secondary" : "outline"} icon={composing ? "x" : "pen-square"} onClick={() => { const n = !composing; setComposing(n); if (!n) setForwarding(null); }} />
           </div>
           <Field icon="search" placeholder="Search conversations…" value={q} onChange={setQ} />
+          {doneOn && (
+            <div data-message-boxes role="group" aria-label="Conversation filter" style={{ display: "flex", gap: 6, marginTop: 10 }}>
+              {[["inbox", "Inbox"], ["done", "Done" + (doneCount ? " · " + doneCount : "")]].map(([id, label]) => (
+                <button key={id} type="button" data-box={id} aria-pressed={shownBox === id} onClick={() => setBox(id)}
+                  style={{ minHeight: isMobile ? 44 : 32, minWidth: 44, padding: "0 14px", borderRadius: 99, cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 700,
+                    border: "1px solid " + (shownBox === id ? "var(--primary)" : "var(--border)"), background: shownBox === id ? "#EFF6FF" : "#fff", color: shownBox === id ? "var(--primary)" : "var(--foreground)" }}>{label}</button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ overflowY: "auto", flex: 1 }}>
           {list.map((c) => {
             const last = c.messages[c.messages.length - 1];
             return (
-              <button key={c.id} onClick={() => openThread(c.id)}
+              <button key={c.id} data-convo-row={c.id} data-done={isDone(c) ? "true" : "false"} onClick={() => openThread(c.id)}
                 style={{ width: "100%", display: "flex", gap: 11, padding: isMobile ? "15px 16px" : "12px 16px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left",
                   background: active === c.id ? "#EFF6FF" : "#fff" }}>
                 {/* alignSelf: the row is a stretch flex container; a stretched
@@ -624,13 +642,17 @@ function Messaging() {
                       {last && (last.priority === "stat" || last.priority === "urgent") && <span style={{ flex: "none", fontSize: 9.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4, color: "#fff", background: last.priority === "stat" ? "#B91C1C" : "#B45309" }}>{last.priority === "stat" ? "STAT" : "URGENT"}</span>}
                       <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.typing ? "typing…" : (last ? (last.me ? "You: " : "") + last.text : "No messages yet")}</span>
                     </span>
-                    {c.unread > 0 && <span style={{ flex: "none", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 99, background: "var(--primary)", color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{c.unread}</span>}
+                    {c.unread > 0 && !isDone(c) && <span data-unread-badge style={{ flex: "none", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 99, background: "var(--primary)", color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{c.unread}</span>}
                   </div>
                 </div>
               </button>
             );
           })}
-          {list.length === 0 && <div style={{ padding: "18px 16px 6px", fontSize: 12.5, color: "var(--muted-foreground)" }}>No conversations yet — tap the pencil to message anyone in the directory.</div>}
+          {list.length === 0 && <div data-empty-box={shownBox} style={{ padding: "18px 16px 6px", fontSize: 12.5, color: "var(--muted-foreground)" }}>
+            {shownBox === "done" ? "Nothing is marked Done. Mark a conversation Done from its header; a new message brings it back."
+              : doneCount > 0 && !q ? "All caught up — " + doneCount + " conversation" + (doneCount === 1 ? " is" : "s are") + " in Done."
+              : "No conversations yet — tap the pencil to message anyone in the directory."}
+          </div>}
         </div>
       </div>
       )}
@@ -727,6 +749,16 @@ function Messaging() {
                 : <>{presenceOf(conv) === "online" && <StatusDot status="online" pulse />}<span data-thread-status={presenceOf(conv) || "unknown"} style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{presenceOf(conv) === "online" ? "Online · " + conv.role : conv.role}</span></>}
             </div>
           </div>
+          {doneOn && conv.id != null && typeof conv.id === "number" && (() => {
+            const d = isDone(conv);
+            const label = d ? "Move back to inbox" : "Mark done";
+            return (
+              <span data-done-toggle={d ? "done" : "open"} style={{ flex: "none", display: "inline-flex" }}>
+                <Button size="icon" variant="ghost" icon={d ? "inbox" : "check-check"} title={label} aria-label={label} style={isMobile ? { width: 44, height: 44 } : null}
+                  onClick={() => { Promise.resolve(a.setConversationDone && a.setConversationDone(conv.id, !d)).then((ok) => { if (ok && !d && isMobile) setMobileView("list"); }); }} />
+              </span>
+            );
+          })()}
           {/* No call button: voice isn't a real capability yet — no fake affordances. */}
           <span data-thread-details style={{ flex: "none", display: "inline-flex" }}>
             {/* Who this is — not a message count: this device holds only the

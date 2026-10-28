@@ -738,14 +738,17 @@ CREATE TABLE IF NOT EXISTS directory_favorites (
 CREATE UNIQUE INDEX IF NOT EXISTS directory_favorites_uniq
   ON directory_favorites(organization_id, user_id, target_kind, target_id);
 
--- Per-user Done state: done while done_at >= the thread's newest message.
+-- Per-user Done state: done while the thread's newest live message id is
+-- <= through_message_id (NULL: it had none when marked).
 CREATE TABLE IF NOT EXISTS conversation_done (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),
   user_id INTEGER NOT NULL REFERENCES users(id),
   conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-  done_at TIMESTAMP NOT NULL DEFAULT NOW()
+  done_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  through_message_id INTEGER
 );
+ALTER TABLE conversation_done ADD COLUMN IF NOT EXISTS through_message_id INTEGER;
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_done_user_convo_uniq
   ON conversation_done(user_id, conversation_id);
 

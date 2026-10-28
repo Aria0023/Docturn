@@ -687,6 +687,36 @@ async function fanOutMessage(
   return forwardedTo;
 }
 
+/**
+ * The caller's Done state per conversation (PerfectServe parity #3, module
+ * messaging.done): a thread is done for ME while its newest live message is
+ * the one it was marked done through (or older) — so any new message
+ * re-opens it with no write, and no clock is compared. Module off → nothing
+ * is done (the stored rows are kept, never served).
+ */
+async function doneFor(
+  me: User,
+  conversationIds: number[],
+  last: Map<number, Message>,
+): Promise<Map<number, { doneAt: Date; throughMessageId: number | null }>> {
+  const out = new Map<number, { doneAt: Date; throughMessageId: number | null }>();
+  if (!conversationIds.length || !(await isModuleEnabled(me.organizationId, "messaging.done"))) return out;
+  const rows = await storage().doneStatesFor(me.organizationId, me.id, conversationIds);
+  for (const [cid, row] of rows) {
+    const newest = last.get(cid);
+    if (!newest || (row.throughMessageId != null && newest.id <= row.throughMessageId)) out.set(cid, row);
+  }
+  return out;
+}
+/** API fields of a Done state (`doneThroughMessageId` lets a client re-open on any newer message). */
+function doneFields(d: { doneAt: Date; throughMessageId: number | null } | undefined) {
+  return {
+    done: d != null,
+    doneAt: d ? d.doneAt.toISOString() : null,
+    doneThroughMessageId: d ? d.throughMessageId : null,
+  };
+}
+
 // Roles that may create/edit/delete ORG-WIDE message templates.
 const TEMPLATE_ORG_ROLES = new Set<string>(["director", "er_director", "developer"]);
 
@@ -694,6 +724,41 @@ export function registerMessagingRoutes(app: Express) {
   app.get("/api/messaging/on-call-targets", requireAuth, async (req, res) => {
     res.json(await resolveOnCallTargets(currentUser(req)));
   });
+
+  // Done (PerfectServe parity #3): PUT marks a conversation done for me, DELETE
+  // puts it back in my main list. Participants only (anyone else — another
+  // org's user included — gets the same 404 as a missing thread); gated in
+  // GATE_TABLE under messaging.done. My other devices hear it over the hub.
+  const setDone = (done: boolean) => async (req: Request, res: Response) => {
+    const me = currentUser(req);
+    const id = parseId(req.params.id);
+    if (id == null) return res.status(404).json({ error: "not_found" });
+    const convo = await storage().getConversation(me.organizationId, id);
+    if (!convo || !convo.participantIds.includes(me.id)) return res.status(404).json({ error: "not_found" });
+    let state: { doneAt: Date; throughMessageId: number | null } | undefined;
+    if (done) {
+      // Done THROUGH the newest message now: anything newer re-opens it.
+      const newest = (await storage().lastMessagesFor(me.organizationId, [id])).get(id);
+      const throughMessageId = newest?.id ?? null;
+      state = { doneAt: await storage().setConversationDone(me.organizationId, me.id, id, throughMessageId), throughMessageId };
+    } else {
+      await storage().clearConversationDone(me.organizationId, me.id, id);
+    }
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: done ? "conversation.done" : "conversation.undone",
+      resourceType: "conversation",
+      resourceId: id,
+      details: {},
+      riskLevel: "low",
+    });
+    const body = { conversationId: id, ...doneFields(state) };
+    notificationDeps().ws.sendToUsers([me.id], { type: "CONVERSATION_DONE_CHANGED", ...body });
+    res.json(body);
+  };
+  app.put("/api/messaging/conversations/:id/done", requireAuth, setDone(true));
+  app.delete("/api/messaging/conversations/:id/done", requireAuth, setDone(false));
 
   // Directory role contacts (PerfectServe parity #1) — gated with
   // on-call-targets under routing.roleMessaging (which requires oncall.board).
@@ -926,12 +991,18 @@ export function registerMessagingRoutes(app: Express) {
     ]);
     const lastRows = await threadRows(me.organizationId, me.id, Array.from(last.values()));
     const lastById = new Map(lastRows.map((m) => [m.conversationId, m]));
+    const done = await doneFor(me, ids, last);
     res.json(
-      convos.map((c) => ({
-        ...conversationView(c),
-        lastMessage: lastById.get(c.id) ?? null,
-        unreadCount: unread.get(c.id) ?? 0,
-      })),
+      convos.map((c) => {
+        const d = done.get(c.id);
+        return {
+          ...conversationView(c),
+          lastMessage: lastById.get(c.id) ?? null,
+          // A done thread does not count as unread (for me — receipts are untouched).
+          unreadCount: d ? 0 : (unread.get(c.id) ?? 0),
+          ...doneFields(d),
+        };
+      }),
     );
   });
 
@@ -968,11 +1039,16 @@ export function registerMessagingRoutes(app: Express) {
       storage().lastMessagesFor(orgId, ids),
       storage().unreadCountsFor(orgId, me.id, ids),
     ]);
-    const conversations = convos.map((c) => ({
-      id: c.id,
-      lastMessageId: last.get(c.id)?.id ?? null,
-      unreadCount: unread.get(c.id) ?? 0,
-    }));
+    const done = await doneFor(me, ids, last);
+    const conversations = convos.map((c) => {
+      const d = done.get(c.id);
+      return {
+        id: c.id,
+        lastMessageId: last.get(c.id)?.id ?? null,
+        unreadCount: d ? 0 : (unread.get(c.id) ?? 0),
+        ...doneFields(d),
+      };
+    });
 
     let messages: Awaited<ReturnType<typeof threadRows>> = [];
     let more = false;
