@@ -1231,6 +1231,7 @@
     var complete = Array.isArray(raw.attachments) && Array.isArray(raw.deliveries);
     var m = mapMessage(raw);
     m.liveSeq = ++liveSeq;
+    var wasDone = !!(DT.convoDone && DT.convoDone(findConvo(convoId)));
     DT.set(function (s) {
       s.conversations = (s.conversations || []).map(function (c) {
         if (c.id !== convoId) return c;
@@ -1252,6 +1253,10 @@
       return s;
     });
     if (!complete) refreshThread(convoId);
+    // A Done thread was served with unreadCount 0; now that this message
+    // re-opened it, re-read the list so unread messages older than the
+    // loaded window count again (debounced, one request).
+    if (wasDone && DT.convoDone && !DT.convoDone(findConvo(convoId))) syncConversationList();
   }
   // Patch one recipient's delivery row; returns false when no row matched (the
   // caller then re-reads that thread if it is open).

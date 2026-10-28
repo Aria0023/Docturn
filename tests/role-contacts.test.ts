@@ -3,6 +3,7 @@ import supertest from "supertest";
 import { ensureDemoTenants } from "../server/seed.js";
 import { hashPassword } from "../server/auth.js";
 import { setModule } from "../server/modules.js";
+import { resolveOnCallTargets } from "../server/routes/messaging.js";
 import { createTestApp, login, DEV_PASSWORD, type TestContext } from "./helpers.js";
 
 /**
@@ -166,7 +167,15 @@ describe("role contacts", () => {
     expect(res.body).toEqual({ error: "module_disabled", module: "routing.roleMessaging" });
     await setModule(ctx.seedResult.orgId, "routing.roleMessaging", true);
     expect((await erDoc.get("/api/messaging/role-contacts")).status).toBe(200);
+    // With the board off, the schedule's slots are not resolvable by ANY path
+    // (forward by roleTarget included) — not only hidden from the listings.
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    await director.post("/api/oncall/manual").send(slot("Board-gated call", await nameOf(ids().patel!)));
+    const before = await resolveOnCallTargets((await ctx.storage.getUser(ctx.seedResult.orgId, ids()["er.doc"]!))!);
+    expect(before.some((t) => t.kind === "schedule")).toBe(true);
     await setModule(ctx.seedResult.orgId, "oncall.board", false);
+    const after = await resolveOnCallTargets((await ctx.storage.getUser(ctx.seedResult.orgId, ids()["er.doc"]!))!);
+    expect(after.some((t) => t.kind === "schedule")).toBe(false);
     res = await erDoc.get("/api/messaging/role-contacts");
     expect(res.status).toBe(404);
     expect((await erDoc.get("/api/messaging/on-call-targets")).status).toBe(404);

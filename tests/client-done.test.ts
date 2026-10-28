@@ -57,6 +57,17 @@ describe("Done (client)", () => {
     expect(h.reqs.filter((r) => r.method !== "GET").length).toBe(writes);
   });
 
+  it("a re-opened thread re-reads the list, so unread messages older than the loaded window count again", async () => {
+    // Done with 3 unread (served as 0); only the preview is loaded here.
+    const h = await boot({ convos: [convo(1, msg(10, 1), { done: true, doneAt: "2026-10-28T00:00:00Z", doneThroughMessageId: 10, unreadCount: 0 })] });
+    await until(() => (h.state().conversations || []).length === 1);
+    const lists = count(h, "GET", "/api/messaging/conversations");
+    h.convos = [convo(1, msg(11, 1), { unreadCount: 4 })];
+    h.sockets[0].emit({ type: "MESSAGE_RECEIVED", message: msg(11, 1) });
+    await until(() => count(h, "GET", "/api/messaging/conversations") > lists, 2000);
+    await until(() => h.w.DT.unreadMessages() === 4, 2000);
+  });
+
   it("another device's Done arrives over the socket (CONVERSATION_DONE_CHANGED)", async () => {
     const h = await withThreads();
     h.sockets[0].emit({ type: "CONVERSATION_DONE_CHANGED", conversationId: 2, done: true, doneAt: "2026-10-28T00:00:00Z", doneThroughMessageId: 20 });

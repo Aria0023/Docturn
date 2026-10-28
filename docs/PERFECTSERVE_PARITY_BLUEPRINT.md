@@ -610,6 +610,11 @@ is the web app / PWA.
   org roles, and stay out of the list.
 - Directory → Role contacts shows live presence from `/api/presence`
   (unknown, not "offline", when the process has no realtime hub).
+- Schedule slots are resolved only while `oncall.board` is on — checked in
+  `resolveOnCallTargets` itself, so forward-by-`roleTarget` cannot reach a slot
+  either. The compose picker lists a multi-person role once per person, each
+  row naming who it reaches. Reading an Epic-sourced schedule may start the
+  same background refresh the board's read does (never awaited).
 - Tests: tests/role-contacts.test.ts, tests/client-directory.test.ts;
   check: scripts/role-contacts-check.mjs.
 
@@ -647,6 +652,9 @@ is the web app / PWA.
   served with `unreadCount: 0` for that user. Read receipts are never faked —
   the sender still sees the messages unread. With the module off nothing is
   reported done (stored rows are kept and come back when it is switched on).
+- A done thread is served with `unreadCount: 0`, so when a new message
+  re-opens it the client re-reads the conversation list once (debounced) and
+  unread messages older than the loaded window count again.
 - `CONVERSATION_DONE_CHANGED` goes to the user's own sockets, so their other
   devices follow without a reload. Audited `conversation.done` /
   `conversation.undone` (low, conversation id only).

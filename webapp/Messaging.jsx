@@ -556,7 +556,7 @@ function Messaging() {
   // role so it's clear who was addressed.
   const onCallTargets = st.onCallTargets || [];
   React.useEffect(() => { if (composing && a.listOnCallTargets) a.listOnCallTargets(); }, [composing]);
-  const ROLE_ICON = { consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
+  const ROLE_ICON = { schedule: "calendar-clock", consult_service: "stethoscope", next_hospitalist: "repeat", care_team: "users" };
   const startRole = (t) => {
     if (forwarding) { finishForward({ roleTarget: t.id }); return; }
     if (a.startRoleConversation) a.startRoleConversation(t);
@@ -692,9 +692,11 @@ function Messaging() {
                 <div>
                   <div style={{ padding: "10px 24px 6px", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>On-call / roles</div>
                   {rolesShown.map((t) => {
-                    const existing = convos.some((c) => c.name === t.label);
+                    // A thread with the person this role reaches now (one role
+                    // can carry several people, so match by person, not label).
+                    const existing = convos.some((c) => !c.group && !c.broadcast && c.otherUserId === t.userId);
                     return (
-                      <button key={t.id} onClick={() => startRole(t)}
+                      <button key={t.id} data-role-target={t.id} onClick={() => startRole(t)}
                         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "#fff"}
                         style={{ width: "100%", display: "flex", gap: 13, alignItems: "center", padding: "11px 24px", border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer", textAlign: "left", background: "#fff" }}>
                         <div style={{ flex: "none", width: 40, height: 40, borderRadius: 99, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -702,7 +704,7 @@ function Messaging() {
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 14, fontWeight: 600 }}>{t.label}</div>
-                          <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>Resolves to whoever currently holds this role</div>
+                          <div data-role-target-holder style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{t.holder ? "Reaches " + t.holder + " now" : "Resolves to whoever currently holds this role"}</div>
                         </div>
                         {existing
                           ? <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Open thread</span>

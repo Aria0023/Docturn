@@ -149,6 +149,14 @@ console.log("== synthetic server " + BASE);
       rec("R: Message opens a direct thread with the role's server target", active && active.type === "direct" && active.participantIds.includes(mine.target.userId) && active.participantIds.length === 2, JSON.stringify(active && active.participantIds) + " target=" + mine.target.userId);
       rec("R: … with at most one write (POST /api/messaging/conversations, or none when the thread exists)", posts.length <= 1 && posts.every((p) => p.p === "/api/messaging/conversations" && p.s === 201 && JSON.parse(p.body).participantIds[0] === mine.target.userId), posts.map((p) => p.m + " " + p.p + " " + p.s).join(", "));
       rec("R: … and lands on Messages", st.nav === "messages", st.nav);
+      // The compose picker lists the same role per person, told apart by who it reaches.
+      const backBtn = E.page.locator('button[aria-label="Back to conversations"]');
+      if (await backBtn.count()) { await backBtn.click(); await sleep(600); }
+      await E.page.locator('h2:has-text("Messages") + button').click(); // the compose (pencil) button
+      await sleep(2000);
+      const picker = await E.page.evaluate((ids) => ids.map((id) => { const el = document.querySelector(`[data-role-target="${id}"]`); return el ? (el.querySelector("[data-role-target-holder]") || {}).textContent : null; }), mine.holders.map((h) => h.targetId));
+      const names = mine.holders.map((h) => h.name);
+      rec("R: the compose picker shows the role once per person, each naming who it reaches", picker.every((t, i) => t && t.includes(names[i])) && new Set(picker).size === picker.length, JSON.stringify(picker));
     }
     await E.ctx.close();
   }

@@ -187,6 +187,23 @@ console.log("== synthetic server " + BASE);
   let cid = null;
   for (const width of [375, 390, 430]) cid = await roundTrip(BASE, "ISPN", "er.doc", "chen", PW, width, "@" + width);
 
+  // U. Done without opening (only the preview loaded), then a new message:
+  //    the unread total must be the server's again, older unread included.
+  {
+    const S = await open(BASE, 430, "ISPN", "er.doc");
+    const R = await open(BASE, 375, "ISPN", "chen");
+    const rId = (await R.api("GET", "/api/user")).json.id;
+    const cv = (await S.api("POST", "/api/messaging/conversations", { type: "direct", participantIds: [rId] })).json;
+    for (const n of [1, 2, 3]) await S.api("POST", "/api/messaging/send", { conversationId: cv.id, content: "unopened " + n + " " + RUN });
+    await reload(R.page);
+    await R.api("PUT", `/api/messaging/conversations/${cv.id}/done`);
+    await waitFor(async () => (await view(R, cv.id)).done === true, 8000);
+    await S.api("POST", "/api/messaging/send", { conversationId: cv.id, content: "unopened 4 " + RUN });
+    const srv = await waitFor(async () => { const v = await view(R, cv.id); const u = await srvUnread(R); return v.done === false && v.total === u ? { v, u } : null; }, 10000);
+    rec("U: re-opened without being read — the unread total is the server's again (older unread included)", !!srv, JSON.stringify(srv || { v: await view(R, cv.id), u: await srvUnread(R) }));
+    await S.ctx.close(); await R.ctx.close();
+  }
+
   // M. module off.
   const C = await open(BASE, 390, "ISPN", "chen");
   await C.api("PUT", `/api/messaging/conversations/${cid}/done`);

@@ -505,7 +505,11 @@ export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
   //    nobody is never guessed at here. Switched-off sources serve no slots
   //    (services/schedule-sources), and routing.roleMessaging requires
   //    oncall.board, so the board and this list can never disagree.
-  const { slots } = await fetchSelectedSlots(storage(), onCallSourceRegistry(), me.organizationId);
+  //    The board's switch is checked HERE too, so no path (forward by
+  //    roleTarget from a stale client included) resolves a slot while it is off.
+  const slots = (await isModuleEnabled(me.organizationId, "oncall.board"))
+    ? (await fetchSelectedSlots(storage(), onCallSourceRegistry(), me.organizationId)).slots
+    : [];
   for (const sl of slots) {
     const roleKey = "schedule:" + sl.slot;
     await add("schedule", roleKey + ":" + (sl.providerUserId ?? ""), sl.slot, sl.providerUserId, {
