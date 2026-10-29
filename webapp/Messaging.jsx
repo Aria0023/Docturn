@@ -989,9 +989,11 @@ function Messaging() {
             quick responses cost the message list no height and the row no
             width on a short or narrow viewport (keyboard up, landscape, 375); open, the chips WRAP inside the pane —
             nothing is laid out past the right edge — and the panel caps its
-            own height (it scrolls, the composer stays on screen). */}
+            own height and is the element that gives way on a short viewport
+            (flex-shrink down to one chip row; it scrolls inside itself), so
+            the composer and Send stay on screen with the keyboard up. */}
         {isMobile && qrOpen && !conv.broadcast && !recording && tplModOn && (
-          <div data-quick-responses role="toolbar" aria-label="Quick responses" style={{ flex: "none", padding: "8px 12px 0", background: "#fff", display: "flex", flexWrap: "wrap", gap: 6, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", maxHeight: "min(200px, 32vh)", overflowY: "auto", overflowX: "hidden" }}>
+          <div data-quick-responses role="toolbar" aria-label="Quick responses" style={{ flex: "0 1 auto", minHeight: 52, padding: "8px 12px 0", background: "#fff", display: "flex", flexWrap: "wrap", alignContent: "flex-start", gap: 6, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", maxHeight: 200, overflowY: "auto", overflowX: "hidden" }}>
             {quickResponses.map((t) => (
               <button key={t.id} type="button" data-quick-response={t.id} onClick={() => { insertTemplate(t); setQrOpen(false); }} title={t.body}
                 style={{ flex: "none", minHeight: 44, maxWidth: "100%", padding: "0 14px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", boxSizing: "border-box",
