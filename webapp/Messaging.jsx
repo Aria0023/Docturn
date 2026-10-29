@@ -570,6 +570,8 @@ function Messaging() {
   // organization's. Read from the server when Messaging opens (module on).
   const tplModOn = modOn("messaging.templates");
   React.useEffect(() => { if (isMobile && tplModOn && a.listTemplates) a.listTemplates(); }, [isMobile, tplModOn]);
+  const [qrOpen, setQrOpen] = React.useState(false);
+  React.useEffect(() => { setQrOpen(false); }, [cid]);
   const quickResponses = templates.filter((t) => t.scope === "mine").concat(templates.filter((t) => t.scope !== "mine"));
   const insertTemplate = (t) => {
     setDraft((d) => (d && d.trim() ? d.replace(/\s+$/, "") + " " : "") + t.body);
@@ -981,20 +983,29 @@ function Messaging() {
           <TemplatePicker templates={templates} onPick={insertTemplate} onClose={() => setTplOpen(false)} canManageOrg={canManageOrgTemplates} actions={a} isMobile={isMobile} />
         )}
         {/* Quick responses: one tap inserts the text (and presets an urgent /
-            STAT priority) through the same path as the Templates picker. The
-            strip scrolls sideways inside itself — never the page. */}
-        {isMobile && !conv.broadcast && !recording && tplModOn && (
-          <div data-quick-responses role="toolbar" aria-label="Quick responses" style={{ flex: "none", padding: "8px 12px 0", background: "#fff", display: "flex", gap: 6, overflowX: "auto", WebkitOverflowScrolling: "touch", minWidth: 0, maxWidth: "100%", scrollbarWidth: "none" }}>
+            STAT priority) through the same path as the Templates picker. Shut
+            by default: on a phone the Templates button in the row below opens
+            THIS panel (its "All templates" opens the searchable picker), so
+            quick responses cost the message list no height and the row no
+            width on a short or narrow viewport (keyboard up, landscape, 375); open, the chips WRAP inside the pane —
+            nothing is laid out past the right edge — and the panel caps its
+            own height (it scrolls, the composer stays on screen). */}
+        {isMobile && qrOpen && !conv.broadcast && !recording && tplModOn && (
+          <div data-quick-responses role="toolbar" aria-label="Quick responses" style={{ flex: "none", padding: "8px 12px 0", background: "#fff", display: "flex", flexWrap: "wrap", gap: 6, minWidth: 0, maxWidth: "100%", boxSizing: "border-box", maxHeight: "min(200px, 32vh)", overflowY: "auto", overflowX: "hidden" }}>
             {quickResponses.map((t) => (
-              <button key={t.id} type="button" data-quick-response={t.id} onClick={() => insertTemplate(t)} title={t.body}
-                style={{ flex: "none", minHeight: 44, maxWidth: 220, padding: "0 14px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              <button key={t.id} type="button" data-quick-response={t.id} onClick={() => { insertTemplate(t); setQrOpen(false); }} title={t.body}
+                style={{ flex: "none", minHeight: 44, maxWidth: "100%", padding: "0 14px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", boxSizing: "border-box",
                   color: t.priority === "stat" ? "#B91C1C" : t.priority === "urgent" ? "#B45309" : "var(--foreground)", background: t.scope === "mine" ? "#EFF6FF" : "var(--secondary)", border: "1px solid " + (t.priority === "stat" ? "#FCA5A5" : t.priority === "urgent" ? "#FCD34D" : "var(--border)") }}>
                 {t.title}
               </button>
             ))}
             <button type="button" data-quick-response-manage onClick={() => a.setNav("quick-responses")} aria-label="Edit quick responses"
-              style={{ flex: "none", minHeight: 44, minWidth: 44, padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5, color: "var(--primary)", background: "transparent", border: "1px dashed var(--border)" }}>
+              style={{ flex: "none", minHeight: 44, minWidth: 44, maxWidth: "100%", padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5, color: "var(--primary)", background: "transparent", border: "1px dashed var(--border)", boxSizing: "border-box" }}>
               <Icon name={quickResponses.length ? "pencil" : "plus"} size={14} />{quickResponses.length ? "Edit" : "Add quick response"}
+            </button>
+            <button type="button" data-quick-responses-all onClick={() => { setQrOpen(false); setTplOpen(true); }}
+              style={{ flex: "none", minHeight: 44, minWidth: 44, maxWidth: "100%", padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 5, color: "var(--primary)", background: "transparent", border: "1px solid var(--border)", boxSizing: "border-box" }}>
+              <Icon name="search" size={14} />All templates
             </button>
           </div>
         )}
@@ -1016,9 +1027,11 @@ function Messaging() {
               </div>
             )}
             {modOn("messaging.templates") && (
-              <button type="button" data-templates onClick={() => setTplOpen(!tplOpen)} title="Insert a message template" aria-expanded={tplOpen}
+              <button type="button" data-templates data-quick-responses-toggle={isMobile ? "" : undefined}
+                onClick={() => { if (isMobile) { setQrOpen(!(qrOpen || tplOpen)); setTplOpen(false); } else setTplOpen(!tplOpen); }}
+                title={isMobile ? "Quick responses and templates" : "Insert a message template"} aria-label={isMobile ? "Templates — quick responses" : undefined} aria-expanded={isMobile ? qrOpen || tplOpen : tplOpen}
                 style={{ marginLeft: "auto", minHeight: isMobile ? 44 : undefined, padding: isMobile ? "0 10px" : "3px 11px", borderRadius: 99, cursor: "pointer", fontSize: isMobile ? 13 : 11.5, fontWeight: 700, fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flex: "none",
-                  color: tplOpen ? "#fff" : "var(--primary)", background: tplOpen ? "var(--primary)" : "transparent", border: "1px solid " + (tplOpen ? "var(--primary)" : "var(--border)") }}>
+                  color: tplOpen || qrOpen ? "#fff" : "var(--primary)", background: tplOpen || qrOpen ? "var(--primary)" : "transparent", border: "1px solid " + (tplOpen || qrOpen ? "var(--primary)" : "var(--border)") }}>
                 <Icon name="file-text" size={12} />Templates
               </button>
             )}

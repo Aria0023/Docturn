@@ -8,7 +8,9 @@
  *      the server (the org's read-only); Add is ONE POST (scope mine), Edit ONE
  *      PATCH, Delete ONE DELETE; after a reload the page shows what the server
  *      stores.
- *   C. The phone composer shows tap-to-insert chips — mine first, then the
+ *   C. The phone composer keeps them behind one 44px toggle in the priority
+ *      row (no thread height until opened); open, tap-to-insert chips WRAP
+ *      inside the pane — mine first, then the
  *      org's; a tap inserts the text into the message box (no request); a STAT
  *      template presets the STAT priority; the Edit chip opens the page.
  *   M. messaging.templates off: no chips, no Settings row, the page says so;
@@ -119,6 +121,13 @@ const chips = (P) => P.page.evaluate(() => {
     labels: [...document.querySelectorAll("[data-quick-response]")].map((b) => b.textContent.trim()),
     manage: (document.querySelector("[data-quick-response-manage]") || { textContent: "" }).textContent.trim(),
     barOverflowsPage: bar ? bar.getBoundingClientRect().right > window.innerWidth + 0.5 : false,
+    // every chip is laid out inside the viewport (the panel wraps; nothing
+    // sits past the right edge waiting to be scrolled to)
+    chipsPastEdge: [...document.querySelectorAll("[data-quick-response], [data-quick-response-manage]")].filter((b) => b.getBoundingClientRect().right > window.innerWidth + 0.5).map((b) => b.textContent.trim()),
+    toggle: (() => { const t = document.querySelector("[data-quick-responses-toggle]"); if (!t) return null; const r = t.getBoundingClientRect(); const row = t.closest("[data-priority-row]");
+      const tops = row ? [...new Set([...row.querySelectorAll("button")].map((k) => Math.round(k.getBoundingClientRect().top)))] : [];
+      return { w: r.width, h: r.height, expanded: t.getAttribute("aria-expanded"), inPriorityRow: !!row, oneRow: tops.length === 1, right: r.right }; })(),
+    listH: (document.querySelector("[data-thread-scroll]") || { clientHeight: 0 }).clientHeight,
     draft: (document.querySelector('input[aria-label="Message"]') || { value: null }).value,
     prio: (document.querySelector('[role="radiogroup"][aria-label="Priority"] [aria-checked=true]') || { textContent: null }).textContent,
   };
@@ -179,10 +188,16 @@ async function composerRound(C, convId, qrId, label) {
   await openThread(C, convId);
   const all = (await C.api("GET", "/api/messaging/templates")).json || [];
   const expectIds = all.filter((t) => t.scope === "mine").map((t) => t.id).concat(all.filter((t) => t.scope !== "mine").map((t) => t.id));
-  let v = await waitFor(async () => { const x = await chips(C); return x.bar && x.ids.length === expectIds.length ? x : null; }, 8000);
-  rec(`C ${label}: the composer shows the server's templates as chips, mine first`, v && JSON.stringify(v.ids) === JSON.stringify(expectIds), JSON.stringify({ got: v && v.ids, want: expectIds }));
-  rec(`C ${label}: the chip strip scrolls inside itself (not past the page edge)`, v && !v.barOverflowsPage);
-  await checkLayout(C.page, `${label} composer with chips`, ["[data-quick-responses]", "[data-composer]"]);
+  // Shut by default: one 44px toggle in the existing priority / Templates
+  // row, so the chips cost the message list no height until asked for.
+  let v = await waitFor(async () => { const x = await chips(C); return x.toggle ? x : null; }, 8000);
+  rec(`C ${label}: shut by default — a >= 44x44 Quick responses toggle sharing the priority row, no chips laid out`, v && !v.bar && v.ids.length === 0 && v.toggle.w >= 43.5 && v.toggle.h >= 43.5 && v.toggle.inPriorityRow && v.toggle.oneRow && v.toggle.expanded === "false" && v.toggle.right <= C.page.viewportSize().width + 0.5, JSON.stringify(v && v.toggle));
+  const listShut = v ? v.listH : 0;
+  await C.page.locator("[data-quick-responses-toggle]").click();
+  v = await waitFor(async () => { const x = await chips(C); return x.bar && x.ids.length === expectIds.length ? x : null; }, 8000);
+  rec(`C ${label}: the toggle opens the server's templates as chips, mine first`, v && v.toggle.expanded === "true" && JSON.stringify(v.ids) === JSON.stringify(expectIds), JSON.stringify({ got: v && v.ids, want: expectIds }));
+  rec(`C ${label}: open, the chips wrap inside the pane (none past the right edge)`, v && !v.barOverflowsPage && v.chipsPastEdge.length === 0, JSON.stringify(v && v.chipsPastEdge));
+  await checkLayout(C.page, `${label} composer with chips`, ["[data-quick-responses]", "[data-priority-row]", "[data-composer]"]);
   const mark = C.apiLog.length;
   await C.page.locator(`[data-quick-response="${qrId}"]`).click();
   await sleep(500);
@@ -190,8 +205,18 @@ async function composerRound(C, convId, qrId, label) {
   const t = all.find((x) => x.id === qrId);
   rec(`C ${label}: a tap inserts the text into the message box — no request`, v.draft === t.body && writes(C.apiLog, mark).length === 0, JSON.stringify({ draft: v.draft }));
   rec(`C ${label}: a STAT quick response presets STAT`, t.priority !== "stat" || v.prio === "STAT", JSON.stringify({ prio: v.prio, tp: t.priority }));
+  rec(`C ${label}: after the tap the panel shuts and the message list gets its height back`, !v.bar && v.toggle && v.toggle.expanded === "false" && v.listH >= listShut - 1, JSON.stringify({ bar: v.bar, listH: v.listH, listShut }));
+  // The full (searchable) Templates picker is one more tap away on a phone.
+  await C.page.locator("[data-quick-responses-toggle]").click();
+  await C.page.locator("[data-quick-responses-all]").click();
+  await sleep(500);
+  const pick = await C.page.evaluate(() => ({ picker: !!document.querySelector("[data-template-picker]"), bar: !!document.querySelector("[data-quick-responses]") }));
+  rec(`C ${label}: "All templates" swaps the panel for the searchable Templates picker`, pick.picker && !pick.bar, JSON.stringify(pick));
+  await C.page.locator("[data-quick-responses-toggle]").click(); // shuts the picker
+  await sleep(300);
   // Not sent: clear the draft, then the Edit chip opens the page.
   await C.page.locator('input[aria-label="Message"]').fill("");
+  await C.page.locator("[data-quick-responses-toggle]").click();
   await C.page.locator("[data-quick-response-manage]").click();
   await sleep(1200);
   rec(`C ${label}: the Edit chip opens Settings → Quick responses`, (await page(C)).state === "on");
@@ -237,7 +262,7 @@ console.log("== synthetic server " + BASE);
   const pg = await page(C);
   const post = await C.api("POST", "/api/messaging/templates", { title: "x", body: "y" });
   rec("M messaging.templates off: no chips, no Settings row, the page says it is off; POST 404 module_disabled",
-    !cm.bar && !row && pg.state === "off" && post.status === 404 && post.json && post.json.module === "messaging.templates", JSON.stringify({ bar: cm.bar, row, pg: pg.state, status: post.status }));
+    !cm.bar && !cm.toggle && !row && pg.state === "off" && post.status === 404 && post.json && post.json.module === "messaging.templates", JSON.stringify({ bar: cm.bar, toggle: !!cm.toggle, row, pg: pg.state, status: post.status }));
   await checkLayout(C.page, "Quick responses page (module off) @390", ["[data-quick-responses-page]"]);
   await dev.api("PATCH", `/api/dev/modules/${ispn.id}`, { id: "messaging.templates", enabled: true });
   await C.ctx.close(); await ER.ctx.close(); await dev.ctx.close();
@@ -276,6 +301,8 @@ if (REAL) {
   await E.api("POST", "/api/messaging/send", { conversationId: cv.id, content: "real check" });
   await reload(H.page);
   await openThread(H, cv.id);
+  await H.page.locator("[data-quick-responses-toggle]").click();
+  await sleep(400);
   const c = await chips(H);
   rec("Q: the composer offers only \"Add quick response\"", c.bar && c.ids.length === 0 && /Add quick response/.test(c.manage), JSON.stringify(c));
   await nav(H.page, "quick-responses", 1500);

@@ -754,12 +754,16 @@ is the web app / PWA.
   answers 404 exactly like an unknown one. The audit rows
   (`message.template_create` / `_update` / `_delete`, low) carry the id and
   scope only, never the title or text.
-- Phone composer: a sideways-scrolling strip of 44px chips above the message
-  box — mine first, then the organization's; one tap inserts the text through
-  the Templates picker's own path (an urgent / STAT template presets that
-  priority while `messaging.priority` is on). No request is made by a tap.
-  The last chip opens Settings → Quick responses ("Add quick response" when
-  there are none — a fresh tenant has none and no demo rows).
+- Phone composer: the composer's existing Templates button opens a quick
+  responses panel (shut by default, so it costs the message list no height
+  on a short viewport — keyboard up, landscape — and the priority row no
+  width at 375). Inside, 44px chips WRAP within the pane (nothing is laid
+  out past the right edge) — mine first, then the organization's; one tap
+  inserts the text through the Templates picker's own path (an urgent / STAT
+  template presets that priority while `messaging.priority` is on) and shuts
+  the panel. No request is made by a tap. "Edit" opens Settings → Quick
+  responses ("Add quick response" when there are none — a fresh tenant has
+  none and no demo rows); "All templates" opens the searchable picker.
 - Settings → Notifications → Quick responses: my personal templates (add /
   edit / delete, each one server call followed by a re-read, so the list is
   the server's), the organization's shown read-only. Directors still manage

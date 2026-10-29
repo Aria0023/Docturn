@@ -254,16 +254,19 @@ const tag = Date.now().toString(36);
   const unreadAfter = await page.evaluate((id) => (window.DT.getState().conversations.find((x) => x.id === id) || {}).unread, c.id);
   rec("J: on screen, its unread messages are read", unreadAfter === 0, `unread=${unreadAfter}`);
   // Load earlier: scroll to the top, tap, the reader keeps their place.
-  const anchorText = `rt-J ${tag} #31`;
+  // Anchor on the message's server id, not its text: a message's textContent
+  // runs straight into its timestamp, so "…#3" + "12:23 AM" also contains
+  // "#31" and a text match picked message #3 once the earlier page arrived.
+  const anchorId = String(ids[30]);
   await page.evaluate(() => { const el = document.querySelector("[data-thread-scroll]"); el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); });
   await sleep(200);
-  const y0 = await page.evaluate((t) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(t)); return m ? m.getBoundingClientRect().top : null; }, anchorText);
+  const y0 = await page.evaluate((id) => { const m = document.querySelector(`[data-message-id="${id}"]`); return m ? m.getBoundingClientRect().top : null; }, anchorId);
   log.reqs.length = 0;
   await page.locator("[data-load-earlier]").click();
   await page.waitForFunction(() => document.querySelectorAll("[data-message]").length === 80, null, { timeout: 8000 }).catch(() => {});
   await sleep(300);
   const earlier = msgGets(log).filter((r) => /\/messages$/.test(r.path));
-  const y1 = await page.evaluate((t) => { const m = [...document.querySelectorAll("[data-message]")].find((x) => x.textContent.includes(t)); return m ? m.getBoundingClientRect().top : null; }, anchorText);
+  const y1 = await page.evaluate((id) => { const m = document.querySelector(`[data-message-id="${id}"]`); return m ? m.getBoundingClientRect().top : null; }, anchorId);
   const total = await page.locator("[data-message]").count();
   const btn = await page.locator("[data-load-earlier]").count();
   rec("J SHO-65: Load earlier reads the page before the oldest shown (?before=) and shows all 80", earlier.length === 1 && earlier[0].search === `?limit=50&before=${ids[30]}` && total === 80 && btn === 0, `${earlier.map((r) => r.search).join(",")} total=${total} button=${btn}`);
