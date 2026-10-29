@@ -75,7 +75,10 @@ describe("PIN unlock — setting the PIN", () => {
     expect(ok.body).toMatchObject({ set: true });
     const row = (await ctx.storage.getUserPin(ctx.seedResult.orgId, me.id))!;
     expect(row.pinHash).toMatch(/^\$scrypt\$ln=\d+,r=\d+,p=\d+\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
-    expect(row.pinHash).not.toContain(PIN);
+    // The format check above already proves the hash is salt + digest hex only
+    // (a 4-digit PIN can appear in random hex by chance, so substring-matching
+    // the hash itself was flaky). No other column may carry the digits.
+    expect(JSON.stringify({ ...row, pinHash: undefined })).not.toContain(PIN);
     expect((await agent.get("/api/security/pin")).body).toMatchObject({ set: true });
 
     expect((await agent.delete("/api/security/pin")).status).toBe(200);
