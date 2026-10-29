@@ -3,7 +3,7 @@ import { z } from "zod";
 import { appendAudit } from "../audit.js";
 import { getNotificationProfile } from "../config.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { smsFor } from "../services/sms.js";
+import { isSmsUnavailable, smsFor } from "../services/sms.js";
 import { storage } from "../storage.js";
 
 const sendSchema = z.object({
@@ -24,7 +24,14 @@ export function registerSmsRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const profile = await getNotificationProfile(me.organizationId);
       const sms = smsFor(profile.smsCarrier);
-      const result = await sms.send(parsed.data.to, parsed.data.body);
+      let result: { sid: string };
+      try {
+        result = await sms.send(parsed.data.to, parsed.data.body);
+      } catch (err) {
+        // Fail closed: no carrier can deliver → say so, never record "sent".
+        if (isSmsUnavailable(err)) return res.status(503).json({ error: "sms_unavailable", carrier: sms.carrier });
+        throw err;
+      }
       await storage().appendSmsHistory({
         organizationId: me.organizationId,
         userId: me.id,

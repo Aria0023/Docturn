@@ -2,8 +2,10 @@ import { useState } from "react";
 import { Text, TextInput, TouchableOpacity, View } from "react-native";
 import { ApiClient, type MobileUser } from "../api";
 
-// QR org onboarding: a scanned QR encodes the org code, which we resolve via the
-// public /api/mobile/org/:code endpoint before login. Here we accept it typed.
+// QR org onboarding: a scanned QR encodes the org code, which is sent with the
+// credentials to /api/login (here it is typed). There is deliberately no public
+// "does this code exist" lookup — /api/mobile/org/:code answers only a
+// signed-in member about their own org (A.CON-SHO-11).
 export function LoginScreen({ onLoggedIn }: { onLoggedIn: (u: MobileUser) => void }) {
   const [orgCode, setOrgCode] = useState("MERCY");
   const [username, setUsername] = useState("");

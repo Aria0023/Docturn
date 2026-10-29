@@ -1,12 +1,20 @@
 /* DocTurn web-app UI kit — Patient Board (hospital-wide distribution).
    Shows every distributed patient: who is responsible (attending + on-call unit),
-   consultants, and the admitting source. Works two ways:
-     • EHR connected (FHIR) — census auto-syncs from the hospital system.
-     • Manual — admissions are added, edited, reassigned and removed by hand.
-   Lists admissions given + their acceptance status; directors can fully edit. */
+   consultants, and the admitting source — the SERVER's board
+   (GET /api/patient-board). There is no EHR census feed: patients come from
+   ER intake and directors' manual admissions (A.CON clinical #16).
+   A director / ER director edits it on the server (A.CON clinical #13-#15):
+     • room and issue — PATCH /api/patients/:id (status is the patient's
+       routing state, which the server derives, so it is shown, not edited);
+     • Add admission — POST /api/patients, routed at once with
+       POST /api/assignments (the chosen hospitalist, or round-robin);
+     • Remove — DELETE /api/patients/:id (the patient and everything linked,
+       one audited transaction).
+   Every change shows once the server agrees; a refusal says why. */
 
 function BoardWrap({ children }) {
-  return <div style={{ padding: 28, maxWidth: 1220, margin: "0 auto" }}>{children}</div>;
+  const isMobile = useIsMobile();
+  return <div style={{ padding: isMobile ? "16px 12px 28px" : 28, maxWidth: 1220, margin: "0 auto" }}>{children}</div>;
 }
 
 function AvatarStack({ lead, unit }) {
@@ -22,12 +30,29 @@ function AvatarStack({ lead, unit }) {
   );
 }
 
+// "Message team" opens the patient-linked care-team thread — a per-org feature
+// module (messaging.patientThreads). The control is hidden while the org has it
+// switched off; the server still refuses a stale tap (404 module_disabled) and
+// DT.actions.openPatientThread says so. Read at render time: the app re-renders
+// on every store change, including the module map's refresh.
+function patientThreadsOn() {
+  try { return !(window.DT && window.DT.moduleOn) || window.DT.moduleOn("messaging.patientThreads"); } catch (e) { return true; }
+}
+
+// The board's status is the patient's ROUTING state as the server derives it
+// (board.ts): pending = awaiting the hospitalist's accept, assigned = accepted,
+// rejected / expired / cancelled = needs reassigning, waiting = not routed.
 const BOARD_STATUS = {
+  assigned:    { status: "accepted", label: "Admitted" },
   admitted:    { status: "accepted", label: "Admitted" },
-  observation: { status: "active",   label: "Observation" },
   pending:     { status: "pending",  label: "Awaiting accept" },
-  transfer:    { status: "offline",  label: "Transfer" },
+  waiting:     { status: "offline",  label: "Not routed" },
+  rejected:    { status: "declined", label: "Declined" },
+  declined:    { status: "declined", label: "Declined" },
+  expired:     { status: "expired",  label: "Expired" },
+  cancelled:   { status: "rerouted", label: "Re-routed" },
 };
+const boardStatusOf = (st) => BOARD_STATUS[st] || { status: "offline", label: st ? String(st) : "Unknown" };
 
 function BoardReassign({ providers, onPick, label }) {
   return (
@@ -44,106 +69,64 @@ function BoardReassign({ providers, onPick, label }) {
   );
 }
 
-function BoardStatusSelect({ value, onChange }) {
-  const opts = [["admitted", "Admitted"], ["observation", "Observation"], ["pending", "Awaiting accept"], ["transfer", "Transfer"]];
-  const bs = BOARD_STATUS[value] || BOARD_STATUS.admitted;
-  const pal = (window.STATUS[bs.status] || {});
-  return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        style={{ appearance: "none", WebkitAppearance: "none", height: 26, padding: "0 22px 0 10px", borderRadius: "var(--radius-full)",
-          border: "none", background: pal.bg, color: pal.fg, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
-        {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-      <Icon name="chevron-down" size={11} color={pal.fg} style={{ position: "absolute", right: 7, pointerEvents: "none" }} />
-    </div>
-  );
-}
-
-function DataSourceBanner({ fhir, canEdit, onConnect, onDisconnect, onSync }) {
-  const connected = fhir && fhir.connected;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 16px", marginBottom: 18, borderRadius: "var(--radius-lg)",
-      background: connected ? "var(--status-accepted-bg)" : "var(--secondary)", border: `1px solid ${connected ? "var(--status-accepted)" : "var(--border)"}` }}>
-      <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", flex: "none", display: "flex", alignItems: "center", justifyContent: "center",
-        background: connected ? "var(--status-accepted)" : "#fff", color: connected ? "#fff" : "var(--muted-foreground)", border: connected ? "none" : "1px solid var(--border)" }}>
-        <Icon name={connected ? "cloud" : "cloud-off"} size={19} />
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-          {connected ? `Live · synced from ${fhir.source}` : "Manual census entry"}
-          {connected && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><StatusDot status="online" pulse />{" "}</span>}
-        </div>
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
-          {connected
-            ? <>Admissions pull automatically via FHIR · last sync {fhir.lastSync ? dtFmt.ago(fhir.lastSync) : "just now"} · <span className="ds-mono">{fhir.endpoint}</span></>
-            : "No EHR connection — add and manage admissions by hand, or connect a FHIR endpoint to auto-sync."}
-        </div>
-      </div>
-      {connected ? (
-        <div style={{ display: "flex", gap: 8, flex: "none" }}>
-          <Button size="sm" variant="outline" icon="refresh-cw" onClick={onSync}>Sync now</Button>
-          {canEdit && <Button size="sm" variant="ghost" icon="unplug" onClick={onDisconnect}>Disconnect</Button>}
-        </div>
-      ) : (
-        canEdit && <Button size="sm" icon="plug" onClick={onConnect}>Connect EHR (FHIR)</Button>
-      )}
-    </div>
-  );
-}
-
 const DEPT_OPTS = ["MED", "ICU", "TELE", "ER", "SURG"];
 
+// A director's manual admission: a real patient on the server, routed at
+// once — to the hospitalist picked here, or round-robin to the next eligible
+// one — who accepts it like any ER admission. The director who adds it is the
+// admitting clinician of record.
 function AddAdmissionModal({ providers, onClose, onAdd }) {
-  const [f, setF] = React.useState({ initials: "", room: "", dept: "MED", issue: "", attending: "", er: "" });
+  const [f, setF] = React.useState({ initials: "", room: "", dept: "MED", issue: "", attending: "" });
+  const [busy, setBusy] = React.useState(false);
   const set = (k, v) => setF((p) => Object.assign({}, p, { [k]: v }));
+  const submit = () => {
+    if (busy) return;
+    if (!f.initials.trim()) { window.DT.actions.toast({ tone: "rejected", title: "Initials required", msg: "Enter the patient's initials." }); return; }
+    setBusy(true);
+    Promise.resolve(onAdd(f)).then((ok) => { setBusy(false); if (ok !== false) onClose(); }, () => setBusy(false));
+  };
   return (
-    <Modal title="Add admission" subtitle="Record a new patient on the board. Leave the attending blank to queue for acceptance." icon="clipboard-plus" onClose={onClose} width={520}
+    <Modal title="Add admission" subtitle="Routed now — to the hospitalist you pick, or round-robin — and accepted like any ER admission." icon="clipboard-plus" onClose={onClose} width={520}
       children={
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", gap: 12 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <div style={{ width: 120 }}><Field label="Initials" icon="user" value={f.initials} onChange={(v) => set("initials", v.toUpperCase().slice(0, 3))} placeholder="A.B." /></div>
             <div style={{ width: 110 }}><Field label="Room" icon="door-open" value={f.room} onChange={(v) => set("room", v)} placeholder="318" /></div>
             <DSelect label="Unit" icon="building" value={f.dept} onChange={(v) => set("dept", v)} options={DEPT_OPTS.map((d) => ({ value: d, label: d }))} />
           </div>
           <Field label="Presenting issue" icon="clipboard-list" value={f.issue} onChange={(v) => set("issue", v)} placeholder="e.g. CHF exacerbation" />
-          <div style={{ display: "flex", gap: 12 }}>
-            <DSelect label="Attending (optional)" icon="stethoscope" value={f.attending} onChange={(v) => set("attending", v)}
-              options={[{ value: "", label: "— Queue for acceptance —" }].concat(providers.map((p) => ({ value: p.name, label: p.name })))} />
-            <div style={{ flex: 1 }}><Field label="Admitted by" icon="ambulance" value={f.er} onChange={(v) => set("er", v)} placeholder="ER physician / source" /></div>
-          </div>
+          <DSelect label="Send to" icon="stethoscope" value={f.attending} onChange={(v) => set("attending", v)}
+            options={[{ value: "", label: "Round-robin — next eligible hospitalist" }].concat(providers.map((p) => ({ value: p.name, label: p.name })))} />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
             <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" icon="check" onClick={() => { if (f.initials.trim()) { onAdd(f); onClose(); } else window.DT.actions.toast({ tone: "rejected", title: "Initials required", msg: "Enter the patient's initials." }); }}>Add admission</Button>
+            <Button size="sm" icon="check" onClick={submit} style={busy ? { opacity: .6, pointerEvents: "none" } : null}>{busy ? "Adding…" : "Add admission"}</Button>
           </div>
         </div>
       } />
   );
 }
 
-// The board's optional sections. The census table and the tiles/banner that
-// summarize it need a live EHR feed, so they carry a "needs EHR/FHIR" note and
-// can be switched off until that's wired up.
+// The board's optional sections — a layout preference saved on THIS device
+// only (every section shows the server's board).
 const BOARD_MODULES = [
-  ["admissions",  "Admissions tile", null],
-  ["accepted",    "Accepted tile", null],
-  ["awaiting",    "Awaiting-acceptance tile", "Needs live census (EHR/FHIR)"],
-  ["consultants", "With-consultants tile", "Needs live census (EHR/FHIR)"],
-  ["dataSource",  "EHR / FHIR data-source bar", "Needs EHR/FHIR"],
-  ["census",      "Patient census table", "Needs live census (EHR/FHIR)"],
+  ["admissions",  "Admissions tile"],
+  ["accepted",    "Accepted tile"],
+  ["awaiting",    "Awaiting-acceptance tile"],
+  ["consultants", "With-consultants tile"],
+  ["census",      "Patient list"],
 ];
 
 function BoardCustomize({ modules, onSetModule, onClose }) {
   return (
     <React.Fragment>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 300, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(300px, calc(100vw - 24px))", maxWidth: "100%", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
         <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>Customize board</div>
-          <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Show only the sections you use today.</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Show only the sections you use — saved on this device only.</div>
         </div>
         <div style={{ padding: 6 }}>
-          {BOARD_MODULES.map(([key, label, note]) => {
+          {BOARD_MODULES.map(([key, label]) => {
             const on = !!modules[key];
             return (
               <button key={key} onClick={() => onSetModule(key, !on)}
@@ -154,7 +137,6 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
                 </span>
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>{label}</span>
-                  {note && <span style={{ display: "block", fontSize: 11, color: "var(--status-pending)", marginTop: 1 }}>{note}</span>}
                 </span>
               </button>
             );
@@ -165,14 +147,144 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
   );
 }
 
-function PatientBoard({ patients, role, providers = [], fhir, modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onConnectFhir, onDisconnectFhir, onSyncFhir, onPurge, onAddConsult, onRespondConsult, consultServices }) {
+// "Responsible" — attending + on-call unit, or the routing/declined state with a
+// reassign control. Shared by the desktop table and the mobile card so the two
+// layouts can never drift apart.
+function ResponsibleCell({ p, providers, canEdit, onReassign }) {
+  const pendingish = (p.status === "pending" || p.status === "waiting" || p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled" || p.status === "unrouted");
+  if (pendingish) {
+    const declined = p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled";
+    const color = declined ? "var(--status-rejected)" : "var(--status-pending)";
+    return canEdit && onReassign ? (
+      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+        {declined && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: color }}><Icon name="x" size={13} />Declined</span>}
+        <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label="Assign…" />
+      </div>
+    ) : (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: color, fontWeight: 600 }}>
+        <Icon name={declined ? "x" : "loader"} size={14} />{declined ? "Declined — awaiting reassignment" : "Routing…"}
+      </span>
+    );
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+      <AvatarStack lead={p.attending} unit={p.unit} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.attending.name}</div>
+        {canEdit && onReassign
+          ? <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label="Reassign…" />
+          : <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{p.unit && p.unit.length ? `+ ${p.unit.map((u) => u.role).join(", ")} on unit` : "Solo"}</div>}
+      </div>
+    </div>
+  );
+}
+
+// "Consultants" — who was consulted, their accept/decline state, and (for
+// editors) the add-consult control. Shared by the table and the mobile card.
+function ConsultantsCell({ p, onAddConsult, onRespondConsult, consultServices }) {
+  return (
+    <React.Fragment>
+      {(p.consultDetails && p.consultDetails.length)
+        ? <ConsultRoster details={p.consultDetails} onRespond={onRespondConsult} />
+        : ((p.consultants || []).length === 0 && !onAddConsult
+          ? <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>—</span>
+          : <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{(p.consultants || []).map((c) => {
+              const nm = typeof c === "string" ? c : (c.specialty || c.name || "");
+              return <SpecialtyTag key={nm} name={nm} size="sm" />;
+            })}</div>)}
+      {onAddConsult && p.patientId != null && (
+        <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(p.patientId, spec)} />
+      )}
+    </React.Fragment>
+  );
+}
+
+// A single stacked patient card for phones — the same data and controls as one
+// table row, laid out vertically so nothing needs a 1080px horizontal scroll.
+function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRemove, onAddConsult, onRespondConsult, consultServices }) {
+  const bs = boardStatusOf(p.status);
+  const canThread = p.patientId != null && patientThreadsOn();
+  const Label = ({ children }) => (
+    <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 4 }}>{children}</div>
+  );
+  return (
+    <div style={{ padding: "15px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+      {/* Header: patient identity + status */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <Avatar initials={p.initials} size={42} tint={p.status === "pending" ? "amber" : "slate"} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {p.initials}
+            {p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}
+            {p.synced && <Icon name="cloud" size={13} color="var(--status-accepted)" title="Synced from EHR" />}
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted-foreground)", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+            Rm {canEdit ? <EditableText value={p.room} onSave={(v) => onUpdate(p.id, { room: v })} size={13} weight={400} color="var(--muted-foreground)" /> : p.room} · {p.dept}
+          </div>
+        </div>
+        <div data-board-status={p.status} style={{ flex: "none" }}><Badge status={bs.status}>{bs.label}</Badge></div>
+      </div>
+
+      {/* Issue */}
+      <div style={{ marginTop: 12 }}>
+        <Label>Issue</Label>
+        <div style={{ fontSize: 14.5, color: "var(--foreground)" }}>{canEdit ? <EditableText value={p.issue} onSave={(v) => onUpdate(p.id, { issue: v })} size={14.5} weight={400} multiline /> : p.issue}</div>
+      </div>
+
+      {/* Responsible + Admitted-by side by side */}
+      <div style={{ display: "flex", gap: 14, marginTop: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 150px", minWidth: 0 }}>
+          <Label>Responsible</Label>
+          <ResponsibleCell p={p} providers={providers} canEdit={canEdit} onReassign={onReassign} />
+        </div>
+        <div style={{ flex: "1 1 130px", minWidth: 0 }}>
+          <Label>Admitted by</Label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Avatar initials={p.er.avatar} size={26} tint="slate" />
+            <span style={{ fontSize: 13.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Consultants */}
+      <div style={{ marginTop: 12 }}>
+        <Label>Consultants</Label>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+          <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
+        </div>
+      </div>
+
+      {/* Actions */}
+      {(p.patientId != null || canEdit) && (
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          {canThread && (
+            <button onClick={() => window.DT.actions.openPatientThread(p.patientId)}
+              style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+              <Icon name="message-square" size={16} />Message team
+            </button>
+          )}
+          {/* EHR deep link (module ehr.deepLinks + org template) — see OnCallBoard.jsx */}
+          {p.patientId != null && window.OpenInEhrButton && <window.OpenInEhrButton patientId={p.patientId} />}
+          {canEdit && (
+            <button onClick={() => { if (window.confirm("Delete patient " + p.initials + " and everything linked to them (assignments, consults, care-team thread) for everyone? This can't be undone.")) onRemove(p.id); }} title="Remove admission" aria-label={"Remove patient " + p.initials}
+              style={{ width: 46, height: 42, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={18} /></button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PatientBoard({ patients, role, providers = [], modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onPurge, onAddConsult, onRespondConsult, consultServices }) {
+  const isMobile = useIsMobile();
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");
   const [adding, setAdding] = React.useState(false);
   const [customizing, setCustomizing] = React.useState(false);
-  const M = modules || { admissions: true, accepted: true, awaiting: true, consultants: true, dataSource: true, census: true };
+  const M = modules || { admissions: true, accepted: true, awaiting: true, consultants: true, census: true };
   const DEPTS = ["ALL", "ER", "ICU", "MED", "TELE"];
   const canEdit = (role === "director" || role === "er_director") && onUpdate;
+  const threadsOn = patientThreadsOn();
 
   const rows = patients.filter((p) =>
     (dept === "ALL" || p.dept === dept) &&
@@ -181,7 +293,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
      p.attending.name.toLowerCase().includes(query.toLowerCase()) ||
      (p.consultants || []).join(" ").toLowerCase().includes(query.toLowerCase())));
 
-  const accepted = patients.filter((p) => p.status === "admitted" || p.status === "observation").length;
+  const accepted = patients.filter((p) => p.status === "assigned" || p.status === "admitted").length;
   const awaiting = patients.filter((p) => p.status === "pending").length;
   const withConsult = patients.filter((p) => (p.consultants || []).length).length;
 
@@ -199,7 +311,8 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
   return (
     <BoardWrap>
       {(canCustomize || onPurge) && (
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, position: "relative" }}>
+        /* wraps at 375px: Clear 24h+ / Clear all / Customize board total ~378px */
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginBottom: 12, position: "relative", flexWrap: "wrap" }}>
           {onPurge && <Button size="sm" variant="outline" icon="clock" onClick={() => onPurge(24)}>Clear 24h+</Button>}
           {onPurge && <Button size="sm" variant="outline" icon="trash-2" onClick={() => { if (window.confirm("Delete ALL patients on the board? This can't be undone.")) onPurge(0); }}>Clear all</Button>}
           {canCustomize && <Button size="sm" variant="outline" icon="sliders-horizontal" onClick={() => setCustomizing((v) => !v)}>Customize board</Button>}
@@ -207,29 +320,34 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
         </div>
       )}
 
-      {M.dataSource && <DataSourceBanner fhir={fhir} canEdit={canEdit} onConnect={onConnectFhir} onDisconnect={onDisconnectFhir} onSync={onSyncFhir} />}
 
       {tiles.length > 0 && (
-        <div style={{ display: "flex", gap: 14, marginBottom: 22 }}>
-          {tiles.map(([key, label, value, icon, tint]) => <StatTile key={key} label={label} value={value} icon={icon} tint={tint} />)}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: isMobile ? 10 : 14, marginBottom: isMobile ? 16 : 22 }}>
+          {tiles.map(([key, label, value, icon, tint]) => (
+            // On phones each tile takes ~half the row (2-up) so the patient list
+            // isn't pushed far down; on desktop they sit in one flex row.
+            isMobile
+              ? <div key={key} style={{ flex: "1 1 calc(50% - 5px)", minWidth: 0, display: "flex" }}><StatTile label={label} value={value} icon={icon} tint={tint} /></div>
+              : <StatTile key={key} label={label} value={value} icon={icon} tint={tint} />
+          ))}
         </div>
       )}
 
       {!M.census && (
         <Card style={{ padding: 22, textAlign: "center", color: "var(--muted-foreground)" }}>
           <Icon name="layout-list" size={22} color="var(--muted-foreground)" />
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--foreground)", marginTop: 8 }}>Census table is hidden</div>
-          <div style={{ fontSize: 12.5, marginTop: 4 }}>The live patient census needs an EHR/FHIR connection.{canCustomize ? " Turn it on from “Customize board” once that's wired up." : ""}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--foreground)", marginTop: 8 }}>Patient list is hidden on this device</div>
+          <div style={{ fontSize: 12.5, marginTop: 4 }}>{canCustomize ? "Turn it back on from “Customize board”." : "It was hidden on this device."}</div>
         </Card>
       )}
 
       {M.census && <React.Fragment>
       {/* Controls */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 220, maxWidth: 320 }}>
+        <div style={{ flex: 1, minWidth: isMobile ? "100%" : 220, maxWidth: isMobile ? "none" : 320 }}>
           <Field icon="search" value={query} onChange={setQuery} placeholder="Search patient, attending, issue…" />
         </div>
-        <div style={{ display: "flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+        <div style={{ display: "flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", maxWidth: "100%", overflowX: "auto" }}>
           {DEPTS.map((d) => {
             const on = dept === d;
             return (
@@ -249,7 +367,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               : <><b style={{ color: "var(--foreground)" }}>{rows.length}</b> of {patients.length}</>}
           </span>
         </div>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ marginLeft: isMobile ? 0 : "auto", display: "flex", gap: 8, width: isMobile ? "100%" : "auto" }}>
           {canEdit && <Button size="sm" icon="plus" onClick={() => setAdding(true)}>Add admission</Button>}
           {canEdit && <Button size="sm" variant="outline" icon="download" onClick={() => {
             const out = [["patient", "room", "dept", "issue", "status", "attending", "consultants", "admitted_by"]].concat(
@@ -263,7 +381,20 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
         </div>
       </div>
 
-      {/* Table */}
+      {/* Census — a stacked card list on phones (no 1080px horizontal scroll),
+          the wide table on larger screens. */}
+      {isMobile ? (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          {rows.map((p, i) => (
+            <BoardPatientCard key={p.id || i} p={p} i={i} providers={providers} canEdit={canEdit}
+              onReassign={onReassign} onUpdate={onUpdate} onRemove={onRemove}
+              onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
+          ))}
+          {rows.length === 0 && (
+            <div style={{ padding: 30, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients match your filter.</div>
+          )}
+        </Card>
+      ) : (
       <div style={{ overflowX: "auto", borderRadius: "var(--radius-lg)" }}>
       <Card style={{ padding: 0, overflow: "hidden", minWidth: 1080 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
@@ -277,7 +408,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
         </div>
 
         {rows.map((p, i) => {
-          const bs = BOARD_STATUS[p.status] || BOARD_STATUS.admitted;
+          const bs = boardStatusOf(p.status);
           return (
             <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 18px", borderTop: i ? "1px solid var(--border)" : "none" }}>
               {/* Patient */}
@@ -298,57 +429,32 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
               <span style={{ flex: "1.5 1 0", fontSize: 13, color: "var(--foreground)", minWidth: 0, paddingRight: 8 }}>{canEdit ? <EditableText value={p.issue} onSave={(v) => onUpdate(p.id, { issue: v })} size={13} weight={400} multiline /> : p.issue}</span>
               {/* Responsible */}
               <div style={{ flex: "1.4 1 0", minWidth: 0 }}>
-                {(p.status === "pending" || p.status === "waiting" || p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled" || p.status === "unrouted") ? (
-                  (function () {
-                    const declined = p.status === "rejected" || p.status === "declined" || p.status === "expired" || p.status === "cancelled";
-                    const color = declined ? "var(--status-rejected)" : "var(--status-pending)";
-                    return canEdit && onReassign ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                        {declined && <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700, color: color }}><Icon name="x" size={13} />Declined</span>}
-                        <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label={declined ? "Assign…" : "Assign…"} />
-                      </div>
-                    ) : (
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: color, fontWeight: 600 }}>
-                        <Icon name={declined ? "x" : "loader"} size={14} />{declined ? "Declined — awaiting reassignment" : "Routing…"}
-                      </span>
-                    );
-                  })()
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
-                    <AvatarStack lead={p.attending} unit={p.unit} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.attending.name}</div>
-                      {canEdit && onReassign
-                        ? <BoardReassign providers={providers} onPick={(name) => onReassign(p.id, name)} label="Reassign…" />
-                        : <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{p.unit && p.unit.length ? `+ ${p.unit.map((u) => u.role).join(", ")} on unit` : "Solo"}</div>}
-                    </div>
-                  </div>
-                )}
+                <ResponsibleCell p={p} providers={providers} canEdit={canEdit} onReassign={onReassign} />
               </div>
               {/* Consultants — who was consulted + who accepted/declined */}
               <div style={{ flex: "1.6 1 0", minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                {(p.consultDetails && p.consultDetails.length)
-                  ? <ConsultRoster details={p.consultDetails} onRespond={onRespondConsult} />
-                  : ((p.consultants || []).length === 0 && !onAddConsult
-                    ? <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>—</span>
-                    : <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{(p.consultants || []).map((c) => {
-                        const nm = typeof c === "string" ? c : (c.specialty || c.name || "");
-                        return <SpecialtyTag key={nm} name={nm} size="sm" />;
-                      })}</div>)}
-                {onAddConsult && p.patientId != null && (
-                  <ConsultAdd services={consultServices} onPick={(spec) => onAddConsult(p.patientId, spec)} />
-                )}
+                <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
               </div>
               {/* Admitted by */}
               <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
                 <Avatar initials={p.er.avatar} size={26} tint="slate" />
                 <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
               </div>
+              {/* Patient-linked care-team thread */}
+              {p.patientId != null && threadsOn && (
+                <button onClick={() => window.DT.actions.openPatientThread(p.patientId)} title="Message the care team about this patient"
+                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+                  <Icon name="message-square" size={15} />
+                </button>
+              )}
+              {/* EHR deep link (module ehr.deepLinks + org template) — see OnCallBoard.jsx */}
+              {p.patientId != null && window.OpenInEhrButton && <window.OpenInEhrButton patientId={p.patientId} compact />}
               {/* Status */}
-              <span style={{ width: 132, flex: "none" }}>{canEdit ? <BoardStatusSelect value={p.status} onChange={(v) => onUpdate(p.id, { status: v })} /> : <Badge status={bs.status}>{bs.label}</Badge>}</span>
+              <span data-board-status={p.status} style={{ width: 132, flex: "none" }}><Badge status={bs.status}>{bs.label}</Badge></span>
               {/* Remove */}
               {canEdit && (
-                <button onClick={() => onRemove(p.id)} title="Remove admission"
+                <button onClick={() => { if (window.confirm("Delete patient " + p.initials + " and everything linked to them (assignments, consults, care-team thread) for everyone? This can't be undone.")) onRemove(p.id); }} title="Remove admission" aria-label={"Remove patient " + p.initials}
                   onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
                   style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={16} /></button>
               )}
@@ -360,6 +466,7 @@ function PatientBoard({ patients, role, providers = [], fhir, modules, canCustom
         )}
       </Card>
       </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 12, fontSize: 11.5, color: "var(--muted-foreground)" }}>
         <Icon name="lock" size={13} />Patients shown by initials only · access is logged to the PHI audit trail.

@@ -15,10 +15,16 @@ export class Realtime {
   connect() {
     const cookie = ApiClient.sessionCookie();
     const wsUrl = ApiClient.baseUrl.replace(/^http/, "ws") + "/ws";
-    // React Native WebSocket accepts headers as a 3rd arg.
-    this.ws = new WebSocket(wsUrl, undefined, {
+    // React Native's WebSocket accepts a headers option as a 3rd arg that the
+    // DOM lib types don't model, so construct through an untyped alias.
+    const RNWebSocket = WebSocket as unknown as new (
+      url: string,
+      protocols?: string | string[],
+      options?: { headers?: Record<string, string> },
+    ) => WebSocket;
+    this.ws = new RNWebSocket(wsUrl, undefined, {
       headers: cookie ? { Cookie: cookie } : {},
-    } as any);
+    });
     this.ws.onopen = () => {
       this.backoff = 1000;
     };
@@ -37,9 +43,11 @@ export class Realtime {
     };
   }
 
-  subscribe(fn: Listener) {
+  subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
-    return () => this.listeners.delete(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
   }
 
   close() {
