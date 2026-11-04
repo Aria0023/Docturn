@@ -4345,6 +4345,7 @@
     no_username: "Your organization's sign-in service didn't send a username DocTurn can use.",
     no_role: "Your organization's sign-in service signed you in, but you are not in a group that DocTurn gives access to. Ask your administrator.",
     disabled: "That account has been deactivated. Ask a director to restore it.",
+    mfa_required: "Your organization requires two-factor authentication for this role, and your sign-in service didn't confirm it did one. Ask your administrator to require MFA in its DocTurn policy.",
     discovery: "DocTurn couldn't reach your organization's sign-in service.",
     issuer_mismatch: "Your organization's sign-in service is misconfigured (its issuer does not match).",
     jwks: "DocTurn couldn't verify your organization's sign-in service.",

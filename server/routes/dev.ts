@@ -27,6 +27,7 @@ import {
 } from "../services/request-metrics.js";
 import { getDb, getHandle } from "../db.js";
 import { liveHubBus, liveSocketStats } from "../ws/index.js";
+import { ssoRequiredForOrg } from "./sso.js";
 import { storage } from "../storage.js";
 import { sql } from "drizzle-orm";
 import { INSTANCE_ID } from "../instance.js";
@@ -63,6 +64,24 @@ async function swappedUserBody(u: User) {
  * POST /api/amion/sync-now answers with the same snapshot; its amion.sync row
  * is filed in that org naming the developer.
  */
+/**
+ * E2.1 break-glass: the operator entered a tenant whose own staff cannot use
+ * a password ("SSO required"). Nothing changes about the portal — this only
+ * files the fact, at HIGH risk, in that tenant's trail.
+ */
+async function auditSsoBreakGlass(orgId: number, developerId: number, details: Record<string, unknown>) {
+  if (!(await ssoRequiredForOrg(orgId))) return;
+  await appendAudit({
+    organizationId: orgId,
+    userId: developerId,
+    action: "auth.sso_break_glass",
+    resourceType: "organization",
+    resourceId: orgId,
+    details,
+    riskLevel: "high",
+  });
+}
+
 export function registerDevRoutes(app: Express) {
   // Platform → Security → "Sign out all": the operator's incident-response
   // switch. Every session on every tenant issued before now stops resolving
@@ -685,6 +704,10 @@ export function registerDevRoutes(app: Express) {
         details: { from: me.id, to: target.id },
         riskLevel: "high",
       });
+      // E2.1: this tenant's own staff cannot sign in with a password, so this
+      // portal IS the operator's break-glass. Filed as such, on top of the
+      // dev.impersonate row, so the hospital can see it in their trail.
+      await auditSsoBreakGlass(target.organizationId, me.id, { via: "impersonate", as: target.id });
       const body = await swappedUserBody(target);
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
@@ -781,6 +804,7 @@ export function registerDevRoutes(app: Express) {
         details: { as: admin.id, role: admin.role },
         riskLevel: "high",
       });
+      await auditSsoBreakGlass(orgId, me.id, { via: "manage-org", as: admin.id });
       const body = await swappedUserBody(admin);
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);

@@ -1515,6 +1515,10 @@ export function registerAuthRoutes(app: Express) {
           });
           return res.status(403).json({ error: "sso_required" });
         }
+        // A developer account that lives inside the TENANT (not the usual
+        // place — the operator's own account is in the platform org, which is
+        // never SSO-required). The break-glass that matters is the operator's
+        // portal into the tenant, audited in server/routes/dev.ts.
         if (user.role === "developer" && (await ssoRequiredForOrg(user.organizationId))) {
           await appendAudit({
             organizationId: user.organizationId,

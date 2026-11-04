@@ -4,8 +4,9 @@ import type { Role, User } from "@shared/schema";
 import { toSafeUser } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { guardedFetch } from "../integrations/http.js";
+import { MFA_REQUIRED_MODULE } from "../auth.js";
 import { isModuleEnabled } from "../modules.js";
-import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { currentUser, isPrivilegedRole, requireAuth, requireRole } from "../rbac.js";
 import { normalizeUsername } from "../usernames.js";
 import { provisionUser } from "../services/provisioning.js";
 import { storage } from "../storage.js";
@@ -277,6 +278,26 @@ export function registerSsoRoutes(app: Express) {
         return flowError(res, "no_role");
       }
 
+      // E2.1 + security.mfaRequired: when the org requires MFA for privileged
+      // roles, a privileged SSO sign-in is only accepted if the id_token
+      // PROVES the identity provider did more than one factor. Without this
+      // an already-enrolled director would get full access from a single
+      // federated factor, while their password sign-in would still be held
+      // to TOTP — the module would protect the unenrolled and nobody else.
+      const idpMfa = assertsMfa(verified, loaded.config.acrMfaValue);
+      if (!idpMfa && isPrivilegedRole(role) && (await isModuleEnabled(org.id, MFA_REQUIRED_MODULE))) {
+        await appendAudit({
+          organizationId: org.id,
+          userId: null,
+          action: "sso.login_denied_mfa_required",
+          resourceType: "organization",
+          resourceId: org.id,
+          details: { role, amr: verified.amr.length },
+          riskLevel: "high",
+        });
+        return flowError(res, "mfa_required");
+      }
+
       const normalized = normalizeUsername(username);
       let user = await storage().getUserByUsername(org.id, normalized);
       let created = false;
@@ -319,7 +340,6 @@ export function registerSsoRoutes(app: Express) {
         }
       }
 
-      const idpMfa = assertsMfa(verified, loaded.config.acrMfaValue);
       const live = user!;
       req.login(live as unknown as Express.User, async (loginErr) => {
         if (loginErr) return next(loginErr);

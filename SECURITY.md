@@ -114,14 +114,21 @@ automatically uses encrypted Postgres instead of the local file database.
   from the current groups (demotion included) and can never re-role a
   developer or revive a deactivated account. "SSO required" makes a password
   sign in nobody for that org — checked after the credential verifies, so a
-  wrong password reveals nothing — except a developer, whose break-glass
-  sign-in is audited at HIGH risk every time. The org-code lookup behind the
-  "Sign in with …" button answers byte-identically for an unknown code, a
-  code with no connection, a disabled one and a module that is off, so it
-  cannot be used to enumerate hospitals. MFA: an SSO sign-in does not ask for
-  DocTurn's own TOTP, the org's MFA requirement still holds for privileged
-  roles, and only an id_token that ASSERTS multi-factor authentication
-  (`amr`/`acr`) stands that requirement down — recorded in the audit row.
+  wrong password reveals nothing. The operator's way into such a tenant is
+  the impersonation / managed-org portal (their own account lives in the
+  platform org, which is never SSO-required); entering an SSO-required tenant
+  files `auth.sso_break_glass` in THAT tenant's trail at HIGH risk, on top of
+  the usual `dev.impersonate` row, so the hospital can see it. The org-code
+  lookup behind the "Sign in with …" button answers byte-identically for an
+  unknown code, a code with no connection, a disabled one and a module that
+  is off, so it cannot be used to enumerate hospitals. MFA: an SSO sign-in
+  does not ask for DocTurn's own TOTP, and when the org requires MFA for
+  privileged roles a privileged SSO sign-in is REFUSED unless the id_token
+  proves the provider did more than one factor (`amr`, or the `acr` value the
+  director configured) — otherwise an already-enrolled director would get
+  full access from a single federated factor. That proof also stands the
+  TOTP-enrolment gate down for the session, and it is recorded in the audit
+  row.
 - **SCIM provisioning cannot escalate** (module `enterprise.scim`, off by
   default — `docs/ENTERPRISE_READINESS.md` E2.2). The identity provider
   authenticates with a per-organization bearer token of which only a SHA-256

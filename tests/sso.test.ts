@@ -332,26 +332,44 @@ describe("SSO — required, MFA and the module switch", () => {
     const audit = await ctx.storage.listAuditLogs(orgId, 40);
     expect(audit.filter((r) => r.action === "auth.login_denied_sso_required")).toHaveLength(2);
 
+    // The operator's break-glass into an SSO-required tenant is the PORTAL
+    // (their own account lives in the platform org, which is never
+    // SSO-required), and it is filed in that tenant's trail at high risk.
+    const { agent: devAgent } = await login(ctx.app, { orgCode: "DOCTURN", username: "dev" });
+    await devAgent.post("/api/dev/manage-org").send({ orgId }).expect(200);
+    const breakGlass = (await ctx.storage.listAuditLogs(orgId, 40)).find((r) => r.action === "auth.sso_break_glass");
+    expect(breakGlass).toBeTruthy();
+    expect(breakGlass!.riskLevel).toBe("high");
+    expect(breakGlass!.details).toMatchObject({ via: "manage-org" });
+
     // Switching the module off hands the org back its passwords.
     await setModule(orgId, "enterprise.sso", false);
     invalidateModules();
     expect((await login(ctx.app, { username: "chen" })).res.status).toBe(200);
   });
 
-  it("an id_token that asserts MFA satisfies the org's MFA requirement for that session", async () => {
+  it("with security.mfaRequired on, a privileged SSO sign-in needs the IdP to PROVE MFA", async () => {
     await setModule(orgId, "security.mfaRequired", true);
-    await configure({ roleMapping: { map: { "DocTurn-Directors": "director" }, defaultRole: null } });
+    await configure({ roleMapping: { map: { "DocTurn-Directors": "director" }, defaultRole: "hospitalist" } });
     invalidateModules();
 
-    // Without amr: the privileged user is in the enrolment-only session the
-    // password path gives them.
+    // Without amr: refused outright. (The alternative — letting them in on
+    // the enrolment gate — would give an ALREADY-ENROLLED director full
+    // access from one federated factor, while their password sign-in is
+    // still held to TOTP. The module would then protect the unenrolled and
+    // nobody else.)
     const plain = supertest.agent(ctx.app);
-    expect(ssoCode((await signInThroughIdp(plain, { preferred_username: "dir.idp", groups: ["DocTurn-Directors"] })).callback!)).toBe("ok");
-    const flagged = await plain.get("/api/user").expect(200);
-    expect(flagged.body.mfaEnrollmentRequired).toBe(true);
-    expect((await plain.get("/api/accounts")).status).toBe(403);
+    expect(ssoCode((await signInThroughIdp(plain, { preferred_username: "dir.idp", groups: ["DocTurn-Directors"] })).callback!)).toBe("mfa_required");
+    expect((await plain.get("/api/user")).status).toBe(401);
+    expect((await ctx.storage.listAuditLogs(orgId, 40)).some((r) => r.action === "sso.login_denied_mfa_required" && r.riskLevel === "high")).toBe(true);
 
-    // With amr: the IdP did the second factor, so the gate stands down.
+    // An UNPRIVILEGED person is unaffected: the module is about privileged roles.
+    const clinician = supertest.agent(ctx.app);
+    expect(ssoCode((await signInThroughIdp(clinician, { preferred_username: "hosp.idp", groups: ["clinicians"] })).callback!)).toBe("ok");
+    expect((await clinician.get("/api/user").expect(200)).body.role).toBe("hospitalist");
+
+    // With amr: the IdP did the second factor, so the sign-in is accepted AND
+    // the enrolment gate stands down for that session.
     const mfa = supertest.agent(ctx.app);
     expect(ssoCode((await signInThroughIdp(mfa, { preferred_username: "dir.idp", groups: ["DocTurn-Directors"], amr: ["pwd", "mfa"] })).callback!)).toBe("ok");
     const okBody = await mfa.get("/api/user").expect(200);
@@ -359,6 +377,13 @@ describe("SSO — required, MFA and the module switch", () => {
     expect((await mfa.get("/api/accounts")).status).toBe(200);
     const audit = await ctx.storage.listAuditLogs(orgId, 60);
     expect(audit.some((r) => r.action === "sso.login" && (r.details as any)?.idpMfa === true)).toBe(true);
+
+    // The configured `acr` value counts as the same proof.
+    await configure({ roleMapping: { map: { "DocTurn-Directors": "director" }, defaultRole: "hospitalist", acrMfaValue: "urn:hospital:mfa" } });
+    invalidateModules();
+    const byAcr = supertest.agent(ctx.app);
+    expect(ssoCode((await signInThroughIdp(byAcr, { preferred_username: "dir.idp", groups: ["DocTurn-Directors"], acr: "urn:hospital:mfa" })).callback!)).toBe("ok");
+    expect((await byAcr.get("/api/accounts")).status).toBe(200);
   });
 
   it("with the module off the public routes refuse and the director's card is 404", async () => {

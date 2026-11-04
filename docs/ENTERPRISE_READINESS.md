@@ -144,7 +144,7 @@ integration; SAML is a follow-up (noted under the gaps).
 | **JIT accounts** | `server/services/provisioning.ts` (shared with SCIM) | A first sign-in creates the account through the same path SCIM uses: no password (a random 32-byte scrypt hash nobody holds), a rotation profile for a hospitalist, audited. A later sign-in updates the display name and the ROLE from the current claims (a demotion as well as a promotion), and a `developer` is never re-roled by an identity provider. A deactivated account is refused (audited high) — SSO can never resurrect a leaver. |
 | **Role mapping** | `roleFromClaims` | claim value → role, matched case-insensitively, the mapping's declared order deciding for someone in several groups, with a default role (or null = refuse, which is how a hospital keeps DocTurn to a named group). `developer` can never be granted: the save is refused with the group named, not silently dropped. |
 | **Session creation** | `req.login` | The existing login path: the session id is REGENERATED (so a fixation attempt before the flow is worthless), the flow's state / nonce / verifier are read from the session BEFORE that and cleared, and a replay of the same `state` is refused. `/api/auth/sso/*` is in the app-lock passthrough and the session-policy sign-in paths, so a locked or ended session can re-authenticate through the IdP. |
-| **"SSO required"** | `passwordSignInRefused`, `POST /api/login` | A password then signs NOBODY in for that org — checked AFTER the credential verifies, so a wrong password reveals nothing about which orgs require SSO, and audited (`auth.login_denied_sso_required`). The one exception is a **developer**: the operator's break-glass, which is audited at HIGH risk (`auth.sso_break_glass`) every time it is used. |
+| **"SSO required"** | `passwordSignInRefused`, `POST /api/login` | A password then signs NOBODY in for that org — checked AFTER the credential verifies, so a wrong password reveals nothing about which orgs require SSO, and audited (`auth.login_denied_sso_required`). The operator's way in is the impersonation / managed-org PORTAL, not a password: their own account lives in the platform org, which is never SSO-required. Entering an SSO-required tenant through either portal files `auth.sso_break_glass` in THAT tenant's trail at HIGH risk (`server/routes/dev.ts`), on top of the usual `dev.impersonate` row. A developer account that lives inside the tenant itself is held to the same password refusal, and that case is audited as the break-glass too. |
 | **Not an org-code oracle** | `POST /api/auth/sso/available` | An unknown org code, a known org with no connection, a disabled connection and a module that is off all get the byte-identical `{ sso: false }` — and the same work is done in every case (the connection is looked up against an impossible org id when the code is unknown), so the timings match. A malformed body gets the same answer rather than a 400. `no-store`. The sign-in screen therefore shows "Sign in with <hospital>" only for a code that really has SSO, without becoming a way to enumerate hospitals. |
 | **The card** | Settings → Security → Single sign-on (director) | The redirect URI to register, the issuer / client id / secret (write-only), scopes, the claim and its mappings, the default role, "SSO required", enabled — and a **real** "Test connection" that fetches the issuer's discovery document and key set and reports what came back (it never sends the secret: the token endpoint is not called). |
 | **Rate limit** | `app.use("/api/auth/sso", authLimiter)` | The same per-address failure budget as a password sign-in. |
@@ -155,17 +155,25 @@ integration; SAML is a follow-up (noted under the gaps).
    provider is the authenticator; a second factor DocTurn holds adds nothing
    to a federated login it cannot verify, and would strand a hospital that
    requires SSO.
-2. The org's `security.mfaRequired` module **still holds**: a privileged user
-   (director / ER director / developer) without DocTurn MFA lands in exactly
-   the same enrolment-only session a password sign-in gives them.
-3. **Unless** the id_token proves the IdP performed multi-factor
-   authentication — `amr` contains one of `mfa, otp, hwk, swk, sc, pop, fido,
-   wia, mca`, or `acr` equals the value the director configured. Then that
-   session is treated as having a second factor (`session.mfaSatisfiedByIdp`,
-   honoured by the enrolment gate and by `GET /api/user`), and the fact is in
-   the `sso.login` audit row (`idpMfa: true`). DocTurn does not take the
-   hospital's word for it beyond what the token asserts, and it never writes
-   `twoFactorEnabled` on the user from a claim.
+2. When the org has `security.mfaRequired` on, a **privileged** SSO sign-in
+   (director / ER director / developer) is **REFUSED** unless the id_token
+   proves the provider performed multi-factor authentication — `amr` contains
+   one of `mfa, otp, hwk, swk, sc, pop, fido, wia, mca`, or `acr` equals the
+   value the director configured. The refusal is audited
+   (`sso.login_denied_mfa_required`, high) and the sign-in screen says what to
+   ask the administrator for. An unprivileged clinician is unaffected.
+   *Why refuse rather than fall back on the TOTP-enrolment gate: that gate
+   only asks "is this person enrolled?", so an ALREADY-ENROLLED director would
+   have walked in on one federated factor while their password sign-in was
+   still held to TOTP — the module would have protected the unenrolled and
+   nobody else.*
+3. That same proof stands the enrolment gate down for the session
+   (`session.mfaSatisfiedByIdp`, honoured by the gate and by `GET /api/user`),
+   so a hospital whose provider does MFA is not also forced to enrol everyone
+   in DocTurn's TOTP. It is recorded in the `sso.login` audit row
+   (`idpMfa: true`). DocTurn never writes `twoFactorEnabled` on a user from a
+   claim, and it takes the hospital's word for nothing beyond what the token
+   asserts.
 
 ### How it is tested
 
