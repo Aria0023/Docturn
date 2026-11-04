@@ -19,7 +19,8 @@ export type ModuleGroup =
   | "Operations"
   | "Security"
   | "Integrations"
-  | "Platform";
+  | "Platform"
+  | "Enterprise";
 
 export interface ModuleDef {
   id: string;
@@ -88,6 +89,25 @@ export const MODULES: readonly ModuleDef[] = [
   // ---- Platform
   { id: "platform.appearance",    label: "Appearance / theming",           group: "Platform",  default: true,  blurb: "Per-org colours and branding." },
   { id: "platform.cms",           label: "Landing / contact pages",        group: "Platform",  default: false, blurb: "Public landing and contact page content." },
+  // Per-user display presets over the org's branding (docs/ENTERPRISE_READINESS.md
+  // "Themes"): Classic / Calm / Warm / Night / High contrast, text size, follow
+  // device. Server-stored per user (user_theme_prefs). Off = everyone sees the
+  // org's branding only and the preference routes are not served.
+  { id: "platform.userThemes",    label: "Personal display presets",       group: "Platform",  default: true,  blurb: "Each person picks a preset (incl. Night / High contrast), text size and follow-device over the org's branding; stored server-side. Off = org branding only." },
+  // The native shell (Expo + WebView hosting this web app). Off = the shell's
+  // org-scoped endpoints (native device registration, hand-off) are not served.
+  { id: "mobile.nativeShell",     label: "Native app shell",               group: "Platform",  default: false, blurb: "The native iOS / Android shell for this org: native push device registration and the shell's hand-off endpoints. Off = the web app / PWA only." },
+
+  // ---- Enterprise — what a hospital IT security review asks for
+  // (docs/ENTERPRISE_READINESS.md). Every switch below gates ROUTES; the
+  // multi-instance safety mechanisms themselves (realtime bus, job leases,
+  // shared rate-limit store) are never per-org and are always on when the
+  // deployment has DATABASE_URL.
+  { id: "enterprise.multiInstance", label: "Cluster view",                 group: "Enterprise", default: false, blurb: "Developer console → Cluster: this instance's id, the realtime bus in use, which job leases each instance holds and which rate-limit / session store is active. Off = the view is not served." },
+  { id: "enterprise.sso",         label: "Single sign-on (OIDC)",          group: "Enterprise", default: false, blurb: "Sign in through the hospital's own identity provider (Okta / Entra / Google, generic OIDC): per-org connection stored encrypted, just-in-time accounts mapped to a role by group claim, optional 'SSO required'. Off = passwords only." },
+  { id: "enterprise.scim",        label: "SCIM user provisioning",         group: "Enterprise", default: false, blurb: "The identity provider creates, updates and deactivates accounts over SCIM 2.0 with a per-org bearer token; a SCIM deactivation ends the person's sessions. Off = the SCIM endpoints answer 404 for this org." },
+  { id: "enterprise.sessionPolicy", label: "Session policy",               group: "Enterprise", default: false, blurb: "Per-org idle timeout, maximum concurrent sessions and absolute session lifetime, plus 'sign out everywhere' for one person. Off = the platform defaults (15-minute idle timeout) apply." },
+  { id: "enterprise.auditExport", label: "Audit export",                   group: "Enterprise", default: false, blurb: "Directors and developers export the org's audit and PHI-access trail as CSV / JSON (ids, actions, times — never patient data). Off = the trail is viewable in the app only." },
 ] as const;
 
 export type ModuleId = (typeof MODULES)[number]["id"];

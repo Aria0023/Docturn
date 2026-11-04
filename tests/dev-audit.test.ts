@@ -15,6 +15,10 @@ import {
   userReminderPrefs,
   userSoundPrefs,
   users,
+  ssoConnections,
+  scimTokens,
+  orgSessionPolicy,
+  userThemePrefs,
 } from "@shared/schema";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -663,6 +667,35 @@ describe("A.CON-SHO-32 — tenant delete is atomic and complete", () => {
     await dev.delete("/api/dev/organizations/" + org.id + "?force=true").expect(204);
 
     expect(await ctx.storage.getOrganization(org.id)).toBeUndefined();
+    expect(await count()).toBe(0);
+  });
+
+  it("cascades every enterprise table (SSO connection, SCIM tokens, session policy, theme prefs)", async () => {
+    const { agent: dev } = await devLogin();
+    const { org, user } = await makeDoomedTenant();
+    // One row per enterprise table, every one pointing at the doomed tenant
+    // (docs/ENTERPRISE_READINESS.md). Ciphertext fields are opaque here.
+    await ctx.storage.upsertSsoConnection({
+      organizationId: org.id, issuer: "https://idp.example.test", clientId: "docturn", ciphertext: "ct", iv: "iv",
+      authTag: "tag", keyVersion: 1, roleMapping: { clinicians: "hospitalist" }, ssoRequired: true, enabled: true,
+      updatedBy: user.id,
+    });
+    await ctx.storage.createScimToken({ organizationId: org.id, tokenHash: "h".repeat(64), label: "Okta", createdBy: user.id });
+    const revoked = await ctx.storage.createScimToken({ organizationId: org.id, tokenHash: "r".repeat(64), label: "old", createdBy: user.id });
+    expect(await ctx.storage.revokeScimToken(org.id, revoked.id)).toBe(true);
+    await ctx.storage.upsertOrgSessionPolicy({ organizationId: org.id, idleMinutes: 10, maxConcurrent: 2, absoluteHours: 12, updatedBy: user.id });
+    await ctx.storage.setThemePrefs(org.id, user.id, { preset: "night", textSize: "large", followDevice: true });
+    const count = async () =>
+      (await ctx.handle.db.select().from(ssoConnections).where(eq(ssoConnections.organizationId, org.id))).length +
+      (await ctx.handle.db.select().from(scimTokens).where(eq(scimTokens.organizationId, org.id))).length +
+      (await ctx.handle.db.select().from(orgSessionPolicy).where(eq(orgSessionPolicy.organizationId, org.id))).length +
+      (await ctx.handle.db.select().from(userThemePrefs).where(eq(userThemePrefs.userId, user.id))).length;
+    expect(await count()).toBe(5);
+
+    await dev.delete("/api/dev/organizations/" + org.id + "?force=true").expect(204);
+
+    expect(await ctx.storage.getOrganization(org.id)).toBeUndefined();
+    expect(await ctx.storage.getUserById(user.id)).toBeUndefined();
     expect(await count()).toBe(0);
   });
 });

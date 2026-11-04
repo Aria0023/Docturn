@@ -798,4 +798,81 @@ CREATE TABLE IF NOT EXISTS pin_unlock_failures (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS pin_unlock_failures_session_uniq ON pin_unlock_failures(user_id, session_hash);
+
+-- Enterprise readiness (docs/ENTERPRISE_READINESS.md). Mirrors shared/schema.ts.
+-- updated_by / created_by carry no FK on purpose (never block a delete).
+
+-- Background-job leases: one row per job; a tick runs only after
+-- UPDATE … WHERE lease_until <= NOW() claims the row (E1 multi-instance).
+CREATE TABLE IF NOT EXISTS job_leases (
+  name TEXT PRIMARY KEY,
+  holder TEXT NOT NULL,
+  lease_until TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Per-org OIDC SSO connection: secrets as one AES-256-GCM ciphertext under
+-- INTEGRATION_KEY; issuer / client_id / role_mapping are non-secret.
+CREATE TABLE IF NOT EXISTS sso_connections (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  issuer TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  key_version INTEGER NOT NULL DEFAULT 1,
+  role_mapping JSONB,
+  sso_required BOOLEAN NOT NULL DEFAULT FALSE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS sso_connections_org_uniq ON sso_connections(organization_id);
+
+-- Per-org SCIM bearer tokens (SHA-256 of the token only; revoked rows stay).
+CREATE TABLE IF NOT EXISTS scim_tokens (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  token_hash TEXT NOT NULL,
+  label TEXT NOT NULL,
+  created_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMP,
+  revoked_at TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS scim_tokens_hash_uniq ON scim_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS scim_tokens_org_idx ON scim_tokens(organization_id);
+
+-- Per-org session policy (NULL = platform default).
+CREATE TABLE IF NOT EXISTS org_session_policy (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  idle_minutes INTEGER,
+  max_concurrent INTEGER,
+  absolute_hours INTEGER,
+  updated_by INTEGER,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_session_policy_org_uniq ON org_session_policy(organization_id);
+
+-- Per-user display preset over the org's branding (module platform.userThemes).
+CREATE TABLE IF NOT EXISTS user_theme_prefs (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  preset TEXT,
+  text_size TEXT,
+  follow_device BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_theme_prefs_user_uniq ON user_theme_prefs(user_id);
+
+-- Shared rate-limit counters for the Postgres-backed limiter store.
+CREATE TABLE IF NOT EXISTS rate_limit_hits (
+  key TEXT PRIMARY KEY,
+  window_start TIMESTAMP NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0
+);
 `;

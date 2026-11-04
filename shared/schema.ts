@@ -972,6 +972,148 @@ export const pinUnlockFailures = pgTable(
 );
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Enterprise readiness (docs/ENTERPRISE_READINESS.md). Every table here is
+ * mirrored in server/db.ts SCHEMA_SQL. The per-org ones are cascaded by the
+ * tenant delete (storage.deleteOrganization); the per-user one by the user
+ * delete as well. `updated_by` / `created_by` deliberately carry NO foreign
+ * key (the org_integration_credentials pattern) so a row never blocks a
+ * user or tenant delete.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Background-job leases (E1 multi-instance safety). One row per job name;
+ * an instance runs a tick only after claiming the row
+ * (`UPDATE … WHERE lease_until <= NOW()`), so N instances never run the same
+ * tick twice and a crashed holder's lease is reclaimed once it lapses.
+ * Not tenant data — no organization column.
+ */
+export const jobLeases = pgTable("job_leases", {
+  name: text("name").primaryKey(),
+  /** The instance id holding the lease (server/instance.ts), never a secret. */
+  holder: text("holder").notNull(),
+  leaseUntil: timestamp("lease_until").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Per-org OIDC single sign-on connection (module enterprise.sso). The client
+ * secret (and anything else secret) is ONE AES-256-GCM ciphertext under
+ * INTEGRATION_KEY (server/integrations/crypto.ts; AAD binds it to the org).
+ * `issuer`, `client_id` and `role_mapping` are non-secret display /
+ * routing fields; `sso_required` makes password sign-in refuse for the org.
+ */
+export const ssoConnections = pgTable(
+  "sso_connections",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    issuer: text("issuer").notNull(),
+    clientId: text("client_id").notNull(),
+    ciphertext: text("ciphertext").notNull(),
+    iv: text("iv").notNull(),
+    authTag: text("auth_tag").notNull(),
+    keyVersion: integer("key_version").notNull().default(1),
+    /** Non-secret: which IdP group / claim value maps to which DocTurn role. */
+    roleMapping: jsonb("role_mapping").$type<Record<string, string>>(),
+    ssoRequired: boolean("sso_required").notNull().default(false),
+    enabled: boolean("enabled").notNull().default(true),
+    updatedBy: integer("updated_by"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    onePerOrg: uniqueIndex("sso_connections_org_uniq").on(t.organizationId),
+  }),
+);
+
+/**
+ * Per-org SCIM 2.0 bearer tokens (module enterprise.scim). Only a SHA-256 of
+ * the token is stored; the token itself is shown once at creation. A revoked
+ * token keeps its row (revoked_at) for the audit trail.
+ */
+export const scimTokens = pgTable(
+  "scim_tokens",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    tokenHash: text("token_hash").notNull(),
+    label: text("label").notNull(),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    lastUsedAt: timestamp("last_used_at"),
+    revokedAt: timestamp("revoked_at"),
+  },
+  (t) => ({
+    hashUniq: uniqueIndex("scim_tokens_hash_uniq").on(t.tokenHash),
+    byOrg: index("scim_tokens_org_idx").on(t.organizationId),
+  }),
+);
+
+/**
+ * Per-org session policy (module enterprise.sessionPolicy). NULL = the
+ * platform default (SESSION_POLICY in server/config.ts). One row per org.
+ */
+export const orgSessionPolicy = pgTable(
+  "org_session_policy",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    idleMinutes: integer("idle_minutes"),
+    maxConcurrent: integer("max_concurrent"),
+    absoluteHours: integer("absolute_hours"),
+    updatedBy: integer("updated_by"),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    onePerOrg: uniqueIndex("org_session_policy_org_uniq").on(t.organizationId),
+  }),
+);
+
+/**
+ * Per-user display preferences over the org's branding (module
+ * platform.userThemes): preset (classic / calm / warm / night / contrast),
+ * text size (default / large) and whether Night follows the device. Not PHI;
+ * cleared with the user.
+ */
+export const userThemePrefs = pgTable(
+  "user_theme_prefs",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    preset: text("preset"),
+    textSize: text("text_size"),
+    followDevice: boolean("follow_device").notNull().default(false),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    onePerUser: uniqueIndex("user_theme_prefs_user_uniq").on(t.userId),
+  }),
+);
+
+/**
+ * Shared rate-limit counters (E1): the Postgres-backed express-rate-limit
+ * store, so N instances enforce ONE login / account / registration budget.
+ * `key` = "<limiter>:<client key>"; a row is reset when its window lapses.
+ * Not tenant data.
+ */
+export const rateLimitHits = pgTable("rate_limit_hits", {
+  key: text("key").primaryKey(),
+  windowStart: timestamp("window_start").notNull(),
+  count: integer("count").notNull().default(0),
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Relations
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -1060,6 +1202,12 @@ export type UserReminderPrefs = typeof userReminderPrefs.$inferSelect;
 export type UserSoundPrefs = typeof userSoundPrefs.$inferSelect;
 export type UserPin = typeof userPins.$inferSelect;
 export type PinUnlockFailure = typeof pinUnlockFailures.$inferSelect;
+export type JobLease = typeof jobLeases.$inferSelect;
+export type SsoConnection = typeof ssoConnections.$inferSelect;
+export type ScimToken = typeof scimTokens.$inferSelect;
+export type OrgSessionPolicy = typeof orgSessionPolicy.$inferSelect;
+export type UserThemePrefs = typeof userThemePrefs.$inferSelect;
+export type RateLimitHit = typeof rateLimitHits.$inferSelect;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;

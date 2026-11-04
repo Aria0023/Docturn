@@ -47,6 +47,17 @@ import {
   userReminderPrefs,
   userSoundPrefs,
   users,
+  jobLeases,
+  ssoConnections,
+  scimTokens,
+  orgSessionPolicy,
+  userThemePrefs,
+  rateLimitHits,
+  type JobLease,
+  type SsoConnection,
+  type ScimToken,
+  type OrgSessionPolicy,
+  type UserThemePrefs,
   type DirectoryFavorite,
   type FavoriteTargetKind,
   type UserPin,
@@ -543,6 +554,41 @@ export interface IStorage {
   // ── comms KPIs (org-scoped) ──────────────────────────────────────────────────
   avgStatAckSeconds(orgId: number, since: Date): Promise<number | null>;
   avgConsultResponseSeconds(orgId: number, since: Date): Promise<number | null>;
+
+  // ── enterprise readiness (docs/ENTERPRISE_READINESS.md) ─────────────────────
+  // Background-job leases (not tenant data). claimJobLease is ONE atomic
+  // statement: it succeeds only when no unexpired lease exists.
+  claimJobLease(name: string, holder: string, leaseMs: number): Promise<boolean>;
+  releaseJobLeases(holder: string): Promise<number>;
+  listJobLeases(): Promise<JobLease[]>;
+  // Per-org OIDC SSO connection (ciphertext + non-secret fields only).
+  getSsoConnection(orgId: number): Promise<SsoConnection | undefined>;
+  upsertSsoConnection(row: Omit<SsoConnection, "id" | "createdAt" | "updatedAt">): Promise<SsoConnection>;
+  deleteSsoConnection(orgId: number): Promise<boolean>;
+  // Per-org SCIM bearer tokens (hash only).
+  createScimToken(row: Omit<ScimToken, "id" | "createdAt" | "lastUsedAt" | "revokedAt">): Promise<ScimToken>;
+  listScimTokens(orgId: number): Promise<ScimToken[]>;
+  getScimTokenByHash(tokenHash: string): Promise<ScimToken | undefined>;
+  touchScimToken(orgId: number, id: number, at: Date): Promise<void>;
+  revokeScimToken(orgId: number, id: number): Promise<boolean>;
+  // Per-org session policy.
+  getOrgSessionPolicy(orgId: number): Promise<OrgSessionPolicy | undefined>;
+  upsertOrgSessionPolicy(row: Omit<OrgSessionPolicy, "id" | "updatedAt">): Promise<OrgSessionPolicy>;
+  deleteOrgSessionPolicy(orgId: number): Promise<boolean>;
+  // Per-user display preset.
+  getThemePrefs(orgId: number, userId: number): Promise<UserThemePrefs | undefined>;
+  setThemePrefs(
+    orgId: number,
+    userId: number,
+    patch: Partial<Pick<UserThemePrefs, "preset" | "textSize" | "followDevice">>,
+  ): Promise<UserThemePrefs>;
+  deleteThemePrefs(orgId: number, userId: number): Promise<boolean>;
+  // Shared rate-limit counters (not tenant data).
+  incrementRateLimitHit(key: string, windowMs: number): Promise<{ count: number; windowStart: Date }>;
+  decrementRateLimitHit(key: string): Promise<void>;
+  resetRateLimitKey(key: string): Promise<void>;
+  resetRateLimitPrefix(prefix: string): Promise<void>;
+  pruneRateLimitHits(olderThanMs: number): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2224,9 +2270,18 @@ export class DatabaseStorage implements IStorage {
         [userSoundPrefs, userSoundPrefs.organizationId, userSoundPrefs.userId],
         [userPins, userPins.organizationId, userPins.userId],
         [pinUnlockFailures, pinUnlockFailures.organizationId, pinUnlockFailures.userId],
+        // Per-user display preset (enterprise skeleton; module platform.userThemes).
+        [userThemePrefs, userThemePrefs.organizationId, userThemePrefs.userId],
       ] as const) {
         await tx.delete(t).where(userIds.length ? or(eq(orgCol, id), inArray(userCol, userIds))! : eq(orgCol, id));
       }
+      // Enterprise per-org rows (docs/ENTERPRISE_READINESS.md): the SSO
+      // connection ciphertext, SCIM token hashes (revoked ones included) and
+      // the session policy leave with the tenant. Their created_by /
+      // updated_by columns have no FK, so order against users is free.
+      await tx.delete(ssoConnections).where(eq(ssoConnections.organizationId, id));
+      await tx.delete(scimTokens).where(eq(scimTokens.organizationId, id));
+      await tx.delete(orgSessionPolicy).where(eq(orgSessionPolicy.organizationId, id));
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -2297,6 +2352,7 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(userSoundPrefs).where(eq(userSoundPrefs.userId, id));
     await this.db.delete(userPins).where(eq(userPins.userId, id));
     await this.db.delete(pinUnlockFailures).where(eq(pinUnlockFailures.userId, id));
+    await this.db.delete(userThemePrefs).where(eq(userThemePrefs.userId, id));
     await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, id));
     await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, id));
     await this.db.delete(hospitalists).where(eq(hospitalists.userId, id));
@@ -3321,6 +3377,218 @@ export class DatabaseStorage implements IStorage {
         .returning({ id: userPins.id });
       return rows.length > 0;
     });
+  }
+
+  // ── enterprise readiness ─────────────────────────────────────────────────────
+  // ── background-job leases (E1 multi-instance safety) ────────────────────────
+  /**
+   * Claim the lease `name` for `leaseMs`. ONE atomic statement — the UPDATE
+   * only matches while no unexpired lease exists (`lease_until <= NOW()`), so
+   * of N instances racing for a tick exactly one wins, and a holder that died
+   * mid-lease loses it the moment it lapses. A missing row is created
+   * expired-in-the-past (ON CONFLICT DO NOTHING) and the claim retried once.
+   */
+  async claimJobLease(name: string, holder: string, leaseMs: number): Promise<boolean> {
+    const secs = Math.max(0.001, leaseMs / 1000);
+    const claim = async () =>
+      (
+        await this.db
+          .update(jobLeases)
+          .set({
+            holder,
+            leaseUntil: sql`NOW() + make_interval(secs => ${secs})`,
+            updatedAt: sql`NOW()`,
+          })
+          .where(and(eq(jobLeases.name, name), sql`${jobLeases.leaseUntil} <= NOW()`))
+          .returning({ name: jobLeases.name })
+      ).length > 0;
+    if (await claim()) return true;
+    const inserted = await this.db
+      .insert(jobLeases)
+      .values({ name, holder, leaseUntil: sql`NOW() + make_interval(secs => ${secs})` })
+      .onConflictDoNothing()
+      .returning({ name: jobLeases.name });
+    if (inserted.length > 0) return true;
+    return claim();
+  }
+  /** Give back every lease `holder` holds (graceful shutdown): they lapse now. */
+  async releaseJobLeases(holder: string): Promise<number> {
+    const rows = await this.db
+      .update(jobLeases)
+      .set({ leaseUntil: sql`NOW()`, updatedAt: sql`NOW()` })
+      .where(and(eq(jobLeases.holder, holder), sql`${jobLeases.leaseUntil} > NOW()`))
+      .returning({ name: jobLeases.name });
+    return rows.length;
+  }
+  async listJobLeases(): Promise<JobLease[]> {
+    return this.db.select().from(jobLeases).orderBy(asc(jobLeases.name));
+  }
+
+  // ── per-org SSO connection (ciphertext + non-secret fields only) ────────────
+  async getSsoConnection(orgId: number) {
+    const [row] = await this.db.select().from(ssoConnections).where(eq(ssoConnections.organizationId, orgId));
+    return row;
+  }
+  async upsertSsoConnection(row: Omit<SsoConnection, "id" | "createdAt" | "updatedAt">) {
+    const updatedAt = new Date();
+    const [saved] = await this.db
+      .insert(ssoConnections)
+      .values({ ...row, updatedAt })
+      .onConflictDoUpdate({
+        target: [ssoConnections.organizationId],
+        set: {
+          issuer: row.issuer,
+          clientId: row.clientId,
+          ciphertext: row.ciphertext,
+          iv: row.iv,
+          authTag: row.authTag,
+          keyVersion: row.keyVersion,
+          roleMapping: row.roleMapping,
+          ssoRequired: row.ssoRequired,
+          enabled: row.enabled,
+          updatedBy: row.updatedBy,
+          updatedAt,
+        },
+      })
+      .returning();
+    return saved!;
+  }
+  async deleteSsoConnection(orgId: number) {
+    const gone = await this.db
+      .delete(ssoConnections)
+      .where(eq(ssoConnections.organizationId, orgId))
+      .returning({ id: ssoConnections.id });
+    return gone.length > 0;
+  }
+
+  // ── per-org SCIM tokens (hash only) ─────────────────────────────────────────
+  async createScimToken(row: Omit<ScimToken, "id" | "createdAt" | "lastUsedAt" | "revokedAt">) {
+    const [saved] = await this.db.insert(scimTokens).values(row).returning();
+    return saved!;
+  }
+  async listScimTokens(orgId: number) {
+    return this.db.select().from(scimTokens).where(eq(scimTokens.organizationId, orgId)).orderBy(asc(scimTokens.id));
+  }
+  async getScimTokenByHash(tokenHash: string) {
+    const [row] = await this.db.select().from(scimTokens).where(eq(scimTokens.tokenHash, tokenHash));
+    return row;
+  }
+  async touchScimToken(orgId: number, id: number, at: Date) {
+    await this.db
+      .update(scimTokens)
+      .set({ lastUsedAt: at })
+      .where(and(eq(scimTokens.organizationId, orgId), eq(scimTokens.id, id)));
+  }
+  async revokeScimToken(orgId: number, id: number) {
+    const rows = await this.db
+      .update(scimTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(scimTokens.organizationId, orgId), eq(scimTokens.id, id), isNull(scimTokens.revokedAt)))
+      .returning({ id: scimTokens.id });
+    return rows.length > 0;
+  }
+
+  // ── per-org session policy ──────────────────────────────────────────────────
+  async getOrgSessionPolicy(orgId: number) {
+    const [row] = await this.db.select().from(orgSessionPolicy).where(eq(orgSessionPolicy.organizationId, orgId));
+    return row;
+  }
+  async upsertOrgSessionPolicy(row: Omit<OrgSessionPolicy, "id" | "updatedAt">) {
+    const updatedAt = new Date();
+    const [saved] = await this.db
+      .insert(orgSessionPolicy)
+      .values({ ...row, updatedAt })
+      .onConflictDoUpdate({
+        target: [orgSessionPolicy.organizationId],
+        set: {
+          idleMinutes: row.idleMinutes,
+          maxConcurrent: row.maxConcurrent,
+          absoluteHours: row.absoluteHours,
+          updatedBy: row.updatedBy,
+          updatedAt,
+        },
+      })
+      .returning();
+    return saved!;
+  }
+  async deleteOrgSessionPolicy(orgId: number) {
+    const gone = await this.db
+      .delete(orgSessionPolicy)
+      .where(eq(orgSessionPolicy.organizationId, orgId))
+      .returning({ id: orgSessionPolicy.id });
+    return gone.length > 0;
+  }
+
+  // ── per-user display preset ─────────────────────────────────────────────────
+  async getThemePrefs(orgId: number, userId: number) {
+    const [row] = await this.db
+      .select()
+      .from(userThemePrefs)
+      .where(and(eq(userThemePrefs.organizationId, orgId), eq(userThemePrefs.userId, userId)));
+    return row;
+  }
+  async setThemePrefs(
+    orgId: number,
+    userId: number,
+    patch: Partial<Pick<UserThemePrefs, "preset" | "textSize" | "followDevice">>,
+  ) {
+    const set = { ...patch, updatedAt: new Date() };
+    const [saved] = await this.db
+      .insert(userThemePrefs)
+      .values({ organizationId: orgId, userId, ...set })
+      .onConflictDoUpdate({ target: [userThemePrefs.userId], set })
+      .returning();
+    return saved!;
+  }
+  async deleteThemePrefs(orgId: number, userId: number) {
+    const gone = await this.db
+      .delete(userThemePrefs)
+      .where(and(eq(userThemePrefs.organizationId, orgId), eq(userThemePrefs.userId, userId)))
+      .returning({ id: userThemePrefs.id });
+    return gone.length > 0;
+  }
+
+  // ── shared rate-limit counters (E1) ─────────────────────────────────────────
+  /**
+   * Count one hit for `key` in a window of `windowMs`: ONE upsert that starts
+   * a fresh window when the stored one has lapsed, so N instances share one
+   * budget with no read-modify-write race.
+   */
+  async incrementRateLimitHit(key: string, windowMs: number): Promise<{ count: number; windowStart: Date }> {
+    const secs = Math.max(0.001, windowMs / 1000);
+    const lapsed = sql`${rateLimitHits.windowStart} + make_interval(secs => ${secs}) <= NOW()`;
+    const [row] = await this.db
+      .insert(rateLimitHits)
+      .values({ key, windowStart: sql`NOW()`, count: 1 })
+      .onConflictDoUpdate({
+        target: [rateLimitHits.key],
+        set: {
+          count: sql`CASE WHEN ${lapsed} THEN 1 ELSE ${rateLimitHits.count} + 1 END`,
+          windowStart: sql`CASE WHEN ${lapsed} THEN NOW() ELSE ${rateLimitHits.windowStart} END`,
+        },
+      })
+      .returning({ count: rateLimitHits.count, windowStart: rateLimitHits.windowStart });
+    return { count: row!.count, windowStart: toDate(row!.windowStart) ?? new Date() };
+  }
+  async decrementRateLimitHit(key: string): Promise<void> {
+    await this.db
+      .update(rateLimitHits)
+      .set({ count: sql`GREATEST(${rateLimitHits.count} - 1, 0)` })
+      .where(eq(rateLimitHits.key, key));
+  }
+  async resetRateLimitKey(key: string): Promise<void> {
+    await this.db.delete(rateLimitHits).where(eq(rateLimitHits.key, key));
+  }
+  async resetRateLimitPrefix(prefix: string): Promise<void> {
+    await this.db.delete(rateLimitHits).where(like(rateLimitHits.key, prefix.replace(/[%_\\]/g, "\\$&") + "%"));
+  }
+  async pruneRateLimitHits(olderThanMs: number): Promise<number> {
+    const secs = Math.max(0.001, olderThanMs / 1000);
+    const rows = await this.db
+      .delete(rateLimitHits)
+      .where(sql`${rateLimitHits.windowStart} + make_interval(secs => ${secs}) <= NOW()`)
+      .returning({ key: rateLimitHits.key });
+    return rows.length;
   }
 }
 

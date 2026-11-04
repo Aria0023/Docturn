@@ -220,8 +220,14 @@ describe("developer org management", () => {
     });
     expect(created.status).toBe(201);
 
+    // A per-user display preset (user_theme_prefs) is a cheap dependent the
+    // user delete cascades, like the other per-user preference rows.
+    await ctx.storage.setThemePrefs(ctx.seedResult.orgId, created.body.id, { preset: "night", textSize: "large" });
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeTruthy();
+
     // The fresh user has no activity → deletable.
     expect((await agent.delete(`/api/dev/users/${created.body.id}`)).status).toBe(204);
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeUndefined();
 
     // A user with activity (chen has a seeded pending assignment as target) — and
     // the developer can't delete themselves.
