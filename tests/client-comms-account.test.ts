@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
+import { moduleDefaults } from "@shared/modules";
 
 /**
  * The comms / account screens (A.CON comms-account #1-#15), the REAL web
@@ -148,7 +149,10 @@ async function boot(opts: { role?: Role; server?: Partial<Server>; mobile?: bool
     if (p === "/api/user") return { status: 200, body: me };
     if (p === "/api/session") return { status: 200, body: { authenticated: true, user: me } };
     if (p === "/api/config") return { status: 200, body: { syntheticData: server.synthetic } };
-    if (p === "/api/modules") return { status: 200, body: { modules: { ...(server.modules || {}) }, registry: [] } };
+    // The real server always answers with the RESOLVED, complete map
+    // (server/modules.ts getModules): a module the org never touched carries
+    // its registry default, so a default-OFF module reads false here too.
+    if (p === "/api/modules") return { status: 200, body: { modules: { ...moduleDefaults(), ...(server.modules || {}) }, registry: [] } };
     if (p === "/api/settings" && req.method === "GET") return { status: 200, body: { me: server.prefs, org: { assignmentTimeoutMin: 15, statSmsFallback: true, autoReassignOnDecline: false } } };
     if (p === "/api/settings/me" && req.method === "PATCH") { (server.prefs as any)[req.body.key] = req.body.value; return { status: 200, body: { ok: true } }; }
     if (p === "/api/org/config") return { status: 200, body: { name: "Sweep General", code: "SWPGEN", timezone: "America/Chicago", roundRobinShiftTypes: ["day", "night"], consultServices: [], consultServicesVersion: 0, theme: null, shifts: [] } };

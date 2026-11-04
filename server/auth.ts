@@ -17,6 +17,7 @@ import { appendAudit } from "./audit.js";
 import { getModules, isModuleEnabled } from "./modules.js";
 import { normalizeUsername, usernameKey } from "./usernames.js";
 import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, SESSION_POLICY, clientIpKey, getRateLimitState } from "./config.js";
+import { idleMinutesFor, idleWindowMsOf } from "./session-policy.js";
 import { DatabaseRateLimitStore } from "./rate-limit-store.js";
 
 // promisify() picks the 3-argument overload; we always pass explicit parameters.
@@ -285,9 +286,14 @@ export function appLockedAt(req: Request, res: Response): number | null {
   return appLockOf(req, res)?.lockedAt() ?? null;
 }
 
-/** Has a lock that started at `at` outlived the idle window? */
-export function appLockExpired(at: number, now = Date.now()): boolean {
-  return now - at >= SESSION_POLICY.maxAgeMs;
+/**
+ * Has a lock that started at `at` outlived the idle window? `windowMs` is the
+ * window in force for the request (the org's session policy when it has one —
+ * server/session-policy.ts — else the platform's), so a hospital that chose a
+ * 5-minute timeout does not keep a locked session alive for 15 minutes.
+ */
+export function appLockExpired(at: number, now = Date.now(), windowMs = SESSION_POLICY.maxAgeMs): boolean {
+  return now - at >= windowMs;
 }
 
 export interface SessionLockEvent {
@@ -326,7 +332,7 @@ export function appLockGate(): RequestHandler {
       const lock = appLockOf(req, res);
       const at = lock?.lockedAt() ?? null;
       if (!lock || at == null) return next();
-      if (appLockExpired(at)) {
+      if (appLockExpired(at, Date.now(), idleWindowMsOf(res))) {
         // The lock outlived the idle window: this session is over, whatever
         // traffic kept rolling its cookie. The route then sees a signed-out
         // request (401, or { authenticated:false } from the probe).
@@ -667,7 +673,26 @@ export async function resolveSessionUser(raw: unknown): Promise<User | null> {
   if (!principal) return null;
   // Issued before the operator's last "Sign out all": over.
   if ((principal.iat ?? 0) < (await sessionsRevokedAt())) return null;
-  return liveUserAtGeneration(principal.id, principal.pg);
+  const user = await liveUserAtGeneration(principal.id, principal.pg);
+  if (!user) return null;
+  // Issued before this PERSON's own last "sign out everywhere" (E2): over.
+  // Checked here rather than in the session-policy gate on purpose — it then
+  // holds on every instance, for HTTP and for the socket upgrade, and keeps
+  // holding if the module is switched off afterwards. The row is already
+  // loaded, so this costs nothing.
+  if (sessionsRevokedForUser(user, principal.iat ?? 0)) return null;
+  return user;
+}
+
+/** Was this session issued before the user's own "sign out everywhere"? */
+export function sessionsRevokedForUser(
+  user: { sessionsRevokedAt?: Date | string | null },
+  issuedAt: number,
+): boolean {
+  const v = user.sessionsRevokedAt;
+  if (!v) return false;
+  const at = v instanceof Date ? v.getTime() : new Date(v).getTime();
+  return Number.isFinite(at) && issuedAt < at;
 }
 
 /**
@@ -720,7 +745,9 @@ export type ImpersonationRevokedReason =
   | "account_missing"
   | "account_disabled"
   | "not_developer"
-  | "password_changed";
+  | "password_changed"
+  /** E2: the developer signed themselves out everywhere. */
+  | "sessions_revoked";
 
 export type Impersonation =
   | { state: "none" }
@@ -730,6 +757,12 @@ export type Impersonation =
 
 export async function resolveImpersonator(
   session: Pick<NonNullable<Request["session"]>, "impersonatorId" | "impersonatorPg"> | undefined | null,
+  /**
+   * When the borrowed session was issued (epoch ms). Given, the developer's
+   * own "sign out everywhere" (E2) ends the portals they opened as well as
+   * their own sessions.
+   */
+  issuedAt?: number,
 ): Promise<Impersonation> {
   const id = session?.impersonatorId as unknown;
   if (!session || id === undefined || id === null) return { state: "none" };
@@ -741,7 +774,14 @@ export async function resolveImpersonator(
     return { state: "revoked", impersonatorId, reason: "unbound_session" };
   }
   const developer = await liveUserAtGeneration(impersonatorId, pg);
-  if (developer && developer.role === "developer") return { state: "ok", developer };
+  if (developer && developer.role === "developer" && !(issuedAt != null && sessionsRevokedForUser(developer, issuedAt))) {
+    return { state: "ok", developer };
+  }
+  if (developer && developer.role === "developer") {
+    // The developer signed themselves out everywhere: the portals they opened
+    // go with their own sessions.
+    return { state: "revoked", impersonatorId, reason: "sessions_revoked" };
+  }
   const row = developer ?? (await storage().getUserById(impersonatorId));
   const reason: ImpersonationRevokedReason = !row
     ? "account_missing"
@@ -831,7 +871,23 @@ export type SessionRevocation =
       all?: undefined;
       /** The session performing the change keeps its own live connections. */
       exceptSessionId?: string;
-      reason: "password_changed" | "password_reset" | "account_deactivated";
+      /**
+       * ONE session of that user (E2 session policy): the SHA-256 of its
+       * express-session id (server/session-policy.ts sidHashOf). The hub
+       * hashes each socket's own session id to find it — the plain id never
+       * travels on the bus. Without it, every session of the user ends.
+       */
+      onlySidHash?: string;
+      reason:
+        | "password_changed"
+        | "password_reset"
+        | "account_deactivated"
+        /** E2: one session evicted by the org's maximum-concurrent rule. */
+        | "session_evicted"
+        /** E2: one session past the org's absolute maximum lifetime. */
+        | "session_expired"
+        /** E2: this person's "sign out everywhere". */
+        | "sign_out_everywhere";
     }
   | {
       /** Every session of every user ("Sign out all"). */
@@ -877,6 +933,29 @@ function revokeSessions(revocation: SessionRevocation): void {
  */
 export function endSessionsOfDeactivatedUser(userId: number): void {
   revokeSessions({ userId, reason: "account_deactivated" });
+}
+
+/**
+ * E2 session policy: end the live transports of ONE session (evicted by the
+ * maximum-concurrent rule, or past the absolute lifetime), or of every
+ * session of a person ("sign out everywhere"). The HTTP side is handled by
+ * the gate / resolveSessionUser; this closes the sockets now, on every
+ * instance, instead of leaving them open until the next reconnect.
+ */
+export function revokeOneSession(opts: {
+  userId: number;
+  /** SHA-256 of the one session's id; omit to end every session of the user. */
+  sidHash?: string;
+  /** The session asking for it keeps its own connections. */
+  exceptSessionId?: string;
+  reason: "session_evicted" | "session_expired" | "sign_out_everywhere";
+}): void {
+  revokeSessions({
+    userId: opts.userId,
+    ...(opts.sidHash ? { onlySidHash: opts.sidHash } : {}),
+    ...(opts.exceptSessionId ? { exceptSessionId: opts.exceptSessionId } : {}),
+    reason: opts.reason,
+  });
 }
 
 /**
@@ -1035,7 +1114,7 @@ export function configurePassport() {
         clearImpersonation(req.session);
         return done(null, false);
       }
-      const imp = await resolveImpersonator(req.session);
+      const imp = await resolveImpersonator(req.session, parseSessionPrincipal(raw)?.iat ?? 0);
       if (imp.state === "revoked") {
         // The developer who entered this portal changed or lost their
         // password, was deactivated or is no longer a developer: the whole
@@ -1115,7 +1194,9 @@ export function registerAuthRoutes(app: Express) {
       const lock = appLockOf(req, res);
       if (!lock) return res.status(401).json({ error: "unauthorized" });
       const rawIdle = Number((req.body ?? {}).idleMs);
-      const idleMs = Number.isFinite(rawIdle) ? Math.min(Math.max(rawIdle, 0), SESSION_POLICY.maxAgeMs) : 0;
+      // Clamped to the window in force for this org, not the platform's.
+      const window = idleWindowMsOf(res);
+      const idleMs = Number.isFinite(rawIdle) ? Math.min(Math.max(rawIdle, 0), window) : 0;
       const wasLocked = lock.lockedAt() != null;
       await lock.lock(Date.now() - idleMs);
       if (lock.connectionId) announceSessionLocked({ userId: me.id, connectionId: lock.connectionId });
@@ -1471,7 +1552,12 @@ export function registerAuthRoutes(app: Express) {
       if (required) req.session.mfaEnrollmentRequired = true;
       else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
     }
-    const body = required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me);
+    let body: Record<string, unknown> = required ? { ...toSafeUser(me), mfaEnrollmentRequired: true } : toSafeUser(me);
+    // E2 session policy: tell the client the org's idle window so its own
+    // auto-lock timer matches the server's expiry instead of a hard-coded 15
+    // minutes. Only when it differs from the platform default.
+    const idleMinutes = await idleMinutesFor(me.organizationId);
+    if (idleMinutes !== SESSION_POLICY.maxAgeMs / 60_000) body = { ...body, idleMinutes };
     // A locked session: the client must show its lock screen (not the app),
     // and re-authenticate against this org — even after a reload that lost
     // every browser-side trace of the lock (A.CON-SHO-7).

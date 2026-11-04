@@ -849,7 +849,10 @@
     // whether the previous person had a PIN
     "pinStatus",
     // the previous person's alert-sound choice
-    "soundPrefs"];
+    "soundPrefs",
+    // the previous person's org session policy and the idle window it reported
+    // (E2, module enterprise.sessionPolicy) — never the next person's
+    "sessionPolicy", "sessionPolicySaving", "idleLockMinutes"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });

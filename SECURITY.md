@@ -99,6 +99,44 @@ automatically uses encrypted Postgres instead of the local file database.
   never sent while the user is DND, deactivated, or their org has push off.
   The sweep is a per-process timer (several instances can each send one per
   interval); its log lines carry a count only.
+- **Session policy is the hospital's, and enforced by the server** (module
+  `enterprise.sessionPolicy`, off by default — `docs/ENTERPRISE_READINESS.md`
+  E2.3). A director sets the idle timeout (5–480 minutes; the platform default
+  stays 15), a maximum number of concurrent sessions per person and an
+  absolute maximum session length. The idle window is the session STORE's
+  expiry (the gate writes it onto the rolling cookie), the absolute maximum is
+  counted from when the session was first seen (traffic cannot extend it), and
+  a new sign-in past the cap ends the person's OLDEST session — on HTTP
+  (401 `session_ended` with the reason) and on its live socket (1008
+  `session_evicted`), so the app says why instead of "your session expired".
+  The registry behind the cap (`user_sessions`) stores a SHA-256 of the
+  session id, never the id, and no device or location data. Every control is
+  bounded server-side: a value outside the bounds is refused, and the
+  compliance control `session-timeout` reports a widened window as a WARNING
+  with the number rather than a green 15 minutes nobody enforces.
+- **"Sign out everywhere" survives everything** (same module for the routes):
+  self-service in Settings → Security and a director's action on the People
+  screen. It records a per-user epoch on the user row, so every session
+  issued before that moment stops resolving on every instance, for HTTP and
+  for the socket upgrade, **even if the module is switched off afterwards** —
+  and the live sockets close at once. It is not a password change and not a
+  deactivation: the account still works and the person signs in again. A
+  developer signing themselves out everywhere also ends every impersonated /
+  managed-org portal they had open. Audited at medium risk, with ids only.
+- **Audit export is PHI-free by construction** (module
+  `enterprise.auditExport`, off by default — `docs/ENTERPRISE_READINESS.md`
+  E2.4). The export carries times, actions, risk levels, workforce identity
+  and record ids; the free-text `details` object is projected through a
+  positive ALLOW-LIST (numbers, booleans, id lists, and strings only under
+  structural keys such as `role`, `action`, `module`, `reason`), and every
+  other key is dropped with its NAME listed in a `details_omitted` column, so
+  nothing is hidden and nothing free-form leaves the server. `user_agent` is
+  deliberately absent from it. A date range, CSV or JSON and a streamed body
+  are the enterprise form; the old whole-trail CSV on the Compliance screen is
+  unchanged and ungated. A developer may export another tenant's trail, which
+  is audited ON THAT TENANT at high risk with the operator's org id, and
+  needs the module on for both. One hourly rate limit (20 per address) covers
+  every form.
 - **PIN unlock: a PIN re-opens an authenticated, locked session; it is not
   authentication** (module `security.pin`, off by default). It never signs
   anyone in: `POST /api/session/unlock-pin` needs a session that is signed in

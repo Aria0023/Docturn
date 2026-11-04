@@ -130,6 +130,14 @@ export const users = pgTable(
     // reset moves it, so every OTHER session of the user stops deserialising and
     // its WebSocket is closed. NULL = never changed since provisioning.
     passwordChangedAt: timestamp("password_changed_at"),
+    // "Sign out everywhere" (E2, module enterprise.sessionPolicy): every
+    // session issued BEFORE this moment stops resolving — the same rule as
+    // the platform-wide sign-out, per user. Deliberately a column on the user
+    // row, not a decision recorded in `user_sessions`: it is then enforced by
+    // server/auth.ts resolveSessionUser on every HTTP request and every
+    // socket upgrade, on every instance, whatever the module is set to
+    // afterwards. NULL = never.
+    sessionsRevokedAt: timestamp("sessions_revoked_at"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
   (t) => ({
@@ -1076,6 +1084,45 @@ export const orgSessionPolicy = pgTable(
 );
 
 /**
+ * Live cookie sessions of one user (module enterprise.sessionPolicy). ONE row
+ * per express-session id, written the first time that session makes an
+ * authenticated request, so every sign-in path (password, second factor, SSO)
+ * is covered without each one having to remember. Only a SHA-256 of the
+ * session id is stored — the row can never be used to impersonate the
+ * session it describes.
+ *
+ * What it is for: the maximum-concurrent-sessions rule (the oldest live
+ * session is evicted, and the evicted row says WHY so the client can show
+ * it) and the absolute session lifetime. "Sign out everywhere" does NOT use
+ * this table — see users.sessions_revoked_at.
+ */
+export const userSessions = pgTable(
+  "user_sessions",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** SHA-256 of the express-session id — never the id itself. */
+    sidHash: text("sid_hash").notNull(),
+    /** When this session was first seen: the absolute-lifetime clock. */
+    issuedAt: timestamp("issued_at").notNull().defaultNow(),
+    /** Touched at most once a minute; a row older than the idle window is dead. */
+    lastSeenAt: timestamp("last_seen_at").notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at"),
+    /** Why it was ended: the reason the client is given. */
+    revokedReason: text("revoked_reason"),
+  },
+  (t) => ({
+    sidUniq: uniqueIndex("user_sessions_sid_uniq").on(t.sidHash),
+    byUser: index("user_sessions_user_idx").on(t.userId),
+  }),
+);
+
+/**
  * Per-user display preferences over the org's branding (module
  * platform.userThemes): preset (classic / calm / warm / night / contrast),
  * text size (default / large) and whether Night follows the device. Not PHI;
@@ -1206,6 +1253,7 @@ export type JobLease = typeof jobLeases.$inferSelect;
 export type SsoConnection = typeof ssoConnections.$inferSelect;
 export type ScimToken = typeof scimTokens.$inferSelect;
 export type OrgSessionPolicy = typeof orgSessionPolicy.$inferSelect;
+export type UserSession = typeof userSessions.$inferSelect;
 export type UserThemePrefs = typeof userThemePrefs.$inferSelect;
 export type RateLimitHit = typeof rateLimitHits.$inferSelect;
 
@@ -1451,6 +1499,21 @@ export type NotificationProfile = z.infer<typeof notificationProfileSchema>;
  * — the route rejects an id that is not in the catalog's manual set, so an org
  * can never "attest" an automated technical control into passing.
  */
+/**
+ * Per-org session policy (E2, module enterprise.sessionPolicy). Every field
+ * is optional and nullable: null clears it back to the platform default. The
+ * BOUNDS are the server's (server/session-policy.ts SESSION_POLICY_BOUNDS) —
+ * repeated here as literals only because zod needs them at the edge, and
+ * tests/session-policy.test.ts compares the two.
+ */
+export const sessionPolicySchema = z
+  .object({
+    idleMinutes: z.number().int().min(5).max(480).nullable().optional(),
+    maxConcurrent: z.number().int().min(1).max(20).nullable().optional(),
+    absoluteHours: z.number().int().min(1).max(720).nullable().optional(),
+  })
+  .strict();
+
 export const attestationUpsertSchema = z.object({
   controlId: z.string().min(1).max(64),
   status: z.enum(ATTESTATION_STATUS),

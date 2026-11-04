@@ -35,7 +35,8 @@ import { getHandle } from "../db.js";
 import { getBus } from "../services/bus.js";
 import { liveHubBus } from "../ws/index.js";
 import { MFA_REQUIRED_MODULE } from "../auth.js";
-import { getModules } from "../modules.js";
+import { getModules, isModuleEnabled } from "../modules.js";
+import { effectiveSessionPolicy, SESSION_POLICY_MODULE } from "../session-policy.js";
 import { attachmentStoreConfig } from "../services/attachment-store.js";
 import {
   getRetentionStatus,
@@ -200,33 +201,53 @@ const checks: Record<string, CheckFn> = {
     };
   },
 
-  /** Reads the SAME policy object server/app.ts builds the session from. */
-  "session-timeout": async () => {
+  /**
+   * Reads the SAME policy object server/app.ts builds the session from, and —
+   * when the org has the `enterprise.sessionPolicy` module on — the window
+   * that org actually enforces (server/session-policy.ts), which the gate
+   * writes onto the cookie on every request. A director who widened the
+   * window past 15 minutes is reported as a WARN with the number: it was a
+   * deliberate choice inside the server's bounds, and a reviewer must see it
+   * rather than a green row describing a 15 minutes nobody enforces.
+   */
+  "session-timeout": async (ctx) => {
     const cookie = sessionCookieOptions();
-    const maxAgeMs = Number(cookie.maxAge ?? 0);
+    const platformMs = Number(cookie.maxAge ?? 0);
+    const policyOn = await isModuleEnabled(ctx.organizationId, SESSION_POLICY_MODULE);
+    const org = policyOn ? await effectiveSessionPolicy(ctx.organizationId) : null;
+    const maxAgeMs = org ? org.idleMinutes * 60_000 : platformMs;
     const minutes = Math.round((maxAgeMs / 60_000) * 10) / 10;
     const withinLimit = maxAgeMs > 0 && maxAgeMs <= MAX_SESSION_IDLE_MS;
-    const status: ControlStatus = !withinLimit
+    const status: ControlStatus = maxAgeMs <= 0
       ? "fail"
-      : SESSION_POLICY.rolling
-        ? "pass"
-        : "warn";
+      : !SESSION_POLICY.rolling
+        ? "warn"
+        : withinLimit
+          ? "pass"
+          : "warn";
+    const widened = !withinLimit && !!org;
     return {
       status,
       detail:
-        `Session cookie maxAge is ${minutes} minute(s) with rolling renewal ` +
-        `${SESSION_POLICY.rolling ? "ON" : "OFF"}. ` +
+        `Sessions are signed out after ${minutes} minute(s) of inactivity (rolling renewal ` +
+        `${SESSION_POLICY.rolling ? "ON" : "OFF"}). ` +
         (status === "pass"
           ? "That is an inactivity timeout of 15 minutes or less."
-          : status === "warn"
+          : !SESSION_POLICY.rolling
             ? "Without rolling renewal this is an ABSOLUTE lifetime, not an inactivity timeout."
-            : "The configured window exceeds the 15-minute inactivity limit."),
+            : widened
+              ? `This organization's own session policy widened the window past the 15-minute limit this control expects${org!.absoluteHours != null ? `; every session still ends after ${org!.absoluteHours} hour(s)` : ""}.`
+              : "The configured window exceeds the 15-minute inactivity limit."),
       evidence: {
         maxAgeMs,
         maxAgeMinutes: minutes,
         rolling: SESSION_POLICY.rolling,
         thresholdMinutes: MAX_SESSION_IDLE_MS / 60_000,
-        source: "server/config.ts SESSION_POLICY (the object app.ts builds the session from)",
+        platformDefaultMinutes: platformMs / 60_000,
+        orgPolicy: org ? { ...org, module: SESSION_POLICY_MODULE } : null,
+        source: org
+          ? "server/session-policy.ts (the org's policy, written onto the cookie by the gate) over server/config.ts SESSION_POLICY"
+          : "server/config.ts SESSION_POLICY (the object app.ts builds the session from)",
       },
     };
   },

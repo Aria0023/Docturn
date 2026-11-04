@@ -30,6 +30,7 @@ import { registerReminderRoutes } from "./reminders.js";
 import { registerPinRoutes } from "./pin.js";
 import { registerAlertSoundRoutes } from "./alert-sounds.js";
 import { registerResourceRoutes } from "./resources.js";
+import { registerSessionPolicyRoutes } from "./session-policy.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
 import { registerSmsRoutes } from "./sms.js";
@@ -55,6 +56,7 @@ export function registerRoutes(app: Express) {
   registerOrgRoutes(app);
   registerConsultServiceRoutes(app);
   registerSettingsRoutes(app);
+  registerSessionPolicyRoutes(app);
   registerShiftRoutes(app);
   registerConfigRoutes(app);
   registerComplianceRoutes(app);

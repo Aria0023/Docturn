@@ -16,7 +16,16 @@ const { JSDOM } = (await import(jsdomName)) as any;
 export const ME = { id: 11, username: "chen", displayName: "Dr. Test Chen", role: "hospitalist", credential: "MD", organizationId: 1 };
 
 export type Req = { method: string; path: string; body: any };
-export type Reply = { status: number; body?: any } | { network: true };
+export type Reply =
+  | {
+      status: number;
+      body?: any;
+      /** A non-JSON body (a CSV / JSON export stream) served verbatim. */
+      text?: string;
+      /** Response headers the client reads (matched case-insensitively). */
+      headers?: Record<string, string>;
+    }
+  | { network: true };
 export type Route = (req: Req) => Reply | undefined;
 
 export interface Harness {
@@ -26,6 +35,8 @@ export interface Harness {
   modules: Record<string, boolean>;
   convos: any[];
   sockets: any[];
+  /** File names the client asked the browser to download. */
+  downloads: string[];
   user: any;
   state(): any;
   close(): void;
@@ -45,11 +56,11 @@ export function closeAll() {
   while (open.length) open.pop()!.close();
 }
 
-export async function boot(opts: { modules?: Record<string, boolean>; convos?: any[] } = {}): Promise<Harness> {
+export async function boot(opts: { modules?: Record<string, boolean>; convos?: any[]; user?: any } = {}): Promise<Harness> {
   const dom = new JSDOM("<!doctype html><html><head><title>DocTurn</title></head><body></body></html>", { url: "https://app.test/", runScripts: "outside-only", pretendToBeVisual: true });
   const w = dom.window;
   const h: Harness = {
-    w, reqs: [], routes: {}, modules: { ...(opts.modules || {}) }, convos: opts.convos || [], sockets: [], user: ME,
+    w, reqs: [], routes: {}, modules: { ...(opts.modules || {}) }, convos: opts.convos || [], sockets: [], downloads: [], user: opts.user || ME,
     state: () => w.DT.getState(),
     close: () => { try { w.close(); } catch { /* ignore */ } },
   };
@@ -75,8 +86,25 @@ export async function boot(opts: { modules?: Record<string, boolean>; convos?: a
     h.reqs.push(req);
     const r = respond(req);
     if ("network" in r) return Promise.reject(new w.TypeError("Failed to fetch"));
-    const text = r.body === undefined || r.body === null ? "" : JSON.stringify(r.body);
-    return Promise.resolve({ status: r.status, ok: r.status >= 200 && r.status < 300, statusText: "", text: () => Promise.resolve(text), json: () => Promise.resolve(r.body), headers: { get: () => "application/json" } });
+    const text = r.text !== undefined ? r.text : r.body === undefined || r.body === null ? "" : JSON.stringify(r.body);
+    const hdrs: Record<string, string> = { "content-type": "application/json" };
+    for (const [k, v] of Object.entries(r.headers ?? {})) hdrs[k.toLowerCase()] = v;
+    return Promise.resolve({
+      status: r.status,
+      ok: r.status >= 200 && r.status < 300,
+      statusText: "",
+      text: () => Promise.resolve(text),
+      json: () => Promise.resolve(r.body),
+      blob: () => Promise.resolve(new w.Blob([text], { type: hdrs["content-type"] })),
+      headers: { get: (name: string) => hdrs[String(name).toLowerCase()] ?? null },
+    });
+  };
+  // Downloads: the client makes a blob URL and clicks an <a download>. jsdom
+  // has neither, so record the file name instead of navigating.
+  w.URL.createObjectURL = () => "blob:harness";
+  w.URL.revokeObjectURL = () => undefined;
+  w.HTMLAnchorElement.prototype.click = function (this: any) {
+    if (this.download) h.downloads.push(String(this.download));
   };
   class FakeWS {
     url: string; readyState = 0; sent: string[] = [];

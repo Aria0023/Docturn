@@ -185,7 +185,7 @@ function LoginScreen({ onLogin, appName }) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center", textAlign: "center" }}>
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />
-              Encrypted in transit · 15-min idle timeout · server-enforced roles
+              Encrypted in transit · server-enforced idle timeout · server-enforced roles
             </div>
             <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
               {demoMode && <React.Fragment>Demo — pick a role (the form pre-fills that seeded account; password <b style={{ color: "var(--foreground)", fontWeight: 600 }}>docturn</b>) and sign in. </React.Fragment>}

@@ -56,6 +56,12 @@ const nf = (n) => (typeof n === "number" ? n.toLocaleString() : "—");
 function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = null, scope = "org", error = null, onLoad, onExport }) {
   const [tab, setTab] = React.useState("audit");
   const [exporting, setExporting] = React.useState(false);
+  // E2 audit export (module enterprise.auditExport): a date range and a
+  // format, both SENT TO THE SERVER — nothing here filters rows. Offered on
+  // the organization's trail only; a clinician's own trail keeps the plain
+  // CSV export, which no module gates.
+  const [range, setRange] = React.useState({ from: "", to: "" });
+  const rangeOn = !!(window.DT && window.DT.moduleOn && window.DT.moduleOn("enterprise.auditExport"));
   // Phones get stacked rows: the desktop columns are too wide for 375px.
   const mobile = useIsMobile();
   const mine = scope === "mine";
@@ -64,10 +70,12 @@ function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = nul
 
   const rows = tab === "audit" ? audit : phiLog;
   const total = tab === "audit" ? auditCount : phiCount;
-  const exportNow = () => {
+  const ranged = rangeOn && !mine;
+  const exportNow = (format) => {
     if (!onExport || exporting) return;
     setExporting(true);
-    Promise.resolve(onExport(tab, mine ? "mine" : "org")).finally(() => setExporting(false));
+    const opts = ranged ? { from: range.from || undefined, to: range.to || undefined, format: format || "csv" } : undefined;
+    Promise.resolve(onExport(tab, mine ? "mine" : "org", opts)).finally(() => setExporting(false));
   };
 
   const headRow = (cols) => (
@@ -94,16 +102,45 @@ function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = nul
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", columnGap: 12, rowGap: 10, marginBottom: 10 }}>
         <ComplianceTabs tab={tab} setTab={setTab} />
         <span data-compliance-export style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", flex: "none" }}>
-          <Button size="sm" variant="ghost" icon="download" onClick={exportNow} style={{ opacity: exporting ? 0.6 : 1 }}>
+          <Button size="sm" variant="ghost" icon="download" onClick={() => exportNow("csv")} style={{ opacity: exporting ? 0.6 : 1 }}>
             {exporting ? "Exporting…" : "Export CSV"}
           </Button>
+          {ranged && (
+            <span data-export-json>
+              <Button size="sm" variant="ghost" icon="braces" onClick={() => exportNow("json")} style={{ opacity: exporting ? 0.6 : 1 }}>
+                JSON
+              </Button>
+            </span>
+          )}
         </span>
       </div>
+      {/* The range the SERVER filters on (GET /api/audit/export?from&to) —
+          blank means the whole trail. Dates are UTC days, inclusive. */}
+      {ranged && (
+        <div data-export-range style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 10, marginBottom: 12 }}>
+          {[["from", "From"], ["to", "To"]].map(([key, label]) => (
+            <label key={key} style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 150px", minWidth: 0, fontSize: 12, color: "var(--muted-foreground)" }}>
+              {label}
+              <input type="date" data-export-date={key} value={range[key]} max="2999-12-31"
+                onChange={(e) => setRange(Object.assign({}, range, { [key]: e.target.value }))}
+                style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+            </label>
+          ))}
+          {(range.from || range.to) && (
+            <span data-export-range-clear style={{ flex: "none" }}>
+              <Button size="sm" variant="outline" onClick={() => setRange({ from: "", to: "" })}>Whole trail</Button>
+            </span>
+          )}
+        </div>
+      )}
       <div data-trail-window style={{ fontSize: 12, color: "var(--muted-foreground)", marginBottom: 12 }}>
         {error ? (error === "offline" ? "Couldn't reach the server — the trail could not be loaded." : "The server didn't return the trail.")
           : total == null ? "Loading the trail from the server…"
           : total === 0 ? "Nothing recorded yet."
-          : "Showing the newest " + rows.length.toLocaleString() + " of " + total.toLocaleString() + ". Export downloads every row (times in UTC)."}
+          : "Showing the newest " + rows.length.toLocaleString() + " of " + total.toLocaleString() + ". "
+            + (ranged && (range.from || range.to)
+              ? "Export downloads the rows the server finds in that date range (times in UTC)."
+              : "Export downloads every row (times in UTC).")}
       </div>
 
       {tab === "audit" && (

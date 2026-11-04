@@ -525,18 +525,22 @@ function App() {
   const [drawer, setDrawer] = React.useState(false);
   React.useEffect(() => { setDrawer(false); }, [nav]); // close the mobile menu on navigate
 
-  // Idle auto-lock (HIPAA). Resets on any interaction; locks after 15 min idle.
+  // Idle auto-lock (HIPAA). Resets on any interaction; locks after the idle
+  // window the SERVER reported for this organization (st.idleLockMinutes,
+  // from GET /api/user — module enterprise.sessionPolicy), else the platform
+  // default of 15 minutes, which is also what the server's cookie enforces.
   // Not armed while already locked.
+  const idleMinutes = (typeof st.idleLockMinutes === "number" && st.idleLockMinutes >= 1) ? st.idleLockMinutes : 15;
   React.useEffect(() => {
     if (!role || locked) return;
     let timer;
-    const IDLE_MS = 15 * 60 * 1000;
+    const IDLE_MS = idleMinutes * 60 * 1000;
     const arm = () => { clearTimeout(timer); timer = setTimeout(() => lockNow(IDLE_MS), IDLE_MS); };
     const evs = ["mousemove", "mousedown", "keydown", "scroll", "touchstart"];
     evs.forEach((e) => window.addEventListener(e, arm));
     arm();
     return () => { clearTimeout(timer); evs.forEach((e) => window.removeEventListener(e, arm)); };
-  }, [role, locked]);
+  }, [role, locked, idleMinutes]);
 
   useEffect(() => {
     if (st.__toast) { const id = setTimeout(() => a.clearToast(), 2800); return () => clearTimeout(id); }

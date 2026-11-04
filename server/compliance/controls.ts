@@ -97,14 +97,14 @@ export const CONTROLS: ControlDef[] = [
     id: "session-timeout",
     title: "Automatic session inactivity timeout",
     description:
-      "Reads the running session middleware's configured cookie maxAge and rolling flag (server/config.ts SESSION_POLICY — the same object server/app.ts builds the session from). Passes at 15 minutes of inactivity or less.",
+      "Reads the running session middleware's configured cookie maxAge and rolling flag (server/config.ts SESSION_POLICY — the same object server/app.ts builds the session from) and, when this organization has the Session policy module on, the window IT enforces (server/session-policy.ts, written onto the cookie by the gate on every request). Passes at 15 minutes of inactivity or less; a window a director deliberately widened is reported as a warning with the number, never as a green 15 minutes nobody enforces.",
     category: "Session & transport",
     hipaa: ["45 CFR §164.312(a)(2)(iii)"],
     soc2: ["CC6.1"],
     kind: "auto",
     severity: "medium",
     remediation:
-      "Lower SESSION_POLICY.maxAgeMs in server/config.ts to 15 minutes or less and keep rolling: true so the window is an INACTIVITY timeout.",
+      "Lower SESSION_POLICY.maxAgeMs in server/config.ts to 15 minutes or less and keep rolling: true so the window is an INACTIVITY timeout. If this organization widened its own window, lower it in Settings → Security → Session policy (or clear it back to the platform default).",
   },
   {
     id: "session-cookie-flags",

@@ -67,6 +67,9 @@ function PeopleManager({ domainRoles }) {
   const sess = st.session || {};
   const myRole = sess.role;
   const roleColors = st.roleColors || {};
+  // Module enterprise.sessionPolicy owns "sign out everywhere" (the server
+  // answers 404 for the route while it is off), so the control is not offered.
+  const sessionPolicyOn = !!(window.DT && DT.moduleOn && DT.moduleOn("enterprise.sessionPolicy"));
   React.useEffect(() => {
     if (a.loadAccounts) a.loadAccounts();
     if (a.loadOrgIdentity && !(st.orgIdentity && peopleSameOrg(st.orgIdentity.code, sess.org))) a.loadOrgIdentity();
@@ -236,6 +239,13 @@ function PeopleManager({ domainRoles }) {
                       <div style={{ display: "flex", marginLeft: "auto", flex: "none" }}>
                         <PeopleIconButton title={"Reset password for " + u.name + " (issues a one-time password)"} icon="key-round" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Reset " + u.name + "'s password? Their current sessions end and you'll be shown a one-time password to hand over.")) a.resetUserPassword(u.id, u.name); }} />
                         <PeopleIconButton title={"Reset two-factor for " + u.name} icon="shield-off" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
+                        {/* Sign out everywhere (E2, module enterprise.sessionPolicy):
+                            a forgotten tablet or a lost phone. Not a deactivation —
+                            the account still works and the password is untouched. */}
+                        {sessionPolicyOn && (
+                          <PeopleIconButton title={"Sign " + u.name + " out of every device"} icon="log-out" hoverColor="var(--primary)"
+                            onClick={() => { if (window.confirm("Sign " + u.name + " out of every device? Their sessions end now. Their account still works — they can sign in again.")) a.signOutUserEverywhere(u.id, u.name); }} />
+                        )}
                         {u.disabled
                           ? <PeopleIconButton title={"Restore access for " + u.name} icon="user-check" hoverColor="var(--status-accepted)" onClick={() => a.reactivateUser(u.id)} />
                           : <PeopleIconButton title={"Remove access for " + u.name} icon="user-x" hoverColor="var(--destructive)" onClick={() => { if (window.confirm("Remove " + u.name + "'s access? They are signed out now and cannot sign in until restored.")) a.deactivateUser(u.id); }} />}

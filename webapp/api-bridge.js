@@ -236,9 +236,23 @@
           if (r.status === 423 && d && d.error === "session_locked" && !lockActive()) engageLock();
           throw err;
         }
+        // E2 session policy: the org's idle window travels on the identity
+        // bodies, so the client's own idle auto-lock matches the server's
+        // expiry instead of a hard-coded 15 minutes. Absent = the platform
+        // default, which is what the timer falls back to.
+        if (d && (path === "/api/user" || path === "/api/session")) noteIdleMinutes(d.idleMinutes != null ? d : (d.user || {}));
         return d;
       });
     });
+  }
+
+  // The server's idle window for this org, in minutes (null = the platform
+  // default). Never a client decision: it is only what the server sent.
+  function noteIdleMinutes(body) {
+    var n = Number(body && body.idleMinutes);
+    var v = (isFinite(n) && n >= 1) ? Math.floor(n) : null;
+    if (DT.getState().idleLockMinutes === v) return;
+    DT.set(function (s) { s.idleLockMinutes = v; return s; });
   }
 
   // Server-side session loss → sign-in screen, with the same PHI hygiene as an
@@ -246,6 +260,18 @@
   // a burst of failing hydrate calls produces one transition and one message.
   // `why` = "revoked" when the server ended this session because the password
   // was changed or reset elsewhere (WebSocket close 1008 "session_revoked").
+  // Why the server ended this session, in the person's words. The keys are
+  // the server's own reasons: the WebSocket close reason (server/ws) and the
+  // `reason` in 401 { error: "session_ended", reason } (E2 session policy).
+  var SIGNED_OUT_BECAUSE = {
+    revoked: "You were signed out because your password was changed or reset. Sign in again.",
+    max_concurrent: "You were signed out because you signed in on another device and your organization limits how many sessions you may hold at once.",
+    session_evicted: "You were signed out because you signed in on another device and your organization limits how many sessions you may hold at once.",
+    absolute_timeout: "You were signed out because your session reached the maximum length your organization allows. Sign in again.",
+    session_expired: "You were signed out because your session reached the maximum length your organization allows. Sign in again.",
+    sign_out_everywhere: "You were signed out everywhere. Sign in again.",
+    signed_out_everywhere: "You were signed out everywhere. Sign in again.",
+  };
   var sessionExpiring = false;
   function expireSession(why) {
     if (sessionExpiring) return;
@@ -261,9 +287,7 @@
     // snapshot last), so nothing re-persists after the purge (A.CON-SHO-63).
     DT.set(function (s) {
       s.mfaEnrollmentRequired = false; s.mfaChallenge = null;
-      s.loginError = why === "revoked"
-        ? "You were signed out because your password was changed or reset. Sign in again."
-        : "Your session expired — please sign in again.";
+      s.loginError = SIGNED_OUT_BECAUSE[why] || "Your session expired — please sign in again.";
       return s;
     });
     if (origLogout) origLogout();
@@ -302,7 +326,11 @@
       // defeat the idle timeout and could swap a real user's session for a
       // different account. Drop to the sign-in screen once (the parallel
       // hydrate calls all fail together) and let the user authenticate again.
-      if (is401 && epoch === authEpoch && path !== "/api/login" && !DEMO_TOKEN && DT.getState().session) expireSession();
+      // E2: 401 { error: "session_ended", reason } says WHY (evicted by the
+      // org's session cap, past its absolute maximum, signed out everywhere).
+      if (is401 && epoch === authEpoch && path !== "/api/login" && !DEMO_TOKEN && DT.getState().session) {
+        expireSession((e && e.body && e.body.reason) || undefined);
+      }
       throw e;
     });
   }
@@ -723,41 +751,85 @@
   // every row, full UTC timestamps, actor/username/role. The toast says how
   // many rows the file holds, and when a very long trail was cut to its
   // newest rows (A.CON comms-account #8).
-  DT.actions.exportAuditTrail = function (trail, scope) {
+  // E2 (module enterprise.auditExport): `opts` { from, to, format } turns the
+  // same endpoint into the enterprise export — a date range, CSV or JSON,
+  // streamed. The client sends the range and NEVER filters or re-formats the
+  // rows it got back; a streamed response carries no X-Export-Rows, so the
+  // count in the toast is read from the file itself.
+  DT.actions.exportAuditTrail = function (trail, scope, opts) {
+    var o = opts || {};
     var path = "/api/audit/export?trail=" + encodeURIComponent(trail) + "&scope=" + encodeURIComponent(scope === "mine" ? "mine" : "org");
+    if (o.from) path += "&from=" + encodeURIComponent(o.from);
+    if (o.to) path += "&to=" + encodeURIComponent(o.to);
+    if (o.format) path += "&format=" + encodeURIComponent(o.format);
     var headers = {};
     if (DEMO_TOKEN) headers.Authorization = "Bearer " + DEMO_TOKEN;
     // Locked: nothing leaves this tab (A.CON-SHO-7).
     var req = lockActive() ? Promise.reject(lockedError()) : fetch(path, { credentials: "include", headers: headers });
     return req.then(function (res) {
-      if (!res.ok) { var e = new Error("export_failed"); e.status = res.status; throw e; }
+      // A refusal is JSON: carry the server's own code in the error so the
+      // message can say WHY (module off / bad range), not just "refused".
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          var code = "export_failed";
+          try { var b = JSON.parse(t); if (b && b.error) code = b.error; } catch (_) {}
+          var e = new Error(code); e.status = res.status; throw e;
+        });
+      }
       var cd = (res.headers && res.headers.get && res.headers.get("Content-Disposition")) || "";
       var m = cd.match(/filename="([^"]+)"/);
       var name = m ? m[1] : "docturn-" + trail + ".csv";
       var rows = Number(res.headers.get("X-Export-Rows"));
       var total = Number(res.headers.get("X-Export-Total"));
       var cut = res.headers.get("X-Export-Truncated") === "1";
-      return res.blob().then(function (blob) {
-        var url = URL.createObjectURL(blob);
+      // Streamed (the enterprise form): the server cannot know the row count
+      // before it starts writing, so there is no header to trust. Read the
+      // text we are about to hand the browser and count it.
+      var streamed = res.headers.get("X-Export-Streamed") === "1";
+      var type = res.headers.get("Content-Type") || (o.format === "json" ? "application/json" : "text/csv");
+      var load = streamed
+        ? res.text().then(function (t) { return { blob: new Blob([t], { type: type }), rows: countExportRows(t, o.format === "json") }; })
+        : res.blob().then(function (b) { return { blob: b, rows: isFinite(rows) ? rows : 0 }; });
+      return load.then(function (got) {
+        var url = URL.createObjectURL(got.blob);
         var link = document.createElement("a"); link.href = url; link.download = name;
         document.body.appendChild(link); link.click(); link.remove();
         setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 1000);
-        var n = isFinite(rows) ? rows : 0;
+        var n = got.rows;
+        var range = (o.from || o.to) ? (" — " + rangeLabel(o.from, o.to) + ", times in UTC.") : " — every row of the trail, times in UTC.";
         DT.set(function (s) {
           s.__toast = { tone: "accepted", title: "Exported " + n.toLocaleString() + " row" + (n === 1 ? "" : "s"),
-            msg: name + (cut ? " — the newest " + n.toLocaleString() + " of " + total.toLocaleString() + " rows; the server caps one file." : " — every row of the trail, times in UTC.") };
+            msg: name + (cut ? " — the newest " + n.toLocaleString() + " of " + total.toLocaleString() + " rows; the server caps one file." : range) };
           return s;
         });
-        return { name: name, rows: rows, total: total, truncated: cut };
+        return { name: name, rows: n, total: streamed ? n : total, truncated: cut, streamed: streamed };
       });
     }).catch(function (e) {
       DT.set(function (s) {
-        s.__toast = { tone: "rejected", title: "Export failed", msg: isNetworkError(e) ? "No connection — nothing was downloaded." : (e && e.status === 403) ? "Your role can't export this trail." : "The server refused the export — nothing was downloaded." };
+        s.__toast = { tone: "rejected", title: "Export failed", msg: isNetworkError(e) ? "No connection — nothing was downloaded."
+          : moduleRefused(e) ? "Date-range and JSON exports aren't switched on for your organization — a developer turns on Audit export."
+          : (e && e.status === 400) ? "That date range isn't valid — check the from and to dates."
+          : (e && e.status === 403) ? "Your role can't export this trail."
+          : "The server refused the export — nothing was downloaded." };
         return s;
       });
       return null;
     });
   };
+  // Rows in an export we just downloaded: the JSON form states its own
+  // rowCount; the CSV form is one header line plus one line per row.
+  function countExportRows(text, json) {
+    if (json) { try { var d = JSON.parse(text); return typeof d.rowCount === "number" ? d.rowCount : (d.rows || []).length; } catch (_) { return 0; } }
+    var lines = String(text).split(/\r?\n/).filter(function (l) { return l.length > 0; });
+    return Math.max(0, lines.length - 1);
+  }
+  function rangeLabel(from, to) {
+    var f = window.dtFmt;
+    var day = function (v) { return (f && f.dayLabel) ? f.dayLabel(v) : String(v); };
+    if (from && to) return day(from) + " to " + day(to);
+    if (from) return "from " + day(from);
+    return "up to " + day(to);
+  }
   // A role-gated read for a slice that has a "why it isn't there" twin
   // (<key>Error): { ok, body } on success, { ok:false, why } on refusal.
   function okRead(body) { return { ok: true, body: body }; }
@@ -1531,6 +1603,8 @@
     wsRefusals++;
     if (DEMO_TOKEN) return scheduleReconnect(); // token panes have no sign-in to return to
     if (reason === "session_revoked") return expireSession("revoked");
+    // E2 session policy: the close says which rule ended this session.
+    if (SIGNED_OUT_BECAUSE[reason]) return expireSession(reason);
     rawApi("GET", "/api/user").then(function () {
       if (epoch !== authEpoch) return;
       if (wsRefusals >= WS_REFUSALS_BEFORE_PAUSE) { wsPaused = true; return; }
@@ -4109,6 +4183,103 @@
   // Lock screen: GET /api/user (lock-exempt) says whether the PIN may be used
   // for this session; POST /api/session/unlock-pin lifts the server's lock.
   function applyPin(s, v) { s.pinStatus = { set: !!(v && v.set), minLength: (v && v.minLength) || 4, maxLength: (v && v.maxLength) || 8 }; return s; }
+  /* ── E2 session policy (module enterprise.sessionPolicy) ──────────────────
+   * The card shows what the SERVER holds: the stored values, the values in
+   * force and the bounds it will accept. Every control sends one request and
+   * takes the server's answer back — nothing is enforced here.
+   */
+  function sessionPolicyRefusal(e, title) {
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = moduleRefused(e) ? "Session policy is switched off for your organization."
+      : (e && e.status === 403) ? "Only a hospitalist director can change the session policy."
+      : (e && e.status === 400) ? "The server refused that value — pick one from the list."
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : "The server refused the change — nothing was saved.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+  }
+  DT.actions.loadSessionPolicy = function () {
+    if (DT.moduleOn && !DT.moduleOn("enterprise.sessionPolicy")) {
+      DT.set(function (s) { s.sessionPolicy = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/org/session-policy").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { s.sessionPolicy = v; return s; });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.sessionPolicy = null; return s; });
+      return null;
+    });
+  };
+  // `patch` carries only the fields being changed; null clears one back to the
+  // platform default.
+  DT.actions.saveSessionPolicy = function (patch) {
+    DT.set(function (s) { s.sessionPolicySaving = true; return s; });
+    return api("PUT", "/api/org/session-policy", patch || {}).then(function (v) {
+      DT.set(function (s) {
+        s.sessionPolicy = v; s.sessionPolicySaving = false;
+        s.__toast = { tone: "accepted", title: "Session policy updated", msg: sessionPolicySentence(v && v.effective) };
+        return s;
+      });
+      return v;
+    }, function (e) {
+      DT.set(function (s) { s.sessionPolicySaving = false; return s; });
+      sessionPolicyRefusal(e, "Not saved");
+      return null;
+    });
+  };
+  DT.actions.clearSessionPolicy = function () {
+    DT.set(function (s) { s.sessionPolicySaving = true; return s; });
+    return api("DELETE", "/api/org/session-policy").then(function (v) {
+      DT.set(function (s) {
+        s.sessionPolicy = v; s.sessionPolicySaving = false;
+        s.__toast = { tone: "accepted", title: "Back to the default", msg: sessionPolicySentence(v && v.effective) };
+        return s;
+      });
+      return v;
+    }, function (e) {
+      DT.set(function (s) { s.sessionPolicySaving = false; return s; });
+      sessionPolicyRefusal(e, "Not cleared");
+      return null;
+    });
+  };
+  // One sentence describing what the server now enforces — never a promise it
+  // does not keep.
+  function sessionPolicySentence(eff) {
+    if (!eff) return "The server's answer was read back.";
+    var parts = ["signed out after " + eff.idleMinutes + " minutes idle"];
+    if (eff.maxConcurrent != null) parts.push(eff.maxConcurrent + " session" + (eff.maxConcurrent === 1 ? "" : "s") + " at a time per person (the oldest ends)");
+    if (eff.absoluteHours != null) parts.push("every session ends after " + eff.absoluteHours + " hour" + (eff.absoluteHours === 1 ? "" : "s"));
+    return "Now in force: " + parts.join("; ") + ".";
+  }
+  // "Sign out everywhere else" — mine. This session keeps working; every
+  // other one of mine is over, on every device.
+  DT.actions.signOutEverywhere = function () {
+    return api("POST", "/api/account/sessions/revoke-all", {}).then(function (v) {
+      var n = (v && v.sessionsEnded) || 0;
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Signed out everywhere else",
+          msg: n ? "The server ended " + n + " other session" + (n === 1 ? "" : "s") + ". This device stays signed in." : "No other session was open. This device stays signed in." };
+        return s;
+      });
+      return v;
+    }, function (e) { sessionPolicyRefusal(e, "Not signed out"); return null; });
+  };
+  // A director / the operator signing ONE person out of every device.
+  DT.actions.signOutUserEverywhere = function (userId, name) {
+    return api("POST", "/api/accounts/" + Number(userId) + "/sessions/revoke-all", {}).then(function (v) {
+      var n = (v && v.sessionsEnded) || 0;
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Signed out everywhere",
+          msg: (name ? name : "That person") + (n ? " was signed out of " + n + " session" + (n === 1 ? "" : "s") + "." : " had no session open.") + " Their account still works — they can sign in again." };
+        return s;
+      });
+      return v;
+    }, function (e) { sessionPolicyRefusal(e, "Not signed out"); return null; });
+  };
+
   DT.actions.loadPin = function () {
     if (DT.moduleOn && !DT.moduleOn("security.pin")) {
       DT.set(function (s) { s.pinStatus = null; return s; });

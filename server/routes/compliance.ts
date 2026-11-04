@@ -1,7 +1,19 @@
-import type { Express } from "express";
-import { attestationUpsertSchema, type User } from "@shared/schema";
+import type { Express, Request, Response } from "express";
+import { attestationUpsertSchema, type AuditLog, type PhiAccessLog, type User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { CONTROL_BY_ID } from "../compliance/controls.js";
+import {
+  auditRowCells,
+  csvLine as exportCsvLine,
+  EXPORT_AUDIT_COLUMNS,
+  EXPORT_PHI_COLUMNS,
+  isEnterpriseExportRequest,
+  parseExportRequest,
+  phiRowCells,
+  type ExportActor,
+  type ExportWho,
+} from "../compliance/audit-export.js";
+import { isModuleEnabled } from "../modules.js";
 import {
   buildComplianceReport,
   buildEvidencePack,
@@ -81,6 +93,146 @@ const csvLine = (cells: unknown[]) => cells.map(csvCell).join(",") + "\r\n";
 const AUDIT_COLUMNS = ["occurred_at_utc", "actor", "actor_username", "actor_role", "operator", "action", "resource_type", "resource_id", "risk", "details"];
 const PHI_COLUMNS = ["occurred_at_utc", "actor", "actor_username", "actor_role", "operator", "method", "resource", "resource_id", "patient_id", "ip", "user_agent"];
 
+/* ── E2 enterprise audit export ──────────────────────────────────────────────
+ * Module `enterprise.auditExport` (GATE_TABLE, off by default) — the module
+ * gate in server/modules.ts answers 404 for the enterprise form only, so the
+ * legacy export above keeps working for every org.
+ */
+
+/** Rows read (and written) per page while streaming. */
+const EXPORT_PAGE = 500;
+
+/**
+ * Resolve actors as the stream goes: the org's own users are loaded once,
+ * and any id from outside it (an operator in the platform org, a user since
+ * deleted) is looked up at most once and remembered.
+ */
+function actorStream(orgId: number) {
+  const byId = new Map<number, Who | null>();
+  let loaded = false;
+  const nobody: ExportActor = { userId: null, username: null, role: null, name: "" };
+  const of = (id: number | null): ExportActor => {
+    if (id == null) return nobody;
+    const u = byId.get(id) ?? null;
+    return { userId: id, username: u?.username ?? null, role: u?.role ?? null, name: u ? u.displayName : `User #${id}` };
+  };
+  return {
+    async learn(rows: Array<{ userId: number | null; impersonatorUserId: number | null }>) {
+      if (!loaded) {
+        for (const u of await storage().listUsers(orgId)) byId.set(u.id, u);
+        loaded = true;
+      }
+      for (const r of rows) {
+        for (const id of [r.userId, r.impersonatorUserId]) {
+          if (id != null && !byId.has(id)) byId.set(id, (await storage().getUserById(id)) ?? null);
+        }
+      }
+    },
+    who(row: { userId: number | null; impersonatorUserId: number | null }): ExportWho {
+      return { actor: of(row.userId), operator: of(row.impersonatorUserId) };
+    },
+  };
+}
+
+/**
+ * The enterprise export. Director (and ER director) read their OWN org; a
+ * developer may name any tenant with `orgId`, which is audited on THAT
+ * tenant at high risk as the cross-tenant read it is. Streamed page by page;
+ * PHI-free columns only (server/compliance/audit-export.ts).
+ */
+async function streamEnterpriseExport(req: Request, res: Response) {
+  const me = currentUser(req);
+  const parsed = parseExportRequest(req.query as Record<string, unknown>);
+  if (!parsed.ok) return res.status(400).json({ error: "validation_error" });
+  if (!(COMPLIANCE_ROLES as readonly string[]).includes(me.role)) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  // Another tenant is the developer's privilege alone.
+  const crossTenant = parsed.orgId != null && parsed.orgId !== me.organizationId;
+  if (crossTenant && me.role !== "developer") return res.status(403).json({ error: "forbidden" });
+  const orgId = parsed.orgId ?? me.organizationId;
+  const org = await storage().getOrganization(orgId);
+  if (!org) return res.status(404).json({ error: "not_found" });
+  // A developer reading ANOTHER tenant's trail needs the module on for that
+  // tenant too — the gate above only measured the operator's own org.
+  if (crossTenant && !(await isModuleEnabled(orgId, "enterprise.auditExport"))) {
+    return res.status(404).json({ error: "module_disabled", module: "enterprise.auditExport" });
+  }
+
+  const columns = parsed.trail === "audit" ? EXPORT_AUDIT_COLUMNS : EXPORT_PHI_COLUMNS;
+  const stamp = new Date().toISOString().slice(0, 10);
+  const code = String(org.code).replace(/[^A-Za-z0-9_-]/g, "");
+  res.setHeader("Content-Type", parsed.format === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="docturn-${parsed.trail}-${code}-${stamp}.${parsed.format}"`,
+  );
+  res.setHeader("Cache-Control", "no-store");
+  // Written as it is read: there is no row count to put in a header.
+  res.setHeader("X-Export-Streamed", "1");
+
+  const actors = actorStream(orgId);
+  let rows = 0;
+  if (parsed.format === "json") {
+    res.write(
+      JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        organization: { id: org.id, code: org.code },
+        trail: parsed.trail,
+        from: parsed.from ? parsed.from.toISOString() : null,
+        to: parsed.to ? parsed.to.toISOString() : null,
+        columns: [...columns],
+      }).replace(/\}$/, ',"rows":['),
+    );
+  } else {
+    res.write(exportCsvLine([...columns]));
+  }
+
+  let afterId: number | undefined;
+  for (;;) {
+    const page =
+      parsed.trail === "audit"
+        ? await storage().pageAuditLogs(orgId, { limit: EXPORT_PAGE, afterId, from: parsed.from, to: parsed.to })
+        : await storage().pagePhiAccess(orgId, { limit: EXPORT_PAGE, afterId, from: parsed.from, to: parsed.to });
+    if (page.length === 0) break;
+    await actors.learn(page as Array<{ userId: number | null; impersonatorUserId: number | null }>);
+    for (const row of page) {
+      const cells =
+        parsed.trail === "audit"
+          ? auditRowCells(row as AuditLog, actors.who(row as AuditLog))
+          : phiRowCells(row as PhiAccessLog, actors.who(row as PhiAccessLog));
+      if (parsed.format === "json") {
+        res.write((rows ? "," : "") + JSON.stringify(cells));
+      } else {
+        res.write(exportCsvLine(columns.map((c) => cells[c] ?? "")));
+      }
+      rows++;
+    }
+    afterId = page[page.length - 1]!.id;
+    if (page.length < EXPORT_PAGE) break;
+  }
+  if (parsed.format === "json") res.write(`],"rowCount":${rows}}`);
+
+  await appendAudit({
+    organizationId: orgId,
+    userId: me.id,
+    action: "audit.export",
+    resourceType: "audit_trail",
+    resourceId: null,
+    details: {
+      trail: parsed.trail,
+      format: parsed.format,
+      scope: "org",
+      rows,
+      from: parsed.from ? parsed.from.toISOString() : null,
+      to: parsed.to ? parsed.to.toISOString() : null,
+      ...(crossTenant ? { crossTenant: true, operatorOrganizationId: me.organizationId } : {}),
+    },
+    riskLevel: crossTenant ? "high" : "medium",
+  });
+  res.end();
+}
+
 // HIPAA audit trail + PHI access summary for the Compliance screen, plus the
 // continuous control monitor (Vanta-style) and its auditor evidence export.
 export function registerComplianceRoutes(app: Express) {
@@ -117,6 +269,11 @@ export function registerComplianceRoutes(app: Express) {
    */
   app.get("/api/audit/export", requireAuth, async (req, res) => {
     const me = currentUser(req);
+    // E2: the enterprise form (a date range / JSON / another tenant) is a
+    // different export with its own rules — see streamEnterpriseExport().
+    if (isEnterpriseExportRequest(req.query as Record<string, unknown>)) {
+      return streamEnterpriseExport(req, res);
+    }
     const trail = String(req.query.trail ?? "");
     const scope = String(req.query.scope ?? "org");
     if ((trail !== "audit" && trail !== "phi") || (scope !== "org" && scope !== "mine")) {

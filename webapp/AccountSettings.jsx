@@ -541,6 +541,18 @@ function AccountSettings({ onLock }) {
   const reminder = st.reminderPrefs || null;
   React.useEffect(() => { if (reminderOn && a.loadReminderPrefs) a.loadReminderPrefs(); }, [reminderOn]);
   React.useEffect(() => { if (on("messaging.alertSounds") && !st.soundPrefs && a.loadSoundPrefs) a.loadSoundPrefs(); }, [on("messaging.alertSounds")]);
+  // E2 session policy (module enterprise.sessionPolicy). The card is the
+  // SERVER's: stored values, the values in force and the bounds it accepts.
+  const policyOn = on("enterprise.sessionPolicy");
+  const sessionPolicy = st.sessionPolicy || null;
+  const [soeBusy, setSoeBusy] = React.useState(false);
+  React.useEffect(() => { if (policyOn && a.loadSessionPolicy) a.loadSessionPolicy(); }, [policyOn]);
+  const signOutEverywhere = () => {
+    if (soeBusy || !a.signOutEverywhere) return;
+    if (!window.confirm("Sign out of every other device? This device stays signed in; anything else signed in as you is ended now.")) return;
+    setSoeBusy(true);
+    Promise.resolve(a.signOutEverywhere()).finally(() => setSoeBusy(false));
+  };
   const pinOn = on("security.pin");
   const pinStatus = st.pinStatus || null;
   const [pinOpen, setPinOpen] = React.useState(false);
@@ -696,7 +708,17 @@ function AccountSettings({ onLock }) {
               : <ShiftBtn data-pin-set onClick={() => setPinOpen(true)}>Set PIN</ShiftBtn>)} />
         )}
         {onLock && <SettingsRow icon="lock" title="Lock app now" sub={pinOn && pinStatus && pinStatus.set ? "Require your PIN or password to continue" : "Require your password to continue"} onClick={onLock} />}
+        {/* E2: ends every OTHER session of mine — the server does it, on every
+            device, and this one is re-stamped so it keeps working. */}
+        {policyOn && (
+          <SettingsRow icon="log-out" title="Sign out everywhere else" wrapSub rowProps={{ "data-sign-out-everywhere": "" }}
+            sub="Ends your sessions on every other device and browser. This device stays signed in."
+            right={<ShiftBtn data-soe-action disabled={soeBusy} onClick={signOutEverywhere}>{soeBusy ? "Signing out…" : "Sign out"}</ShiftBtn>} />
+        )}
       </SettingsGroup>
+      {/* Session policy — the organization's, a director's to set. Every
+          control sends ONE request and shows the server's answer. */}
+      {policyOn && isDirector && role === "director" && <SessionPolicyCard policy={sessionPolicy} saving={!!st.sessionPolicySaving} />}
       {pinOpen && <PinDialog changing={!!(pinStatus && pinStatus.set)} onClose={() => setPinOpen(false)} />}
 
       {isDirector && (
@@ -721,4 +743,60 @@ function AccountSettings({ onLock }) {
   );
 }
 
-Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses });
+/**
+ * Settings → Security → Session policy (E2, module enterprise.sessionPolicy).
+ * Three choices, each one PUT, each read back from the server:
+ *   • idle timeout — how long a session may sit idle before the server ends it;
+ *   • sessions per person — the oldest is ended when a new one arrives;
+ *   • maximum session length — however much traffic the session has.
+ * "Platform default" clears a value; "Back to the default" clears all three.
+ */
+function SessionPolicyCard({ policy, saving }) {
+  const a = useActions();
+  if (!policy) {
+    return (
+      <SettingsGroup title="Session policy">
+        <SettingsRow icon="timer" title="Session policy" wrapSub rowProps={{ "data-session-policy": "loading" }} sub="Reading your organization's policy from the server…" />
+      </SettingsGroup>
+    );
+  }
+  const lim = policy.limits || {};
+  const eff = policy.effective || {};
+  const stored = policy.policy || {};
+  const idleChoices = [5, 10, 15, 30, 60, 120, 240, 480].filter((n) => (!lim.idleMinutes || (n >= lim.idleMinutes.min && n <= lim.idleMinutes.max)));
+  const concChoices = [1, 2, 3, 5, 10, 20].filter((n) => (!lim.maxConcurrent || (n >= lim.maxConcurrent.min && n <= lim.maxConcurrent.max)));
+  const hourChoices = [1, 4, 8, 12, 24, 72, 168, 720].filter((n) => (!lim.absoluteHours || (n >= lim.absoluteHours.min && n <= lim.absoluteHours.max)));
+  const save = (key, raw) => {
+    if (saving) return;
+    const v = raw === "" ? null : Number(raw);
+    a.saveSessionPolicy(Object.assign({}, { [key]: v }));
+  };
+  const picker = (key, value, choices, unitLabel, defaultLabel) => (
+    <select data-session-policy-field={key} value={value == null ? "" : String(value)} disabled={saving}
+      onChange={(e) => save(key, e.target.value)}
+      style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", maxWidth: 190 }}>
+      <option value="">{defaultLabel}</option>
+      {choices.map((n) => <option key={n} value={n}>{n} {unitLabel}{n === 1 ? "" : "s"}</option>)}
+    </select>
+  );
+  return (
+    <SettingsGroup title="Session policy">
+      <SettingsRow icon="timer" title="Idle timeout" wrapSub rowProps={{ "data-session-policy": "on" }}
+        sub={"The server signs a session out after " + eff.idleMinutes + " minutes without a request. " + (stored.idleMinutes == null ? "This is the platform default." : "Set for your organization.")}
+        right={picker("idleMinutes", stored.idleMinutes, idleChoices, "minute", "Platform default (" + ((lim.idleMinutes && lim.idleMinutes.default) || 15) + " min)")} />
+      <SettingsRow icon="users" title="Sessions per person" wrapSub
+        sub={eff.maxConcurrent == null ? "No limit — a person may be signed in on as many devices as they like." : "At most " + eff.maxConcurrent + " at a time; signing in on another device ends the oldest, and that device is told why."}
+        right={picker("maxConcurrent", stored.maxConcurrent, concChoices, "session", "No limit")} />
+      <SettingsRow icon="hourglass" title="Maximum session length" wrapSub
+        sub={eff.absoluteHours == null ? "No maximum — only the idle timeout ends a session." : "Every session ends " + eff.absoluteHours + " hour" + (eff.absoluteHours === 1 ? "" : "s") + " after it began, however much it is used."}
+        right={picker("absoluteHours", stored.absoluteHours, hourChoices, "hour", "No maximum")} />
+      {policy.stored && (
+        <div style={{ padding: "10px 14px 12px", borderTop: "1px solid var(--border)" }}>
+          <ShiftBtn data-session-policy-clear disabled={saving} onClick={() => a.clearSessionPolicy()}>Back to the default</ShiftBtn>
+        </div>
+      )}
+    </SettingsGroup>
+  );
+}
+
+Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses, SessionPolicyCard });

@@ -9,9 +9,11 @@ import {
   APP_LOCK_CLOSE_CODE,
   onSessionLocked,
   onSessionsRevoked,
+  parseSessionPrincipal,
   resolveImpersonator,
   resolveSessionUser,
 } from "../auth.js";
+import { applySessionPolicy, sidHashOf, type SessionEndReason } from "../session-policy.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -51,6 +53,18 @@ import {
  * code the web client retries with backoff (webapp/api-bridge.js), never a
  * sign-out.
  */
+
+/**
+ * What a closed socket SAYS, per revocation reason. The three E2 reasons are
+ * distinct strings because the web client turns each into a different
+ * sentence on the sign-in screen; everything else keeps the long-standing
+ * "session_revoked" the client already handles.
+ */
+const REVOCATION_CLOSE_REASON: Record<string, string> = {
+  session_evicted: "session_evicted",
+  session_expired: "session_expired",
+  sign_out_everywhere: "signed_out_everywhere",
+};
 
 /** RFC 6455 "Service Restart": the server is going away; reconnect later. */
 export const SERVER_RESTART_CLOSE_CODE = 1012;
@@ -135,7 +149,13 @@ export class WsHub implements WsFanout {
 
   private applyRevocation(r: Parameters<Parameters<typeof onSessionsRevoked>[0]>[0]): void {
     if (r.all) this.closeAllSockets({ exceptSessionId: r.exceptSessionId });
-    else this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId });
+    else {
+      this.closeUserSockets(r.userId, {
+        ...(r.exceptSessionId ? { exceptSessionId: r.exceptSessionId } : {}),
+        ...(r.onlySidHash ? { onlySidHash: r.onlySidHash } : {}),
+        closeReason: REVOCATION_CLOSE_REASON[r.reason] ?? "session_revoked",
+      });
+    }
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage) {
@@ -146,6 +166,12 @@ export class WsHub implements WsFanout {
     }
     if (!session) {
       ws.close(1008, "unauthorized");
+      return;
+    }
+    // E2 session policy: refused WITH its reason, so the client can say
+    // "you were signed out because you signed in somewhere else".
+    if ("ended" in session) {
+      ws.close(1008, session.ended === "max_concurrent" ? "session_evicted" : "session_expired");
       return;
     }
     const { userId, organizationId, sessionId, impersonatorId } = session;
@@ -295,7 +321,11 @@ export class WsHub implements WsFanout {
   private async resolveSession(
     req: IncomingMessage,
   ): Promise<
-    { userId: number; organizationId: number; sessionId: string | null; impersonatorId: number | null } | "locked" | null
+    | { userId: number; organizationId: number; sessionId: string | null; impersonatorId: number | null }
+    /** E2: the session policy ended this session; the reason is the close reason. */
+    | { ended: SessionEndReason }
+    | "locked"
+    | null
   > {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
@@ -338,13 +368,24 @@ export class WsHub implements WsFanout {
           // ONE rule for "is this session still signed in" — shared with
           // Passport's deserializeUser, so the realtime feed can never outlive
           // the HTTP session (deactivation, password change/reset)…
+          const principal = parseSessionPrincipal(r.session?.passport?.user);
           const user = await resolveSessionUser(r.session?.passport?.user);
           if (!user) return resolve(null);
           // …including, for a borrowed session, the developer behind it.
-          const imp = await resolveImpersonator(r.session);
+          const imp = await resolveImpersonator(r.session, principal?.iat ?? 0);
           if (imp.state === "revoked") return resolve(null);
           // A locked session gets no realtime feed (A.CON-SHO-7).
           if (r.session?.appLock?.userId === user.id) return resolve("locked");
+          // E2 session policy: a session the HTTP gate would end (evicted by
+          // the org's maximum-concurrent rule, or past its absolute maximum)
+          // gets no socket either — and is told which it was.
+          const decision = await applySessionPolicy({
+            user,
+            sid: r.sessionID ?? null,
+            issuedAt: principal?.iat ?? null,
+            borrowed: imp.state === "ok",
+          });
+          if (decision.endedBecause) return resolve({ ended: decision.endedBecause });
           resolve({
             userId: user.id,
             organizationId: user.organizationId,
@@ -386,15 +427,21 @@ export class WsHub implements WsFanout {
     return closed;
   }
 
-  closeUserSockets(userId: number, opts: { exceptSessionId?: string } = {}): number {
+  closeUserSockets(
+    userId: number,
+    opts: { exceptSessionId?: string; onlySidHash?: string; closeReason?: string } = {},
+  ): number {
     let closed = 0;
     for (const set of [...this.clients.values()]) {
       for (const ws of [...set]) {
         const m = this.meta.get(ws);
         if (!m || (m.userId !== userId && m.impersonatorId !== userId)) continue;
         if (opts.exceptSessionId && m.sessionId === opts.exceptSessionId) continue;
+        // E2: one named session only. The plain session id never travels on
+        // the bus, so the socket's own id is hashed to compare.
+        if (opts.onlySidHash && (!m.sessionId || sidHashOf(m.sessionId) !== opts.onlySidHash)) continue;
         try {
-          ws.close(1008, "session_revoked");
+          ws.close(1008, opts.closeReason ?? "session_revoked");
         } catch {
           ws.terminate();
         }

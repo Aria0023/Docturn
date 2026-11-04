@@ -13,6 +13,7 @@ import type { NextFunction, Request, Response } from "express";
 import { MODULE_IDS, resolveModules } from "@shared/modules";
 import { storage } from "./storage.js";
 import { currentUser } from "./rbac.js";
+import { isEnterpriseExportRequest } from "./compliance/audit-export.js";
 
 const SETTING_KEY = "modules";
 
@@ -100,6 +101,9 @@ const bodyHasTheme = (req: Request) => {
   const t = (req.body as { theme?: unknown } | undefined)?.theme;
   return !!t && typeof t === "object";
 };
+/** The E2 form of GET /api/audit/export (from / to / format / orgId). */
+const enterpriseAuditExport = (req: Request) =>
+  isEnterpriseExportRequest((req.query ?? {}) as Record<string, unknown>);
 
 export const GATE_TABLE: readonly GateRule[] = [
   // Routing
@@ -171,6 +175,25 @@ export const GATE_TABLE: readonly GateRule[] = [
   // this instance, the realtime bus, the job leases and the limiter store.
   // The safety mechanisms themselves are never switchable per org.
   { path: /^\/api\/dev\/cluster$/, module: "enterprise.multiInstance" },
+  // Audit export, ENTERPRISE form only (a date range / JSON / another
+  // tenant). GET /api/audit/export is older than the module: the legacy
+  // `?trail=…&scope=…` CSV is the Compliance screen's Export button for every
+  // org and must stay reachable, so the gate applies only when the request
+  // carries from / to / format / orgId (isEnterpriseExportRequest). A
+  // developer's cross-tenant export ALSO needs the module on for the target
+  // tenant — this rule can only see the caller's own org, so that second
+  // check lives in the route (server/routes/compliance.ts).
+  { path: /^\/api\/audit\/export$/, module: "enterprise.auditExport", methods: ["GET"], when: enterpriseAuditExport },
+  // Session policy (server/routes/session-policy.ts): the director's card and
+  // "sign out everywhere" (self-service and for another person). The
+  // ENFORCEMENT is in two places this table cannot express: the
+  // sessionPolicyGate (server/session-policy.ts, which checks the same module
+  // itself on every /api request and at the WebSocket upgrade) and
+  // resolveSessionUser (server/auth.ts), where a completed "sign out
+  // everywhere" keeps holding even if the module is switched off afterwards.
+  { path: /^\/api\/org\/session-policy$/, module: "enterprise.sessionPolicy" },
+  { path: /^\/api\/account\/sessions\/revoke-all$/, module: "enterprise.sessionPolicy" },
+  { path: /^\/api\/accounts\/[^/]+\/sessions\/revoke-all$/, module: "enterprise.sessionPolicy" },
 ];
 
 /** First gate rule that applies to this request, if any. */

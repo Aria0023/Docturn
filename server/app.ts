@@ -15,6 +15,7 @@ import { authenticateCredentials, configurePassport } from "./auth.js";
 import {
   ACCOUNT_RATE_LIMIT,
   AUTH_RATE_LIMIT,
+  EXPORT_RATE_LIMIT,
   GENERAL_RATE_LIMIT,
   RATE_LIMIT_RESPONSE,
   SESSION_POLICY,
@@ -31,6 +32,7 @@ import { moduleGate } from "./modules.js";
 import { registerNumericParams } from "./params.js";
 import { DatabaseRateLimitStore } from "./rate-limit-store.js";
 import { requestIdMiddleware, requestIdOf } from "./request-id.js";
+import { rememberSessionPrincipal, sessionPolicyGate } from "./session-policy.js";
 import { createSessionStore } from "./session-store.js";
 import { requestMetricsMiddleware } from "./services/request-metrics.js";
 import { mountWebapp, type WebappOptions } from "./webapp-static.js";
@@ -147,6 +149,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   app.use(sessionMiddleware);
 
   configurePassport();
+  // Before passport looks at the session: remember which session this request
+  // arrived with, because passport deletes that entry when it refuses one
+  // (server/session-policy.ts — the gate then cannot say why it ended).
+  app.use(rememberSessionPrincipal());
   app.use(passport.initialize());
   app.use(passport.session());
   // Demo-token auth: lets the side-by-side demo console give each pane its own
@@ -163,6 +169,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // Feature-module gate: per-org on/off switches enforced centrally (one table
   // in server/modules.ts) so route files stay untouched. After session/passport
   // so currentUser(req) is populated; before registerRoutes so it wins.
+  // E2 session policy: the org's idle window, absolute maximum and
+  // maximum-concurrent rule, applied before every other gate — a session the
+  // policy has ended must not get to do anything else first.
+  app.use("/api", sessionPolicyGate());
   app.use(moduleGate());
 
   // Mint a demo token from valid demo credentials. Non-production only; the
@@ -277,6 +287,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     // same failure budget as a wrong sign-in, on top of the per-session cap.
     app.use("/api/session/unlock-pin", authLimiter);
     app.put("/api/security/pin", authLimiter);
+    // Audit export (E2): one request reads a whole trail, so it has its own
+    // hourly budget per address on top of the general limiter.
+    app.use(
+      "/api/audit/export",
+      rateLimit({ ...EXPORT_RATE_LIMIT, ...common, ...sharedStore("export") }),
+    );
     app.use("/api", generalLimiter);
   }
 

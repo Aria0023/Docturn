@@ -266,6 +266,16 @@ export const ACCOUNT_RATE_LIMIT = { windowMs: 15 * 60 * 1000, max: 10 };
  * Mounted by server/auth.ts registerAuthRoutes when rate limiting is enabled.
  */
 export const REGISTER_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 10 };
+/**
+ * Audit export (GET /api/audit/export, E2). The one endpoint that reads a
+ * whole trail in one request: each call is a full table scan and, for a
+ * six-year archive, a large download. Counts EVERY request (successes are
+ * exactly what must be capped) per client address, so a scripted loop cannot
+ * use it to pull the trail continuously or as a cheap denial of service.
+ * Mounted by server/app.ts when rate limiting is enabled.
+ */
+export const EXPORT_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 20 };
+
 
 /** The JSON body every limiter answers with (same shape as the API's errors). */
 export const RATE_LIMIT_RESPONSE = { error: "rate_limited" } as const;

@@ -4,6 +4,7 @@ import { endSessionsOfDeactivatedUser, issueTemporaryPassword, rotatePassword } 
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { broadcastRotationChange } from "../services/notifications.js";
+import { signOutEverywhere } from "./session-policy.js";
 import { storage } from "../storage.js";
 
 /**
@@ -149,6 +150,32 @@ export function registerAccountRoutes(app: Express) {
       riskLevel: "high",
     });
     res.json({ ok: true, id: target.id, disabled: false });
+  });
+
+  /**
+   * "Sign out everywhere" for another person (E2, module
+   * enterprise.sessionPolicy): a leaver's forgotten tablet, a shared
+   * workstation, a lost phone. Not a deactivation — the account still works,
+   * it simply has no live session anywhere any more, and no password changes.
+   * Durable: every session issued before this moment stops resolving on
+   * every instance (users.sessions_revoked_at), and the live sockets close
+   * now.
+   */
+  app.post("/api/accounts/:id/sessions/revoke-all", requireAuth, requireRole(...MANAGE_ROLES), async (req, res) => {
+    const me = currentUser(req);
+    const target = await reachableTarget(req, res);
+    if (!target) return;
+    const ended = await signOutEverywhere(target, {});
+    await appendAudit({
+      organizationId: target.organizationId,
+      userId: me.id,
+      action: "auth.sign_out_everywhere",
+      resourceType: "user",
+      resourceId: target.id,
+      details: { self: false, username: target.username, role: target.role, sessionsEnded: ended },
+      riskLevel: "medium",
+    });
+    res.json({ ok: true, id: target.id, sessionsEnded: ended });
   });
 
   // Administrative password reset: mints a one-time credential, forces a

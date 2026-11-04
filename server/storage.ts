@@ -51,6 +51,7 @@ import {
   ssoConnections,
   scimTokens,
   orgSessionPolicy,
+  userSessions,
   userThemePrefs,
   rateLimitHits,
   type JobLease,
@@ -137,6 +138,18 @@ export interface MessagePageOptions {
   limit?: number;
   beforeId?: number;
   afterId?: number;
+}
+
+/** One page of an audit / PHI-access trail, oldest first (E2 audit export). */
+export interface TrailPageOptions {
+  limit: number;
+  /** Keyset cursor: only rows with a GREATER id. */
+  afterId?: number;
+  /** Inclusive range on created_at. */
+  from?: Date | null;
+  to?: Date | null;
+  /** Only this user's own rows. */
+  userId?: number | null;
 }
 function clampPage(limit: number | undefined): number {
   const n = Number.isFinite(limit) ? Math.floor(limit as number) : MESSAGE_PAGE_DEFAULT;
@@ -655,7 +668,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.organizationId, orgId))
       .orderBy(asc(users.id));
   }
-  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt">>) {
+  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt">>) {
     // Stored trimmed; uniqueness is on lower(username) (server/db.ts).
     const [row] = await this.db.insert(users).values({ ...user, username: normalizeUsername(user.username) }).returning();
     return row!;
@@ -1775,6 +1788,39 @@ export class DatabaseStorage implements IStorage {
       .limit(limit);
   }
 
+  /* ── streaming trail readers (E2 audit export) ─────────────────────────────
+   * Keyset pagination by `id` ASCENDING, oldest first: both trails are
+   * append-only, so the id order IS the chronological order, and `id >
+   * afterId` lets a six-year export be written page by page without ever
+   * holding it in memory (and without OFFSET re-scanning what was sent).
+   */
+  async pageAuditLogs(orgId: number, opts: TrailPageOptions) {
+    const where = [eq(auditLogs.organizationId, orgId)];
+    if (opts.userId != null) where.push(eq(auditLogs.userId, opts.userId));
+    if (opts.from) where.push(gte(auditLogs.createdAt, opts.from));
+    if (opts.to) where.push(lte(auditLogs.createdAt, opts.to));
+    if (opts.afterId != null) where.push(gt(auditLogs.id, opts.afterId));
+    return this.db
+      .select()
+      .from(auditLogs)
+      .where(and(...where))
+      .orderBy(asc(auditLogs.id))
+      .limit(opts.limit);
+  }
+  async pagePhiAccess(orgId: number, opts: TrailPageOptions) {
+    const where = [eq(phiAccessLogs.organizationId, orgId)];
+    if (opts.userId != null) where.push(eq(phiAccessLogs.userId, opts.userId));
+    if (opts.from) where.push(gte(phiAccessLogs.createdAt, opts.from));
+    if (opts.to) where.push(lte(phiAccessLogs.createdAt, opts.to));
+    if (opts.afterId != null) where.push(gt(phiAccessLogs.id, opts.afterId));
+    return this.db
+      .select()
+      .from(phiAccessLogs)
+      .where(and(...where))
+      .orderBy(asc(phiAccessLogs.id))
+      .limit(opts.limit);
+  }
+
   // ── six-year compliance archive (§164.316(b)(2)(i)) ──────────────────────────
   /**
    * Copy an org's audit / PHI-access / security rows into the retained archive
@@ -2282,6 +2328,7 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(ssoConnections).where(eq(ssoConnections.organizationId, id));
       await tx.delete(scimTokens).where(eq(scimTokens.organizationId, id));
       await tx.delete(orgSessionPolicy).where(eq(orgSessionPolicy.organizationId, id));
+      await tx.delete(userSessions).where(eq(userSessions.organizationId, id));
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -2353,6 +2400,7 @@ export class DatabaseStorage implements IStorage {
     await this.db.delete(userPins).where(eq(userPins.userId, id));
     await this.db.delete(pinUnlockFailures).where(eq(pinUnlockFailures.userId, id));
     await this.db.delete(userThemePrefs).where(eq(userThemePrefs.userId, id));
+    await this.db.delete(userSessions).where(eq(userSessions.userId, id));
     await this.db.delete(mfaBackupCodes).where(eq(mfaBackupCodes.userId, id));
     await this.db.delete(mfaCredentials).where(eq(mfaCredentials.userId, id));
     await this.db.delete(hospitalists).where(eq(hospitalists.userId, id));
@@ -3486,6 +3534,64 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(scimTokens.organizationId, orgId), eq(scimTokens.id, id), isNull(scimTokens.revokedAt)))
       .returning({ id: scimTokens.id });
     return rows.length > 0;
+  }
+
+  /* ── live cookie sessions of one user (E2 session policy) ──────────────────
+   * Keyed by a SHA-256 of the express-session id. A row is LIVE while it has
+   * no revoked_at and its last_seen_at is inside the org's idle window: once
+   * the window has passed the session's cookie has expired in the store too,
+   * so counting it would evict a session that is actually in use.
+   */
+  async upsertUserSession(row: { organizationId: number; userId: number; sidHash: string }) {
+    const now = new Date();
+    const [saved] = await this.db
+      .insert(userSessions)
+      .values({ ...row, issuedAt: now, lastSeenAt: now })
+      .onConflictDoUpdate({ target: [userSessions.sidHash], set: { lastSeenAt: now } })
+      .returning();
+    return saved!;
+  }
+  async getUserSession(sidHash: string) {
+    const [row] = await this.db.select().from(userSessions).where(eq(userSessions.sidHash, sidHash));
+    return row;
+  }
+  async touchUserSession(sidHash: string) {
+    await this.db.update(userSessions).set({ lastSeenAt: new Date() }).where(eq(userSessions.sidHash, sidHash));
+  }
+  /** Live sessions of a user, OLDEST FIRST (the eviction order). */
+  async listLiveUserSessions(userId: number, seenSince: Date) {
+    return this.db
+      .select()
+      .from(userSessions)
+      .where(and(eq(userSessions.userId, userId), isNull(userSessions.revokedAt), gte(userSessions.lastSeenAt, seenSince)))
+      .orderBy(asc(userSessions.issuedAt), asc(userSessions.id));
+  }
+  async revokeUserSessionById(id: number, reason: string) {
+    const rows = await this.db
+      .update(userSessions)
+      .set({ revokedAt: new Date(), revokedReason: reason })
+      .where(and(eq(userSessions.id, id), isNull(userSessions.revokedAt)))
+      .returning({ id: userSessions.id, sidHash: userSessions.sidHash });
+    return rows[0];
+  }
+  /** Mark every live session of a user revoked; returns how many. */
+  async revokeUserSessions(userId: number, reason: string, exceptSidHash?: string) {
+    const where = [eq(userSessions.userId, userId), isNull(userSessions.revokedAt)];
+    if (exceptSidHash) where.push(ne(userSessions.sidHash, exceptSidHash));
+    const rows = await this.db
+      .update(userSessions)
+      .set({ revokedAt: new Date(), revokedReason: reason })
+      .where(and(...where))
+      .returning({ id: userSessions.id });
+    return rows.length;
+  }
+  /** Opportunistic cleanup: rows no cookie can belong to any more. */
+  async pruneUserSessions(before: Date) {
+    await this.db.delete(userSessions).where(lt(userSessions.lastSeenAt, before));
+  }
+  /** "Sign out everywhere": every session issued before `at` stops resolving. */
+  async setUserSessionsRevokedAt(userId: number, at: Date) {
+    await this.db.update(users).set({ sessionsRevokedAt: at }).where(eq(users.id, userId));
   }
 
   // ── per-org session policy ──────────────────────────────────────────────────

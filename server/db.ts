@@ -267,6 +267,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_uniq ON users(organization_
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
+-- "Sign out everywhere" (E2): every session issued before this stops resolving.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_revoked_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS hospitalists (
   id SERIAL PRIMARY KEY,
@@ -879,6 +881,21 @@ CREATE TABLE IF NOT EXISTS scim_tokens (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS scim_tokens_hash_uniq ON scim_tokens(token_hash);
 CREATE INDEX IF NOT EXISTS scim_tokens_org_idx ON scim_tokens(organization_id);
+
+-- Live cookie sessions of one user (E2 session policy): a SHA-256 of the
+-- session id only. Drives max-concurrent eviction and the absolute lifetime.
+CREATE TABLE IF NOT EXISTS user_sessions (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  sid_hash TEXT NOT NULL,
+  issued_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_seen_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  revoked_at TIMESTAMP,
+  revoked_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_sessions_sid_uniq ON user_sessions(sid_hash);
+CREATE INDEX IF NOT EXISTS user_sessions_user_idx ON user_sessions(user_id);
 
 -- Per-org session policy (NULL = platform default).
 CREATE TABLE IF NOT EXISTS org_session_policy (
