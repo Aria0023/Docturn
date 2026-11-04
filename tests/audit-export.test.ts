@@ -38,6 +38,10 @@ describe("audit export — PHI-free detail projection", () => {
       fields: ["room", "admittedAt"],
       recipients: [3, 4, 5],
       nothing: null,
+      // The word naming WHICH path an action came through (here the operator's
+      // break-glass into an SSO-required tenant) is structural, so a hospital
+      // reading its own export can tell an impersonation from a portal entry.
+      via: "impersonate",
     });
     expect(out.kept).toEqual({
       serviceId: "7",
@@ -46,6 +50,7 @@ describe("audit export — PHI-free detail projection", () => {
       fields: "room|admittedAt",
       recipients: "3|4|5",
       nothing: "",
+      via: "impersonate",
     });
     expect(out.omitted.sort()).toEqual(["changed", "description", "error", "name"]);
   });

@@ -64,6 +64,9 @@ export const SAFE_DETAIL_STRING_KEYS: readonly string[] = [
   "trigger",
   "username",
   "vendor",
+  // Always a fixed word naming the path an action came through:
+  // round_robin | manual | delete | forward | impersonate | manage-org.
+  "via",
 ];
 
 /** Array-valued detail keys that list COLUMN / SETTING NAMES, not values. */
