@@ -9,7 +9,7 @@ function SettingsRow({ icon, title, sub, right, onClick, wrapSub, rowProps }) {
   const clickable = typeof onClick === "function";
   return (
     <div onClick={onClick} role={clickable ? "button" : undefined} {...(rowProps || {})}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)", cursor: clickable ? "pointer" : "default", background: "#fff" }}>
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderTop: "1px solid var(--border)", cursor: clickable ? "pointer" : "default", background: "var(--card)" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
         <Icon name={icon} size={16} color="var(--muted-foreground)" />
       </span>
@@ -28,7 +28,7 @@ function SettingsGroup({ title, children }) {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{ fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--muted-foreground)", margin: "0 4px 6px" }}>{title}</div>
-      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", background: "#fff" }}>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", background: "var(--card)" }}>
         <div style={{ marginTop: -1 }}>{children}</div>
       </div>
     </div>
@@ -41,8 +41,8 @@ function Switch({ on, onChange, label, busy }) {
   return (
     <button type="button" aria-label={label} aria-pressed={!!on} aria-busy={busy ? "true" : undefined} disabled={!!busy} onClick={() => !busy && onChange && onChange(!on)}
       style={{ width: 44, height: 44, padding: 0, border: "none", background: "transparent", cursor: busy ? "progress" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: busy ? 0.6 : 1 }}>
-      <span style={{ display: "block", width: 44, height: 26, borderRadius: 99, position: "relative", background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
-        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
+      <span style={{ display: "block", width: 44, height: 26, borderRadius: 99, position: "relative", background: on ? "var(--primary)" : "var(--border-strong)", transition: "background .15s" }}>
+        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
       </span>
     </button>
   );
@@ -114,7 +114,7 @@ function TwoFactorSetup({ enrolled, onDone, onCancel }) {
             <React.Fragment>
               <div style={{ fontSize: 13 }}>Add this key to your authenticator app:</div>
               <code style={{ display: "block", padding: "10px 12px", background: "var(--secondary)", borderRadius: "var(--radius-md)", fontSize: 14, letterSpacing: ".08em", wordBreak: "break-all" }}>{secret || "(key unavailable)"}</code>
-              {otpauth && <a href={otpauth} style={{ fontSize: 12.5, color: "var(--primary)" }}>Open in authenticator app</a>}
+              {otpauth && <a href={otpauth} style={{ fontSize: 12.5, color: "var(--primary-ink)" }}>Open in authenticator app</a>}
               <label style={{ fontSize: 13, fontWeight: 500 }}>6-digit code</label>
               <input value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="123456"
                 style={{ height: 42, border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: "0 12px", fontSize: 18, letterSpacing: ".2em", fontFamily: "var(--font-sans)" }} />
@@ -185,8 +185,8 @@ function EnableAlertsCard() {
   const finish = () => { lsSet(ALERTS_CARD_KEY, "1"); setDone(true); };
   if (flash) {
     return (
-      <div data-alerts-card="done" role="status" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "#ECFDF5", borderBottom: "1px solid #A7F3D0", color: "#065F46", fontSize: 13, fontWeight: 600 }}>
-        <Icon name="bell-ring" size={18} color="#065F46" />{flash}
+      <div data-alerts-card="done" role="status" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", background: "var(--status-accepted-bg)", borderBottom: "1px solid var(--status-accepted-rim)", color: "var(--status-accepted-fg)", fontSize: 13, fontWeight: 600 }}>
+        <Icon name="bell-ring" size={18} color="var(--status-accepted-fg)" />{flash}
       </div>
     );
   }
@@ -209,21 +209,21 @@ function EnableAlertsCard() {
     ? "Share → Add to Home Screen (iOS 16.4+), open DocTurn from there, then turn alerts on."
     : status === "error" ? "Check your connection and try again." : "Even when DocTurn is closed.";
   return (
-    <div data-alerts-card={iosTab ? "ios" : "offer"} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px 6px 16px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", color: "#1E3A8A" }}>
-      <Icon name="bell-ring" size={18} color="#1D4ED8" />
+    <div data-alerts-card={iosTab ? "ios" : "offer"} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 6px 6px 16px", background: "var(--primary-tint)", borderBottom: "1px solid var(--status-active-rim)", color: "var(--status-active-fg)" }}>
+      <Icon name="bell-ring" size={18} color="var(--primary-ink)" />
       <div style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}>
         <div style={{ fontSize: 13, fontWeight: 700 }}>{title}</div>
         <div style={{ fontSize: 12, fontWeight: 500 }}>{sub}</div>
       </div>
       {!iosTab && (
         <button type="button" data-alerts-enable onClick={turnOn} disabled={busy}
-          style={{ flex: "none", minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "none", background: "#1D4ED8", color: "#fff", fontWeight: 700, fontSize: 13, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-sans)", opacity: busy ? 0.7 : 1 }}>
+          style={{ flex: "none", minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "none", background: "var(--primary)", color: "var(--primary-foreground)", fontWeight: 700, fontSize: 13, cursor: busy ? "default" : "pointer", fontFamily: "var(--font-sans)", opacity: busy ? 0.7 : 1 }}>
           {busy ? "Turning on…" : "Turn on"}
         </button>
       )}
       <button type="button" data-alerts-dismiss onClick={finish} title="Dismiss" aria-label="Dismiss alerts suggestion"
-        style={{ flex: "none", width: 44, height: 44, borderRadius: "var(--radius-md)", border: "none", background: "transparent", color: "#1E3A8A", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Icon name="x" size={16} color="#1E3A8A" />
+        style={{ flex: "none", width: 44, height: 44, borderRadius: "var(--radius-md)", border: "none", background: "transparent", color: "var(--status-active-fg)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon name="x" size={16} color="var(--status-active-fg)" />
       </button>
     </div>
   );
@@ -235,7 +235,7 @@ function ShiftBtn({ primary, onClick, disabled, children, ...rest }) {
     <button type="button" onClick={disabled ? undefined : onClick} aria-disabled={disabled ? "true" : undefined} {...rest}
       style={{ minHeight: 44, padding: "0 16px", borderRadius: "var(--radius-md)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
         cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1,
-        border: primary ? "1px solid var(--primary)" : "1px solid var(--border)", background: primary ? "var(--primary)" : "#fff", color: primary ? "#fff" : "var(--foreground)" }}>
+        border: primary ? "1px solid var(--primary)" : "1px solid var(--border)", background: primary ? "var(--primary)" : "var(--card)", color: primary ? "var(--primary-foreground)" : "var(--foreground)" }}>
       {children}
     </button>
   );
@@ -286,12 +286,12 @@ function EndShiftDialog({ status, onClose }) {
           <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
             {people.map((d) => (
               <button key={d.id} type="button" data-shift-cover={d.id} aria-pressed={cover === d.id} onClick={() => setCover(cover === d.id && !pending ? null : d.id)}
-                style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "6px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (cover === d.id ? "var(--primary)" : "var(--border)"), background: cover === d.id ? "#EFF6FF" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
+                style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 44, padding: "6px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (cover === d.id ? "var(--primary)" : "var(--border)"), background: cover === d.id ? "var(--primary-tint)" : "var(--card)", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{d.name}</span>
                   <span style={{ display: "block", fontSize: 12, color: "var(--muted-foreground)" }}>{d.specialty || "Provider"}{d.working ? " · on shift" : " · off shift"}</span>
                 </span>
-                {cover === d.id && <Icon name="check" size={16} color="var(--primary)" />}
+                {cover === d.id && <Icon name="check" size={16} color="var(--primary-ink)" />}
               </button>
             ))}
             {people.length === 0 && <div data-shift-no-cover style={{ padding: 12, fontSize: 13, color: "var(--muted-foreground)", textAlign: "center" }}>{pending ? "Nobody else in the rotation is on shift, so your pending requests cannot be handed over yet." : "No colleagues found."}</div>}
@@ -356,7 +356,7 @@ function PinDialog({ changing, onClose }) {
 // The tone per priority is stored on the server (one PUT per change, the row
 // shows the server's answer); THIS open app plays it — WebAudio, no files.
 const TONE_LABEL = { siren: "Siren", alarm: "Alarm", chime: "Chime", ping: "Ping", soft: "Soft", none: "None (silent)" };
-const SOUND_ROWS = [["stat", "STAT", "#B91C1C"], ["urgent", "Urgent", "#B45309"], ["routine", "Routine", "var(--foreground)"]];
+const SOUND_ROWS = [["stat", "STAT", "var(--status-rejected)"], ["urgent", "Urgent", "var(--status-pending)"], ["routine", "Routine", "var(--foreground)"]];
 function AlertSounds({ prefs }) {
   const a = useActions();
   const [busy, setBusy] = React.useState(null);
@@ -373,10 +373,10 @@ function AlertSounds({ prefs }) {
         <span>In-app sound — iPhone lock-screen notifications use the system sound. Plays only while DocTurn is open on this device (not while do not disturb is on), for messages from others.</span>
       </div>
       {SOUND_ROWS.map(([pr, label, color]) => (
-        <div key={pr} data-sound-row={pr} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "#fff" }}>
+        <div key={pr} data-sound-row={pr} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--card)" }}>
           <span style={{ flex: "1 1 90px", minWidth: 0, fontSize: 14, fontWeight: 700, color }}>{label}</span>
           <select aria-label={label + " sound"} data-sound-select={pr} value={prefs[pr]} disabled={!!busy} onChange={(e) => change(pr, e.target.value)}
-            style={{ flex: "1 1 140px", minWidth: 0, maxWidth: 220, minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontFamily: "inherit", color: "var(--foreground)" }}>
+            style={{ flex: "1 1 140px", minWidth: 0, maxWidth: 220, minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontFamily: "inherit", color: "var(--foreground)" }}>
             {tones.map((t) => <option key={t} value={t}>{TONE_LABEL[t] || t}</option>)}
           </select>
           <ShiftBtn data-sound-preview={pr} aria-label={"Preview " + label + " sound"} disabled={prefs[pr] === "none"} onClick={() => a.previewSound(prefs[pr])}>
@@ -394,7 +394,7 @@ function AlertSounds({ prefs }) {
 // write is one server call followed by a re-read, so the list is the
 // server's. The organization's templates are shown read-only (directors
 // manage those from the composer's Templates picker).
-const QR_PRIORITY = { routine: ["Routine", "var(--muted-foreground)"], urgent: ["Urgent", "#B45309"], stat: ["STAT", "#B91C1C"] };
+const QR_PRIORITY = { routine: ["Routine", "var(--muted-foreground)"], urgent: ["Urgent", "var(--status-pending)"], stat: ["STAT", "var(--status-rejected)"] };
 function QuickResponses() {
   const st = useStore();
   const a = useActions();
@@ -442,7 +442,7 @@ function QuickResponses() {
     );
   }
   const row = (t, editable) => (
-    <div key={t.id} data-qr-item={t.id} data-qr-scope={t.scope} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "#fff", minWidth: 0 }}>
+    <div key={t.id} data-qr-item={t.id} data-qr-scope={t.scope} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderTop: "1px solid var(--border)", background: "var(--card)", minWidth: 0 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <span style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{t.title}</span>
@@ -478,7 +478,7 @@ function QuickResponses() {
                 {Object.keys(QR_PRIORITY).map((id) => (
                   <button key={id} type="button" role="radio" aria-checked={form.priority === id} data-qr-priority={id} onClick={() => setForm({ ...form, priority: id })}
                     style={{ minHeight: 44, minWidth: 44, padding: "0 12px", borderRadius: 99, cursor: "pointer", fontSize: 14, fontWeight: 700, fontFamily: "inherit",
-                      color: form.priority === id ? "#fff" : QR_PRIORITY[id][1], background: form.priority === id ? QR_PRIORITY[id][1] : "transparent", border: "1px solid " + (form.priority === id ? QR_PRIORITY[id][1] : "var(--border)") }}>{QR_PRIORITY[id][0]}</button>
+                      color: form.priority === id ? "var(--on-status)" : QR_PRIORITY[id][1], background: form.priority === id ? QR_PRIORITY[id][1] : "transparent", border: "1px solid " + (form.priority === id ? QR_PRIORITY[id][1] : "var(--border)") }}>{QR_PRIORITY[id][0]}</button>
                 ))}
               </div>
             )}
@@ -579,7 +579,7 @@ function AccountSettings({ onLock }) {
   return (
     <div style={{ maxWidth: 640 }}>
       {/* profile card */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", marginBottom: 18 }}>
         <Avatar initials={me.avatar} size={48} />
         <div style={{ minWidth: 0, flex: 1 }}>
           {/* Read-only: a clinician's name is identity data the organization
@@ -661,7 +661,7 @@ function AccountSettings({ onLock }) {
                   <button key={n} type="button" data-reminder-interval={n} aria-pressed={reminder.intervalMin === n}
                     onClick={() => (st.reminderSaving || reminder.intervalMin === n ? null : a.setReminderPrefs(true, n))}
                     style={{ minWidth: 44, minHeight: 44, padding: "0 12px", borderRadius: "var(--radius-md)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer",
-                      border: "1px solid " + (reminder.intervalMin === n ? "var(--primary)" : "var(--border)"), background: reminder.intervalMin === n ? "#EFF6FF" : "#fff", color: reminder.intervalMin === n ? "var(--primary)" : "var(--foreground)" }}>
+                      border: "1px solid " + (reminder.intervalMin === n ? "var(--primary)" : "var(--border)"), background: reminder.intervalMin === n ? "var(--primary-tint)" : "var(--card)", color: reminder.intervalMin === n ? "var(--primary-ink)" : "var(--foreground)" }}>
                     {n} min
                   </button>
                 ))}

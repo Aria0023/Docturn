@@ -112,9 +112,9 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
                   <div style={{ position: "relative", padding: 2 }}>
                     <span style={{ position: "absolute", inset: 0, borderRadius: 99, border: "2px solid " + ring }} />
                     <Avatar initials={p.avatar} size={30} tint={isMe ? "blue" : (isNext ? "emerald" : "slate")} />
-                    <span style={{ position: "absolute", top: -3, left: -3, width: 15, height: 15, borderRadius: 99, background: isNext ? "var(--status-accepted)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #fff" }}>{i + 1}</span>
+                    <span style={{ position: "absolute", top: -3, left: -3, width: 15, height: 15, borderRadius: 99, background: isNext ? "var(--status-accepted)" : "var(--secondary)", color: isNext ? "var(--on-status)" : "var(--muted-foreground)", fontSize: 9, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid var(--card)" }}>{i + 1}</span>
                   </div>
-                  <span style={{ fontSize: 10.5, fontWeight: 600, color: isMe ? "var(--primary)" : "var(--foreground)", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isMe ? "You" : shortName(p.name)}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: isMe ? "var(--primary-ink)" : "var(--foreground)", maxWidth: 48, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isMe ? "You" : shortName(p.name)}</span>
                 </div>
               );
             })}
@@ -154,7 +154,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
           <Card key={p.id} style={{ padding: 16 }}>
             <div data-pending-id={p.id} data-pending-for={obo ? obo.userId : undefined}>
             {obo && (
-              <div data-pending-obo style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12, color: "var(--primary-ink, #1D4ED8)", fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
+              <div data-pending-obo style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12, color: "var(--primary-ink)", fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
                 <Icon name="link-2" size={13} style={{ marginTop: 1, flex: "none" }} />
                 <span>For {obo.name} — you're on call in their care team. Accepting puts the patient on {String(obo.name).split(",")[0]}'s census; only they can decline.</span>
               </div>

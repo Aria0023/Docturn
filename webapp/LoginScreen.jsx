@@ -121,7 +121,7 @@ function LoginScreen({ onLogin, appName }) {
           style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, padding: mobile ? "9px 6px" : "11px 6px", minHeight: 44,
             borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12, fontWeight: 500, fontFamily: "inherit",
             border: `1px solid ${current === r.id ? "var(--primary)" : "var(--border)"}`,
-            background: current === r.id ? "var(--primary-tint, #EFF6FF)" : "#fff", color: current === r.id ? "var(--primary-ink, #1D4ED8)" : "var(--foreground)" }}>
+            background: current === r.id ? "var(--primary-tint)" : "var(--card)", color: current === r.id ? "var(--primary-ink)" : "var(--foreground)" }}>
           <Icon name={r.icon} size={18} />
           {r.label}
         </button>
@@ -134,7 +134,7 @@ function LoginScreen({ onLogin, appName }) {
   const roleSelect = (list, current, onPick) => (
     <div style={{ position: "relative" }}>
       <select id="dt-demo-role" value={current} onChange={(e) => onPick(e.target.value)}
-        style={{ width: "100%", height: 44, appearance: "none", WebkitAppearance: "none", padding: "0 36px 0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 16, fontFamily: "inherit", cursor: "pointer" }}>
+        style={{ width: "100%", height: 44, appearance: "none", WebkitAppearance: "none", padding: "0 36px 0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontSize: 16, fontFamily: "inherit", cursor: "pointer" }}>
         {list.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
       </select>
       <Icon name="chevron-down" size={16} color="var(--muted-foreground)" style={{ position: "absolute", right: 12, top: 14, pointerEvents: "none" }} />
@@ -145,16 +145,16 @@ function LoginScreen({ onLogin, appName }) {
   // padding gives the hit area, the matching negative margins keep the line
   // box the height of the surrounding text.
   const linkBtn = (label, onClick) => (
-    <button type="button" onClick={onClick} style={{ display: "inline-block", border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, lineHeight: "18px", padding: "13px 6px", margin: "-13px -6px", minHeight: 44, verticalAlign: "baseline" }}>{label}</button>
+    <button type="button" onClick={onClick} style={{ display: "inline-block", border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, lineHeight: "18px", padding: "13px 6px", margin: "-13px -6px", minHeight: 44, verticalAlign: "baseline" }}>{label}</button>
   );
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: short ? "10px 12px" : mobile ? "16px 14px" : 28, paddingTop: mobile ? "max(" + (short ? 10 : 16) + "px, var(--sai-top, 0px))" : 28, paddingLeft: mobile ? "max(" + (short ? 12 : 14) + "px, var(--sai-left, 0px))" : 28, paddingRight: mobile ? "max(" + (short ? 12 : 14) + "px, var(--sai-right, 0px))" : 28 }}>
       {/* Single sleek card — no split graphics panel */}
-      <div style={{ width: "100%", maxWidth: 400, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: short ? "16px 16px" : mobile ? "22px 18px" : "32px 30px" }}>
+      <div style={{ width: "100%", maxWidth: 400, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: short ? "16px 16px" : mobile ? "22px 18px" : "32px 30px" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-            <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
+            <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "var(--primary-foreground)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
             <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{brand}</span>
           </div>
           <h1 style={{ fontSize: short ? 20 : 22, fontWeight: 700, margin: short ? "10px 0 2px" : mobile ? "16px 0 4px" : "22px 0 5px", textAlign: "center" }}>{mode === "register" ? "Create an account" : "Sign in"}</h1>

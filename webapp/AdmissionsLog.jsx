@@ -59,7 +59,7 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
             line (still right-aligned) instead of being drawn past the Card's
             overflow:hidden edge ("Clea" at 375px, A.CON-SHO-49). */}
         <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8, rowGap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
-          <Icon name="scroll-text" size={17} color="var(--primary)" />
+          <Icon name="scroll-text" size={17} color="var(--primary-ink)" />
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Admissions log</h3>
           <Badge variant="secondary">{total}</Badge>
           {onPurge ? (
@@ -84,7 +84,7 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
           <div style={{ maxHeight: "62vh", overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
-                <tr style={{ position: "sticky", top: 0, background: "#fff" }}>
+                <tr style={{ position: "sticky", top: 0, background: "var(--card)" }}>
                   {["When", "Patient", "Room", "Assigned to", "Specialty", "Route", "Status"].map((h) => (
                     <th key={h} style={{ textAlign: "left", padding: "9px 16px", fontSize: 11, fontWeight: 700, letterSpacing: ".03em", textTransform: "uppercase", color: "var(--muted-foreground)", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>{h}</th>
                   ))}
@@ -104,7 +104,7 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
                     <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>{a.provider}</td>
                     <td style={{ padding: "10px 16px", whiteSpace: "nowrap", color: "var(--muted-foreground)" }}>{a.specialty || "—"}</td>
                     <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: a.via === "Manual" ? "var(--status-pending)" : "var(--primary)" }}>{a.via || "—"}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: a.via === "Manual" ? "var(--status-pending)" : "var(--primary-ink)" }}>{a.via || "—"}</span>
                     </td>
                     <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}><Badge status={statusTint(a.status)}>{a.status || "sent"}</Badge>{a.routings > 1 ? <span style={{ fontSize: 12, color: "var(--muted-foreground)", marginLeft: 6 }}>routed {a.routings}×</span> : null}</td>
                   </tr>

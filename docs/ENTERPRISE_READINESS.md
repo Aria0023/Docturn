@@ -100,6 +100,99 @@ is unset; the in-process fake transport describe always runs.
 
 ---
 
+## Personal display presets (in code and tested)
+
+Module `platform.userThemes` (default **on**). The ORGANIZATION keeps its
+branding — workspace name, accent, corner radius, sidebar style, content width
+and its colour scheme (`classic | calm | warm`), all written by its directors
+through `PATCH /api/org/preferences` and gated by `platform.appearance`. On top
+of that each PERSON picks their own:
+
+| Preset | What it changes |
+| --- | --- |
+| `org` (default) | Nothing — follows whatever the organization chose. |
+| `classic` / `calm` / `warm` | One of the three light canvases, for this person only, whatever the organization picked. |
+| `night` | A true dark canvas: page darkest, cards floating above it, chips recessed below, and all five status families restated as dark tints with light ink. |
+| `contrast` | High contrast — black canvas, white ink, visible lines, every text pair at 7:1 or better. |
+
+Plus **text size** (`default | large`) and **follow this device**
+(`prefers-color-scheme`, offered only on `org` and `night` — the two presets
+that have both a light and a dark reading).
+
+### What the server does
+
+- `GET` / `PUT /api/me/theme` — the caller's own `user_theme_prefs` row.
+  Organization and user come from the session, never the body; there is one row
+  per user, so there is no id to address and nothing cross-tenant to reach. The
+  body is strict and every value comes from a fixed catalogue in
+  `shared/schema.ts`; an unknown stored value reads back as the default.
+- Audited `theme.prefs_update`, `riskLevel: low`, details = the three chosen
+  values. No PHI; the row is removed with the user and with the tenant.
+- `GATE_TABLE` gates `/api/me/theme` on `platform.userThemes`: off = 404
+  `module_disabled` on both verbs, the stored choice kept for when it returns,
+  and the client shows the organization's branding only.
+- `GET /manifest.webmanifest?theme=<preset>` answers with that preset's splash
+  colours. The preset is named in the URL, not read from the session, because a
+  browser fetches the manifest without the page's cookies — so nothing about
+  who is signed in is needed, or revealed, to colour a splash screen.
+
+### What the client does
+
+- `webapp/AppShell.jsx` resolves the person's preset against the organization's
+  palette and the device, overrides the `-ch` channels in `webapp/tokens.css`
+  (which recolours the whole app), and sets `color-scheme`, the `theme-color`
+  meta (a hex — the native shell parses it for its status-bar icons, see
+  `docs/MOBILE.md`) and the manifest href.
+- Accent-derived shades are **computed, not assumed**: the operator's accent is
+  lightened until it reads AA on a dark card and canvas, the ink on the fill is
+  whichever of near-white/near-black reads better on it, and the accent tints
+  are fitted in the opposite direction. `--primary` is a FILL only;
+  `--primary-ink` is the accent as TEXT, fitted against the card, the canvas,
+  the tint and the tile.
+- `large` text zooms `:root` by 1.125 (the kit sizes its type in pixels inline,
+  so raising the root font alone changes nothing visible) and publishes
+  `--dt-zoom` so viewport-unit heights divide by it.
+- The slice is **never** written to browser storage and is cleared on sign-out:
+  a shared ward workstation must not come back up wearing the previous
+  clinician's theme. The cost is a brief flash of the organization's palette
+  while `/api/me/theme` answers, which is the right trade.
+
+### How it is tested
+
+- `tests/user-themes.test.ts` — defaults, store/read-back, audit row, another
+  user in the same org unaffected, seven rejected bodies, module off on both
+  verbs, 401 signed out, a second tenant with its own switch and rows.
+- `tests/live-no-demo-seeds.test.ts` — the slice is cleared on sign-out and
+  never reaches browser storage.
+- `scripts/contrast-check.mjs` — the whole token pair matrix for 5 presets x
+  the 8 accents an organization can pick (2065 pairs), reading `PALETTES` and
+  the pure `accentTokens()` out of `AppShell.jsx` so the static check and the
+  browser share one implementation of the contrast maths.
+- `scripts/theme-check.mjs` — the rendered counterpart: 6 presets x 2 text
+  sizes x 375/390/430 on four screens (983 checks), asserting AA for every
+  rendered text run against the colour it actually sits on, nothing painted its
+  own backdrop, >= 44px targets, >= 16px inputs, no horizontal overflow, zero
+  CSP violations and zero page errors — plus that the preset round-trips
+  through the server (a reload keeps it, a second browser as the same person
+  sees it), that following the device never rewrites the stored choice, and
+  that with the module off the section is gone and the server refuses the PUT.
+
+### Honest gaps
+
+- The manifest's `theme_color` for a light preset stays the brand blue: the
+  manifest is fetched without a session, so it cannot know the organization's
+  accent. The live top inset and status bar DO follow the accent, through the
+  `theme-color` meta.
+- `large` text is a 1.125 root zoom, not a type-scale rebuild. It is uniform
+  and keeps every phone rule, but a person who wants only bigger *text* (not
+  bigger everything) is served by the browser's own text zoom.
+- Two colour languages stay literal on purpose and are checked as
+  self-contained pairs: the ESI triage chips and the consult specialty chips
+  (`webapp/components.jsx`). So do the colour pickers themselves, the
+  synthetic-data hazard stripe and the impersonation banner.
+
+---
+
 ## Organizational (never satisfied by code)
 
 These stay *manual* controls in the compliance monitor; a named owner

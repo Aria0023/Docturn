@@ -24,7 +24,7 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
               <div style={{ flex: "1 1 180px", minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>Patient {p.initials} · Room {p.room}{p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}</div>
                 <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{p.complaint} · from {p.from}</div>
-                {p.onBehalfOf && <div data-pending-obo style={{ fontSize: 12, color: "var(--primary-ink, #1D4ED8)", fontWeight: 600, marginTop: 2 }}>For {p.onBehalfOf.name} (your care team) — accepting puts the patient on their census; only they can decline.</div>}
+                {p.onBehalfOf && <div data-pending-obo style={{ fontSize: 12, color: "var(--primary-ink)", fontWeight: 600, marginTop: 2 }}>For {p.onBehalfOf.name} (your care team) — accepting puts the patient on their census; only they can decline.</div>}
               </div>
               {!p.onBehalfOf && <Button variant="outline" size="sm" icon="x" onClick={() => onDecline && onDecline(p.id)}>Decline</Button>}
               <Button size="sm" icon="check" onClick={() => onAccept && onAccept(p.id)}>{p.onBehalfOf ? "Accept for " + String(p.onBehalfOf.name).split(",")[0] : "Accept"}</Button>
@@ -39,7 +39,7 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
       <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {incoming.length > 0 && incomingNode}
       <Card style={{ padding: 28, textAlign: "center" }}>
-        <span style={{ width: 46, height: 46, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name="stethoscope" size={22} /></span>
+        <span style={{ width: 46, height: 46, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name="stethoscope" size={22} /></span>
         <div style={{ fontSize: 15, fontWeight: 700, marginTop: 12 }}>Take patients as a hospitalist</div>
         <div style={{ fontSize: 13, color: "var(--muted-foreground)", margin: "6px auto 16px", maxWidth: 420, lineHeight: 1.5 }}>
           Start taking patients to join the rotation and get the full hospitalist workflow — accept incoming admissions, carry a census, request consults and message the care team.

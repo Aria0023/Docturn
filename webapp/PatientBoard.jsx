@@ -22,7 +22,7 @@ function AvatarStack({ lead, unit }) {
     <div style={{ display: "flex", alignItems: "center" }}>
       <Avatar initials={lead.avatar} size={30} tint="blue" />
       {unit && unit.map((u, i) => (
-        <span key={i} style={{ marginLeft: -8, border: "2px solid #fff", borderRadius: "99px", display: "inline-flex" }}>
+        <span key={i} style={{ marginLeft: -8, border: "2px solid var(--card)", borderRadius: "99px", display: "inline-flex" }}>
           <Avatar initials={u.avatar} size={26} tint={(window.TEAM_ROLE[u.role] || {}).tint || "slate"} />
         </span>
       ))}
@@ -57,10 +57,10 @@ const boardStatusOf = (st) => BOARD_STATUS[st] || { status: "offline", label: st
 function BoardReassign({ providers, onPick, label }) {
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", marginTop: 2 }}>
-      <Icon name="repeat" size={11} color="var(--primary)" style={{ position: "absolute", left: 8, pointerEvents: "none" }} />
+      <Icon name="repeat" size={11} color="var(--primary-ink)" style={{ position: "absolute", left: 8, pointerEvents: "none" }} />
       <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
         style={{ appearance: "none", WebkitAppearance: "none", height: 26, padding: "0 22px 0 24px", borderRadius: "var(--radius-md)",
-          border: "1px solid var(--border)", background: "#fff", fontSize: 11.5, fontWeight: 600, color: "var(--primary)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+          border: "1px solid var(--border)", background: "var(--card)", fontSize: 11.5, fontWeight: 600, color: "var(--primary-ink)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         <option value="">{label}</option>
         {providers.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
       </select>
@@ -120,7 +120,7 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
   return (
     <React.Fragment>
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(300px, calc(100vw - 24px))", maxWidth: "100%", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(300px, calc(100vw - 24px))", maxWidth: "100%", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", overflow: "hidden" }}>
         <div style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>Customize board</div>
           <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>Show only the sections you use — saved on this device only.</div>
@@ -132,8 +132,8 @@ function BoardCustomize({ modules, onSetModule, onClose }) {
               <button key={key} onClick={() => onSetModule(key, !on)}
                 style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", fontFamily: "var(--font-sans)" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
-                <span style={{ width: 18, height: 18, flex: "none", borderRadius: 5, border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--primary)" : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {on && <Icon name="check" size={13} color="#fff" />}
+                <span style={{ width: 18, height: 18, flex: "none", borderRadius: 5, border: `1px solid ${on ? "var(--primary)" : "var(--border)"}`, background: on ? "var(--primary)" : "var(--card)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {on && <Icon name="check" size={13} color="var(--primary-foreground)" />}
                 </span>
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 600 }}>{label}</span>
@@ -259,7 +259,7 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           {canThread && (
             <button onClick={() => window.DT.actions.openPatientThread(p.patientId)}
-              style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+              style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary-ink)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
               <Icon name="message-square" size={16} />Message team
             </button>
           )}
@@ -353,7 +353,7 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
             return (
               <button key={d} onClick={() => setDept(d)}
                 style={{ padding: "6px 13px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
-                  background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                  background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                 {d === "ALL" ? "All units" : d}
               </button>
             );
@@ -444,7 +444,7 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
               {p.patientId != null && threadsOn && (
                 <button onClick={() => window.DT.actions.openPatientThread(p.patientId)} title="Message the care team about this patient"
                   onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+                  style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary-ink)" }}>
                   <Icon name="message-square" size={15} />
                 </button>
               )}

@@ -39,8 +39,8 @@ function IntSwitch({ on, disabled, busy, onChange, label }) {
       data-int-switch={on ? "on" : "off"}
       onClick={() => { if (!disabled && !busy) onChange(!on); }}
       style={{ width: 52, height: 44, minWidth: 44, padding: 0, border: "none", background: "transparent", cursor: disabled ? "not-allowed" : busy ? "progress" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", opacity: disabled ? 0.45 : 1 }}>
-      <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "#CBD5E1", transition: "background .15s" }}>
-        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
+      <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "var(--border-strong)", transition: "background .15s" }}>
+        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transition: "left .15s" }} />
       </span>
     </button>
   );
@@ -52,7 +52,7 @@ function IntButton({ children, icon, onClick, disabled, title, primary, danger, 
     <button type="button" onClick={() => { if (!disabled) onClick(); }} disabled={disabled} title={title} aria-label={title || undefined} {...props}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", fontSize: 13.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap",
         border: primary ? "1px solid var(--primary)" : danger ? "1px solid var(--destructive)" : "1px solid var(--border)",
-        background: primary ? "var(--primary)" : "#fff", color: primary ? "#fff" : danger ? "var(--destructive)" : "var(--foreground)" }}>
+        background: primary ? "var(--primary)" : "var(--card)", color: primary ? "var(--primary-foreground)" : danger ? "var(--destructive)" : "var(--foreground)" }}>
       {icon && <Icon name={icon} size={15} />}{children}
     </button>
   );
@@ -82,10 +82,10 @@ function IntegrationCard({ card, orgName, busy, result, onToggle, onTest, onSetu
     : (card.canEnable ? "Not tested since the server started" : null);
   return (
     <div data-integration={card.id} data-status={card.status} data-enabled={card.enabled ? "1" : "0"}
-      style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 14, background: "#fff", minWidth: 0 }}>
+      style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 14, background: "var(--card)", minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
         <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-          <Icon name={card.icon || "plug"} size={18} color={card.status === "active" ? "var(--primary)" : "var(--muted-foreground)"} />
+          <Icon name={card.icon || "plug"} size={18} color={card.status === "active" ? "var(--primary-ink)" : "var(--muted-foreground)"} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -213,7 +213,7 @@ function IntegrationSetupSheet({ card, orgId, orgName, storage, onClose, onUpdat
             <div role="tablist" style={{ display: "flex", gap: 6 }}>
               {[["render", "On Render"], ["aws", "On AWS"]].map(([k, l]) => (
                 <button key={k} type="button" role="tab" aria-selected={where === k} onClick={() => setWhere(k)}
-                  style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid " + (where === k ? "var(--primary)" : "var(--border)"), background: where === k ? "#EFF6FF" : "#fff", color: where === k ? "var(--primary)" : "var(--foreground)", fontWeight: 600, fontSize: 13.5, cursor: "pointer", fontFamily: "var(--font-sans)" }}>{l}</button>
+                  style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid " + (where === k ? "var(--primary)" : "var(--border)"), background: where === k ? "var(--primary-tint)" : "var(--card)", color: where === k ? "var(--primary-ink)" : "var(--foreground)", fontWeight: 600, fontSize: 13.5, cursor: "pointer", fontFamily: "var(--font-sans)" }}>{l}</button>
               ))}
             </div>
             <IntStepList title={where === "render" ? "Render dashboard" : "AWS (SSM Parameter Store)"} steps={where === "render" ? setup.steps.render : setup.steps.aws} />
@@ -307,7 +307,7 @@ function IntegrationsPanel({ orgId, embedded }) {
   const body = (
     <div data-integrations-panel={data ? data.orgId : ""}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-        <Icon name="plug" size={18} color="var(--primary)" />
+        <Icon name="plug" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Integrations</h3>
         {data && <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{cards.filter((c) => c.status === "active").length} of {cards.length} active for {orgName}</span>}
       </div>
@@ -315,7 +315,7 @@ function IntegrationsPanel({ orgId, embedded }) {
         Each card shows what the server reports right now. Switches change this organization only and are enforced by the server; a connection can only be switched on once it is set up.
         {readOnly ? " " + INT_READONLY_NOTE + " You can see every status here." : ""}
       </p>
-      {failed && !data && <div role="alert" style={{ fontSize: 13, color: "var(--destructive)", padding: "8px 0" }}>Couldn't load integrations ({failed}). <button type="button" onClick={load} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", minHeight: 44, fontFamily: "var(--font-sans)" }}>Retry</button></div>}
+      {failed && !data && <div role="alert" style={{ fontSize: 13, color: "var(--destructive)", padding: "8px 0" }}>Couldn't load integrations ({failed}). <button type="button" onClick={load} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 600, cursor: "pointer", minHeight: 44, fontFamily: "var(--font-sans)" }}>Retry</button></div>}
       {!data && !failed && <div style={{ fontSize: 13, color: "var(--muted-foreground)", padding: "8px 0" }}>Loading from the server…</div>}
       {data && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

@@ -39,7 +39,7 @@ function DSelect({ label, icon, value, onChange, options }) {
   return (
     <div style={{ flex: 1, minWidth: 0 }}>
       {label && <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>{label}</label>}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", background: "#fff" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", background: "var(--card)" }}>
         {icon && <Icon name={icon} size={16} color="var(--muted-foreground)" />}
         <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label || undefined}
           style={{ border: "none", outline: "none", background: "transparent", fontSize: 16, minHeight: 44, fontFamily: "inherit", width: "100%", minWidth: 0, color: "var(--foreground)", cursor: "pointer" }}>
@@ -80,7 +80,7 @@ function RoleChip({ role, color }) {
   const isDev = role === "developer";
   const label = isDev ? "Developer · all orgs" : ROLE_LABEL[role] || role;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 8px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: color, background: (color || "#888") + "18", border: "1px solid " + (color || "#888") + "33", whiteSpace: "nowrap" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 8px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: color, background: (color || "var(--muted-foreground)") + "18", border: "1px solid " + (color || "var(--muted-foreground)") + "33", whiteSpace: "nowrap" }}>
       {isDev ? <Icon name="crown" size={11} color={color} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: color, flex: "none" }} />}{label}
     </span>
   );
@@ -93,7 +93,7 @@ function RoleColorEditor({ roleColors, onSetRoleColor }) {
   return (
     <Card style={{ padding: 16, marginBottom: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-        <Icon name="palette" size={16} color="var(--primary)" />
+        <Icon name="palette" size={16} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Role colors</h3>
         <span data-role-colors-scope style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· on this browser only — other devices and people keep the default colors</span>
       </div>
@@ -101,7 +101,7 @@ function RoleColorEditor({ roleColors, onSetRoleColor }) {
         {DEV_ROLES.map(([id, label]) => (
           <div key={id} style={{ position: "relative" }}>
             <button onClick={() => setOpenRole(openRole === id ? null : id)}
-              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 11px", minHeight: 44, borderRadius: "var(--radius-md)", cursor: "pointer", border: "1px solid var(--border)", background: "#fff", fontFamily: "var(--font-sans)" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 11px", minHeight: 44, borderRadius: "var(--radius-md)", cursor: "pointer", border: "1px solid var(--border)", background: "var(--card)", fontFamily: "var(--font-sans)" }}>
               <span style={{ width: 16, height: 16, borderRadius: 5, background: roleColors[id], flex: "none" }} />
               <span style={{ fontSize: 13, fontWeight: 600 }}>{label}</span>
               <Icon name="chevron-down" size={13} color="var(--muted-foreground)" />
@@ -109,11 +109,11 @@ function RoleColorEditor({ roleColors, onSetRoleColor }) {
             {openRole === id && (
               <React.Fragment>
                 <div onClick={() => setOpenRole(null)} style={{ position: "fixed", inset: 0, zIndex: 30 }} />
-                <div data-keep-cols="4" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 31, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 10, display: "grid", gridTemplateColumns: "repeat(4, 44px)", gap: 7, width: 225 }}>
+                <div data-keep-cols="4" style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 31, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 10, display: "grid", gridTemplateColumns: "repeat(4, 44px)", gap: 7, width: 225 }}>
                   {ROLE_SWATCHES.map((c) => (
                     <button key={c} onClick={() => { onSetRoleColor(id, c); setOpenRole(null); }} aria-label={"Use " + c + " for " + label}
                       style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: c, cursor: "pointer", border: roleColors[id] === c ? "2px solid var(--foreground)" : "2px solid transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {roleColors[id] === c && <Icon name="check" size={14} color="#fff" />}
+                      {roleColors[id] === c && <Icon name="check" size={14} color="var(--on-status)" />}
                     </button>
                   ))}
                 </div>
@@ -169,8 +169,8 @@ function AddUserPanel({ organizations, devUsers = [], devUsersLoaded = true, rol
       <React.Fragment>
         <RoleChip role={u.role} color={roleColors[u.role]} />
         {onImpersonate && u.role !== "developer" && <button onClick={() => onImpersonate(u)} title={"Open " + u.name + "'s portal (root access)"}
-          onMouseEnter={(e) => e.currentTarget.style.color = "var(--primary)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-          style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 12px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)", flex: "none" }}><Icon name="log-in" size={13} />Open portal</button>}
+          onMouseEnter={(e) => e.currentTarget.style.color = "var(--primary-ink)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 12px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)", flex: "none" }}><Icon name="log-in" size={13} />Open portal</button>}
         {onRemoveUser && <button onClick={() => onRemoveUser(u.id)} title="Remove user"
           onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
           style={{ width: mobile ? 44 : 28, height: mobile ? 44 : 28, marginLeft: mobile ? "auto" : undefined, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="trash-2" size={15} /></button>}
@@ -214,7 +214,7 @@ function AddUserPanel({ organizations, devUsers = [], devUsersLoaded = true, rol
               return (
                 <button key={id} type="button" onClick={() => set("role", id)} aria-pressed={on}
                   style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 13px", minHeight: 44, borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13, fontWeight: 500,
-                    border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "#EFF6FF" : "#fff", color: on ? "var(--primary)" : "var(--foreground)" }}>
+                    border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "var(--primary-tint)" : "var(--card)", color: on ? "var(--primary-ink)" : "var(--foreground)" }}>
                   <span style={{ width: 10, height: 10, borderRadius: 3, background: roleColors[id], flex: "none" }} />{label}
                 </button>
               );
@@ -283,9 +283,9 @@ function AddUserPanel({ organizations, devUsers = [], devUsersLoaded = true, rol
       {roots.length > 0 && (
         <div data-developers>
         <Card style={{ padding: 0, overflow: "hidden", marginBottom: 12, border: "1px solid var(--primary)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "10px 16px", background: "var(--primary-tint, #EFF6FF)", borderBottom: "1px solid var(--border)" }}>
-            <Icon name="crown" size={15} color="var(--primary)" />
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--primary)" }}>Developers</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "10px 16px", background: "var(--primary-tint)", borderBottom: "1px solid var(--border)" }}>
+            <Icon name="crown" size={15} color="var(--primary-ink)" />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--primary-ink)" }}>Developers</span>
             <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>· every developer account accesses every organization</span>
             <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted-foreground)" }}>{roots.length}</span>
           </div>
@@ -305,9 +305,9 @@ function AddUserPanel({ organizations, devUsers = [], devUsersLoaded = true, rol
           return (
             <Card key={code} style={{ padding: 0, overflow: "hidden" }}>
               <button onClick={() => setCollapsed((c) => Object.assign({}, c, { [code]: !c[code] }))}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px 11px 13px", border: "none", borderLeft: `3px solid ${accent}`, background: isOpen ? tintFor(accent) : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px 11px 13px", border: "none", borderLeft: `3px solid ${accent}`, background: isOpen ? tintFor(accent) : "var(--card)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flex: "none" }} />
-                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: accent, color: "#fff", fontWeight: 700, fontSize: 11.5, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code.slice(0, 2)}</span>
+                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: accent, color: "var(--on-status)", fontWeight: 700, fontSize: 11.5, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code.slice(0, 2)}</span>
                 <div style={{ minWidth: 0, flex: "1 1 0" }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2 }}>{orgName(code)}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, marginTop: 1 }}>
@@ -359,8 +359,8 @@ function ModToggle({ on, disabled, onChange, label }) {
   return (
     <button type="button" onClick={() => !disabled && onChange(!on)} role="switch" aria-checked={on} aria-label={label} disabled={disabled}
       style={{ width: 52, height: 44, minWidth: 44, border: "none", background: "transparent", cursor: disabled ? "not-allowed" : "pointer", padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", opacity: disabled ? 0.45 : 1, flex: "none" }}>
-      <span style={{ display: "block", width: 42, height: 24, borderRadius: 99, padding: 2, background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
-        <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
+      <span style={{ display: "block", width: 42, height: 24, borderRadius: 99, padding: 2, background: on ? "var(--primary)" : "var(--border-strong)", transition: "background .15s" }}>
+        <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
       </span>
     </button>
   );
@@ -517,7 +517,7 @@ function SystemHealthCard({ health, onRefresh }) {
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-        <Icon name="server" size={18} color="var(--primary)" />
+        <Icon name="server" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>System health</h3>
         <span data-health-status style={{ marginLeft: "auto" }}>{badge}</span>
       </div>
@@ -570,7 +570,7 @@ function ClusterCard({ cluster, moduleOn, onRefresh }) {
      {/* Card passes no attributes through; the probes read this div. */}
      <div data-cluster-card data-cluster-state={state}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-        <Icon name="globe" size={18} color="var(--primary)" />
+        <Icon name="globe" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Cluster</h3>
         <span data-cluster-status style={{ marginLeft: "auto" }}>{badge}</span>
       </div>
@@ -638,12 +638,12 @@ function OrgAutocomplete({ value, onText, onPick }) {
         placeholder="Start typing — e.g. Cedars Sinai"
         help="Auto-completes the official name + location from the web." />
       {open && items.length > 0 && (
-        <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0, top: 72, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-lg)", maxHeight: 240, overflowY: "auto" }}>
+        <div style={{ position: "absolute", zIndex: 70, left: 0, right: 0, top: 72, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-lg)", maxHeight: 240, overflowY: "auto" }}>
           {items.map(function (it, i) {
             return (
               <button key={i} type="button" onClick={function () { onPick(it); setOpen(false); }}
-                style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", padding: "9px 12px", border: "none", borderTop: i ? "1px solid var(--border)" : "none", background: "#fff", cursor: "pointer" }}>
-                <Icon name="building-2" size={15} color="var(--primary)" />
+                style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", padding: "9px 12px", border: "none", borderTop: i ? "1px solid var(--border)" : "none", background: "var(--card)", cursor: "pointer" }}>
+                <Icon name="building-2" size={15} color="var(--primary-ink)" />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{it.name}</span>
                   <span style={{ display: "block", fontSize: 12, color: "var(--muted-foreground)" }}>{[it.city, it.state].filter(Boolean).join(", ")}{it.code ? " · " + it.code : ""}</span>
@@ -750,10 +750,10 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
   return (
     <PageWrap>
       {/* Cross-tenant banner */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 18, borderRadius: "var(--radius-md)", background: "#1E293B", color: "#fff" }}>
-        <Icon name="globe" size={16} color="#7DD3FC" />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 18, borderRadius: "var(--radius-md)", background: "var(--inverse)", color: "var(--inverse-foreground)" }}>
+        <Icon name="globe" size={16} color="var(--inverse-accent)" />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Platform operator — full cross-tenant access</span>
-        <span style={{ fontSize: 12, color: "#94A3B8" }}>Changes made here, and every read of a tenant's data, are recorded in the server's audit trail.</span>
+        <span style={{ fontSize: 12, color: "var(--inverse-muted)" }}>Changes made here, and every read of a tenant's data, are recorded in the server's audit trail.</span>
       </div>
 
       <div style={{ display: "flex", gap: 14, marginBottom: 22, flexWrap: "wrap" }}>
@@ -798,7 +798,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                 onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"}
                 onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", padding: "13px 16px", borderTop: i ? "1px solid var(--border)" : "none", transition: "background .12s" }}>
-                <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                   {o.code.slice(0, 2)}
                 </span>
                 <div style={{ flex: "1 1 140px", minWidth: 0 }}>
@@ -861,7 +861,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
                 onPick={(it) => setTform({ ...tform, name: it.name, code: it.code || tform.code, timezone: it.timezone || tform.timezone, tzSource: it.timezone ? "lookup" : tform.tzSource, city: it.city || null, state: it.state || null })} />
               {(tform.city || tform.state) && (
                 <div data-tenant-location style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted-foreground)" }}>
-                  <Icon name="map-pin" size={14} color="var(--primary)" />
+                  <Icon name="map-pin" size={14} color="var(--primary-ink)" />
                   <span>Location from the hospital lookup: <b style={{ color: "var(--foreground)" }}>{[tform.city, tform.state].filter(Boolean).join(", ")}</b> — saved with the organization.</span>
                 </div>
               )}

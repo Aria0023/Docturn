@@ -23,9 +23,9 @@ function MfaShell({ appName, children }) {
   const mobile = useIsMobile();
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: mobile ? "20px 14px" : 28 }}>
-      <div style={{ width: "100%", maxWidth: 440, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 18px" : "30px 30px" }}>
+      <div style={{ width: "100%", maxWidth: 440, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 18px" : "30px 30px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 18 }}>
-          <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
+          <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "var(--primary-foreground)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 19 }}>{brand.charAt(0).toUpperCase()}</span>
           <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{brand}</span>
         </div>
         {children}
@@ -88,7 +88,7 @@ function MfaEnrollScreen({ me, appName, onDone, onSignOut }) {
   return (
     <MfaShell appName={appName}>
       {/* The banner that explains why the user is here, not on their dashboard. */}
-      <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 13px", borderRadius: "var(--radius-md)", background: "var(--primary-tint, #EFF6FF)", border: "1px solid var(--primary)", color: "var(--primary)", marginBottom: 18 }}>
+      <div role="status" style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 13px", borderRadius: "var(--radius-md)", background: "var(--primary-tint)", border: "1px solid var(--primary)", color: "var(--primary-ink)", marginBottom: 18 }}>
         <Icon name="shield-check" size={18} style={{ flex: "none", marginTop: 1 }} />
         <div>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Your role requires two-factor authentication</div>
@@ -122,10 +122,10 @@ function MfaEnrollScreen({ me, appName, onDone, onSignOut }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--secondary)", border: "1px solid var(--border)" }}>
               <Icon name="key-round" size={16} color="var(--muted-foreground)" />
               <code data-testid="mfa-secret" style={{ flex: 1, fontSize: 14, letterSpacing: ".08em", wordBreak: "break-all", fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)" }}>{setup ? dtGroupSecret(setup.secret) : (err ? "—" : "Generating key…")}</code>
-              {setup && <button onClick={copySecret} title="Copy key" style={{ border: "1px solid var(--border)", background: "#fff", borderRadius: "var(--radius-md)", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--foreground)" }}><Icon name={copied ? "check" : "copy"} size={15} /></button>}
+              {setup && <button onClick={copySecret} title="Copy key" style={{ border: "1px solid var(--border)", background: "var(--card)", borderRadius: "var(--radius-md)", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--foreground)" }}><Icon name={copied ? "check" : "copy"} size={15} /></button>}
             </div>
             {setup && setup.otpauthUrl && (
-              <a href={setup.otpauthUrl} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12.5, fontWeight: 600, color: "var(--primary)", textDecoration: "none" }}>
+              <a href={setup.otpauthUrl} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 12.5, fontWeight: 600, color: "var(--primary-ink)", textDecoration: "none" }}>
                 <Icon name="smartphone" size={14} />Open in authenticator app
               </a>
             )}
@@ -143,7 +143,7 @@ function MfaEnrollScreen({ me, appName, onDone, onSignOut }) {
             <Icon name="lock" size={13} />Nothing else in {appName || "DocTurn"} is available until this is done.
           </div>
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--muted-foreground)" }}>
-            Not now? <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Sign out</button>.
+            Not now? <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Sign out</button>.
           </div>
         </div>
       )}
@@ -198,7 +198,7 @@ function MfaChallengeScreen({ appName, challenge, onCancel }) {
         {smsNote && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{smsNote}</div>}
         <Button full size="lg" icon="log-in" onClick={submit} style={{ opacity: (busy || code.replace(/\s+/g, "").length < 6) ? 0.55 : 1, pointerEvents: busy ? "none" : "auto" }}>{busy ? "Verifying…" : "Verify and sign in"}</Button>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--muted-foreground)" }}>
-          <button onClick={sms} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Text me a code instead</button>
+          <button onClick={sms} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Text me a code instead</button>
           <button onClick={onCancel} style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Back to sign in</button>
         </div>
       </div>

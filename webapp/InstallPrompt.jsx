@@ -60,14 +60,14 @@ function InstallPrompt() {
 
   return (
     <React.Fragment>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--primary)", color: "#fff" }}>
-        <Icon name="smartphone" size={18} color="#fff" />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: "var(--primary)", color: "var(--primary-foreground)" }}>
+        <Icon name="smartphone" size={18} color="var(--primary-foreground)" />
         <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600 }}>Install DocTurn on your device — one tap for a full-screen app.</div>
         <button onClick={install}
-          style={{ flex: "none", padding: "7px 14px", borderRadius: "var(--radius-md)", border: "none", background: "#fff", color: "var(--primary)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Install</button>
+          style={{ flex: "none", padding: "7px 14px", borderRadius: "var(--radius-md)", border: "none", background: "var(--card)", color: "var(--primary-ink)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Install</button>
         <button onClick={dismiss} title="Dismiss"
-          style={{ flex: "none", width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Icon name="x" size={16} color="#fff" />
+          style={{ flex: "none", width: 30, height: 30, borderRadius: "var(--radius-md)", border: "none", background: "transparent", color: "var(--primary-foreground)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon name="x" size={16} color="var(--primary-foreground)" />
         </button>
       </div>
       {iosHelp && (

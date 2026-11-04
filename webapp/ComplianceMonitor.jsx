@@ -104,7 +104,7 @@ function CmAttestEditor({ control, onSave }) {
         <div>
           <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Status</label>
           <select value={status} onChange={(e) => setStatus(e.target.value)} data-testid={"attest-status-" + control.id}
-            style={{ width: "100%", height: 40, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--input)", background: "#fff", fontSize: 14, fontFamily: "inherit", color: "var(--foreground)" }}>
+            style={{ width: "100%", height: 40, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--input)", background: "var(--card)", fontSize: 14, fontFamily: "inherit", color: "var(--foreground)" }}>
             {CM_ATTEST_OPTIONS.map(function (o) { return <option key={o[0]} value={o[0]}>{o[1]}</option>; })}
           </select>
         </div>
@@ -241,7 +241,7 @@ function CmControlRow({ control, policy, onDraft, onSave }) {
           </div>
           {control.status !== "pass" && (
             <div style={{ display: "flex", gap: 7, alignItems: "flex-start", marginTop: 8, fontSize: 12.5, lineHeight: 1.5, color: "var(--muted-foreground)" }}>
-              <Icon name="wrench" size={13} color="var(--primary)" style={{ marginTop: 2, flex: "none" }} />
+              <Icon name="wrench" size={13} color="var(--primary-ink)" style={{ marginTop: 2, flex: "none" }} />
               <span><strong style={{ color: "var(--foreground)" }}>Fix:</strong> {control.remediation}</span>
             </div>
           )}
@@ -335,14 +335,14 @@ function ComplianceMonitor() {
       <SettingsTabs />
 
       {/* The honest banner. Deliberately first, deliberately unmissable. */}
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 16px", marginBottom: 18, borderRadius: "var(--radius-md)", background: "#1E293B", color: "#fff" }}>
-        <Icon name="shield-alert" size={18} color="#FDBA74" style={{ marginTop: 1, flex: "none" }} />
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "14px 16px", marginBottom: 18, borderRadius: "var(--radius-md)", background: "var(--inverse)", color: "var(--inverse-foreground)" }}>
+        <Icon name="shield-alert" size={18} color="var(--inverse-warning)" style={{ marginTop: 1, flex: "none" }} />
         <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, marginBottom: 3 }}>These checks cover technical safeguards only — they are not a certification.</div>
-          <span style={{ color: "#CBD5E1" }}>
+          <span style={{ color: "var(--inverse-muted)" }}>
             HIPAA has no certification, and SOC 2 is an attestation only a licensed CPA firm can issue. Business Associate Agreements,
             the security risk analysis, workforce training and contingency planning are organizational controls that no software can
-            verify — they appear below as <strong style={{ color: "#fff" }}>“Needs human”</strong> until a named owner attests to them.
+            verify — they appear below as <strong style={{ color: "var(--inverse-foreground)" }}>“Needs human”</strong> until a named owner attests to them.
             Everything marked Pass was measured from this running system at load time; nothing on this page is hardcoded.
           </span>
         </div>

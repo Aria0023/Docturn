@@ -23,8 +23,8 @@ function Toggle({ on, onClick, label, disabled }) {
   return (
     <button type="button" role="switch" aria-checked={!!on} aria-label={label} onClick={() => { if (!disabled) onClick(); }} disabled={disabled}
       style={{ width: 52, height: 44, minWidth: 44, padding: 0, border: "none", background: "transparent", cursor: disabled ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", opacity: disabled ? 0.5 : 1 }}>
-      <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "#CBD5E1", transition: "background .2s" }}>
-        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
+      <span style={{ position: "relative", display: "block", width: 44, height: 26, borderRadius: 99, background: on ? "var(--status-accepted)" : "var(--border-strong)", transition: "background .2s" }}>
+        <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
       </span>
     </button>
   );
@@ -72,7 +72,7 @@ function OrgSettings() {
     <PageWrap>
       <SettingsTabs />
       <div data-org-header={org.code} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 22 }}>
-        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(org.code || "").slice(0, 2)}</span>
+        <span style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(org.code || "").slice(0, 2)}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
           {isDev ? (
             <React.Fragment>
@@ -100,7 +100,7 @@ function OrgSettings() {
         {/* Assignment & round-robin rules */}
         <Card style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
-            <Icon name="route" size={18} color="var(--primary)" />
+            <Icon name="route" size={18} color="var(--primary-ink)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Assignment &amp; rotation</h3>
           </div>
           <Field label="Assignment timeout (minutes)" icon="timer" value={String(s.timeout)} disabled={!canEdit} onChange={(v) => a.setSetting("timeout", parseInt(v.replace(/[^0-9]/g, ""), 10) || 0)}
@@ -126,7 +126,7 @@ function OrgSettings() {
         {/* Message retention (server-enforced purge, audited) */}
         <Card style={{ padding: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <Icon name="clock" size={18} color="var(--primary)" />
+            <Icon name="clock" size={18} color="var(--primary-ink)" />
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Message retention</h3>
           </div>
           <MessageRetentionBody st={st} a={a} canEdit={canEdit} />
@@ -180,7 +180,7 @@ function ShiftTypesCard({ canEdit }) {
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <Icon name="clock" size={18} color="var(--primary)" />
+        <Icon name="clock" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Shift types</h3>
       </div>
       <p style={{ fontSize: 12, color: "var(--muted-foreground)", margin: "0 0 4px", lineHeight: 1.45 }}>
@@ -231,7 +231,7 @@ function EhrDeepLinkCard({ canEdit = true }) {
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <Icon name="external-link" size={18} color="var(--primary)" />
+        <Icon name="external-link" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Open in EHR</h3>
         {cfg && cfg.configured && moduleOn && <Badge status="accepted" icon="circle">Active</Badge>}
         {cfg && !moduleOn && <Badge status="offline">Module off</Badge>}
@@ -240,14 +240,14 @@ function EhrDeepLinkCard({ canEdit = true }) {
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
         {Object.keys(presets).map((k) => (
           <button key={k} onClick={() => applyPreset(k)} title={presets[k].note}
-            style={{ padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (template === presets[k].template ? "var(--primary)" : "var(--border)"), background: template === presets[k].template ? "#EFF6FF" : "#fff", color: template === presets[k].template ? "var(--primary)" : "var(--foreground)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}>{presets[k].label}</button>
+            style={{ padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid " + (template === presets[k].template ? "var(--primary)" : "var(--border)"), background: template === presets[k].template ? "var(--primary-tint)" : "var(--card)", color: template === presets[k].template ? "var(--primary-ink)" : "var(--foreground)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)" }}>{presets[k].label}</button>
         ))}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "end" }}>
         <div>
           <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Vendor</label>
           <select value={vendor} onChange={(e) => { setVendor(e.target.value); setDirty(true); }}
-            style={{ height: 40, width: "100%", padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            style={{ height: 40, width: "100%", padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "var(--card)", cursor: "pointer" }}>
             <option value="epic">Epic</option>
             <option value="cerner">Cerner</option>
             <option value="custom">Custom</option>
@@ -260,7 +260,7 @@ function EhrDeepLinkCard({ canEdit = true }) {
         const note = sel ? presets[sel].note : null;
         const placeholder = /YOUR-[A-Z0-9-]*HOST/i.test(template);
         return (
-          <div style={{ marginTop: 8, fontSize: 11.5, color: placeholder ? "#92400E" : "var(--muted-foreground)", lineHeight: 1.45 }}>
+          <div style={{ marginTop: 8, fontSize: 11.5, color: placeholder ? "var(--status-pending-fg)" : "var(--muted-foreground)", lineHeight: 1.45 }}>
             {placeholder ? "Replace the YOUR-…-HOST placeholder with the launch URL your EHR team provides — the button stays hidden until you do. " : ""}
             {note || "The exact URL scheme and parameters are issued by your health system's Epic / Cerner team."}
             {preview && <div style={{ marginTop: 4, fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>Preview: {preview}</div>}
@@ -355,7 +355,7 @@ function MessageRetentionBody({ st, a, canEdit = true }) {
   const days = st.orgRetentionDays || 0;
   const moduleOn = st.modules ? st.modules["ops.retention"] !== false : !(info && info.moduleEnabled === false);
   const floor = (info && info.minimumRecommendedDays) || 7;
-  const selectStyle = { height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "#fff", cursor: canEdit ? "pointer" : "not-allowed", maxWidth: "100%" };
+  const selectStyle = { height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "var(--card)", cursor: canEdit ? "pointer" : "not-allowed", maxWidth: "100%" };
   const readOnly = canEdit ? null : <span data-readonly-note style={{ fontWeight: 600 }}> {DIRECTOR_ONLY_NOTE}</span>;
   const note = { fontSize: 12, lineHeight: 1.45, margin: "10px 0 0", display: "flex", gap: 7, alignItems: "flex-start" };
 

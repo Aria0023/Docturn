@@ -53,14 +53,14 @@ function CustomizableDashboard({ role, widgets, bare }) {
               {adding && (
                 <React.Fragment>
                   <div onClick={() => setAdding(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 260, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 6 }}>
+                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: 260, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 6 }}>
                     {hiddenWidgets.map((id) => (
                       <button key={id} onClick={() => { a.toggleDashWidget(role, id); setAdding(false); }}
                         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                         style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600 }}>
                         <Icon name={byId[id].icon || "square"} size={15} color="var(--muted-foreground)" />
                         <span style={{ flex: 1, minWidth: 0 }}>{byId[id].label}</span>
-                        <Icon name="plus" size={14} color="var(--primary)" />
+                        <Icon name="plus" size={14} color="var(--primary-ink)" />
                       </button>
                     ))}
                   </div>
@@ -95,11 +95,11 @@ function CustomizableDashboard({ role, widgets, bare }) {
             {editing && (
               <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 12px", marginBottom: 8, background: "var(--secondary)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", cursor: "grab" }}>
                 <Icon name="grip-vertical" size={15} color="var(--muted-foreground)" />
-                <Icon name={w.icon || "square"} size={15} color="var(--primary)" />
+                <Icon name={w.icon || "square"} size={15} color="var(--primary-ink)" />
                 <span style={{ fontSize: 13, fontWeight: 700 }}>{w.label}</span>
                 <button onClick={() => a.toggleDashWidget(role, id)} title="Remove panel"
                   onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+                  style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", color: "var(--muted-foreground)", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                   <Icon name="eye-off" size={13} />Remove
                 </button>
               </div>

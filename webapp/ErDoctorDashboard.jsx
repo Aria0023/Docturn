@@ -43,10 +43,10 @@ function ConsultPanel({ service, roster, pool, members, onAddMember, onRemoveMem
   const r = roster || {};
   const addable = (pool || []).filter((m) => !members.some((x) => x.id === m.id || (m.userId && x.userId === m.userId)));
   return (
-    <div data-consult-panel={service} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "#fff", overflow: "hidden" }}>
+    <div data-consult-panel={service} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--card)", overflow: "hidden" }}>
       {/* header band: service + on-call provider — tinted by specialty */}
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: (window.specialtyColor(service) || {}).bg || "var(--secondary)", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${(window.specialtyColor(service) || {}).color || "var(--primary)"}` }}>
-        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "var(--on-status)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="stethoscope" size={15} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -78,7 +78,7 @@ function ConsultPanel({ service, roster, pool, members, onAddMember, onRemoveMem
             ))}
             {addable.length > 0 && (
               <button onClick={() => setAdding(!adding)}
-                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "#fff", color: "var(--primary)" }}>
+                style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "var(--card)", color: "var(--primary-ink)" }}>
                 <Icon name={adding ? "x" : "plus"} size={12} />{adding ? "Close" : "Add PA / NP"}
               </button>
             )}
@@ -89,11 +89,11 @@ function ConsultPanel({ service, roster, pool, members, onAddMember, onRemoveMem
           <div data-midlevel-picker style={{ display: "flex", flexDirection: "column", gap: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", padding: 6, marginLeft: mobile ? 0 : 68 }}>
             {addable.map((m) => (
               <button key={m.id} onClick={() => { onAddMember(m); if (addable.length === 1) setAdding(false); }}
-                onMouseEnter={(e) => e.currentTarget.style.background = "#fff"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                onMouseEnter={(e) => e.currentTarget.style.background = "var(--card)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 9px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", textAlign: "left" }}>
                 <Avatar initials={m.avatar} size={26} tint={(window.TEAM_ROLE[m.role] || {}).tint || "slate"} />
                 <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>{m.name}<RolePill role={m.role} /></span>
-                <Icon name="plus" size={14} color="var(--primary)" />
+                <Icon name="plus" size={14} color="var(--primary-ink)" />
               </button>
             ))}
           </div>
@@ -116,7 +116,7 @@ function ReassignSelect({ providers, onPick, mobile }) {
       <Icon name="repeat" size={13} color="var(--muted-foreground)" style={{ position: "absolute", left: 10, pointerEvents: "none" }} />
       <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
         style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 32, maxWidth: "100%", minWidth: 0, padding: "0 26px 0 28px", borderRadius: "var(--radius-md)",
-          border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 12.5, fontWeight: 600, color: "var(--foreground)",
+          border: "1px solid var(--border)", background: "var(--card)", fontSize: mobile ? 16 : 12.5, fontWeight: 600, color: "var(--foreground)",
           fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         <option value="">Reassign…</option>
         {providers.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
@@ -356,7 +356,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                     <button key={n} type="button" onClick={() => setFields({ ...fields, acuity: n })}
                       title={"ESI " + n + " · " + e.name} aria-label={"ESI " + n + " · " + e.name} aria-pressed={on}
                       style={{ flex: 1, minWidth: mobile ? 0 : undefined, minHeight: mobile ? 44 : undefined, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: mobile ? "center" : undefined, gap: 2, padding: "7px 4px", borderRadius: "var(--radius-md)", cursor: "pointer", fontFamily: "var(--font-sans)",
-                        border: `1px solid ${on ? e.dot : "var(--border)"}`, background: on ? e.bg : "#fff", color: on ? e.fg : "var(--muted-foreground)" }}>
+                        border: `1px solid ${on ? e.dot : "var(--border)"}`, background: on ? e.bg : "var(--card)", color: on ? e.fg : "var(--muted-foreground)" }}>
                       <span style={{ fontSize: mobile ? 16 : 14, fontWeight: 800 }}>{n}</span>
                       {!mobile && <span style={{ fontSize: 9.5, fontWeight: 600, lineHeight: 1.1, textAlign: "center" }}>{e.name}</span>}
                     </button>
@@ -385,9 +385,9 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
           </div>
 
           {mode === "quick" ? (
-            <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: "var(--radius-md)", padding: 14, display: "flex", gap: 11, alignItems: "flex-start" }}>
-              <Icon name="route" size={18} color="var(--primary)" />
-              <div style={{ fontSize: 13, color: "#1e3a8a", lineHeight: 1.5 }} data-testid="rr-hint">
+            <div style={{ background: "var(--primary-tint)", border: "1px solid var(--status-active-rim)", borderRadius: "var(--radius-md)", padding: 14, display: "flex", gap: 11, alignItems: "flex-start" }}>
+              <Icon name="route" size={18} color="var(--primary-ink)" />
+              <div style={{ fontSize: 13, color: "var(--status-active-fg)", lineHeight: 1.5 }} data-testid="rr-hint">
                 {rrStatus.mode === "sequential"
                   ? <React.Fragment>Routes <b>in rotation order</b> to the next hospitalist on a round‑robin shift with room under their cap{specialty ? <React.Fragment> (preferring {specialty})</React.Fragment> : null}.</React.Fragment>
                   : <React.Fragment>Routes to the <b>lowest‑census</b> hospitalist on a round‑robin shift with room under their cap{specialty ? <React.Fragment> (preferring {specialty})</React.Fragment> : null}.</React.Fragment>}{" "}
@@ -404,7 +404,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
               {providers.map((p) => (
                 <button key={p.id} onClick={() => setManual(p.id)}
                   style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: "var(--radius-md)", cursor: "pointer", textAlign: "left",
-                    border: `1px solid ${manualId === p.id ? "var(--primary)" : "var(--border)"}`, background: manualId === p.id ? "#EFF6FF" : "#fff" }}>
+                    border: `1px solid ${manualId === p.id ? "var(--primary)" : "var(--border)"}`, background: manualId === p.id ? "var(--primary-tint)" : "var(--card)" }}>
                   <Avatar initials={p.avatar} size={32} tint={p.working ? "emerald" : "slate"} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{p.name}</div>
@@ -422,7 +422,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
               <Icon name="users-round" size={15} color="var(--muted-foreground)" />
               <span style={{ fontSize: 13, fontWeight: 600 }}>Consult services</span>
               <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>optional · select multiple</span>
-              {onToggleService && <button onClick={() => setMgmt((v) => !v)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--border)", background: mgmt ? "var(--secondary)" : "#fff", borderRadius: "var(--radius-md)", padding: "4px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", color: "var(--foreground)" }}><Icon name={mgmt ? "check" : "sliders-horizontal"} size={12} />{mgmt ? "Done" : "Customize"}</button>}
+              {onToggleService && <button onClick={() => setMgmt((v) => !v)} style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, border: "1px solid var(--border)", background: mgmt ? "var(--secondary)" : "var(--card)", borderRadius: "var(--radius-md)", padding: "4px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", color: "var(--foreground)" }}><Icon name={mgmt ? "check" : "sliders-horizontal"} size={12} />{mgmt ? "Done" : "Customize"}</button>}
             </div>
 
             {mgmt && (
@@ -435,7 +435,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                     return (
                       <button key={s} onClick={() => onToggleService(s)} title={shown ? "Hide from picker" : "Show in picker"}
                         style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)",
-                          border: `1px solid ${shown ? c.color : "var(--border)"}`, background: shown ? c.bg : "#fff", color: shown ? c.color : "var(--muted-foreground)", opacity: shown ? 1 : 0.6 }}>
+                          border: `1px solid ${shown ? c.color : "var(--border)"}`, background: shown ? c.bg : "var(--card)", color: shown ? c.color : "var(--muted-foreground)", opacity: shown ? 1 : 0.6 }}>
                         <Icon name={shown ? "eye" : "eye-off"} size={11} />{s}
                       </button>
                     );
@@ -459,7 +459,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-full)",
                       fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", whiteSpace: "nowrap", transition: "all .12s",
                       border: `1px solid ${c.color}`, background: on ? c.color : c.bg,
-                      color: on ? "#fff" : c.color, boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                      color: on ? "var(--on-status)" : c.color, boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                     {on ? <Icon name="check" size={12} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />} {s}
                   </button>
                 );
@@ -493,7 +493,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
     return { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "9px 10px",
       borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13, fontWeight: 500,
       border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
-      background: active ? "#EFF6FF" : "#fff", color: active ? "var(--primary)" : "var(--foreground)" };
+      background: active ? "var(--primary-tint)" : "var(--card)", color: active ? "var(--primary-ink)" : "var(--foreground)" };
   }
 }
 

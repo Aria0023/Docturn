@@ -31,7 +31,7 @@ function erReadWhy(err) {
 }
 
 function ErStat({ label, value, icon, tint, sub }) {
-  const tints = { blue: ["#DBEAFE", "var(--primary)"], emerald: ["var(--status-accepted-bg)", "var(--status-accepted)"], amber: ["var(--status-pending-bg)", "var(--status-pending)"], slate: ["var(--status-neutral-bg)", "var(--status-neutral)"] };
+  const tints = { blue: ["var(--status-active-bg)", "var(--primary)"], emerald: ["var(--status-accepted-bg)", "var(--status-accepted)"], amber: ["var(--status-pending-bg)", "var(--status-pending)"], slate: ["var(--status-neutral-bg)", "var(--status-neutral)"] };
   const [bg, fg] = tints[tint] || tints.blue;
   return (
     <Card style={{ padding: 16, flex: 1, minWidth: 0 }}>
@@ -51,7 +51,7 @@ function ErShiftSelect({ shifts, value, onChange, mobile }) {
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
       <select value={value} onChange={(e) => onChange(e.target.value)}
-        style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 28, maxWidth: "100%", padding: "0 24px 0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 12, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+        style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 28, maxWidth: "100%", padding: "0 24px 0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontSize: mobile ? 16 : 12, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         {shifts.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
       </select>
       <Icon name="chevron-down" size={12} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
@@ -153,7 +153,7 @@ function ErRosterPanel({ roster, error, shifts, onSetOnShift, onSetShift, onMana
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-        <Icon name="ambulance" size={18} color="var(--primary)" />
+        <Icon name="ambulance" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>ER physicians</h3>
         <span data-er-roster-count style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{roster ? "· " + roster.onShift + " of " + list.length + " on shift" : "· " + erReadWhy(error)}</span>
         {onManagePeople && <span style={{ marginLeft: "auto" }}><Button size="sm" variant="outline" icon="users" onClick={onManagePeople}>Manage in People</Button></span>}
@@ -169,7 +169,7 @@ function ErRosterPanel({ roster, error, shifts, onSetOnShift, onSetShift, onMana
               <ErShiftSelect shifts={[{ id: "", label: "Shift not set" }].concat(shiftOpts)} value={p.shiftType || ""} onChange={(sid) => { if (sid) onSetShift(p.userId, sid); }} mobile={mobile} />
               <button onClick={() => onSetOnShift(p.userId, !p.onShift)} title={p.onShift ? "End shift" : "Start shift"} aria-pressed={p.onShift}
                 style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 11px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
-                  border: "1px solid var(--border)", background: p.onShift ? "var(--status-accepted-bg)" : "#fff", color: p.onShift ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
+                  border: "1px solid var(--border)", background: p.onShift ? "var(--status-accepted-bg)" : "var(--card)", color: p.onShift ? "var(--status-accepted)" : "var(--muted-foreground)" }}>
                 <Icon name={p.onShift ? "toggle-right" : "toggle-left"} size={13} />{p.onShift ? "On shift" : "Off"}
               </button>
             </React.Fragment>
@@ -178,11 +178,11 @@ function ErRosterPanel({ roster, error, shifts, onSetOnShift, onSetShift, onMana
           // Off-shift rows are marked by the slate avatar, the offline dot, the
           // "Off" state and a grey surface — not by fading the row, which took
           // its text to 2.6:1 (A.CON-SHO-53).
-          <div key={p.userId} data-er-physician={p.userId} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: p.onShift ? "#fff" : "var(--secondary)" }}>
+          <div key={p.userId} data-er-physician={p.userId} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "11px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: p.onShift ? "var(--card)" : "var(--secondary)" }}>
             <div style={{ position: "relative", flex: "none" }}>
               <Avatar initials={avatar} size={38} tint={p.onShift ? "blue" : "slate"} />
               {/* display:flex so the dot sits on the avatar rim, not 10px up in a line box */}
-              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.onShift ? "online" : "offline"} /></span>
+              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid var(--card)", borderRadius: 99 }}><StatusDot status={p.onShift ? "online" : "offline"} /></span>
             </div>
             <div style={{ flex: "1 1 0", minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.displayName}</div>
@@ -205,7 +205,7 @@ function ErRecentIntakesPanel({ sent }) {
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <Icon name="activity" size={17} color="var(--primary)" />
+        <Icon name="activity" size={17} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Recent intakes</h3>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
@@ -233,7 +233,7 @@ function ErOpsPanel({ onBroadcasts }) {
   return (
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <Icon name="megaphone" size={17} color="var(--primary)" />
+        <Icon name="megaphone" size={17} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>ER operations</h3>
       </div>
       <p style={{ fontSize: 12.5, color: "var(--muted-foreground)", margin: "0 0 12px" }}>Send a targeted alert or review acknowledgement tracking.</p>
