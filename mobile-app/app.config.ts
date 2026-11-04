@@ -40,7 +40,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       NSMicrophoneUsageDescription: "DocTurn uses the microphone to record a voice message.",
       // Lets the page's service worker run inside the WebView (iOS allows it
       // only for app-bound domains); the shell never navigates elsewhere.
-      WKAppBoundDomains: host ? [host] : [],
+      // HTTPS hosts only, without a port (a development build on http://
+      // must not be limited to app-bound domains — src/shell/config.ts).
+      ...(https && host ? { WKAppBoundDomains: [host.replace(/:\d+$/, "")] } : {}),
     },
     privacyManifests: {
       NSPrivacyTracking: false,

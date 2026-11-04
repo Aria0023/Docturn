@@ -7,7 +7,7 @@ import * as Notifications from "expo-notifications";
 import { WebView } from "react-native-webview";
 import type { ShouldStartLoadRequest, WebViewErrorEvent, WebViewMessageEvent, WebViewNavigation } from "react-native-webview/lib/WebViewTypes";
 import { callShellScript, flagScript, parseShellMessage } from "./src/shell/bridge";
-import { API_BASE_URL, API_HOST, APP_VERSION, BRAND_COLOR, PLATFORM, USER_AGENT_SUFFIX } from "./src/shell/config";
+import { API_BASE_URL, API_HOST, APP_BOUND_DOMAINS, APP_VERSION, BRAND_COLOR, PLATFORM, USER_AGENT_SUFFIX } from "./src/shell/config";
 import { linkTarget, pushTarget, sameHost, startUrl, type OpenTarget } from "./src/shell/links";
 import { OfflinePage } from "./src/shell/OfflinePage";
 import { clearDelivered, ensureChannels, getPermission, getToken, installForegroundHandler, requestPermission, responseTitle } from "./src/shell/push";
@@ -131,6 +131,7 @@ function Shell() {
 
   const onShouldStart = useCallback((req: ShouldStartLoadRequest) => {
     if (sameHost(req.url, API_HOST)) return true;
+    if (/^(about|blob|data):/i.test(req.url)) return true; // in-document (attachment previews, blob-backed views)
     if (/^(https?|mailto|tel|sms):/i.test(req.url)) Linking.openURL(req.url).catch(() => {});
     return false; // everything else leaves the shell: the system browser / dialer / mail
   }, []);
@@ -192,14 +193,14 @@ function Shell() {
             allowsBackForwardNavigationGestures={false}
             setBuiltInZoomControls={false}
             textZoom={100}
-            bounces={false}
             overScrollMode="never"
             contentInsetAdjustmentBehavior="never"
             automaticallyAdjustContentInsets={false}
-            pullToRefreshEnabled // iOS only (react-native-webview); Android relies on the error page's Try again
+            pullToRefreshEnabled // iOS only (react-native-webview; needs the scroll view's bounce); Android relies on the error page's Try again
             // Lets the page's service worker run inside WKWebView (iOS requires
-            // app-bound domains for it); WKAppBoundDomains is set in app.config.ts.
-            limitsNavigationsToAppBoundDomains
+            // app-bound domains for it); WKAppBoundDomains is set in app.config.ts
+            // under the same HTTPS condition.
+            limitsNavigationsToAppBoundDomains={APP_BOUND_DOMAINS}
             startInLoadingState={false}
             webviewDebuggingEnabled={__DEV__}
           />

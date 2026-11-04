@@ -216,11 +216,11 @@ client, and the frames those helpers handled are covered by
 | **Notification tap → Messages** | A tap opens the app on Messages for every message title (the rule `webapp/sw.js` applies), and simply opens the app for assignment / consult titles. Payloads carry **no thread id by design** (content-free), so a tap cannot open a specific thread; the newest unread thread is at the top of the list. |
 | **Universal / app links → the thread** | `https://<host>/messages/<id>` opens the app on that thread once the account's list is live (a thread the account does not have opens the list, nothing more); `https://<host>/?open=messages` opens Messages; `docturn://messages[/<id>]` is the app's own scheme. The server publishes exactly those two HTTPS shapes in `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` (`server/routes/well-known.ts`; from `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE`, `ANDROID_SHA256_CERT_FINGERPRINTS`; **404 until they are set — never a placeholder**, because Apple's CDN and Android's verifier cache what they fetch). The app declares the matching `applinks:` / `webcredentials:` associated domains and an `autoVerify` intent filter for the configured host. |
 | **Offline page** | When the host cannot be reached (no network, DNS, TLS, server down) the shell shows "Can't reach DocTurn" with **Try again**, and retries by itself when the app returns to the front. It says nothing about data: once the page loads, the web app's own offline rules above apply. |
-| **Pull to refresh** | `pullToRefreshEnabled` — **iOS only** in react-native-webview; on Android the error page's Try again and the foreground retry are the refresh. |
+| **Pull to refresh** | `pullToRefreshEnabled` — **iOS only** in react-native-webview; on Android the error page's Try again and the foreground retry are the refresh. It reloads the whole page (the web app re-syncs after a reload); a device check below watches for an overscroll at the top of an inner list triggering it. |
 | **Android back button** | The page is one document, so Back walks the WebView's own history when there is any (a link opened in-page) and otherwise lets the OS background the app. Predictive back is off. |
 | **Safe areas + status bar** | The top inset is painted with the page's `<meta name="theme-color">`, the bottom inset with the page's body background, and the status-bar icons are light or dark by luminance — live, through a watcher the shell injects, so a theme the user switches to is followed at once. (Android 16 is edge-to-edge; the shell paints the insets itself.) |
 | **Camera / microphone for the page** | `mediaCapturePermissionGrantType="grant"`, `allowsInlineMediaPlayback`, `mediaPlaybackRequiresUserAction={false}`, `android.permission.CAMERA` / `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS`, `NSCameraUsageDescription` / `NSMicrophoneUsageDescription` — so the web app's voice messages (`getUserMedia` / `MediaRecorder`) and `<input type="file" capture>` image capture work inside the WebView. **Device checks only** (no simulator here) — see the list below. |
-| **Service worker inside WKWebView** | iOS allows a page's service worker only for *app-bound domains*: `WKAppBoundDomains` lists the configured host and the WebView sets `limitsNavigationsToAppBoundDomains`, so the precached offline shell and the lock / dismissed-banner storage work as in Safari. The shell never navigates elsewhere: any other `https:` / `mailto:` / `tel:` link leaves for the system browser, mail or dialer. |
+| **Service worker inside WKWebView** | iOS allows a page's service worker only for *app-bound domains*: for an HTTPS host `WKAppBoundDomains` lists it (port-stripped) and the WebView sets `limitsNavigationsToAppBoundDomains`, so the precached offline shell and the lock / dismissed-banner storage work as in Safari; a development build on `http://` gets neither (it could not navigate at all otherwise). The shell never navigates elsewhere: `about:` / `blob:` / `data:` stay in-document, and any other `https:` / `mailto:` / `tel:` / `sms:` link leaves for the system browser, mail or dialer. |
 | **Store assets and config** | 1024 px opaque iOS icon, Android adaptive + monochrome icons, splash (brand blue, 160 px glyph), Android notification small icon — all generated from `webapp/icons/` by `mobile-app/scripts/make-assets.py` (the iOS icon is a 2× upscale of the 512 px master; replace with a 1024 px master before submission). `PrivacyInfo.xcprivacy` (no tracking; required-reason APIs UserDefaults / FileTimestamp / SystemBootTime / DiskSpace; collected data types Name, User ID, Health, Other User Content, Device ID — linked, app functionality — **must match the App Privacy answers in App Store Connect**). `ITSAppUsesNonExemptEncryption = false` (HTTPS only). Android `allowBackup=false` (no cloud backup of the WebView's cookie / storage). Bundle id / package `com.docturn.app`. `eas.json`: `development` (dev client), `preview` (internal, APK) and `production` profiles, each setting `EXPO_PUBLIC_API_BASE_URL`. |
 
 Verified here (no simulator or device in this environment): `npx expo-doctor`
@@ -307,10 +307,11 @@ real PHI), and screenshots that show the app, not a browser.
    organization** (Google applies extra identity and testing requirements to
    new personal accounts), create the app for `com.docturn.app`, complete the
    Data safety form to match the privacy manifest, and enable **Play App
-   Signing**. The **first** upload to Play must be done manually in the
-   console (a preview `.aab`); `eas submit` works from the second one. The
-   app-signing certificate's SHA-256 (Play Console → App integrity) and the
-   upload key's SHA-256 (`eas credentials`) are the
+   Signing**. EAS's submit documentation has required the **first** Play
+   upload to be made by hand in the console (a preview `.aab`), with
+   `eas submit` from then on — check the current EAS Submit docs when you get
+   there. The app-signing certificate's SHA-256 (Play Console → App
+   integrity) and the upload key's SHA-256 (`eas credentials`) are the
    `ANDROID_SHA256_CERT_FINGERPRINTS` for the server (comma-separated).
 3. **Expo / EAS account** — `npm install -g eas-cli`, `eas login`, then in
    `mobile-app/`: `eas init` (links the project; put the printed id in
@@ -332,10 +333,11 @@ real PHI), and screenshots that show the app, not a browser.
 5. **Build and submit** (from `mobile-app/`):
    `eas build --profile development --platform all` (dev client for a
    physical device), `eas build --profile preview --platform all` (internal
-   testers: TestFlight / an APK), `eas build --profile production --platform
-   all`, then `eas submit --platform ios --latest` and `eas submit --platform
-   android --latest`. Production builds get `aps-environment: production`
-   from EAS automatically.
+   testers: TestFlight / an APK; iOS internal distribution needs each test
+   iPhone registered once with `eas device:create`), `eas build --profile
+   production --platform all`, then `eas submit --platform ios --latest` and
+   `eas submit --platform android --latest`. Production builds get
+   `aps-environment: production` from EAS automatically.
 6. **Device-only checks** (nothing here runs on a device; each needs a
    development or preview build on a real iPhone and Android phone):
    - sign in → the OS notification prompt appears once, after sign-in; Settings
@@ -347,13 +349,24 @@ real PHI), and screenshots that show the app, not a browser.
    - sign out → the token row is gone and no further push arrives on that
      phone; sign in as someone else → the row moves to that account;
    - `https://<host>/messages/<id>` from Mail / Messages / another app opens
-     the app on that thread (iOS: after the AASA has been fetched — Apple's
-     CDN can take up to a day; Android: `adb shell pm get-app-links
-     com.docturn.app` shows `verified`);
+     the app on that thread (iOS fetches the association file through Apple's
+     CDN at install / update time and can lag — if a link does not open at
+     once, check Apple's current associated-domains documentation before
+     changing anything; Android: `adb shell pm get-app-links com.docturn.app`
+     shows `verified`);
    - voice message: `getUserMedia` + `MediaRecorder` inside the WebView records
      and the message sends (iOS 16.4+ WKWebView; Android System WebView);
      attachment with `<input type="file" accept="image/*" capture>` opens the
-     camera; the permission prompts use the strings above;
+     camera; the permission prompts use the strings above; an attachment
+     opens / downloads inside the shell (WKWebView downloads are a known
+     gap);
+   - second launch: the page's service worker is active inside WKWebView
+     (`navigator.serviceWorker.controller` is non-null in Safari's Web
+     Inspector attached to the app) and an offline launch shows the sign-in
+     screen as on the web;
+   - the keyboard never covers the message composer (iOS WKWebView;
+     Android `softwareKeyboardLayoutMode: resize`), and an overscroll at the
+     top of a list does not trigger the iOS pull-to-refresh reload;
    - airplane mode at launch → the offline page; back online → the page loads
      by itself when the app returns to the front; airplane mode while signed
      in → the web app's own offline behaviour (above);

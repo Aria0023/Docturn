@@ -19,3 +19,10 @@ export const PLATFORM: "ios" | "android" = Platform.OS === "android" ? "android"
 /** Appended to the WebView's user agent; webapp/api-bridge.js reads it (DT.shell). */
 export const USER_AGENT_SUFFIX = `DocTurnShell/${APP_VERSION}`;
 export const EAS_PROJECT_ID: string | null = extra.eas?.projectId ?? Constants.easConfig?.projectId ?? null;
+/**
+ * iOS app-bound domains (lets the page's service worker run in WKWebView)
+ * exist only for an HTTPS host — app.config.ts emits WKAppBoundDomains under
+ * the same condition, and a WebView limited to app-bound domains with none
+ * declared could not navigate anywhere (a development build on http://).
+ */
+export const APP_BOUND_DOMAINS = API_BASE_URL.startsWith("https://");
