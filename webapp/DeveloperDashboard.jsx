@@ -80,7 +80,7 @@ function RoleChip({ role, color }) {
   const isDev = role === "developer";
   const label = isDev ? "Developer · all orgs" : ROLE_LABEL[role] || role;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 8px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: color, background: (color || "var(--muted-foreground)") + "18", border: "1px solid " + (color || "var(--muted-foreground)") + "33", whiteSpace: "nowrap" }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 8px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: window.readableInk(color, 0.09) || "var(--muted-foreground)", background: (color || "var(--muted-foreground)") + "18", border: "1px solid " + (color || "var(--muted-foreground)") + "33", whiteSpace: "nowrap" }}>
       {isDev ? <Icon name="crown" size={11} color={color} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: color, flex: "none" }} />}{label}
     </span>
   );
@@ -113,7 +113,7 @@ function RoleColorEditor({ roleColors, onSetRoleColor }) {
                   {ROLE_SWATCHES.map((c) => (
                     <button key={c} onClick={() => { onSetRoleColor(id, c); setOpenRole(null); }} aria-label={"Use " + c + " for " + label}
                       style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", background: c, cursor: "pointer", border: roleColors[id] === c ? "2px solid var(--foreground)" : "2px solid transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {roleColors[id] === c && <Icon name="check" size={14} color="var(--on-status)" />}
+                      {roleColors[id] === c && <Icon name="check" size={14} color="var(--on-fixed)" />}
                     </button>
                   ))}
                 </div>
@@ -307,7 +307,7 @@ function AddUserPanel({ organizations, devUsers = [], devUsersLoaded = true, rol
               <button onClick={() => setCollapsed((c) => Object.assign({}, c, { [code]: !c[code] }))}
                 style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px 11px 13px", border: "none", borderLeft: `3px solid ${accent}`, background: isOpen ? tintFor(accent) : "var(--card)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flex: "none" }} />
-                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: accent, color: "var(--on-status)", fontWeight: 700, fontSize: 11.5, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code.slice(0, 2)}</span>
+                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: accent, color: "var(--on-fixed)", fontWeight: 700, fontSize: 11.5, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code.slice(0, 2)}</span>
                 <div style={{ minWidth: 0, flex: "1 1 0" }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.2 }}>{orgName(code)}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, marginTop: 1 }}>

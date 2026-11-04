@@ -85,6 +85,13 @@
      applyTheme re-derives --primary-foreground per preset; --on-status is the
      ink on the fixed-hue status fills, which stay dark in every preset. */
   --on-status:            #ffffff;
+  /* Ink on a FIXED colour fill — a consult specialty shade, an ESI dot, a role
+     or tenant swatch. Those hues do not move with the preset (they are a
+     clinical / identity colour language, not a theme), they are always dark and
+     saturated, and scripts/contrast-check.mjs asserts white reads on each of
+     them. So this stays white in every preset, unlike --on-status, which the
+     dark presets flip to near-black because their status fills go light. */
+  --on-fixed:             #ffffff;
   /* Accent surfaces. applyTheme (AppShell.jsx) re-derives both from the org's
      accent so the contrast contract holds for any accent (A.CON-SHO-53):
      --primary text reads ≥4.5:1 on --primary-tint, and --primary-ink — the

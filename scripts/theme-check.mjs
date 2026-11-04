@@ -156,13 +156,30 @@ window.__themeScan = function () {
       // #fff looks like. The two fixed clinical colour languages (ESI triage,
       // consult specialty chips) are light on purpose and are exempt because
       // they carry their OWN ink that reads AA on their own fill.
-      if (dark && lum(own.rgb) > 0.72) {
-        var selfContained = false;
-        if (txt) {
-          var f2 = parse(cs.color);
-          if (f2 && f2.a > 0.2) selfContained = ratio(over(f2, own.rgb), own.rgb) >= 4.5;
-        }
-        if (!selfContained) out.stray.push({ at: where(el), bg: cs.backgroundColor, w: Math.round(r3.width), h: Math.round(r3.height) });
+      if (dark && lum(own.rgb) > 0.72 && r3.width >= 40 && r3.height >= 18) {
+        // Self-contained means every text run painted ON this fill reads on it
+        // — the element's own text and any descendant's that does not paint a
+        // surface of its own (an ESI button's "3" lives in a child span, so the
+        // ink has to be looked for there too). A light block with no readable
+        // text on it is a hard-coded colour that survived the sweep.
+        var runs = [];
+        var collect = function (node) {
+          for (var c3 = 0; c3 < node.children.length; c3++) {
+            var ch = node.children[c3];
+            var chs = getComputedStyle(ch);
+            var chbg = parse(chs.backgroundColor);
+            if (chbg && chbg.a >= 0.95) continue; // paints its own surface
+            if (ownText(ch)) runs.push(chs.color);
+            collect(ch);
+          }
+        };
+        if (txt) runs.push(cs.color);
+        collect(el);
+        var readable = runs.length > 0 && runs.every(function (col) {
+          var f2 = parse(col);
+          return f2 && f2.a > 0.2 && ratio(over(f2, own.rgb), own.rgb) >= 4.5;
+        });
+        if (!readable) out.stray.push({ at: where(el), bg: cs.backgroundColor, w: Math.round(r3.width), h: Math.round(r3.height), runs: runs.slice(0, 3) });
       }
     }
 

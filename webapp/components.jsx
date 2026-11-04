@@ -359,9 +359,15 @@ function ConsultRoster({ details, onRespond, compact }) {
         const c = specialtyColor(spec);
         return (
           <div key={spec} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: c.bg }}>
+            {/* The band carries THEME ink (the name, the counter), so its tint
+                is the specialty hue mixed into the current surface rather than
+                the palette's fixed light tint: on a dark canvas the fixed tint
+                stayed light and the muted counter on it read 1.78:1
+                (scripts/theme-check.mjs). The hue still names the service, and
+                the dot keeps the fixed shade. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "color-mix(in srgb, " + c.color + " 16%, var(--card))" }}>
               <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: c.color }}>{spec}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--foreground)" }}>{spec}</span>
               <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
             </div>
             {members.map((m, i) => {

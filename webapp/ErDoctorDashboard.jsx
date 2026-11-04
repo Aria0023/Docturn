@@ -45,8 +45,8 @@ function ConsultPanel({ service, roster, pool, members, onAddMember, onRemoveMem
   return (
     <div data-consult-panel={service} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--card)", overflow: "hidden" }}>
       {/* header band: service + on-call provider — tinted by specialty */}
-      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: (window.specialtyColor(service) || {}).bg || "var(--secondary)", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${(window.specialtyColor(service) || {}).color || "var(--primary)"}` }}>
-        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "var(--on-status)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", background: (window.specialtyColor(service) || {}).color ? "color-mix(in srgb, " + window.specialtyColor(service).color + " 16%, var(--card))" : "var(--secondary)", borderBottom: "1px solid var(--border)", borderLeft: `3px solid ${(window.specialtyColor(service) || {}).color || "var(--primary)"}` }}>
+        <span style={{ width: 30, height: 30, borderRadius: "var(--radius-md)", background: (window.specialtyColor(service) || {}).color || "var(--primary)", color: "var(--on-fixed)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="stethoscope" size={15} />
         </span>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -459,7 +459,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: "var(--radius-full)",
                       fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", whiteSpace: "nowrap", transition: "all .12s",
                       border: `1px solid ${c.color}`, background: on ? c.color : c.bg,
-                      color: on ? "var(--on-status)" : c.color, boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                      color: on ? "var(--on-fixed)" : c.color, boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                     {on ? <Icon name="check" size={12} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />} {s}
                   </button>
                 );

@@ -134,7 +134,7 @@ function Broadcasts({ onSend, broadcasts = [] }) {
               return (
                 <Card key={b.id || i} style={{ padding: 16 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                    <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: sm[4], color: sm[3] === "var(--on-status)" ? "var(--on-status)" : sm[3], display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                    <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: sm[4], color: sm[3], display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                       <Icon name={sm[2]} size={18} />
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>

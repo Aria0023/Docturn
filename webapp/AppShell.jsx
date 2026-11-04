@@ -555,6 +555,37 @@ var ACCENT_KEYS = Object.keys(accentTokens("#2563EB", "0 0% 100%", "0 0% 100%"))
   .concat(["--status-active-bg"]);
 
 /**
+ * Fit an operator-chosen colour so it reads as TEXT in whatever preset is
+ * active — a role swatch or another tenant's accent (webapp/store.js
+ * roleColors, DeveloperDashboard ORG_PALETTE). Those are free-form hexes a
+ * person picked for identity, not theme tokens, so they cannot be restated per
+ * preset; they are FITTED instead, with the same maths as the theme's own
+ * accent (A.CON-SHO-53).
+ *
+ * `tintPct` is the alpha the colour is laid over the surface with (the role
+ * chips use 9%), so the ink is fitted against the tint it actually lands on.
+ * Memoised per colour + surface, because a support directory draws one of
+ * these for every person on screen.
+ */
+var inkCache = {};
+function readableInk(hex, tintPct) {
+  if (!hex || String(hex).charAt(0) !== "#") return hex;
+  var cardCh = "0 0% 100%";
+  try { cardCh = (getComputedStyle(document.documentElement).getPropertyValue("--card-ch") || cardCh).trim() || cardCh; } catch (e) { /* no document */ }
+  var key = hex + "|" + cardCh + "|" + (tintPct || 0);
+  if (inkCache[key]) return inkCache[key];
+  var hsl = hexToHsl(hex);
+  var surface = chToRgb255(cardCh);
+  var raw = hslToRgb255(hsl.h, hsl.s, hsl.l);
+  var pct = tintPct || 0;
+  var tint = [0, 1, 2].map(function (i) { return Math.round(raw[i] * pct + surface[i] * (1 - pct)); });
+  var dir = relLum(tint) < 0.18 ? 1 : -1;
+  var l = fitLightness(hsl.h, hsl.s, hsl.l, tint, dir, AA);
+  inkCache[key] = "hsl(" + hsl.h + " " + hsl.s + "% " + l + "%)";
+  return inkCache[key];
+}
+
+/**
  * The preset actually in force, given the org's theme, the person's preference
  * and the device. "org" means "my organization's palette"; followDevice applies
  * to the two presets that have both a light and a dark reading, so a person on
@@ -607,6 +638,7 @@ function applyTheme(theme, user) {
   // type, the 44px tap targets and the 16px inputs together. --dt-zoom is
   // published so anything sized in viewport units can divide by it (otherwise
   // a 100dvh shell is exactly one zoom factor too tall).
+  inkCache = {}; // the surfaces moved, so every fitted ink is re-derived
   var large = !!(user && user.textSize === "large");
   root.setProperty("--dt-zoom", large ? "1.125" : "1");
   root.setProperty("zoom", large ? "1.125" : "1");
@@ -709,4 +741,4 @@ function SettingsTabs() {
   );
 }
 
-Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, SettingsTabs, applyTheme, ThemeStyle, hexToHsl, useIsMobile, PALETTES, effectivePreset, accentTokens, contrastRatio });
+Object.assign(window, { Sidebar, Topbar, PageWrap, SectionTitle, SettingsTabs, applyTheme, ThemeStyle, hexToHsl, useIsMobile, PALETTES, effectivePreset, accentTokens, contrastRatio, readableInk });

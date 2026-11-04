@@ -192,7 +192,7 @@ for (const preset of PRESETS) {
 // The two fixed clinical colour languages, checked as pairs.
 tokens = baseTokens;
 for (const [c, b] of palette) {
-  for (const [fg, bg, floor, label] of [[c, b, 4.5, `specialty chip ${c} on ${b}`], [WHITE, c, 4.5, `white icon/text on specialty ${c}`]]) {
+  for (const [fg, bg, floor, label] of [[c, b, 4.5, `specialty chip ${c} on ${b}`], ["var(--on-fixed)", c, 4.5, `--on-fixed ink on the solid specialty ${c}`]]) {
     const r = ratio(resolve(fg), resolve(bg));
     checked++;
     if (r < floor) { failed++; console.log(`FAIL  ${r.toFixed(2)}:1  (min ${floor})  ${label}`); }
@@ -200,10 +200,12 @@ for (const [c, b] of palette) {
   }
 }
 for (const [fg, bg] of esi) {
-  const r = ratio(resolve(fg), resolve(bg));
-  checked++;
-  if (r < 4.5) { failed++; console.log(`FAIL  ${r.toFixed(2)}:1  (min 4.5)  ESI chip ${fg} on ${bg}`); }
-  else if (VERBOSE) console.log(`PASS  ${r.toFixed(2)}:1  ESI chip ${fg} on ${bg}`);
+  for (const [a, b, label] of [[fg, bg, `ESI chip ${fg} on ${bg}`], ["var(--on-fixed)", fg, `--on-fixed ink on the solid ESI ${fg}`]]) {
+    const r = ratio(resolve(a), resolve(b));
+    checked++;
+    if (r < 4.5) { failed++; console.log(`FAIL  ${r.toFixed(2)}:1  (min 4.5)  ${label}`); }
+    else if (VERBOSE) console.log(`PASS  ${r.toFixed(2)}:1  ${label}`);
+  }
 }
 
 console.log(`\n${checked} pairs checked across ${PRESETS.length} presets x ${ACCENTS.length} accents`);
