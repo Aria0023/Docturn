@@ -38,8 +38,9 @@ describe("push notifications", () => {
 
     expect(webSent).toHaveLength(1);
     expect(JSON.parse(webSent[0]!)).toEqual({ title: "New secure message" });
+    // Title + the shell's Android channel + priority (tests/push-channels.test.ts) — nothing else.
     expect(expoSent).toEqual([
-      { to: "ExponentPushToken[abc]", title: "New secure message" },
+      { to: "ExponentPushToken[abc]", title: "New secure message", channelId: "routine", priority: "default" },
     ]);
     // Content-free: the payload carries no message text / patient fields.
     expect(webSent[0]).not.toContain("content");
