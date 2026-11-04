@@ -133,7 +133,11 @@ function MyThemeCard({ userTheme, userThemesOn, orgPalette, onSetMyTheme, save }
   const canFollow = (userTheme.followDevicePresets || ["org", "night"]).indexOf(preset) >= 0;
   const orgLabel = (COLOR_SCHEMES.find((c) => c[1] === (orgPalette || "classic")) || ["Classic"])[0];
   return (
-    <Card style={{ padding: 18 }} data-user-theme={preset}>
+    // The marker goes on a wrapper, not on <Card>: Card takes only children /
+    // style / onClick / hover and drops anything else, so a data-* attribute on
+    // it never reaches the DOM (scripts/theme-check.mjs looks for this one).
+    <div data-user-theme={preset}>
+    <Card style={{ padding: 18 }}>
       <CardHead icon="user-cog" title="Your theme (this account)" sub="for you only — nobody else sees it" />
       <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.45 }}>
         Saved to your account on the server, so it follows you to every browser and phone you sign in on. It layers over your organization's branding — the workspace name, accent colour, corner radius, sidebar and content width stay as your organization set them.
@@ -165,6 +169,7 @@ function MyThemeCard({ userTheme, userThemesOn, orgPalette, onSetMyTheme, save }
         </div>
       </Row>
     </Card>
+    </div>
   );
 }
 
