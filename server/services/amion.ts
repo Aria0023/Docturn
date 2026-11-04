@@ -7,6 +7,7 @@ import { storage, type DatabaseStorage } from "../storage.js";
 import { amionUrlFromCredentials, feedVersionOf, readOrgCredentials, syncBelongsTo } from "../integrations/credentials.js";
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../integrations/http.js";
 import { skipWhileRunning } from "../integrations/single-flight.js";
+import { startLeasedInterval, type LeasedTimer } from "./job-leases.js";
 import { broadcastRotationChange } from "./notifications.js";
 import { SCHEDULE_SOURCE_IDS, SOURCE_SETTING_KEY } from "./schedule-sources/types.js";
 
@@ -552,9 +553,10 @@ export async function getAmionStatus(
 
 // ── boot loop ─────────────────────────────────────────────────────────────────
 // One sync shortly after boot (never blocking startup), then on the configured
-// interval. Both timers are unref'd so they never keep the process alive.
-let bootTimer: NodeJS.Timeout | null = null;
-let loopTimer: NodeJS.Timeout | null = null;
+// interval. Both timers are unref'd so they never keep the process alive, and
+// every firing claims the "amion-sync" job lease first (services/job-leases.ts)
+// so with several instances exactly one pulls each hospital's feed.
+let loopTimer: LeasedTimer | null = null;
 
 export type ScheduledAmionSyncOutcome =
   | "synced"
@@ -660,14 +662,10 @@ export function startAmionSyncLoop() {
       })
       .catch((err) => console.error("[amion] scheduled sync tick failed:", err instanceof Error ? err.name : "error")),
   );
-  bootTimer = setTimeout(run, 5_000);
-  bootTimer.unref?.();
-  loopTimer = setInterval(run, intervalMin * 60_000);
-  loopTimer.unref?.();
+  loopTimer = startLeasedInterval("amion-sync", intervalMin * 60_000, run, { bootDelayMs: 5_000 });
   console.log(`[amion] schedule sync loop — every ${intervalMin} min for each org with a connected feed, schedule.amion and the on-call board on, and Amion as its schedule source`);
 }
 
 export function stopAmionSyncLoop() {
-  if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
-  if (loopTimer) { clearInterval(loopTimer); loopTimer = null; }
+  if (loopTimer) { loopTimer.stop(); loopTimer = null; }
 }

@@ -4,6 +4,7 @@ import { storage } from "../storage.js";
 import { appendAudit } from "../audit.js";
 import { isModuleEnabled } from "../modules.js";
 import { attachmentStoreConfig } from "./attachment-store.js";
+import { startLeasedInterval, type LeasedTimer } from "./job-leases.js";
 
 /**
  * Per-org message retention: when an org sets `messageRetentionDays` (> 0) and
@@ -320,17 +321,15 @@ export async function runMessageRetentionSweep(): Promise<number> {
   return total;
 }
 
-let timer: NodeJS.Timeout | null = null;
+let timer: LeasedTimer | null = null;
+/** Hourly; each tick claims the "retention" lease first (one instance purges). */
 export function startRetentionLoop(intervalMs = 3600_000) {
   if (timer) return;
-  timer = setInterval(() => {
-    void runMessageRetentionSweep();
-  }, intervalMs);
-  timer.unref?.();
+  timer = startLeasedInterval("retention", intervalMs, () => runMessageRetentionSweep());
 }
 export function stopRetentionLoop() {
   if (timer) {
-    clearInterval(timer);
+    timer.stop();
     timer = null;
   }
 }

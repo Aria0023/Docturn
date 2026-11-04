@@ -24,7 +24,7 @@
   DT.set(function (s) {
     s.orgs = []; s.orgsLoaded = false; s.platformOrg = null;
     s.devUsers = []; s.devUsersLoaded = false;
-    s.notifications = []; s.platformHealth = null; s.auditCount = null;
+    s.notifications = []; s.platformHealth = null; s.cluster = null; s.auditCount = null;
     // Nor the kit's demo threads and broadcasts (A.CON comms-account): the
     // server's lists are the only ones a live page shows.
     s.conversations = []; s.broadcasts = [];
@@ -4786,6 +4786,27 @@
       return null;
     });
   };
+  // Developer console → Cluster view (E1 multi-instance safety, module
+  // enterprise.multiInstance): this instance's id, the realtime bus it fans
+  // out through, every job lease and its holder, the limiter / session store
+  // — every value the server's, read from live state. A 404 module_disabled
+  // is an honest "switched off" (and the module map is re-read at once so
+  // the card follows the switch); a failure says so instead of showing numbers.
+  DT.actions.loadCluster = function () {
+    return get("/api/dev/cluster").then(function (c) {
+      DT.set(function (s) { s.cluster = Object.assign({}, c, { receivedAt: Date.now() }); return s; });
+      return c;
+    }).catch(function (e) {
+      var code = String((e && e.message) || "");
+      if (e && e.status === 404 && code === "module_disabled") {
+        DT.set(function (s) { s.cluster = { off: true, module: (e.body && e.body.module) || "enterprise.multiInstance" }; return s; });
+        refreshModulesAfterRefusal();
+        return null;
+      }
+      DT.set(function (s) { s.cluster = { error: isNetworkError(e) ? "No connection to the server." : "The server didn't return the cluster view." }; return s; });
+      return null;
+    });
+  };
   // Developer console → Compliance: the server's trail, read fresh each time
   // the tab opens — the platform org's (GET /api/audit) or one tenant's
   // (GET /api/dev/organizations/:id/audit) — with its TRUE size, never a page
@@ -5018,6 +5039,9 @@
       followSoundModule();
     }).catch(function () {});
   }
+  // Re-read the org's switches now (a screen that just flipped one, a check
+  // script) instead of waiting for the minute timer.
+  DT.actions.loadModules = function () { return hydrateModules(); };
   // Alert sounds follow the module map (re-read on every identity change and
   // each minute): switched on → read my choice once; off → forget it.
   function followSoundModule() {

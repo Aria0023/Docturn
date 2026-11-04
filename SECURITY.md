@@ -62,6 +62,14 @@ automatically uses encrypted Postgres instead of the local file database.
   when the developer is deactivated. Deactivation closes live sockets at once.
 - **External AI is OFF by default** — intake notes are parsed locally and never
   leave the server unless an operator deliberately turns it on (see below).
+- **Multi-instance safe on Postgres** (`docs/ENTERPRISE_READINESS.md` E1): the
+  brute-force limiters count in one shared table so N instances enforce one
+  budget; a password change, deactivation, "sign out all" or app lock closes
+  the person's live sockets on every instance, not only the one that took the
+  request; realtime frames cross instances over Postgres `LISTEN`/`NOTIFY`;
+  a deploy's SIGTERM drains in-flight requests and never signs anyone out.
+  Every response carries an `X-Request-Id` (also in error bodies and on the
+  server's error log line) so a problem can be traced without exchanging PHI.
 - **Integrations are real and fail closed** (Settings → Integrations,
   `docs/INTEGRATIONS.md`): status comes from live configuration, each org's
   switch is enforced server-side, OpenAI cannot be switched on without the BAA

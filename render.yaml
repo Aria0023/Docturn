@@ -81,6 +81,18 @@ services:
       # accounts are unaffected and need no configuration.
       # Persistent Postgres — the app creates its schema + seeds on first boot.
       # Data now survives restarts/redeploys (unlike the old in-process PGlite).
+      # With it set the service may be scaled to MORE THAN ONE instance
+      # (docs/ENTERPRISE_READINESS.md E1): sessions, realtime frames
+      # (LISTEN/NOTIFY), the login/account/registration rate limits and the
+      # background-job leases all live in this database, boot is serialised
+      # under an advisory lock, and the SESSION_SECRET / INTEGRATION_KEY
+      # generated above are shared by every instance of the service. Render's
+      # RENDER_INSTANCE_ID names each instance; on a deploy Render sends
+      # SIGTERM and the app drains in-flight requests (SHUTDOWN_TIMEOUT_MS,
+      # default 10 s) and closes WebSockets with a reconnect code. The demo
+      # keeps attachments in the database (no ATTACHMENT_STORE), so nothing is
+      # tied to one instance's disk. The app still boots WITHOUT this variable
+      # (in-process PGlite) as a single instance.
       - key: DATABASE_URL
         fromDatabase:
           name: docturn-db

@@ -23,7 +23,10 @@ EnvironmentFile=/etc/docturn/docturn.env
 ExecStart=/usr/bin/node --import /opt/docturn/scripts/shared-alias-loader.mjs /opt/docturn/dist/server/index.js
 Restart=always
 RestartSec=3
-# Give the process time to finish in-flight requests on stop/restart.
+# Give the process time to finish in-flight requests on stop/restart. On
+# SIGTERM the app stops accepting, closes WebSockets with a reconnect code,
+# waits SHUTDOWN_TIMEOUT_MS (default 10 s) for in-flight requests, releases
+# its job leases and exits (server/shutdown.ts) — keep this above that.
 TimeoutStopSec=20
 KillSignal=SIGTERM
 

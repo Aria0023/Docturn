@@ -1,27 +1,26 @@
 import { appendAudit } from "../audit.js";
 import { storage } from "../storage.js";
 import { runExpirySweep } from "./assignments.js";
+import { startLeasedInterval, type LeasedTimer } from "./job-leases.js";
 
 /**
  * Background sweep that expires overdue pending assignments and reroutes them.
- * Server-authoritative: the client never computes the next provider.
+ * Server-authoritative: the client never computes the next provider. Each
+ * tick claims the "expiry" job lease first (services/job-leases.ts), so with
+ * several instances only one runs it.
  */
-let timer: NodeJS.Timeout | null = null;
+let timer: LeasedTimer | null = null;
 
 export function startExpiryLoop(intervalMs = 15_000) {
   if (timer) return;
-  timer = setInterval(() => {
-    runExpirySweep(storage()).catch((err) =>
-      console.error("[expiry] sweep failed", err),
-    );
-  }, intervalMs);
-  // Don't keep the process alive solely for the sweep.
-  timer.unref?.();
+  timer = startLeasedInterval("expiry", intervalMs, () =>
+    runExpirySweep(storage()).catch((err) => console.error("[expiry] sweep failed", err)),
+  );
 }
 
 export function stopExpiryLoop() {
   if (timer) {
-    clearInterval(timer);
+    timer.stop();
     timer = null;
   }
 }
@@ -31,7 +30,7 @@ export function stopExpiryLoop() {
  * than `olderThanHours` are purged so stale board/log data clears itself rather
  * than piling up. Runs on an interval; also safe to call directly.
  */
-let cleanTimer: NodeJS.Timeout | null = null;
+let cleanTimer: LeasedTimer | null = null;
 export async function runAutoClean(olderThanHours = 24): Promise<number> {
   let removed = 0;
   let orgs: Awaited<ReturnType<ReturnType<typeof storage>["listOrganizations"]>> = [];
@@ -84,15 +83,12 @@ export async function runAutoClean(olderThanHours = 24): Promise<number> {
 
 export function startAutoCleanLoop(intervalMs = 3600_000, olderThanHours = 24) {
   if (cleanTimer) return;
-  cleanTimer = setInterval(() => {
-    void runAutoClean(olderThanHours);
-  }, intervalMs);
-  cleanTimer.unref?.();
+  cleanTimer = startLeasedInterval("autoclean", intervalMs, () => runAutoClean(olderThanHours));
 }
 
 export function stopAutoCleanLoop() {
   if (cleanTimer) {
-    clearInterval(cleanTimer);
+    cleanTimer.stop();
     cleanTimer = null;
   }
 }

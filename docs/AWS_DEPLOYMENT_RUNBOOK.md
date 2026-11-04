@@ -26,7 +26,9 @@ codes and `/api/sms/send` answer `503 sms_unavailable`, assignment/STAT SMS esca
 is skipped with a log line — nothing is faked as sent), no SOC 2 spend.
 
 **What is deliberately deferred** (see §15): Postgres row-level security,
-S3 attachment storage, CloudWatch alarms, multi-instance scaling.
+S3 attachment storage, CloudWatch alarms. (Multi-instance scaling is
+supported on Postgres — §15 item 2 lists its requirements; this single-box
+topology simply does not need it yet.)
 
 ---
 
@@ -254,6 +256,8 @@ box.
 | `TWILIO_*` | only to send texts | unset → SMS is unavailable in production: MFA SMS codes and `/api/sms/send` return `503 sms_unavailable`, SMS escalation is skipped (logged, content-free). Nothing is sent, nothing costs money, and nothing is reported as sent. Clinicians use TOTP / backup codes for MFA. Set all three (§7a) to send content-free texts through Twilio; each org can switch SMS off in Settings → Integrations |
 | `OPENAI_API_KEY`, `AI_EXTERNAL_PHI_OK`, `USE_STUB_AI` | **leave unset** unless OpenAI signed a BAA | AI intake stays on the deterministic local extractor; no PHI leaves the box. Intake notes are PHI: set the key AND `AI_EXTERNAL_PHI_OK=true` only after OpenAI has signed a BAA with you (§7a) |
 | `PORT` | leave unset | 3000 (Caddy proxies to `127.0.0.1:3000`) |
+| `INSTANCE_ID` | optional | names this process in `job_leases`, on realtime-bus frames and in the developer console's cluster view (default: host-pid-random; Render supplies `RENDER_INSTANCE_ID`). Never a secret |
+| `SHUTDOWN_TIMEOUT_MS` | leave unset | 10000: how long a SIGTERM waits for in-flight requests before cutting them (exit 1 instead of 0). Keep it below the service manager's stop grace (`TimeoutStopSec=20` in `deploy/aws/docturn.service`) |
 | `AMION_*` / Epic vars | optional, legacy | one-organization fallback only. Each hospital now connects its OWN Amion feed / Epic app in Settings → Integrations (§7a), stored encrypted with `INTEGRATION_KEY`; a hospital's saved credentials always win over these |
 
 ### 7a. Connecting integrations (any time after go-live)
@@ -515,13 +519,24 @@ These are real, findable-in-the-code limitations — not polish:
 1. **No Postgres row-level security yet.** Tenant isolation is enforced in the
    application (`organizationId` on every query, `assertSameOrg` → 404). RLS
    would add a database-level second wall. Planned; not required for a pilot.
-2. **One instance only.** Sessions are in Postgres (with `DATABASE_URL` the
-   store is `connect-pg-simple`, table `session`), so restarts no longer sign
-   anyone out — but rate-limit counters, WebSocket fan-out and the background
-   loops (expiry, STAT escalation, retention, Amion sync) live in the process.
-   A second instance would split the limits, miss realtime events from the
-   other instance and run every loop twice. Scaling out needs a shared
-   limiter store, a pub/sub for `/ws`, and a single loop runner.
+2. **Multi-instance is supported — with Postgres only.** With `DATABASE_URL`
+   set, N instances may run behind a load balancer: sessions are in the
+   Postgres `session` table, realtime frames cross instances over Postgres
+   `LISTEN`/`NOTIFY` (large ones by reference), the login / account /
+   registration limiters count in the shared `rate_limit_hits` table, the
+   background loops (expiry, auto-clean, Amion / Epic sync, STAT escalation,
+   unread reminder, retention) each claim a `job_leases` row before a tick so
+   one instance runs it, boot (schema + seed) is serialised under an advisory
+   lock, and SIGTERM drains in-flight requests and closes sockets with a
+   reconnect code (`docs/ENTERPRISE_READINESS.md` E1 has the tests and the
+   two-process probe). Requirements: every instance shares `SESSION_SECRET`,
+   `INTEGRATION_KEY` and `ATTACHMENT_KEY`; the health check is `/api/health`
+   (503 while draining); the stop grace period exceeds `SHUTDOWN_TIMEOUT_MS`
+   (default 10 s; the unit file gives 20 s); and attachments must be on
+   shared storage (gap 3). Without `DATABASE_URL` (PGlite) the deployment is
+   one process by design. Remaining per-instance: the live-presence snapshot
+   (`GET /api/presence` lists the answering instance's sockets; frames do
+   cross) and the general 300/min `/api` limiter.
 3. **Attachments are on the instance disk, not S3.** Real and encrypted, but
    tied to one instance and its snapshots. `attachment-store.ts` documents the
    S3 implementation as the next step; the routes need no change. No antivirus

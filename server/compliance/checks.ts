@@ -32,6 +32,8 @@ import {
   sessionCookieOptions,
 } from "../config.js";
 import { getHandle } from "../db.js";
+import { getBus } from "../services/bus.js";
+import { liveHubBus } from "../ws/index.js";
 import { MFA_REQUIRED_MODULE } from "../auth.js";
 import { getModules } from "../modules.js";
 import { attachmentStoreConfig } from "../services/attachment-store.js";
@@ -325,18 +327,75 @@ const checks: Record<string, CheckFn> = {
       disabled_by_app_option:
         "the app was constructed with rateLimiting:false (test/dev harness), so the limiters were skipped",
     };
+    const where =
+      state.store === "database"
+        ? " Counted in the shared rate_limit_hits table: one budget across every instance."
+        : " Counted in this process's memory: a second instance would hold its own, separate budget.";
     return {
       status: state.enabled ? "pass" : "fail",
       detail: state.enabled
-        ? `Login brute-force protection is active: ${AUTH_RATE_LIMIT.max} auth requests per ${AUTH_RATE_LIMIT.windowMs / 60_000} minutes per IP.`
+        ? `Login brute-force protection is active: ${AUTH_RATE_LIMIT.max} auth requests per ${AUTH_RATE_LIMIT.windowMs / 60_000} minutes per IP.${where}`
         : `Login brute-force protection is NOT active — ${because[state.reason] ?? state.reason}.`,
       evidence: {
         enabled: state.enabled,
         reason: state.reason,
+        store: state.store,
         authWindowMs: AUTH_RATE_LIMIT.windowMs,
         authMaxRequests: AUTH_RATE_LIMIT.max,
         rateLimitEnv: process.env.RATE_LIMIT ?? null,
       },
+    };
+  },
+
+  /**
+   * Multi-instance safety (E1, docs/ENTERPRISE_READINESS.md), measured from
+   * live state: the database kind, the realtime bus the live hub fans out
+   * through (its own connection flag and counters), the session store and
+   * the limiter store this process recorded. Never from an env var's promise.
+   */
+  "multi-instance-safety": async () => {
+    const db = getHandle().storage;
+    const bus = (liveHubBus() ?? getBus()).status();
+    const sessions = getSessionStoreState().kind;
+    const limiter = getRateLimitState();
+    const evidence = {
+      instanceId: bus.instanceId,
+      database: db,
+      bus: bus.kind,
+      busConnected: bus.connected,
+      busPublished: bus.published,
+      busReceived: bus.received,
+      busByReference: bus.byReference,
+      busDropped: bus.dropped,
+      busReconnects: bus.reconnects,
+      sessionStore: sessions,
+      rateLimitStore: limiter.enabled ? limiter.store : null,
+      jobLeases: "job_leases table (every background tick claims a row first)",
+    };
+    if (db !== "postgres") {
+      return {
+        status: "warn",
+        detail:
+          "Single-instance deployment: no DATABASE_URL, so the realtime bus is in-process, sessions and rate-limit counters are in memory and only this process may run. Safe as ONE instance; a second one would miss this instance's realtime frames and hold its own limits. Set DATABASE_URL (Postgres) before scaling out.",
+        evidence,
+      };
+    }
+    const problems: string[] = [];
+    if (bus.kind !== "postgres") problems.push("the live hub is not on the Postgres LISTEN/NOTIFY bus");
+    else if (!bus.connected) problems.push("the Postgres LISTEN connection is down (reconnecting; frames from other instances are not arriving)");
+    if (sessions !== "postgres") problems.push("sessions are not in the Postgres session table");
+    if (limiter.enabled && limiter.store !== "database") problems.push("rate limits are counted per instance, not in the shared table");
+    if (problems.length) {
+      return {
+        status: "fail",
+        detail: `Postgres is configured but this instance is not cluster-safe: ${problems.join("; ")}.`,
+        evidence,
+      };
+    }
+    return {
+      status: "pass",
+      detail: `Cluster-safe: Postgres database, realtime frames shared over LISTEN/NOTIFY (${bus.published} published, ${bus.received} received, ${bus.byReference} by reference, ${bus.dropped} dropped on this instance), sessions and rate-limit counters in Postgres, background jobs leased per tick. N instances may run.`,
+      evidence,
     };
   },
 

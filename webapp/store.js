@@ -472,6 +472,10 @@
       // GET /api/dev/platform-health (this server instance, measured). Null
       // until loaded; { error } when the server didn't answer.
       platformHealth: null,
+      // GET /api/dev/cluster (E1 multi-instance safety; module
+      // enterprise.multiInstance). Null until loaded; { off: true } when the
+      // server says the module is off; { error } when it didn't answer.
+      cluster: null,
 
       // The offline kit's demo threads and broadcasts; a live deployment starts
       // with none (the server's lists replace them) — never demo rows.
@@ -833,7 +837,7 @@
     // the previous person's org: its people, identity, catalog and rules
     "accounts", "accountsOrg", "accountsError", "orgIdentity", "consultServices", "consultServicesVersion", "orgConfigs",
     // the previous operator's cross-tenant view (developer console)
-    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount",
+    "orgs", "orgsLoaded", "platformOrg", "devUsers", "devUsersLoaded", "platformHealth", "diagnostics", "auditCount", "cluster",
     // the previous person's trail sizes and their org's live presence
     "phiAccessCount", "auditScope", "auditError", "presence",
     // the previous person's Directory: their org's role contacts and holders

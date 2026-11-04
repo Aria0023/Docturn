@@ -5,6 +5,7 @@ import { storage, type DatabaseStorage } from "../../storage.js";
 import { deriveEpicTokenUrl, feedVersionOf, readOrgCredentials, syncBelongsTo } from "../../integrations/credentials.js";
 import { guardedFetch, integrationFetch, IntegrationCallError } from "../../integrations/http.js";
 import { skipWhileRunning } from "../../integrations/single-flight.js";
+import { startLeasedInterval, type LeasedTimer } from "../job-leases.js";
 import { mapHoursToShift, normalizeName } from "../amion.js";
 import type { OnCallSlot, ScheduleSource, ScheduleSourceStatus, ShiftType } from "./types.js";
 
@@ -622,10 +623,13 @@ export async function runScheduledEpicSyncAll(
   return out;
 }
 
-let epicBootTimer: NodeJS.Timeout | null = null;
-let epicLoopTimer: NodeJS.Timeout | null = null;
+let epicLoopTimer: LeasedTimer | null = null;
 
-/** Background Epic pulls every EPIC_SYNC_INTERVAL_MIN (default 60) minutes; timers unref'd. */
+/**
+ * Background Epic pulls every EPIC_SYNC_INTERVAL_MIN (default 60) minutes;
+ * timers unref'd, and every firing claims the "epic-sync" job lease first
+ * (services/job-leases.ts) so with several instances exactly one pulls.
+ */
 export function startEpicSyncLoop() {
   if (epicLoopTimer) return;
   const intervalMin = epicConfig().intervalMin;
@@ -634,14 +638,10 @@ export function startEpicSyncLoop() {
   const run = skipWhileRunning(() =>
     runScheduledEpicSyncAll().catch((err) => console.error("[epic] scheduled sync tick failed:", err instanceof Error ? err.name : "error")),
   );
-  epicBootTimer = setTimeout(run, 8_000);
-  epicBootTimer.unref?.();
-  epicLoopTimer = setInterval(run, intervalMin * 60_000);
-  epicLoopTimer.unref?.();
+  epicLoopTimer = startLeasedInterval("epic-sync", intervalMin * 60_000, run, { bootDelayMs: 8_000 });
   console.log(`[epic] on-call sync loop — every ${intervalMin} min for each org with a connected Epic app and schedule.epic on`);
 }
 
 export function stopEpicSyncLoop() {
-  if (epicBootTimer) { clearTimeout(epicBootTimer); epicBootTimer = null; }
-  if (epicLoopTimer) { clearInterval(epicLoopTimer); epicLoopTimer = null; }
+  if (epicLoopTimer) { epicLoopTimer.stop(); epicLoopTimer = null; }
 }

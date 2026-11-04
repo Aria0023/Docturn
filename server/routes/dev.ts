@@ -26,9 +26,14 @@ import {
   type PoolStats,
 } from "../services/request-metrics.js";
 import { getDb, getHandle } from "../db.js";
-import { liveSocketStats } from "../ws/index.js";
+import { liveHubBus, liveSocketStats } from "../ws/index.js";
 import { storage } from "../storage.js";
 import { sql } from "drizzle-orm";
+import { INSTANCE_ID } from "../instance.js";
+import { getRateLimitState, getSessionStoreState } from "../config.js";
+import { getBus } from "../services/bus.js";
+import { JOB_NAMES, leasedTimers } from "../services/job-leases.js";
+import { isShuttingDown } from "../shutdown.js";
 
 /**
  * The answer to a session swap (impersonate / manage-org / stop): the new
@@ -838,6 +843,53 @@ export function registerDevRoutes(app: Express) {
         database: { ok: dbOk, roundTripMs: dbOk ? roundTripMs : null, storage: h.storage, pool },
         api,
         websocket: liveSocketStats(),
+      });
+    },
+  );
+
+  /**
+   * Cluster view (module enterprise.multiInstance, E1 — docs/ENTERPRISE_READINESS.md):
+   * what THIS instance is, how it reaches the others and which job leases the
+   * cluster holds. Every value is read from live state — the bus's own
+   * counters, the job_leases table, the recorded limiter / session store —
+   * never from an env var's promise. Ids and counts only.
+   */
+  app.get(
+    "/api/dev/cluster",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.cluster_read",
+        resourceType: "platform",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
+      const bus = liveHubBus() ?? getBus();
+      const now = Date.now();
+      const leases = (await storage().listJobLeases()).map((l) => ({
+        name: l.name,
+        holder: l.holder,
+        leaseUntil: l.leaseUntil,
+        held: new Date(l.leaseUntil).getTime() > now,
+        heldByThisInstance: l.holder === INSTANCE_ID && new Date(l.leaseUntil).getTime() > now,
+      }));
+      const limiter = getRateLimitState();
+      const sessions = getSessionStoreState();
+      const h = getHandle();
+      res.json({
+        instance: { id: INSTANCE_ID, draining: isShuttingDown(), timers: leasedTimers(), jobs: [...JOB_NAMES] },
+        bus: bus.status(),
+        leases,
+        rateLimit: { enabled: limiter.enabled, store: limiter.store, reason: limiter.reason },
+        sessions: { store: sessions.kind },
+        database: { storage: h.storage },
+        // The one honest summary: can a second instance be added safely?
+        multiInstanceSafe: h.storage === "postgres" && bus.kind === "postgres" && sessions.kind === "postgres",
       });
     },
   );

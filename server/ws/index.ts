@@ -3,6 +3,7 @@ import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
+import { getBus, type BusFrame, type RealtimeBus } from "../services/bus.js";
 import { demoConnectionId, demoTokenLockedAt, resolveDemoUser } from "../demoAuth.js";
 import {
   APP_LOCK_CLOSE_CODE,
@@ -38,7 +39,26 @@ import {
  * closes its open sockets the same way, so nothing is pushed to a locked tab
  * and nothing it receives can make it re-fetch. 4423 is not 1008: the client
  * keeps its lock screen instead of treating the session as dead.
+ *
+ * Multi-instance (E1, docs/ENTERPRISE_READINESS.md): the hub holds the
+ * sockets of THIS instance only. Every fan-out is delivered locally and then
+ * published on the realtime bus (server/services/bus.ts — Postgres
+ * LISTEN/NOTIFY when DATABASE_URL is set), and a frame that arrives from
+ * another instance is delivered locally only. Session control crosses the
+ * same way: a revocation or lock announced here closes the person's sockets
+ * on every instance, never only on the one that took the request. Graceful
+ * shutdown closes every socket with 1012 "server_restart" — a reconnect-class
+ * code the web client retries with backoff (webapp/api-bridge.js), never a
+ * sign-out.
  */
+
+/** RFC 6455 "Service Restart": the server is going away; reconnect later. */
+export const SERVER_RESTART_CLOSE_CODE = 1012;
+
+export interface WsHubOptions {
+  /** The bus to fan out through; defaults to the process bus (getBus()). */
+  bus?: RealtimeBus;
+}
 
 interface ClientMeta {
   userId: number;
@@ -70,20 +90,52 @@ export class WsHub implements WsFanout {
   private heartbeat: NodeJS.Timeout | null = null;
   private unsubscribeRevoker: () => void;
   private unsubscribeLock: () => void;
+  private unsubscribeBus: () => void;
+  readonly bus: RealtimeBus;
 
   constructor(
     server: HttpServer,
     private sessionMiddleware: RequestHandler,
+    opts: WsHubOptions = {},
   ) {
+    this.bus = opts.bus ?? getBus();
     this.wss = new WebSocketServer({ server, path: "/ws" });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
-    this.unsubscribeRevoker = onSessionsRevoked((r) =>
-      r.all
-        ? this.closeAllSockets({ exceptSessionId: r.exceptSessionId })
-        : this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId }),
-    );
-    this.unsubscribeLock = onSessionLocked((e) => this.closeSessionSockets(e.userId, e.connectionId));
+    // Session control announced in THIS process: apply here, then tell the
+    // other instances. A frame that comes back from the bus is applied only.
+    this.unsubscribeRevoker = onSessionsRevoked((r) => {
+      this.applyRevocation(r);
+      this.bus.publish({ kind: "revoke", revocation: r });
+    });
+    this.unsubscribeLock = onSessionLocked((e) => {
+      this.closeSessionSockets(e.userId, e.connectionId);
+      this.bus.publish({ kind: "lock", userId: e.userId, connectionId: e.connectionId });
+    });
+    this.unsubscribeBus = this.bus.subscribe((frame) => this.onBusFrame(frame));
     this.startHeartbeat();
+  }
+
+  /** A frame from another instance: deliver / apply locally, never re-publish. */
+  private onBusFrame(frame: BusFrame): void {
+    switch (frame.kind) {
+      case "users":
+        this.deliverToUsers(frame.userIds, JSON.stringify(frame.message));
+        break;
+      case "org":
+        this.deliverToOrg(frame.orgId, JSON.stringify(frame.message));
+        break;
+      case "revoke":
+        this.applyRevocation(frame.revocation);
+        break;
+      case "lock":
+        this.closeSessionSockets(frame.userId, frame.connectionId);
+        break;
+    }
+  }
+
+  private applyRevocation(r: Parameters<Parameters<typeof onSessionsRevoked>[0]>[0]): void {
+    if (r.all) this.closeAllSockets({ exceptSessionId: r.exceptSessionId });
+    else this.closeUserSockets(r.userId, { exceptSessionId: r.exceptSessionId });
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage) {
@@ -392,8 +444,18 @@ export class WsHub implements WsFanout {
   }
 
   // ── WsFanout ───────────────────────────────────────────────────────────────
+  // Local delivery first, then the bus for the other instances' sockets.
   sendToUsers(userIds: number[], message: unknown) {
-    const payload = JSON.stringify(message);
+    this.deliverToUsers(userIds, JSON.stringify(message));
+    this.bus.publish({ kind: "users", userIds: [...new Set(userIds)], message });
+  }
+
+  broadcast(orgId: number, message: unknown) {
+    this.deliverToOrg(orgId, JSON.stringify(message));
+    this.bus.publish({ kind: "org", orgId, message });
+  }
+
+  private deliverToUsers(userIds: number[], payload: string) {
     for (const uid of new Set(userIds)) {
       const set = this.clients.get(uid);
       if (!set) continue;
@@ -403,8 +465,7 @@ export class WsHub implements WsFanout {
     }
   }
 
-  broadcast(orgId: number, message: unknown) {
-    const payload = JSON.stringify(message);
+  private deliverToOrg(orgId: number, payload: string) {
     for (const set of this.clients.values()) {
       for (const ws of set) {
         const m = this.meta.get(ws);
@@ -413,6 +474,26 @@ export class WsHub implements WsFanout {
         }
       }
     }
+  }
+
+  /**
+   * Graceful shutdown: close every socket with 1012 "server_restart" so the
+   * clients reconnect (to a sibling instance, or to this one after the
+   * restart) with backoff instead of signing out. Returns how many.
+   */
+  closeForRestart(): number {
+    let closed = 0;
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        try {
+          ws.close(SERVER_RESTART_CLOSE_CODE, "server_restart");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
+      }
+    }
+    return closed;
   }
 
   /**
@@ -429,6 +510,7 @@ export class WsHub implements WsFanout {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.unsubscribeRevoker();
     this.unsubscribeLock();
+    this.unsubscribeBus();
     this.wss.close();
     if (liveHub === this) liveHub = null;
   }
@@ -453,12 +535,26 @@ export function liveOnlineUserIds(orgId: number): number[] | null {
   return liveHub ? liveHub.onlineUserIds(orgId) : null;
 }
 
+/**
+ * The hub's socket count plus the bus it fans out through, for the cluster
+ * view; null when no hub is attached.
+ */
+export function liveHubBus(): RealtimeBus | null {
+  return liveHub ? liveHub.bus : null;
+}
+
+/** Close every socket of the live hub with 1012 (graceful shutdown); 0 when none. */
+export function closeLiveSocketsForRestart(): number {
+  return liveHub ? liveHub.closeForRestart() : 0;
+}
+
 /** Attach a WS hub to the HTTP server and route notifications through it. */
 export function attachWebSocket(
   server: HttpServer,
   sessionMiddleware: RequestHandler,
+  opts: WsHubOptions = {},
 ): WsHub {
-  const hub = new WsHub(server, sessionMiddleware);
+  const hub = new WsHub(server, sessionMiddleware, opts);
   configureNotifications({ ws: hub });
   liveHub = hub;
   return hub;

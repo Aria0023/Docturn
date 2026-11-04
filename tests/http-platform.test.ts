@@ -78,7 +78,7 @@ describe("SHO-19 async handler rejections reach the JSON error middleware", () =
       const res = await agent.get("/api/hospitalists").timeout(RESPOND);
       expect(res.status).toBe(500);
       expect(res.headers["content-type"]).toMatch(/application\/json/);
-      expect(res.body).toEqual({ error: "internal_error" });
+      expect(res.body).toEqual({ error: "internal_error", requestId: expect.any(String) });
       // …and it was logged as a server fault, not swallowed.
       expect(loggedText(errorSpy)).toContain("simulated database failure");
     } finally {
@@ -100,7 +100,7 @@ describe("SHO-19 async handler rejections reach the JSON error middleware", () =
     try {
       const res = await agent.get("/api/hospitalists").timeout(RESPOND);
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: "internal_error" });
+      expect(res.body).toEqual({ error: "internal_error", requestId: expect.any(String) });
     } finally {
       ctx.storage.listHospitalists = original;
     }
@@ -117,7 +117,7 @@ describe("SHO-24 / SHO-35 body-parser errors are 4xx and never logged with the b
       .send(`{"orgCode":"ISPN","username":"${PHI_MARKER}", nope`)
       .timeout(RESPOND);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "invalid_json" });
+    expect(res.body).toEqual({ error: "invalid_json", requestId: expect.any(String) });
     // Logged as a client warning (no error-level line), with status + type and
     // NOTHING from the request body — neither err.body nor JSON.parse's quoted
     // excerpt may reach the log.
@@ -138,7 +138,7 @@ describe("SHO-24 / SHO-35 body-parser errors are 4xx and never logged with the b
       .send({ orgCode: "ISPN", username: "chen", password: "x".repeat(1_100_000) })
       .timeout(RESPOND);
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "payload_too_large" });
+    expect(res.body).toEqual({ error: "payload_too_large", requestId: expect.any(String) });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -151,14 +151,14 @@ describe("SHO-24 / SHO-35 body-parser errors are 4xx and never logged with the b
       .send({ fileName: "big.bin", mimeType: "application/octet-stream", dataBase64: "A".repeat(13 * 1024 * 1024) })
       .timeout({ response: 15000, deadline: 20000 });
     expect(res.status).toBe(413);
-    expect(res.body).toEqual({ error: "payload_too_large" });
+    expect(res.body).toEqual({ error: "payload_too_large", requestId: expect.any(String) });
   });
 
   it("other http-errors statuses are honoured (bad percent-encoding in a path → 400)", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await supertest(ctx.app).get("/api/cms/%E0%A4%A").timeout(RESPOND);
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "bad_request" });
+    expect(res.body).toEqual({ error: "bad_request", requestId: expect.any(String) });
   });
 });
 
@@ -180,7 +180,7 @@ describe("SHO-35 a 5xx log line carries no request value", () => {
         .send({ initials: "JS", issueSummary: `${PHI_MARKER} John Smith chest pain`, ehrId: MRN })
         .timeout(RESPOND);
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: "internal_error" });
+      expect(res.body).toEqual({ error: "internal_error", requestId: expect.any(String) });
     } finally {
       ctx.storage.createPatient = original;
     }
@@ -212,7 +212,7 @@ describe("SHO-35 a 5xx log line carries no request value", () => {
     try {
       const res = await agent.get("/api/hospitalists").timeout(RESPOND);
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: "internal_error" });
+      expect(res.body).toEqual({ error: "internal_error", requestId: expect.any(String) });
     } finally {
       ctx.storage.listHospitalists = original;
     }
@@ -306,11 +306,11 @@ describe("SHO-35 a NUL byte in input is a 400, never a 500", () => {
     ]) {
       const res = await agent.post("/api/patients").send(body).timeout(RESPOND);
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: "validation_error" });
+      expect(res.body).toEqual({ error: "validation_error", requestId: expect.any(String) });
     }
     const q = await agent.get(`/api/patients?search=${encodeURIComponent(`${PHI_MARKER}\u0000`)}`).timeout(RESPOND);
     expect(q.status).toBe(400);
-    expect(q.body).toEqual({ error: "validation_error" });
+    expect(q.body).toEqual({ error: "validation_error", requestId: expect.any(String) });
     // Nothing was written, nothing logged at error level, no value in the log.
     expect((await agent.get("/api/patients").timeout(RESPOND)).body.length).toBe(before);
     expect(errorSpy).not.toHaveBeenCalled();
@@ -325,7 +325,7 @@ describe("SHO-35 a NUL byte in input is a 400, never a 500", () => {
     // NUL in the path: refused up front, before the router decodes it into a lookup.
     const org = await supertest(ctx.app).get("/api/mobile/org/IS%00PN").timeout(RESPOND);
     expect(org.status).toBe(400);
-    expect(org.body).toEqual({ error: "validation_error" });
+    expect(org.body).toEqual({ error: "validation_error", requestId: expect.any(String) });
     // The attachment upload mounts its own 12 MB parser, after the global guard.
     const { agent } = await login(ctx.app, { username: "chen" });
     const png = Buffer.from(
@@ -337,7 +337,7 @@ describe("SHO-35 a NUL byte in input is a 400, never a 500", () => {
       .send({ fileName: `scan\u0000${PHI_MARKER}.png`, mimeType: "image/png", dataBase64: png })
       .timeout(RESPOND);
     expect(up.status).toBe(400);
-    expect(up.body).toEqual({ error: "validation_error" });
+    expect(up.body).toEqual({ error: "validation_error", requestId: expect.any(String) });
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });

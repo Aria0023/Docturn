@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
-import { getSessionStoreState, resolveTrustProxy } from "./config.js";
-import { initDbWithRecovery, type DbHandle } from "./db.js";
+import { getRateLimitState, getSessionStoreState, resolveTrustProxy } from "./config.js";
+import { initDbWithRecovery, withBootLock, type DbHandle } from "./db.js";
+import { INSTANCE_ID } from "./instance.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
 import {
   ensureDemoTenants,
@@ -18,6 +19,9 @@ import { startUnreadReminderLoop } from "./services/unread-reminder.js";
 import { startRetentionLoop } from "./services/retention.js";
 import { initWebPush, LivePushTransport } from "./services/push.js";
 import { configureNotifications } from "./services/notifications.js";
+import { initBus } from "./services/bus.js";
+import { releaseInstanceLeases, stopAllLeasedTimers } from "./services/job-leases.js";
+import { installGracefulShutdown } from "./shutdown.js";
 import { attachWebSocket } from "./ws/index.js";
 import { installLogScrubber, loggableError } from "./log-safe.js";
 
@@ -89,22 +93,27 @@ async function main() {
   // otherwise just ensure the platform org/developer exist. Idempotent.
   // ensurePlatform() self-gates the cross-tenant root account behind
   // PLATFORM_ADMIN_PASSWORD on production / real-PHI instances.
+  // Under the boot advisory lock (Postgres): N instances starting at once
+  // seed in turn, so the second one finds the org and only ensures — never
+  // a duplicate demo org or platform account (tests/pg-boot.test.ts).
   try {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
-    if (!synthetic) {
-      await ensurePlatform(storage);
-    } else {
-      const existing = await storage.getOrganizationByCode("ISPN");
-      if (!existing) {
-        await seed(storage);
-        console.log("[db] empty database — seeded demo data (org ISPN + platform).");
-      } else {
+    await withBootLock(handle, async () => {
+      if (!synthetic) {
         await ensurePlatform(storage);
+      } else {
+        const existing = await storage.getOrganizationByCode("ISPN");
+        if (!existing) {
+          await seed(storage);
+          console.log("[db] empty database — seeded demo data (org ISPN + platform).");
+        } else {
+          await ensurePlatform(storage);
+        }
+        // Idempotently provision the two isolated demo tenants (HOSP + ER).
+        await ensureDemoTenants(storage);
       }
-      // Idempotently provision the two isolated demo tenants (HOSP + ER).
-      await ensureDemoTenants(storage);
-    }
+    });
   } catch (e) {
     console.error("[db] seed/ensure failed:", e);
   }
@@ -123,12 +132,32 @@ async function main() {
   }
   const app = createApp({ trustProxy: trust.value });
 
+  // Realtime bus (E1 multi-instance safety): Postgres LISTEN/NOTIFY when
+  // DATABASE_URL is set — a frame fanned out here reaches the sockets of
+  // every instance — else in-process (the single-process PGlite run).
+  const bus = await initBus({ databaseUrl: process.env.DATABASE_URL, pool: handle.pool });
+
   const server = createServer(app);
-  attachWebSocket(
+  const hub = attachWebSocket(
     server,
     app.locals.sessionMiddleware as RequestHandler,
+    { bus },
   );
 
+  // Graceful shutdown (server/shutdown.ts): SIGTERM → stop timers, stop
+  // accepting, close sockets with 1012 (clients reconnect), drain in-flight
+  // requests, give the job leases back, close the bus and the pool, exit.
+  installGracefulShutdown({
+    server,
+    stopTimers: stopAllLeasedTimers,
+    closeSockets: () => hub.closeForRestart(),
+    releaseLeases: releaseInstanceLeases,
+    closeBus: () => bus.close(),
+    closeDb: () => handle.close(),
+  });
+
+  // Every loop below fires on every instance but RUNS on one: each tick
+  // claims its row in job_leases first (server/services/job-leases.ts).
   startExpiryLoop();
   // Auto-clean: hourly sweep purges patients/assignments older than 24h so stale
   // board and log data clears itself. Manual "Clear" controls call the same path.
@@ -159,6 +188,11 @@ async function main() {
     for (const line of dbBootNotes(handle)) console.log("  ↳ " + line);
     console.log(
       `  ↳ sessions: ${getSessionStoreState().kind === "postgres" ? "Postgres `session` table (survive restarts, shared across instances)" : "in-memory (a restart signs everyone out; single instance only)"}`,
+    );
+    const limiter = getRateLimitState();
+    console.log(
+      `  ↳ instance ${INSTANCE_ID}: realtime bus ${bus.kind === "postgres" ? "Postgres LISTEN/NOTIFY (frames reach every instance)" : "in-process (single instance only)"}; ` +
+        `job leases in job_leases; rate limits ${!limiter.enabled ? "OFF" : limiter.store === "database" ? "counted in Postgres (shared across instances)" : "counted in memory (per instance)"}`,
     );
     console.log(`  ↳ proxy trust: ${trust.description}${trust.source === "default" ? " (default)" : ""}`);
     if (HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost") {

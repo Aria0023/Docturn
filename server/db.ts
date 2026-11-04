@@ -130,6 +130,37 @@ export interface CreateDbOptions {
   pgliteDir?: string;
 }
 
+/**
+ * Session-level advisory lock key for the boot sequence (schema + first-boot
+ * seed) on a real Postgres. N instances starting at the same moment take it
+ * in turn: `CREATE TABLE IF NOT EXISTS` is NOT atomic across sessions (two
+ * parallel runs on an empty database fail with "duplicate key value violates
+ * unique constraint pg_type_typname_nsp_index"), and two first-boot seeds
+ * would both try to insert the demo org. 0x444f4354 spells "DOCT".
+ */
+export const BOOT_LOCK_KEY = 0x444f4354;
+
+/**
+ * Run `fn` while holding the boot advisory lock (Postgres only; PGlite is a
+ * single process, so `fn` simply runs). The lock lives on one dedicated
+ * connection for exactly the duration of `fn` and is released even if `fn`
+ * throws. Re-entrant across calls, not within one (do not nest).
+ */
+export async function withBootLock<T>(h: Pick<DbHandle, "pool">, fn: () => Promise<T>): Promise<T> {
+  if (!h.pool) return fn();
+  const client = await h.pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [BOOT_LOCK_KEY]);
+    try {
+      return await fn();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock($1)", [BOOT_LOCK_KEY]).catch(() => {});
+    }
+  } finally {
+    client.release();
+  }
+}
+
 export function createDb(opts: CreateDbOptions = {}): DbHandle {
   const databaseUrl = opts.databaseUrl ?? process.env.DATABASE_URL;
   if (databaseUrl) {
@@ -149,7 +180,11 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
         // ALTER … ADD COLUMN IF NOT EXISTS), so re-running it every start is a
         // no-op once provisioned. (`drizzle-kit push` remains available for
         // richer migrations, but is no longer required just to boot.)
-        await pool.query(SCHEMA_SQL);
+        // Under the boot lock, so N instances starting together apply it one
+        // after another instead of racing (tests/pg-boot.test.ts).
+        await withBootLock({ pool }, async () => {
+          await pool.query(SCHEMA_SQL);
+        });
       },
       close: async () => {
         await pool.end();

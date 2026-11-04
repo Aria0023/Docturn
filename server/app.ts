@@ -29,6 +29,8 @@ import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
 import { registerNumericParams } from "./params.js";
+import { DatabaseRateLimitStore } from "./rate-limit-store.js";
+import { requestIdMiddleware, requestIdOf } from "./request-id.js";
 import { createSessionStore } from "./session-store.js";
 import { requestMetricsMiddleware } from "./services/request-metrics.js";
 import { mountWebapp, type WebappOptions } from "./webapp-static.js";
@@ -38,6 +40,12 @@ export interface CreateAppOptions {
   sessionSecret?: string;
   /** When false (tests), disable rate limiting for determinism. */
   rateLimiting?: boolean;
+  /**
+   * Where the auth / account / registration limiters count. Default: the
+   * shared `rate_limit_hits` table when DATABASE_URL is set (one budget across
+   * every instance), else this process's memory. Tests pick explicitly.
+   */
+  rateLimitStore?: "database" | "memory";
   /**
    * Express `trust proxy` value. `true` means "loopback" (a reverse proxy on
    * this host); a string is an address list / keyword list; a number is the
@@ -71,8 +79,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     app.set("trust proxy", opts.trustProxy);
   }
 
+  // Request id (server/request-id.ts) — the very first thing, so every
+  // response, every error body and every log line the error middleware writes
+  // carries the same X-Request-Id, static files and 404s included.
+  app.use(requestIdMiddleware());
   // Time every /api request (the developer console's measured API latency —
-  // server/services/request-metrics.ts). First, so the time includes body
+  // server/services/request-metrics.ts). Next, so the time includes body
   // parsing, the session lookup and every gate.
   app.use(requestMetricsMiddleware());
   // Security response headers (helmet CSP/HSTS/… + Permissions-Policy). The
@@ -191,6 +203,13 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   const rateLimitDisabledByOption = opts.rateLimiting === false;
   const rateLimitDisabledByEnv = process.env.RATE_LIMIT === "off";
   const rateLimitEnabled = !rateLimitDisabledByOption && !rateLimitDisabledByEnv;
+  // Multi-instance (E1): with DATABASE_URL the auth / account / registration
+  // limiters count in the shared `rate_limit_hits` table, so N instances
+  // enforce ONE budget; without it (single-process PGlite) in memory. The
+  // general /api limiter (300/min, every request) stays in memory on purpose:
+  // a database write per request would cost more than the limit protects.
+  const rateLimitStore: "database" | "memory" =
+    opts.rateLimitStore ?? (process.env.DATABASE_URL ? "database" : "memory");
   setRateLimitState({
     enabled: rateLimitEnabled,
     reason: rateLimitEnabled
@@ -198,8 +217,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       : rateLimitDisabledByEnv
         ? "disabled_by_env"
         : "disabled_by_app_option",
+    store: rateLimitStore,
   });
   if (rateLimitEnabled) {
+    // One store instance per limiter (the library refuses a shared one).
+    const sharedStore = (prefix: string) =>
+      rateLimitStore === "database" ? { store: new DatabaseRateLimitStore(prefix) } : {};
     // Tiered limits: stricter on auth, looser on general traffic. Every limiter
     // keys on clientIpKey(): the address Express resolved under the `trust
     // proxy` ADDRESS LIST above, so an X-Forwarded-For sent by anything other
@@ -215,6 +238,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     const authLimiter = rateLimit({
       ...AUTH_RATE_LIMIT,
       ...common,
+      ...sharedStore("auth"),
       // Count only FAILED auth attempts (status >= 400). The control we need is
       // brute-force / credential-stuffing protection (§164.308(a)(5)(ii)(C)),
       // and that is entirely about wrong guesses — a successful sign-in is not
@@ -236,6 +260,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       legacyHeaders: false,
       message: RATE_LIMIT_RESPONSE,
       skipSuccessfulRequests: true,
+      ...sharedStore("acct"),
       // A body without both fields is a validation error, not a guess.
       skip: (req) => !loginAccountKey(req),
       keyGenerator: (req) => loginAccountKey(req) ?? "acct:none",
@@ -351,15 +376,21 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   //    bound params, a Postgres `detail`/`where`/`hint`, a quoted value, or a
   //    request body — a failed insert of a patient must not put the patient
   //    in the log.
+  //
+  // Every answer and every log line carries the request id (X-Request-Id),
+  // so a report of "it failed, id …" meets the operator's log on one token
+  // without either side handling PHI. The id is the only thing added to the
+  // body: never the database's text.
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const { status, type, name } = classifyError(err);
+    const requestId = requestIdOf(res);
     if (status >= 500) {
-      console.error("[error]", req.method, req.path, loggableError(err));
+      console.error("[error]", req.method, req.path, { requestId }, loggableError(err));
     } else {
-      console.warn("[warn]", req.method, req.path, { status, type: type ?? name });
+      console.warn("[warn]", req.method, req.path, { status, type: type ?? name, requestId });
     }
     if (res.headersSent) return;
-    res.status(status).json({ error: errorCode(status, type) });
+    res.status(status).json({ error: errorCode(status, type), requestId });
   });
 
   return app;

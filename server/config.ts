@@ -296,6 +296,14 @@ function ipv6Prefix64(ip: string): string {
   return full.slice(0, 4).map((h) => h.padStart(4, "0")).join(":") + "::/64";
 }
 
+/**
+ * Where the limiters count (E1 multi-instance safety): "database" = the
+ * shared `rate_limit_hits` table (server/rate-limit-store.ts), one budget
+ * across every instance; "memory" = this process only — the single-process
+ * PGlite run, where a second instance would hold its own, separate budget.
+ */
+export type RateLimitStoreKind = "database" | "memory";
+
 export interface RateLimitState {
   /** Whether the running app actually mounted the limiters. */
   enabled: boolean;
@@ -305,11 +313,14 @@ export interface RateLimitState {
     | "no_app_created"
     | "disabled_by_env"
     | "disabled_by_app_option";
+  /** Which store the mounted limiters count in (meaningful when enabled). */
+  store: RateLimitStoreKind;
 }
 
 let rateLimitState: RateLimitState = {
   enabled: false,
   reason: "no_app_created",
+  store: "memory",
 };
 
 /** Recorded by createApp() with what it actually mounted. Never guessed. */

@@ -3,6 +3,7 @@ import { pushAllowedForOrg } from "../integrations/gates.js";
 import { isModuleEnabled } from "../modules.js";
 import { storage, type DatabaseStorage } from "../storage.js";
 import { isDnd } from "./escalation.js";
+import { startLeasedInterval, type LeasedTimer } from "./job-leases.js";
 import { notificationDeps } from "./notifications.js";
 
 /**
@@ -81,23 +82,22 @@ export async function runUnreadReminderSweep(
   return { reminded, skippedModuleOff, failedOrgs };
 }
 
-let timer: NodeJS.Timeout | null = null;
-/** Per-process loop (see the note above). Every minute by default. */
+let timer: LeasedTimer | null = null;
+/** Every minute by default; each tick claims the "unread-reminder" lease first (one instance sweeps). */
 export function startUnreadReminderLoop(intervalMs = 60_000) {
   if (timer) return;
-  timer = setInterval(() => {
-    runUnreadReminderSweep(storage()).then((r) => {
-      // A count only — no user, org, or message identifiers.
-      if (r.reminded > 0) console.log(`[unread-reminder] ${r.reminded} reminder(s) sent`);
-    }).catch((err) =>
-      console.error("[unread-reminder] sweep failed", (err as Error)?.message ?? err),
-    );
-  }, intervalMs);
-  timer.unref?.();
+  timer = startLeasedInterval("unread-reminder", intervalMs, () =>
+    runUnreadReminderSweep(storage())
+      .then((r) => {
+        // A count only — no user, org, or message identifiers.
+        if (r.reminded > 0) console.log(`[unread-reminder] ${r.reminded} reminder(s) sent`);
+      })
+      .catch((err) => console.error("[unread-reminder] sweep failed", (err as Error)?.message ?? err)),
+  );
 }
 export function stopUnreadReminderLoop() {
   if (timer) {
-    clearInterval(timer);
+    timer.stop();
     timer = null;
   }
 }

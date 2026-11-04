@@ -542,6 +542,79 @@ function SystemHealthCard({ health, onRefresh }) {
   );
 }
 
+// Cluster view from GET /api/dev/cluster (E1 multi-instance safety, module
+// enterprise.multiInstance — docs/ENTERPRISE_READINESS.md): what THIS instance
+// is, how it reaches the others and who holds each background-job lease.
+// Every value is the server's; the switch is per org and the server enforces
+// it (a 404 module_disabled is shown as "switched off", never as numbers).
+const STORE_WORDS = { database: "shared (Postgres)", memory: "this instance only", postgres: "Postgres", none: "not chosen yet" };
+function ClusterCard({ cluster, moduleOn, onRefresh }) {
+  const mobile = useIsMobile();
+  const c = cluster && !cluster.error && !cluster.off ? cluster : null;
+  const off = moduleOn === false || !!(cluster && cluster.off);
+  const state = off ? "off" : !cluster ? "loading" : cluster.error ? "error" : "ok";
+  const badge = off ? <Badge variant="outline">Switched off</Badge>
+    : !cluster ? <Badge status="offline">Checking…</Badge>
+    : cluster.error ? <Badge status="rejected">Unavailable</Badge>
+    : c.multiInstanceSafe ? <Badge status="accepted" icon="circle">Cluster-safe</Badge>
+    : <Badge status="pending" icon="alert-triangle">Single instance</Badge>;
+  const row = (label, value, key) => (
+    <div data-cluster={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, fontSize: 12.5, flexWrap: "wrap" }}>
+      <span style={{ color: "var(--muted-foreground)", fontWeight: 500 }}>{label}</span>
+      <span data-cluster-value style={{ fontWeight: 600, fontVariantNumeric: "tabular-nums", textAlign: "right", wordBreak: "break-all" }}>{value}</span>
+    </div>
+  );
+  const bus = c ? c.bus : null;
+  return (
+    <Card style={{ padding: 18 }}>
+     {/* Card passes no attributes through; the probes read this div. */}
+     <div data-cluster-card data-cluster-state={state}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+        <Icon name="globe" size={18} color="var(--primary)" />
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Cluster</h3>
+        <span data-cluster-status style={{ marginLeft: "auto" }}>{badge}</span>
+      </div>
+      {off ? (
+        <div data-cluster-off style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
+          The cluster view is switched off for this organization (module <span className="ds-mono">enterprise.multiInstance</span>, Modules tab).
+          The multi-instance safety mechanisms themselves — the realtime bus, job leases and the shared rate-limit store — are not switchable; only this view is.
+        </div>
+      ) : (
+        <React.Fragment>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginBottom: 14 }}>
+            Read from the server instance that answered{c ? " · " + devClock(c.receivedAt) : ""}.
+          </div>
+          {cluster && cluster.error && <div style={{ fontSize: 12.5, color: "var(--destructive)", marginBottom: 10 }}>{cluster.error}</div>}
+          <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+            {row("This instance", !c ? "—" : c.instance.id + (c.instance.draining ? " · draining" : ""), "instance")}
+            {row("Realtime bus", !bus ? "—" : (bus.kind === "postgres" ? "Postgres LISTEN/NOTIFY" : "in-process") + (bus.kind === "postgres" ? (bus.connected ? " · connected" : " · reconnecting") : "") + " · " + bus.published + " out / " + bus.received + " in" + (bus.byReference ? " · " + bus.byReference + " by reference" : "") + (bus.dropped ? " · " + bus.dropped + " dropped" : ""), "bus")}
+            {row("Rate limits", !c ? "—" : !c.rateLimit.enabled ? "OFF" : STORE_WORDS[c.rateLimit.store] || c.rateLimit.store, "ratelimit")}
+            {row("Sessions", !c ? "—" : STORE_WORDS[c.sessions.store] || c.sessions.store, "sessions")}
+            {row("Database", !c ? "—" : STORAGE_LABEL[c.database.storage] || c.database.storage, "db")}
+            <div data-cluster="leases" style={{ fontSize: 12.5 }}>
+              <div style={{ color: "var(--muted-foreground)", fontWeight: 500, marginBottom: 4 }}>Job leases{c ? " · " + c.leases.length + " of " + c.instance.jobs.length + " jobs have ticked" : ""}</div>
+              {!c ? <div>—</div> : c.leases.length === 0 ? <div data-cluster-value>None claimed yet (the first ticks are due within a minute).</div> : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {c.leases.map((l) => (
+                    <div key={l.name} data-cluster-lease={l.name} style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                      <span className="ds-mono" style={{ fontSize: 12 }}>{l.name}</span>
+                      <span data-cluster-value style={{ fontWeight: 600, wordBreak: "break-all", textAlign: "right" }}>{l.held ? (l.heldByThisInstance ? "this instance" : l.holder) : "lapsed · last " + l.holder}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <Button size="sm" variant="outline" full icon="refresh-cw" onClick={onRefresh} style={mobile ? { minHeight: 44 } : undefined}>Refresh</Button>
+          </div>
+        </React.Fragment>
+      )}
+     </div>
+    </Card>
+  );
+}
+
 // Web-powered hospital autocomplete (DocTurn live): type a fragment, get the
 // official name + city/state/timezone + a suggested code from /api/dev/org-lookup.
 function OrgAutocomplete({ value, onText, onPick }) {
@@ -642,6 +715,16 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
   const health = st.platformHealth;
   const loadHealth = () => { if (window.DT && window.DT.actions.loadPlatformHealth) window.DT.actions.loadPlatformHealth(); };
   React.useEffect(() => { loadHealth(); }, []);
+  // Cluster view (E1): only on a live page, and only while the org's switch
+  // is on — the server enforces the switch; the card never fetches past it.
+  const clusterLive = !!(window.DT && window.DT.actions && window.DT.actions.loadCluster);
+  // Until the org's module map has been read nothing is asked (the map is
+  // null before the server answers): no request the server would only refuse.
+  const modulesKnown = !!st.modules;
+  const clusterOn = clusterLive && modulesKnown && (!window.DT.moduleOn || window.DT.moduleOn("enterprise.multiInstance"));
+  const cluster = st.cluster;
+  const loadCluster = () => { if (clusterOn) window.DT.actions.loadCluster(); };
+  React.useEffect(() => { loadCluster(); }, [clusterOn]);
   // Phone layout: KPI tiles 2-up, grid columns allowed to shrink (minWidth 0),
   // and each organization row is two lines (identity, then status + actions)
   // so Config/Manage/Delete stay inside the viewport.
@@ -741,6 +824,7 @@ function DeveloperDashboard({ organizations, devUsers, roleColors, diagnostics, 
         {/* Right column: system health, AI monitor */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           <SystemHealthCard health={health} onRefresh={loadHealth} />
+          {clusterLive && <ClusterCard cluster={cluster} moduleOn={modulesKnown ? clusterOn : null} onRefresh={loadCluster} />}
 
           <Card style={{ padding: 18 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>

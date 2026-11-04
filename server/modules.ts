@@ -167,6 +167,10 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Platform — theming is written through PATCH /api/org/preferences { theme }.
   { path: /^\/api\/org\/preferences$/, module: "platform.appearance", methods: ["PATCH"], when: bodyHasTheme },
   { path: /^\/api\/cms(\/|$)/, module: "platform.cms" },
+  // Enterprise — the developer console's cluster view (server/routes/dev.ts):
+  // this instance, the realtime bus, the job leases and the limiter store.
+  // The safety mechanisms themselves are never switchable per org.
+  { path: /^\/api\/dev\/cluster$/, module: "enterprise.multiInstance" },
 ];
 
 /** First gate rule that applies to this request, if any. */

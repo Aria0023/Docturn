@@ -548,6 +548,23 @@ describe("web client realtime (jsdom, real store.js + api-bridge.js)", () => {
     expect(h.sockets).toHaveLength(4);
   }, 20000);
 
+  it("E1: close 1012 server_restart (graceful shutdown) → reconnect with backoff; nobody is signed out, no /api/user probe", async () => {
+    const h = await boot();
+    h.reqs.length = 0;
+    h.sockets[0].serverClose(1012, "server_restart");
+    // The first backoff ceiling is 1 s (jittered ≥ 500 ms): a new socket, soon.
+    await until(() => h.sockets.length === 2, 2500);
+    expect(h.state().session).not.toBeNull();
+    expect(h.state().loginError ?? null).toBeNull();
+    expect(gets(h, /^\/api\/user$/)).toHaveLength(0);
+    // The replacement instance greets the socket; what was missed is synced.
+    h.reqs.length = 0;
+    h.sockets[1].emit({ type: "CONNECTION_ESTABLISHED", userId: CHEN.id });
+    await until(() => gets(h, /^\/api\/messaging\/sync/).length === 1, 1500);
+    // PHI slices survived the restart (nothing was cleared).
+    expect(h.convo(1)).toBeTruthy();
+  }, 10000);
+
   it("SHO-62/NEE-1: sign-in/restore never prompts for notifications (permission 'default')", async () => {
     const h = await boot({ push: "default" });
     await sleep(100);

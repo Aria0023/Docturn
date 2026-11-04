@@ -1,9 +1,15 @@
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { getDb, getHandle } from "../db.js";
+import { isShuttingDown } from "../shutdown.js";
 
 export function registerHealthRoutes(app: Express) {
   app.get("/api/health", async (req, res) => {
+    // Draining after SIGTERM (server/shutdown.ts): tell the load balancer to
+    // stop routing here while the in-flight requests finish.
+    if (isShuttingDown()) {
+      return res.status(503).json({ ok: false, db: "up", shuttingDown: true });
+    }
     try {
       await getDb().execute(sql`SELECT 1`);
       const h = getHandle();

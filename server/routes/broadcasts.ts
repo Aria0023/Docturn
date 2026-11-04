@@ -9,10 +9,57 @@ import { appendAudit } from "../audit.js";
 import { requireModule } from "../modules.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
+import { registerFrameResolver } from "../services/bus.js";
 import { storage } from "../storage.js";
 
 // Roles that see per-recipient ack tallies on the broadcast list.
 const DIRECTOR_ROLES = new Set<string>(["director", "er_director", "developer"]);
+
+/**
+ * Multi-instance (E1): a BROADCAST_CREATED frame carries the broadcast text,
+ * so one past the realtime bus's payload cap travels as {organizationId,
+ * broadcastId, recipient} and the receiving instance rebuilds it from the
+ * row: sender name, ack requirement, the frozen recipient count and the
+ * acknowledgements so far. The recipient flag is per fan-out (recipients vs
+ * observers), so it rides in the reference.
+ */
+registerFrameResolver("BROADCAST_CREATED", {
+  toRef(frame) {
+    const b = frame.broadcast as Partial<EmergencyBroadcast & { recipient: boolean }> | undefined;
+    if (!b || !Number.isInteger(b.id) || !Number.isInteger(b.organizationId)) return null;
+    return {
+      type: "BROADCAST_CREATED",
+      organizationId: b.organizationId as number,
+      broadcastId: b.id as number,
+      recipient: b.recipient === true,
+    };
+  },
+  async fromRef(ref) {
+    const orgId = Number(ref.organizationId);
+    const id = Number(ref.broadcastId);
+    if (!Number.isInteger(orgId) || !Number.isInteger(id)) return null;
+    const b = await storage().getBroadcast(orgId, id);
+    if (!b) return null;
+    const [sender, acks] = await Promise.all([
+      storage().getUser(orgId, b.senderId),
+      storage().listBroadcastAcks(orgId, b.id),
+    ]);
+    const recipients = new Set(b.recipientIds ?? []);
+    const { ackCount, total } = ackTally(recipients, acks);
+    const { recipientIds: _ids, ...shown } = b;
+    return {
+      type: "BROADCAST_CREATED",
+      broadcast: {
+        ...shown,
+        senderName: sender?.displayName ?? "",
+        ackRequired: broadcastRequiresAck(b.severity),
+        ackCount,
+        total,
+        recipient: ref.recipient === true,
+      },
+    };
+  },
+});
 
 /** Ack semantics: urgent/critical demand an explicit acknowledgement; info doesn't. */
 export function broadcastRequiresAck(severity: string): boolean {

@@ -309,6 +309,43 @@ describe("#15/#16/#17 platform health and the AI monitor are the server's answer
   });
 });
 
+// ── E1 cluster view (module enterprise.multiInstance) ──────────────────────
+describe("E1 cluster view is the server's answer, behind its module", () => {
+  const CLUSTER = {
+    instance: { id: "host-1-abc", draining: false, timers: ["expiry"], jobs: ["expiry"] },
+    bus: { kind: "postgres", instanceId: "host-1-abc", connected: true, published: 3, received: 1, byReference: 0, dropped: 0, reconnects: 0 },
+    leases: [{ name: "expiry", holder: "host-1-abc", leaseUntil: "2026-10-10T09:00:13Z", held: true, heldByThisInstance: true }],
+    rateLimit: { enabled: true, store: "database", reason: "enabled" },
+    sessions: { store: "postgres" },
+    database: { storage: "postgres" },
+    multiInstanceSafe: true,
+  };
+
+  it("cluster is null until the server answers, then exactly its body; module off → an off marker and a module re-read, never numbers; a failure is an error", async () => {
+    const h = await boot();
+    expect(h.state().cluster).toBeNull();
+    h.routes.cluster = (req) => (req.path === "/api/dev/cluster" ? { status: 200, body: CLUSTER } : undefined);
+    await h.w.DT.actions.loadCluster();
+    expect(h.state().cluster).toMatchObject(CLUSTER);
+    // The switch is per org and enforced by the server: a 404 module_disabled
+    // becomes an honest "switched off", and the module map is re-read at once
+    // (the client-module-refusals pattern) so the control disappears.
+    const modulesBefore = h.reqs.filter((r) => r.path === "/api/modules").length;
+    h.routes.cluster = (req) => (req.path === "/api/dev/cluster" ? { status: 404, body: { error: "module_disabled", module: "enterprise.multiInstance" } } : undefined);
+    await h.w.DT.actions.loadCluster();
+    expect(h.state().cluster).toEqual({ off: true, module: "enterprise.multiInstance" });
+    await until(() => h.reqs.filter((r) => r.path === "/api/modules").length > modulesBefore, 2000);
+    h.routes.cluster = (req) => (req.path === "/api/dev/cluster" ? { status: 500, body: { error: "internal_error" } } : undefined);
+    await h.w.DT.actions.loadCluster();
+    expect(h.state().cluster).toEqual({ error: "The server didn't return the cluster view." });
+  });
+
+  it("the cluster slice is a personal slice: cleared on sign-out, never persisted", () => {
+    expect(STORE_SRC).toMatch(/PERSONAL_SLICES = \[[\s\S]*?"cluster"[\s\S]*?\];/);
+    expect(STORE_SRC).not.toMatch(/PERSIST_KEYS[\s\S]{0,400}"cluster"/);
+  });
+});
+
 // ── #22 New tenant ─────────────────────────────────────────────────────────
 describe("#22 New tenant sends the modal's fields only", () => {
   it("no city is invented from the browser's time zone; resolves only on the server's answer", async () => {

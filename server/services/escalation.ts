@@ -4,6 +4,7 @@ import { appendAudit } from "../audit.js";
 import { getNotificationProfile } from "../config.js";
 import { isModuleEnabled } from "../modules.js";
 import { notificationDeps } from "./notifications.js";
+import { startLeasedInterval, type LeasedTimer } from "./job-leases.js";
 import { smsAllowedForOrg } from "../integrations/gates.js";
 import {
   deliverViaCoveringThread,
@@ -323,21 +324,19 @@ export async function runStatEscalationSweep(
   return { realerted, escalated, skippedModuleOff };
 }
 
-let timer: NodeJS.Timeout | null = null;
+let timer: LeasedTimer | null = null;
+/** Per-tick "stat-escalation" lease (services/job-leases.ts): one instance sweeps. */
 export function startStatEscalationLoop(intervalMs = 15_000) {
   if (timer) return;
-  timer = setInterval(() => {
+  timer = startLeasedInterval("stat-escalation", intervalMs, () =>
     // Thresholds come from statEscalationTimings() (the same values
     // GET /api/settings reports to clients).
-    runStatEscalationSweep(storage()).catch((err) =>
-      console.error("[escalation] sweep failed", err),
-    );
-  }, intervalMs);
-  timer.unref?.();
+    runStatEscalationSweep(storage()).catch((err) => console.error("[escalation] sweep failed", err)),
+  );
 }
 export function stopStatEscalationLoop() {
   if (timer) {
-    clearInterval(timer);
+    timer.stop();
     timer = null;
   }
 }

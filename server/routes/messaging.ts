@@ -33,6 +33,7 @@ import {
 import { MESSAGE_PAGE_DEFAULT, MESSAGE_PAGE_MAX, storage } from "../storage.js";
 import { parseId } from "../params.js";
 import { liveOnlineUserIds } from "../ws/index.js";
+import { registerFrameResolver } from "../services/bus.js";
 
 // Attachment mime allowlist — only these types can be uploaded. Anything else is
 // rejected (400 bad_type) so we never store arbitrary executable/unknown blobs.
@@ -169,6 +170,30 @@ async function liveMessageView(orgId: number, message: Message) {
       ),
   };
 }
+
+/**
+ * Multi-instance (E1): a MESSAGE_RECEIVED frame is the only frame whose size
+ * follows free text, so one past the realtime bus's payload cap travels as
+ * {organizationId, messageId} and the receiving instance rebuilds it with the
+ * SAME decoration as the thread view (liveMessageView) — the client cannot
+ * tell which instance it is connected to. A recalled or missing message
+ * rebuilds to nothing (the frame is dropped, never half-sent).
+ */
+registerFrameResolver("MESSAGE_RECEIVED", {
+  toRef(frame) {
+    const m = frame.message as Partial<Message> | undefined;
+    if (!m || !Number.isInteger(m.id) || !Number.isInteger(m.organizationId)) return null;
+    return { type: "MESSAGE_RECEIVED", organizationId: m.organizationId as number, messageId: m.id as number };
+  },
+  async fromRef(ref) {
+    const orgId = Number(ref.organizationId);
+    const id = Number(ref.messageId);
+    if (!Number.isInteger(orgId) || !Number.isInteger(id)) return null;
+    const message = await storage().getMessage(orgId, id);
+    if (!message || message.deletedAt) return null;
+    return { type: "MESSAGE_RECEIVED", message: await liveMessageView(orgId, message) };
+  },
+});
 
 /**
  * Messages decorated as GET /conversations/:id/messages serves them to

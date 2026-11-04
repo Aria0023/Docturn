@@ -17,6 +17,7 @@ import { appendAudit } from "./audit.js";
 import { getModules, isModuleEnabled } from "./modules.js";
 import { normalizeUsername, usernameKey } from "./usernames.js";
 import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, SESSION_POLICY, clientIpKey, getRateLimitState } from "./config.js";
+import { DatabaseRateLimitStore } from "./rate-limit-store.js";
 
 // promisify() picks the 3-argument overload; we always pass explicit parameters.
 const scryptAsync = promisify(scrypt) as unknown as (
@@ -1142,13 +1143,18 @@ export function registerAuthRoutes(app: Express) {
   // address resolved under the trusted-proxy list, IPv6 bucketed by /64) and
   // the shared RATE_LIMIT_RESPONSE body. Supplying a keyGenerator also bypasses
   // the library's X-Forwarded-For validation, so nothing can throw and 500.
-  const registerLimiter: RequestHandler = getRateLimitState().enabled
+  // Counts in the same store as the app.ts limiters (the shared
+  // `rate_limit_hits` table when DATABASE_URL is set — one registration
+  // budget across every instance — else this process's memory).
+  const limitState = getRateLimitState();
+  const registerLimiter: RequestHandler = limitState.enabled
     ? rateLimit({
         ...REGISTER_RATE_LIMIT,
         standardHeaders: true,
         legacyHeaders: false,
         keyGenerator: clientIpKey,
         message: RATE_LIMIT_RESPONSE,
+        ...(limitState.store === "database" ? { store: new DatabaseRateLimitStore("reg") } : {}),
       })
     : (_req, _res, next) => next();
 

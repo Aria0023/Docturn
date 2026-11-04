@@ -146,6 +146,19 @@ export const CONTROLS: ControlDef[] = [
       "Remove RATE_LIMIT=off from the deployment environment and restart so the 50-per-15-min login limiter is mounted.",
   },
   {
+    id: "multi-instance-safety",
+    title: "Safe to run as more than one instance",
+    description:
+      "Measured from THIS process's live state (never from an env var's promise): the database kind, whether the WebSocket hub fans out over the Postgres LISTEN/NOTIFY realtime bus and that bus's listener is connected (with its publish / receive / by-reference / dropped counters), whether sessions are in the Postgres session table and whether the login / account / registration limiters count in the shared rate_limit_hits table. Background jobs (expiry, auto-clean, Amion / Epic sync, STAT escalation, unread reminder, retention) always claim a job_leases row before a tick runs. Without DATABASE_URL the deployment is a single process by design and the control WARNS; with it, anything per-instance FAILS.",
+    category: "Session & transport",
+    hipaa: ["45 CFR §164.308(a)(7)(ii)(C)", "45 CFR §164.312(b)"],
+    soc2: ["A1.2", "CC7.2"],
+    kind: "auto",
+    severity: "medium",
+    remediation:
+      "Run production with DATABASE_URL (Postgres): the realtime bus, sessions, rate-limit counters and job leases then live in the database and N instances may run behind the load balancer (docs/AWS_DEPLOYMENT_RUNBOOK.md §15, docs/ENTERPRISE_READINESS.md). A FAIL with Postgres configured means the listener connection is down or a store was overridden — check the boot log's instance line.",
+  },
+  {
     id: "encryption-at-rest",
     title: "Encryption of ePHI at rest",
     description:
