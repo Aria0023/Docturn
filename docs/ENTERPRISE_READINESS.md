@@ -103,7 +103,31 @@ is unset; the in-process fake transport describe always runs.
 ## E2 — Identity (in code and tested)
 
 Four separate switches, all OFF by default, so nothing below changes how an
-existing tenant behaves until a developer turns it on for that tenant.
+existing tenant behaves until a developer turns it on for that tenant:
+`enterprise.sso` (E2.1), `enterprise.scim` (E2.2),
+`enterprise.sessionPolicy` (E2.3) and `enterprise.auditExport` (E2.4).
+
+### What an operator must do (not optional)
+
+- **`INTEGRATION_KEY`** must be set for E2.1: it encrypts the hospital's SSO
+  client secret exactly as it encrypts its Amion / Epic credentials. Without
+  it a director cannot save an SSO connection at all — the route refuses
+  rather than storing a secret in plaintext, and says so.
+- **`PUBLIC_BASE_URL`** should be set where DocTurn must hand an ABSOLUTE url
+  to somebody else and cannot trust the `Host` header: the SSO redirect URI a
+  hospital registers with its identity provider
+  (`<base>/api/auth/sso/callback`) and the SCIM base URL a director is shown
+  (`<base>/scim/v2`). Unset, both are derived from the request — right behind
+  an ordinary reverse proxy, wrong behind one that rewrites the host.
+- **`SSO_ALLOW_INSECURE_ISSUER` must stay unset** on anything handling real
+  patient data. It exists so a local TEST identity provider on
+  `http://127.0.0.1` can be used; it is ignored when `NODE_ENV=production`,
+  warned about on the boot log and shown on the director's card.
+- Nothing here needs a migration step: every table and column is created by
+  the idempotent DDL in `server/db.ts` on boot (`sso_connections`,
+  `scim_tokens`, `org_session_policy`, `user_sessions`,
+  `users.sessions_revoked_at`), and all of them are cascaded in the
+  tenant-delete transaction (and the user delete, where user-keyed).
 
 ### E2.1 OIDC single sign-on (module `enterprise.sso`)
 
