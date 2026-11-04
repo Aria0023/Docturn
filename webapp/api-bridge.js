@@ -4101,6 +4101,64 @@
   // Settings' Preview button (a tap, so the browser lets it play).
   DT.actions.previewSound = function (tone) { unlockAudio(); return playTone(tone); };
 
+  // ---- the person's own display preset (module platform.userThemes) --------
+  // GET / PUT /api/me/theme holds MY preset, text size and follow-device over
+  // the ORGANIZATION's branding (which stays on PATCH /api/org/preferences for
+  // its directors). The slice is never persisted: on a shared ward workstation
+  // the next clinician must not inherit the previous one's theme, so a fresh
+  // page shows the organization's palette until the server answers for whoever
+  // is signed in. A save shows the server's answer — a refusal rolls the
+  // screen back to what the server holds and says why.
+  function applyUserTheme(s, v) {
+    if (!v || typeof v.preset !== "string") return s;
+    s.userTheme = {
+      preset: v.preset, textSize: v.textSize, followDevice: !!v.followDevice,
+      presets: Array.isArray(v.presets) ? v.presets : null,
+      textSizes: Array.isArray(v.textSizes) ? v.textSizes : null,
+      followDevicePresets: Array.isArray(v.followDevicePresets) ? v.followDevicePresets : null,
+      defaults: v.defaults || null,
+    };
+    return s;
+  }
+  DT.actions.loadMyTheme = function () {
+    if (DT.moduleOn && !DT.moduleOn("platform.userThemes")) {
+      DT.set(function (s) { s.userTheme = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/me/theme").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { return applyUserTheme(s, v); });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.userTheme = null; return s; });
+      return null;
+    });
+  };
+  // One key changed → ONE PUT of the whole row (the server owns all three), and
+  // the screen follows the answer. Shown at once so the preview is live, then
+  // kept or rolled back by the server.
+  DT.actions.setMyTheme = function (patch) {
+    var cur = DT.getState().userTheme;
+    if (!cur || !patch) return Promise.resolve(false);
+    var body = { preset: cur.preset, textSize: cur.textSize, followDevice: !!cur.followDevice };
+    ["preset", "textSize", "followDevice"].forEach(function (k) { if (patch[k] !== undefined) body[k] = patch[k]; });
+    body.followDevice = !!body.followDevice;
+    DT.set(function (s) { s.userTheme = Object.assign({}, cur, body); s.userThemeSave = { state: "saving" }; return s; });
+    return api("PUT", "/api/me/theme", body).then(function (v) {
+      DT.set(function (s) { s.userThemeSave = { state: "saved", at: Date.now() }; return applyUserTheme(s, v); });
+      return true;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      var msg = moduleRefused(e) ? "Personal display presets are switched off for your organization."
+        : isNetworkError(e) ? "No connection — nothing was changed."
+        : "The server refused it — nothing was changed.";
+      DT.set(function (s) { s.userTheme = cur; s.userThemeSave = { state: "error", msg: msg }; s.__toast = { tone: "rejected", title: "Theme not changed", msg: msg }; return s; });
+      return false;
+    });
+  };
+
   // PIN unlock (PerfectServe parity #7, module security.pin, default off).
   // A PIN re-opens THIS authenticated, locked session; it is not a sign-in.
   // The server holds the scrypt hash and the per-session failure count; this
@@ -5145,6 +5203,7 @@
       if (!r) return;
       DT.set(function (s) { s.modules = r.modules || {}; s.moduleRegistry = r.registry || []; return s; });
       followSoundModule();
+      followUserThemeModule();
     }).catch(function () {});
   }
   // Re-read the org's switches now (a screen that just flipped one, a check
@@ -5157,6 +5216,15 @@
     if (!st.session || lockActive()) return;
     if (!DT.moduleOn("messaging.alertSounds")) { if (st.soundPrefs) DT.set(function (s) { s.soundPrefs = null; return s; }); return; }
     if (!st.soundPrefs) DT.actions.loadSoundPrefs();
+  }
+  // The person's own display preset follows the module map the same way:
+  // switched on → read my choice once; off → forget it, so the app falls back
+  // to the organization's palette and the Appearance section disappears.
+  function followUserThemeModule() {
+    var st = DT.getState();
+    if (!st.session || lockActive()) return;
+    if (!DT.moduleOn("platform.userThemes")) { if (st.userTheme) DT.set(function (s) { s.userTheme = null; return s; }); return; }
+    if (!st.userTheme) DT.actions.loadMyTheme();
   }
   function moduleOrgId(orgRef) {
     if (typeof orgRef === "number") return orgRef;

@@ -91,15 +91,18 @@
   button, [role="button"], a, label, select, input, textarea { touch-action: manipulation; }
   :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: hsl(214 25% 86%); border-radius: 99px; border: 2px solid #fff; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px; border: 2px solid var(--card); }
   @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
   @keyframes dt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
   /* Mobile shell height: 100vh for engines without dvh (iOS < 15.4), 100dvh
+     where supported — both divided by --dt-zoom, because a person on "large"
+     text zooms :root and viewport units do NOT shrink with it (the shell would
+     be exactly one zoom factor too tall and push the tab bar off screen).
      where supported so Safari's collapsing toolbar never leaves a gap. An
      inline style object cannot hold two values for one property, hence a class. */
-  .dt-mobile-shell { height: 100vh; height: 100dvh; }
+  .dt-mobile-shell { height: calc(100vh / var(--dt-zoom, 1)); height: calc(100dvh / var(--dt-zoom, 1)); }
   /* Demo-only topbar controls hide on narrow desktop windows (A.CON-MIN-10). */
   @media (max-width: 1000px) { .dt-hide-narrow { display: none !important; } }
   /* Phone: collapse the kit's inline multi-column grids to a single column so
@@ -274,6 +277,10 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    // Appearance carries "Your theme (this account)" — a preference every role
+    // has, so every role needs a route to it (director / ER director reach the
+    // same screen through SettingsTabs).
+    { id: "appearance", label: "Appearance", icon: "palette" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
@@ -282,6 +289,7 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    { id: "appearance", label: "Appearance", icon: "palette" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
@@ -332,7 +340,14 @@ const NAV_MODULE = {
   admissions: "routing.assignments", history: "routing.assignments",
   resources: "ops.resources", appearance: "platform.appearance",
 };
-const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.DT.moduleOn(NAV_MODULE[it.id]);
+// Appearance is the one screen two modules share: the organization's branding
+// (platform.appearance) and the person's own preset (platform.userThemes).
+// Either one on keeps the screen — the card whose module is off says so.
+const navModuleOn = (it) => {
+  if (!window.DT.moduleOn) return true;
+  if (it.id === "appearance") return window.DT.moduleOn("platform.appearance") || window.DT.moduleOn("platform.userThemes");
+  return !NAV_MODULE[it.id] || window.DT.moduleOn(NAV_MODULE[it.id]);
+};
 
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
@@ -353,7 +368,7 @@ const TOP = {
   consult:    ["Consult services", "The services ER physicians can request — saved for your organization"],
   people:     ["People", "Your organization's accounts, as the server holds them"],
   access:     ["Access & people", "Your organization's people and the fixed roles that govern their access"],
-  appearance: ["Appearance & layout", "Your organization's branding and theme, and this device's navigation"],
+  appearance: ["Appearance & layout", "Your own colour scheme and text size, your organization's branding, and this device's navigation"],
   settings:   ["Organization settings", "Rotation rules, retention and integrations"],
   enterprise: ["Platform", "Operations that span every organization"],
   users:      ["Users by organization", "Support directory — every user grouped by tenant"],
@@ -445,7 +460,7 @@ function ImpersonationGateHold({ imp, gate, me, onReturn, onSignOut }) {
     ? who + " hasn't enrolled the two-factor authentication this organization requires for their role yet."
     : who + " still has the one-time password the account was created or reset with, and hasn't chosen their own yet.";
   return (
-    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
+    <div style={{ minHeight: "calc(100dvh / var(--dt-zoom, 1))", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
       <ImpersonationBanner imp={imp} onReturn={onReturn} />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "20px 16px" : 28 }}>
         <div data-testid="impersonation-gate-hold" style={{ width: "100%", maxWidth: 440, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 20px" : "30px 28px", textAlign: "center" }}>
@@ -551,25 +566,25 @@ function App() {
     const sess = st.session || {};
     const identity = { org: lockFlag.org || sess.org, user: lockFlag.user || sess.user, name: lockFlag.name || sess.name || "", role: lockFlag.role || sess.role || role };
     const me = st.me || (identity.name ? { name: identity.name, avatar: identity.name.replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase(), role: identity.role } : null);
-    return <React.Fragment><ThemeStyle theme={st.theme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
+    return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
   }
   // Second factor at sign-in for an enrolled account: the server holds the
   // login (202) until the code arrives, so there is no session yet.
-  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
+  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
   // A developer inside a portal whose account is held by its own gate: show
   // why, with the way back (A.CON-SHO-38) — never the owner's enrolment /
   // change forms.
   // The toast is rendered here too: a failed Return ("Couldn't leave portal")
   // must be visible on this screen, not only inside the shell.
-  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
+  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
   // The org requires MFA for this privileged role and the user hasn't enrolled:
   // the server 403s every other route, so hold the whole app (no navigation)
   // on the enrolment screen until /api/user says the block has lifted.
-  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
+  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
   // A provisioned / admin-reset account still holds its one-time password: the
   // server 403s every other route, so hold the app on the change screen.
-  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
+  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
@@ -649,7 +664,8 @@ function App() {
   else if (nav === "people") screen = <PeopleManager domainRoles={dirDomain.roles} />;
   else if (nav === "access") screen = <AccessPeople domainRoles={dirDomain.roles} />;
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
-    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave} />;
+    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave}
+    userTheme={st.userTheme} userThemesOn={!window.DT.moduleOn || window.DT.moduleOn("platform.userThemes")} onSetMyTheme={a.setMyTheme} userThemeSave={st.userThemeSave} />;
   else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
   else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;
@@ -704,7 +720,7 @@ function App() {
     const TABBAR_TOTAL = "calc(var(--dt-tabbar-h, 58px) + var(--sai-bottom))";
     return (
       <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
-        <ThemeStyle theme={st.theme} />
+        <ThemeStyle theme={st.theme} userTheme={st.userTheme} />
         <SyntheticBanner on={st.syntheticData} />
         <div className="dt-install-slot"><InstallPrompt /><EnableAlertsCard /></div>
         {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
@@ -767,8 +783,8 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
-      <ThemeStyle theme={st.theme} />
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh / var(--dt-zoom, 1))", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
+      <ThemeStyle theme={st.theme} userTheme={st.userTheme} />
       <SyntheticBanner on={st.syntheticData} />
       <InstallPrompt />
       <EnableAlertsCard />

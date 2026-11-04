@@ -4,9 +4,13 @@
    which is itself grounded in the live codebase (client/src/index.css,
    tailwind.config.ts, shadcn/ui, manifest.json).
 
-   Light mode only — the product declares color-scheme: light and ships
-   no dark theme. Always reference the SEMANTIC token (e.g. var(--primary)),
-   never a raw hex, so the system stays themeable.
+   The values below are the ORGANIZATION's default (light) look. A person may
+   layer their own preset on top — Night and High contrast are dark canvases —
+   by overriding the "-ch" channels from webapp/AppShell.jsx (PALETTES /
+   applyTheme), which is why every colour here composes from a channel and why
+   a component must reference the SEMANTIC token (e.g. var(--primary)) and
+   never a raw hex: a literal cannot follow the person's theme, and on a dark
+   canvas it is white-on-white.
 
    Color tokens are stored as HSL *channels* (no hsl() wrapper), matching the
    codebase convention, then composed into ready-to-use colors below.
@@ -29,6 +33,17 @@
   --input-ch:                214 32% 91%;
   --ring-ch:                 221 83% 53%;
   --destructive-ch:          0 72% 51%;     /* #DC2626 — white text on it reads 4.8:1 (AA; A.CON-SHO-53) */
+  /* A heavier line than --border: switch tracks in their "off" state, dashed
+     separators, the rim of a tinted tile. Was #CBD5E1 all over the kit. */
+  --border-strong-ch:        213 27% 84%;
+  /* The deliberately DARK panels — the developer console's tenant header, the
+     compliance / support overview strips, the lock dialog. These stay dark in
+     every preset (that is the point of them), so a preset only deepens them;
+     the -foreground / -muted / -accent channels are the ink that sits on them. */
+  --inverse-ch:              217 33% 17%;   /* #1E293B */
+  --inverse-foreground-ch:   210 40% 98%;
+  --inverse-muted-ch:        213 27% 72%;   /* ≥4.5:1 on --inverse */
+  --inverse-accent-ch:       199 95% 74%;   /* #7DD3FC — icons / links on --inverse */
 
   /* --- Composed semantic tokens (use these in components) ---------------- */
   --primary:              hsl(var(--primary-ch));
@@ -47,7 +62,29 @@
   --input:                hsl(var(--input-ch));
   --ring:                 hsl(var(--ring-ch));
   --destructive:          hsl(var(--destructive-ch));
+  /* applyTheme re-derives this per preset: whichever of near-white / near-black
+     reads better as text on the preset's --destructive fill. */
   --destructive-foreground: #ffffff;
+  --border-strong:        hsl(var(--border-strong-ch));
+  --inverse:              hsl(var(--inverse-ch));
+  --inverse-foreground:   hsl(var(--inverse-foreground-ch));
+  --inverse-muted:        hsl(var(--inverse-muted-ch));
+  --inverse-accent:       hsl(var(--inverse-accent-ch));
+  /* Warning / danger ink for those same always-dark panels and overlays: the
+     light-on-dark shades, which do NOT follow the light presets' deep status
+     colours (a #B45309 amber is unreadable on a near-black panel). */
+  --inverse-warning:      #FDBA74;
+  --inverse-danger:       #FCA5A5;
+  /* Scrim behind a modal / drawer, and the two shadow-ish surfaces that used to
+     be hard-coded rgba(): the translucent topbar and a lifted overlay. */
+  --overlay:              hsl(222 47% 8% / .42);
+  /* The near-opaque scrim of a full-screen viewer (an attachment lightbox). */
+  --overlay-strong:       hsl(222 47% 11% / .94);
+  --topbar-bg:            hsl(var(--card-ch) / .85);
+  /* Ink on a solid accent / status fill (buttons, STAT bars, avatar tiles).
+     applyTheme re-derives --primary-foreground per preset; --on-status is the
+     ink on the fixed-hue status fills, which stay dark in every preset. */
+  --on-status:            #ffffff;
   /* Accent surfaces. applyTheme (AppShell.jsx) re-derives both from the org's
      accent so the contrast contract holds for any accent (A.CON-SHO-53):
      --primary text reads ≥4.5:1 on --primary-tint, and --primary-ink — the
@@ -98,6 +135,21 @@
   --status-neutral:     #475569;  /* slate   — inactive / expired / disabled     (6.92:1 on tint) */
   --status-neutral-fg:  #475569;
   --status-neutral-bg:  #F1F5F9;
+  /* `--status-X-rim`: the 1-2px line around a tinted banner / input / chip of
+     that family — a shade between the tint and the text, never used for text.
+     The dark presets override all four shades of every family together. */
+  --status-pending-rim:  #FCD34D;
+  --status-accepted-rim: #A7F3D0;
+  --status-active-rim:   #BFDBFE;
+  --status-rejected-rim: #FCA5A5;
+  --status-neutral-rim:  #CBD5E1;
+
+  /* Root display scale. `large` text (a person's own preference) sets
+     --dt-zoom and zooms :root by it, so the kit's pixel type, its 44px tap
+     targets and its 16px inputs all grow together. Anything sized in viewport
+     units must divide by it (see .dt-mobile-shell in index.html) or it would
+     overflow the screen by exactly the scale factor. */
+  --dt-zoom: 1;
 
   /* ======================================================================
      TYPOGRAPHY

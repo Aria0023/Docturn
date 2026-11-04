@@ -257,6 +257,13 @@
       // (server-backed; DND without covering makes on-call roles unreachable).
       myPrefs: { dnd: false, coveringUserId: null },
       theme: { appName: "DocTurn", accent: "#2563EB", radius: 8, sidebar: "expanded", contentWidth: "standard" },
+      // THIS person's display preset over the organization's theme above
+      // (module platform.userThemes, GET/PUT /api/me/theme). null until the
+      // server has answered: "org" is the default everyone sees, so a page with
+      // no answer yet shows the organization's palette, never someone else's
+      // choice. Deliberately NOT in PERSIST_KEYS — a shared ward workstation
+      // must not show the previous clinician's theme to the next one.
+      userTheme: null,
       navHidden: {},
       navOrder: {},
       // Per-role patient-board module visibility overrides (merged over the
@@ -849,7 +856,9 @@
     // whether the previous person had a PIN
     "pinStatus",
     // the previous person's alert-sound choice
-    "soundPrefs"];
+    "soundPrefs",
+    // the previous person's display preset (night / large text / follow device)
+    "userTheme"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1163,6 +1172,11 @@
     // No server, no PIN unlock: only the server can lift its own lock.
     pinUnlockAvailable: function () { return Promise.resolve(false); },
     unlockWithPin: function () { return Promise.resolve({ ok: false, error: "offline" }); },
+    // Per-user display preset: offline there is no server to hold it, so the
+    // offline kit reports "not connected" rather than changing the look of a
+    // page it could not save (standing rule: no control that only moves pixels).
+    loadMyTheme: function () { set(function (s) { s.userTheme = null; return s; }); return Promise.resolve(null); },
+    setMyTheme: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     loadSoundPrefs: function () { set(function (s) { s.soundPrefs = null; return s; }); return Promise.resolve(null); },
     setSoundPref: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     previewSound: function () { return false; },

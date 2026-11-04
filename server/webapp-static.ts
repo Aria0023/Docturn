@@ -397,6 +397,20 @@ function chooseMode(opt: WebappMode | undefined): { mode: WebappMode; source: st
  * Mount the client on `app` (after the API routes): /sw.js, the shell, the
  * compressed static files, express.static, and the SPA fallback.
  */
+/**
+ * The display presets whose splash / chrome colours differ from the shipped
+ * manifest — the two dark canvases and the two low-glare light ones (see
+ * PALETTES in webapp/AppShell.jsx; `theme_color` for a light preset stays the
+ * brand blue because the manifest is fetched without a session and so cannot
+ * know the organization's accent).
+ */
+const MANIFEST_THEMES: Record<string, { theme_color: string; background_color: string }> = {
+  calm: { theme_color: "#2563EB", background_color: "#EFF2F7" },
+  warm: { theme_color: "#2563EB", background_color: "#F7F3EB" },
+  night: { theme_color: "#1E2430", background_color: "#101420" },
+  contrast: { theme_color: "#000000", background_color: "#000000" },
+};
+
 export function mountWebapp(app: Express, dir: string, opts: WebappOptions = {}): WebappServing {
   const root = resolve(dir);
   const distDir = resolve(opts.distDir ?? join(root, "dist"));
@@ -488,6 +502,32 @@ export function mountWebapp(app: Express, dir: string, opts: WebappOptions = {})
       sendRepresentation(req, res, await compressAll(body), "application/javascript; charset=UTF-8");
     } catch (e) {
       next(e);
+    }
+  });
+
+  /* themed web-app manifest -------------------------------------------------
+     The installed app's splash and chrome colours follow the display preset
+     the page is running: webapp/AppShell.jsx (applyThemeColor) rewrites the
+     <link rel="manifest"> href to /manifest.webmanifest?theme=<preset> when a
+     person switches, and this answers with that preset's colours.
+
+     The preset is named in the URL, not read from the session: a browser
+     fetches the manifest without the page's cookies, so a per-user manifest
+     could not be served reliably — and this way nothing about who is signed in
+     is needed, or revealed, to colour a splash screen. `theme` must be one of
+     the fixed presets below; anything else (and the light presets, which keep
+     the shipped colours) falls through to the file on disk. The live top inset
+     and status bar follow <meta name="theme-color">, which the page updates
+     itself (docs/MOBILE.md). */
+  app.get("/manifest.webmanifest", (req, res, next) => {
+    const want = typeof req.query.theme === "string" ? MANIFEST_THEMES[req.query.theme] : undefined;
+    if (!want) return next();
+    try {
+      const base = JSON.parse(readFileSync(join(root, "manifest.webmanifest"), "utf8")) as Record<string, unknown>;
+      res.setHeader("Cache-Control", REVALIDATE);
+      res.type("application/manifest+json").send(JSON.stringify({ ...base, ...want }));
+    } catch {
+      next();
     }
   });
 

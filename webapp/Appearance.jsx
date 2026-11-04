@@ -6,8 +6,15 @@
      once, then kept or rolled back by the server's answer (api-bridge.js).
      While the platform.appearance module is off the server refuses them, so
      this screen says so instead of offering them.
+   - "Your theme (this account)" is a preference of THIS PERSON on the server
+     (GET / PUT /api/me/theme, module platform.userThemes): a preset over the
+     organization's palette, a text size and whether it follows the device. It
+     travels with the account to every browser and changes nothing for anyone
+     else. While the module is off the server refuses it, so the section says so.
    - Navigation structure (hide / reorder sidebar items) is a preference of
-     THIS DEVICE (browser storage) — said in its title and footnote. */
+     THIS DEVICE (browser storage) — said in its title and footnote.
+   Each of the three carries a label naming whose setting it is; nothing on this
+   screen is ambiguous about whether it changes the organization or the person. */
 
 const ACCENTS = [
   ["#2563EB", "Blue"], ["#0F766E", "Teal"], ["#7C3AED", "Violet"],
@@ -18,6 +25,27 @@ const RADII = [["Sharp", 4], ["Rounded", 8], ["Soft", 14]];
 // Whole-app canvas palettes (see applyTheme). Classic = the shipped look.
 const COLOR_SCHEMES = [["Classic", "classic"], ["Calm", "calm"], ["Warm", "warm"]];
 const WIDTHS = [["Standard", "standard"], ["Wide", "wide"], ["Full", "full"]];
+// This person's own presets over the org's palette (server-stored, module
+// platform.userThemes). "Organization's" is the default: follow whatever the
+// org chose. Night and High contrast are dark canvases; the three light ones
+// let a person differ from their org without changing it for anyone.
+const MY_PRESETS = [
+  ["org", "Organization's", "building-2"],
+  ["classic", "Classic", "sun"],
+  ["calm", "Calm", "cloud"],
+  ["warm", "Warm", "coffee"],
+  ["night", "Night", "moon"],
+  ["contrast", "High contrast", "contrast"],
+];
+const TEXT_SIZES = [["Default", "default"], ["Large", "large"]];
+const PRESET_NOTE = {
+  org: "Follows your organization's colour scheme — change with it.",
+  classic: "The shipped light look, whatever your organization picked.",
+  calm: "Cool, soft slate — lower glare for long shifts.",
+  warm: "Warm paper — the least blue light.",
+  night: "A true dark canvas for night shifts.",
+  contrast: "Maximum contrast on every pair — for bright wards and low vision.",
+};
 const SIDEBARS = [["Expanded", "expanded", "panel-left"], ["Compact", "compact", "panel-left-close"]];
 
 function Seg({ options, value, onChange }) {
@@ -29,7 +57,7 @@ function Seg({ options, value, onChange }) {
         return (
           <button key={val} onClick={() => onChange(val)}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
-              background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+              background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
             {icon && <Icon name={icon} size={15} />}{label}
           </button>
         );
@@ -57,18 +85,18 @@ function Row({ label, sub, children }) {
 function CardHead({ icon, title, sub }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
-      <Icon name={icon} size={17} color="var(--primary)" />
+      <Icon name={icon} size={17} color="var(--primary-ink)" />
       <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{title}</h3>
       {sub && <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>· {sub}</span>}
     </div>
   );
 }
 
-function ThemeSaveNote({ save }) {
+function ThemeSaveNote({ save, mine }) {
   if (!save || !save.state) return null;
   const map = {
     saving: ["loader", "var(--muted-foreground)", "Saving…"],
-    saved: ["check-circle-2", "var(--status-accepted-fg, var(--status-accepted))", "Saved for your organization"],
+    saved: ["check-circle-2", "var(--status-accepted-fg)", mine ? "Saved to your account" : "Saved for your organization"],
     error: ["alert-triangle", "var(--destructive)", "Not saved" + (save.msg ? " — " + save.msg : "")],
   };
   const m = map[save.state];
@@ -76,7 +104,71 @@ function ThemeSaveNote({ save }) {
   return <span data-theme-save={save.state} role="status" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: m[1] }}><Icon name={m[0]} size={13} />{m[2]}</span>;
 }
 
-function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset, appearanceOn = true, themeSave }) {
+// "Your theme (this account)" — the one card on this screen that belongs to the
+// PERSON. Separate from the organization's branding above it, labelled as such,
+// and every control writes straight through to /api/me/theme (the preview is
+// the live app, because applyTheme has already been given the new preset).
+function MyThemeCard({ userTheme, userThemesOn, orgPalette, onSetMyTheme, save }) {
+  const mobile = useIsMobile();
+  if (!userThemesOn) {
+    return (
+      <Card style={{ padding: 18 }}>
+        <CardHead icon="user-cog" title="Your theme (this account)" sub="switched off" />
+        <div data-user-theme-off role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, lineHeight: 1.5, marginTop: 6 }}>
+          <span style={{ flex: "none", marginTop: 1 }}><Icon name="info" size={16} color="var(--muted-foreground)" /></span>
+          <span><b>Personal display presets are switched off for your organization</b> by the DocTurn operator. Everyone sees your organization's branding; nobody can set a personal theme until the operator switches it back on.</span>
+        </div>
+      </Card>
+    );
+  }
+  if (!userTheme) {
+    return (
+      <Card style={{ padding: 18 }}>
+        <CardHead icon="user-cog" title="Your theme (this account)" sub="for you only" />
+        <div data-user-theme-loading style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 6 }}>Reading your saved theme…</div>
+      </Card>
+    );
+  }
+  const preset = userTheme.preset || "org";
+  const canFollow = (userTheme.followDevicePresets || ["org", "night"]).indexOf(preset) >= 0;
+  const orgLabel = (COLOR_SCHEMES.find((c) => c[1] === (orgPalette || "classic")) || ["Classic"])[0];
+  return (
+    <Card style={{ padding: 18 }} data-user-theme={preset}>
+      <CardHead icon="user-cog" title="Your theme (this account)" sub="for you only — nobody else sees it" />
+      <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4, lineHeight: 1.45 }}>
+        Saved to your account on the server, so it follows you to every browser and phone you sign in on. It layers over your organization's branding — the workspace name, accent colour, corner radius, sidebar and content width stay as your organization set them.
+      </div>
+      <div style={{ marginTop: 8 }}><ThemeSaveNote save={save} mine /></div>
+      <Row label="Colour scheme" sub={"Your own canvas. " + (PRESET_NOTE[preset] || "")}>
+        <div style={{ display: "inline-flex", flexWrap: "wrap", maxWidth: "100%", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", justifyContent: mobile ? "flex-start" : "flex-end" }}>
+          {MY_PRESETS.map(([val, label, icon]) => {
+            const on = preset === val;
+            return (
+              <button key={val} data-my-preset={val} aria-pressed={on} onClick={() => onSetMyTheme({ preset: val })}
+                title={val === "org" ? "Follow your organization's scheme (" + orgLabel + ")" : PRESET_NOTE[val]}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap",
+                  background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                <Icon name={icon} size={15} />{label}{val === "org" ? " (" + orgLabel + ")" : ""}
+              </button>
+            );
+          })}
+        </div>
+      </Row>
+      <Row label="Text size" sub="Large scales the whole app — text, buttons and inputs together.">
+        <Seg options={TEXT_SIZES} value={userTheme.textSize || "default"} onChange={(v) => onSetMyTheme({ textSize: v })} />
+      </Row>
+      <Row label="Follow this device" sub={canFollow
+        ? "Use the phone or computer's own light / dark setting: light by day (your organization's scheme), Night after dark."
+        : "Only available on Organization's and Night — Classic, Calm, Warm and High contrast are a deliberate choice the device must not override."}>
+        <div style={{ opacity: canFollow ? 1 : 0.45, pointerEvents: canFollow ? "auto" : "none" }}>
+          <Seg options={[["On", true], ["Off", false]]} value={!!userTheme.followDevice} onChange={(v) => onSetMyTheme({ followDevice: v })} />
+        </div>
+      </Row>
+    </Card>
+  );
+}
+
+function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset, appearanceOn = true, themeSave, userTheme, userThemesOn = true, onSetMyTheme, userThemeSave }) {
   const mobile = useIsMobile();
   // build ordered, annotated nav list for the structure editor
   const items = navOrder.map((id) => master.find((m) => m.id === id)).filter(Boolean);
@@ -89,9 +181,9 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
         <div style={{ flex: "1 1 240px", minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Appearance &amp; layout</div>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
-            {appearanceOn
-              ? "Your organization's branding and theme are saved on the server for everyone in it. Navigation order is kept on this device."
-              : "Navigation order is kept on this device."}
+            {(appearanceOn ? "Your organization's branding and theme are saved on the server for everyone in it. " : "")
+              + (userThemesOn ? "Your own colour scheme and text size are saved to your account and change nothing for anyone else. " : "")
+              + "Navigation order is kept on this device."}
           </div>
           {appearanceOn && <div style={{ marginTop: 4 }}><ThemeSaveNote save={themeSave} /></div>}
         </div>
@@ -104,6 +196,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
       <div style={{ display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 16, alignItems: "start" }}>
         {/* LEFT: controls */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+          <MyThemeCard userTheme={userTheme} userThemesOn={userThemesOn} orgPalette={theme.palette} onSetMyTheme={onSetMyTheme} save={userThemeSave} />
           {!appearanceOn && (
             <Card style={{ padding: 18 }}>
               <div data-appearance-off role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, lineHeight: 1.5 }}>
@@ -123,7 +216,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                 {ACCENTS.map(([hex, name]) => (
                   <button key={hex} title={name} onClick={() => onSetTheme({ accent: hex })}
                     style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: hex, cursor: "pointer", border: theme.accent === hex ? "2px solid var(--foreground)" : "2px solid transparent", boxShadow: "0 0 0 1px var(--border)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {theme.accent === hex && <Icon name="check" size={15} color="#fff" />}
+                    {theme.accent === hex && <Icon name="check" size={15} color="var(--primary-foreground)" />}
                   </button>
                 ))}
               </div>
@@ -154,7 +247,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
               {items.map((it, i) => {
                 const locked = it.id === "dashboard";
                 return (
-                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "#fff" }}>
+                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "9px 12px", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--card)" }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                       <button onClick={() => onMoveNav(role, navOrder, it.id, -1)} disabled={i === 0}
                         style={{ border: "none", background: "transparent", cursor: i === 0 ? "default" : "pointer", color: i === 0 ? "var(--border)" : "var(--muted-foreground)", padding: 0, lineHeight: 0 }}><Icon name="chevron-up" size={15} /></button>
@@ -166,7 +259,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                     {locked
                       ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", display: "inline-flex", alignItems: "center", gap: 4 }}><Icon name="lock" size={12} />Home</span>
                       : <button onClick={() => onToggleNav(role, it.id)} title="Hide from navigation"
-                          style={{ border: "1px solid var(--border)", background: "#fff", borderRadius: "var(--radius-md)", cursor: "pointer", padding: "4px 8px", fontSize: 11.5, fontWeight: 600, color: "var(--muted-foreground)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="eye" size={13} />Visible</button>}
+                          style={{ border: "1px solid var(--border)", background: "var(--card)", borderRadius: "var(--radius-md)", cursor: "pointer", padding: "4px 8px", fontSize: 11.5, fontWeight: 600, color: "var(--muted-foreground)", display: "inline-flex", alignItems: "center", gap: 5 }}><Icon name="eye" size={13} />Visible</button>}
                   </div>
                 );
               })}
@@ -177,8 +270,8 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
                   {hiddenItems.map((it) => (
                     <button key={it.id} onClick={() => onToggleNav(role, it.id)}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", border: "1px dashed var(--border)", borderRadius: "var(--radius-full)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}>
-                      <Icon name="plus" size={13} color="var(--primary)" />{it.label}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", border: "1px dashed var(--border)", borderRadius: "var(--radius-full)", background: "var(--card)", cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}>
+                      <Icon name="plus" size={13} color="var(--primary-ink)" />{it.label}
                     </button>
                   ))}
                 </div>
@@ -196,13 +289,13 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
             </div>
             <div style={{ display: "flex", height: 320, background: "var(--secondary)" }}>
               {/* mini sidebar */}
-              <div style={{ width: theme.sidebar === "compact" ? 52 : 128, flex: "none", background: "#fff", borderRight: "1px solid var(--border)", padding: theme.sidebar === "compact" ? "12px 0" : 12, display: "flex", flexDirection: "column", gap: 6, alignItems: theme.sidebar === "compact" ? "center" : "stretch", transition: "width .2s" }}>
+              <div style={{ width: theme.sidebar === "compact" ? 52 : 128, flex: "none", background: "var(--card)", borderRight: "1px solid var(--border)", padding: theme.sidebar === "compact" ? "12px 0" : 12, display: "flex", flexDirection: "column", gap: 6, alignItems: theme.sidebar === "compact" ? "center" : "stretch", transition: "width .2s" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6, justifyContent: theme.sidebar === "compact" ? "center" : "flex-start" }}>
-                  <span style={{ width: 22, height: 22, borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#fff", fontWeight: 800, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(theme.appName || "D").charAt(0).toUpperCase()}</span>
+                  <span style={{ width: 22, height: 22, borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "var(--primary-foreground)", fontWeight: 800, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(theme.appName || "D").charAt(0).toUpperCase()}</span>
                   {theme.sidebar !== "compact" && <span style={{ fontSize: 12.5, fontWeight: 800, letterSpacing: "-.02em", whiteSpace: "nowrap", overflow: "hidden" }}>{theme.appName}</span>}
                 </div>
                 {items.slice(0, 5).map((it, i) => (
-                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: theme.sidebar === "compact" ? "7px 0" : "7px 9px", justifyContent: theme.sidebar === "compact" ? "center" : "flex-start", borderRadius: "var(--radius-md)", background: i === 0 ? "var(--primary-tint, #EFF6FF)" : "transparent", color: i === 0 ? "var(--primary)" : "var(--muted-foreground)" }}>
+                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: theme.sidebar === "compact" ? "7px 0" : "7px 9px", justifyContent: theme.sidebar === "compact" ? "center" : "flex-start", borderRadius: "var(--radius-md)", background: i === 0 ? "var(--primary-tint)" : "transparent", color: i === 0 ? "var(--primary-ink)" : "var(--muted-foreground)" }}>
                     <Icon name={it.icon} size={15} />
                     {theme.sidebar !== "compact" && <span style={{ fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap" }}>{it.label}</span>}
                   </div>
@@ -211,25 +304,25 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
               {/* mini content */}
               <div style={{ flex: 1, padding: 14, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                  <div style={{ flex: 1, height: 44, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)" }} />
-                  <div style={{ flex: 1, height: 44, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)" }} />
+                  <div style={{ flex: 1, height: 44, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)" }} />
+                  <div style={{ flex: 1, height: 44, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)" }} />
                 </div>
-                <div style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: 12, marginBottom: 12 }}>
+                <div style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", padding: 12, marginBottom: 12 }}>
                   <div style={{ width: "55%", height: 9, background: "var(--secondary)", borderRadius: 99, marginBottom: 8 }} />
                   <div style={{ width: "85%", height: 7, background: "var(--secondary)", borderRadius: 99, marginBottom: 6 }} />
                   <div style={{ width: "70%", height: 7, background: "var(--secondary)", borderRadius: 99 }} />
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", fontSize: 12, fontWeight: 600 }}>Primary</span>
-                  <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "#fff", border: "1px solid var(--border)", color: "var(--foreground)", fontSize: 12, fontWeight: 600 }}>Secondary</span>
-                  <span style={{ padding: "5px 11px", borderRadius: "var(--radius-full)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", fontSize: 11.5, fontWeight: 700, alignSelf: "center" }}>Badge</span>
+                  <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "var(--primary)", color: "var(--primary-foreground)", fontSize: 12, fontWeight: 600 }}>Primary</span>
+                  <span style={{ padding: "7px 14px", borderRadius: "var(--radius-md)", background: "var(--card)", border: "1px solid var(--border)", color: "var(--foreground)", fontSize: 12, fontWeight: 600 }}>Secondary</span>
+                  <span style={{ padding: "5px 11px", borderRadius: "var(--radius-full)", background: "var(--primary-tint)", color: "var(--primary-ink)", fontSize: 11.5, fontWeight: 700, alignSelf: "center" }}>Badge</span>
                 </div>
               </div>
             </div>
           </Card>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 12, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
             <Icon name="info" size={14} style={{ marginTop: 1, flex: "none" }} />
-            <span>{appearanceOn ? "Branding, theme, sidebar style and content width are saved for everyone in your organization. " : ""}Navigation order and hidden items are kept on this device only.</span>
+            <span>The preview is the live app: it already shows your own colour scheme and text size on top of your organization's branding. {appearanceOn ? "Branding, accent, sidebar style and content width are saved for everyone in your organization. " : ""}Navigation order and hidden items are kept on this device only.</span>
           </div>
         </div>
       </div>
