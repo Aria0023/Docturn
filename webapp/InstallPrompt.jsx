@@ -12,6 +12,12 @@ function dtIsStandalone() {
 function dtIsIOS() {
   return /iphone|ipad|ipod/i.test(window.navigator.userAgent) && !window.MSStream;
 }
+// Inside the native shell (mobile-app/: the app IS installed) there is nothing
+// to add to a home screen — api-bridge.js sets DT.shell from the shell's
+// "DocTurnShell/<version>" user-agent suffix.
+function dtIsShell() {
+  try { return !!(window.DT && DT.shell) || /DocTurnShell\//.test(window.navigator.userAgent || ""); } catch (e) { return false; }
+}
 
 function InstallPrompt() {
   const [deferred, setDeferred] = React.useState(window.__dtInstallEvent || null);
@@ -36,7 +42,7 @@ function InstallPrompt() {
   // Only surface when the app can actually be installed: a captured prompt
   // (Android/desktop) or iOS Safari (manual add). Never when already installed
   // or after the tester dismisses it.
-  const canShow = !installed && !dismissed && (deferred || (ios && !dtIsStandalone()));
+  const canShow = !dtIsShell() && !installed && !dismissed && (deferred || (ios && !dtIsStandalone()));
   if (!canShow) return null;
 
   function dismiss() {
