@@ -170,6 +170,13 @@ function MyThemeCard({ userTheme, userThemesOn, orgPalette, onSetMyTheme, save }
 
 function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onToggleNav, onMoveNav, onReset, appearanceOn = true, themeSave, userTheme, userThemesOn = true, onSetMyTheme, userThemeSave }) {
   const mobile = useIsMobile();
+  // Only these roles may write the ORGANIZATION's theme (the server:
+  // requireRole("director", "er_director", "developer") on PATCH
+  // /api/org/preferences). Everyone else reaches this screen for their OWN
+  // theme, so the organization's controls are not offered to them at all — a
+  // control the server would refuse is not a control (standing rule).
+  const canEditOrg = role === "director" || role === "er_director" || role === "developer";
+  const orgControls = appearanceOn && canEditOrg;
   // build ordered, annotated nav list for the structure editor
   const items = navOrder.map((id) => master.find((m) => m.id === id)).filter(Boolean);
   const hiddenItems = master.filter((m) => navHidden.includes(m.id) && m.id !== "dashboard");
@@ -181,13 +188,13 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
         <div style={{ flex: "1 1 240px", minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Appearance &amp; layout</div>
           <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>
-            {(appearanceOn ? "Your organization's branding and theme are saved on the server for everyone in it. " : "")
+            {(orgControls ? "Your organization's branding and theme are saved on the server for everyone in it. " : (appearanceOn ? "Your organization's branding and theme are set by your organization's directors, for everyone in it. " : ""))
               + (userThemesOn ? "Your own colour scheme and text size are saved to your account and change nothing for anyone else. " : "")
               + "Navigation order is kept on this device."}
           </div>
-          {appearanceOn && <div style={{ marginTop: 4 }}><ThemeSaveNote save={themeSave} /></div>}
+          {orgControls && <div style={{ marginTop: 4 }}><ThemeSaveNote save={themeSave} /></div>}
         </div>
-        {appearanceOn && <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onReset} title="Reset your organization's theme to the defaults (for everyone) and this device's navigation">Reset to defaults</Button>}
+        {orgControls && <Button variant="outline" size="sm" icon="rotate-ccw" onClick={onReset} title="Reset your organization's theme to the defaults (for everyone) and this device's navigation">Reset to defaults</Button>}
       </div>
 
       {/* minWidth 0 on both grid children: the phone rule collapses the grid
@@ -197,7 +204,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
         {/* LEFT: controls */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           <MyThemeCard userTheme={userTheme} userThemesOn={userThemesOn} orgPalette={theme.palette} onSetMyTheme={onSetMyTheme} save={userThemeSave} />
-          {!appearanceOn && (
+          {!appearanceOn && canEditOrg && (
             <Card style={{ padding: 18 }}>
               <div data-appearance-off role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, lineHeight: 1.5 }}>
                 <span style={{ flex: "none", marginTop: 1 }}><Icon name="info" size={16} color="var(--muted-foreground)" /></span>
@@ -205,7 +212,15 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
               </div>
             </Card>
           )}
-          {appearanceOn && <React.Fragment>
+          {appearanceOn && !canEditOrg && (
+            <Card style={{ padding: 18 }}>
+              <div data-org-theme-readonly role="status" style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 13, lineHeight: 1.5 }}>
+                <span style={{ flex: "none", marginTop: 1 }}><Icon name="building-2" size={16} color="var(--muted-foreground)" /></span>
+                <span><b>Your organization's branding is set by your directors</b>, for everyone in your organization — the workspace name, accent colour, corner radius, sidebar style and content width. Your own colour scheme and text size, above, are yours alone.</span>
+              </div>
+            </Card>
+          )}
+          {orgControls && <React.Fragment>
           <Card style={{ padding: 18 }}>
             <CardHead icon="palette" title="Brand & theme" sub="for everyone in your organization" />
             <Row label="Workspace name" sub="Shown in the sidebar for everyone in your organization. A device's sign-in screen shows it only after someone from your organization has signed in on it.">
@@ -322,7 +337,7 @@ function Appearance({ theme, role, master, navHidden, navOrder, onSetTheme, onTo
           </Card>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 12, fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
             <Icon name="info" size={14} style={{ marginTop: 1, flex: "none" }} />
-            <span>The preview is the live app: it already shows your own colour scheme and text size on top of your organization's branding. {appearanceOn ? "Branding, accent, sidebar style and content width are saved for everyone in your organization. " : ""}Navigation order and hidden items are kept on this device only.</span>
+            <span>The preview is the live app: it already shows your own colour scheme and text size on top of your organization's branding. {orgControls ? "Branding, accent, sidebar style and content width are saved for everyone in your organization. " : ""}Navigation order and hidden items are kept on this device only.</span>
           </div>
         </div>
       </div>

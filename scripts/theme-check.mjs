@@ -290,6 +290,28 @@ try {
           await go(page, nav);
           const scan = await page.evaluate(() => window.__themeScan());
           report(scan, nav, size);
+          if (nav === "appearance") {
+            // The control is real and on screen: the card exists, it is marked
+            // with the preset the server holds, and the organization's own
+            // branding card is still a SEPARATE, differently labelled card.
+            const card = await page.evaluate(() => {
+              const mine = document.querySelector("[data-user-theme]");
+              const pressed = [...document.querySelectorAll("[data-my-preset]")].filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.getAttribute("data-my-preset"));
+              const text = (document.querySelector("main") || document.body).textContent || "";
+              return {
+                preset: mine && mine.getAttribute("data-user-theme"),
+                pressed: pressed,
+                mine: /for you only/i.test(text),
+                // A hospitalist may not write the organization's theme, so its
+                // controls are not offered — the screen says who sets them.
+                org: /set by your directors/i.test(text) || /for everyone in your organization/i.test(text),
+                orgControls: !!document.querySelector("[data-org-theme-readonly]") === false,
+              };
+            });
+            rec("the person's own card is on screen, marked with the stored preset",
+              card.preset === preset && card.pressed.length === 1 && card.pressed[0] === preset, JSON.stringify(card));
+            rec("and it says whose setting is whose", card.mine === true && card.org === true, JSON.stringify({ mine: card.mine, org: card.org }));
+          }
         }
         const csp = await page.evaluate(() => window.__csp || []);
         rec("zero CSP violations", csp.length === 0, csp.slice(0, 3).join(" | "));
