@@ -29,6 +29,7 @@ import { registerProviderRoutes } from "./providers.js";
 import { registerReminderRoutes } from "./reminders.js";
 import { registerPinRoutes } from "./pin.js";
 import { registerAlertSoundRoutes } from "./alert-sounds.js";
+import { registerThemeRoutes } from "./themes.js";
 import { registerResourceRoutes } from "./resources.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
@@ -50,6 +51,7 @@ export function registerRoutes(app: Express) {
   registerReminderRoutes(app);
   registerPinRoutes(app);
   registerAlertSoundRoutes(app);
+  registerThemeRoutes(app);
   registerMetricsRoutes(app);
   registerReportsRoutes(app);
   registerOrgRoutes(app);
