@@ -3600,7 +3600,7 @@
         var critical = b.sev === "critical";
         var row = document.createElement("div");
         row.className = "dt-broadcast-banner-item";
-        row.style.cssText = "display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid " + (critical ? "#B91C1C" : "#B45309") + ";background:" + (critical ? "#FEE2E2" : "#FEF3C7") + ";color:" + (critical ? "#7F1D1D" : "#78350F") + ";";
+        row.style.cssText = "display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);border:1px solid " + (critical ? "var(--status-rejected)" : "var(--status-pending)") + ";background:" + (critical ? "var(--status-rejected-bg)" : "var(--status-pending-bg)") + ";color:" + (critical ? "var(--status-rejected-fg)" : "var(--status-pending-fg)") + ";";
         var txt = document.createElement("div");
         txt.style.cssText = "flex:1;min-width:0;";
         var t1 = document.createElement("div");
@@ -3615,14 +3615,14 @@
         btn.textContent = "Acknowledge";
         btn.setAttribute("data-broadcast-ack", String(b.id));
         // A real 44px target on every device, not only coarse-pointer ones.
-        btn.style.cssText = "flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;color:#fff;background:" + (critical ? "#B91C1C" : "#B45309") + ";";
+        btn.style.cssText = "flex:none;min-height:44px;padding:0 16px;border-radius:999px;border:none;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;color:var(--on-status);background:" + (critical ? "var(--status-rejected)" : "var(--status-pending)") + ";";
         btn.onclick = function () { DT.actions.ackBroadcast(b.id); };
         row.appendChild(txt); row.appendChild(btn);
         bannerEl.appendChild(row);
       });
       if (due.length > 3) {
         var more = document.createElement("div");
-        more.style.cssText = "text-align:center;font-size:12px;color:#78350F;";
+        more.style.cssText = "text-align:center;font-size:12px;color:var(--status-pending-fg);";
         more.textContent = (due.length - 3) + " more awaiting acknowledgement";
         bannerEl.appendChild(more);
       }
