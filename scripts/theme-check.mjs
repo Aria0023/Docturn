@@ -300,6 +300,50 @@ try {
     await ctx.close();
   }
 
+  // ---- 1b. the rest of the swept surface, in the two dark presets --------
+  // The matrix above walks one role's six screens at every size and width;
+  // the sweep touched every screen of every role, so each remaining screen is
+  // visited once in `night` and once in `contrast`. The stray-light rule is
+  // what matters here: a literal colour that survived the sweep paints a light
+  // surface on a dark canvas and is caught in one pass.
+  for (const leg of [
+    { role: "director", org: "ISPN", user: "director", width: 390, navs: ["dashboard", "board", "admissions", "broadcasts", "oncall", "settings", "approvals", "consult", "roles", "compliance-monitor"] },
+    { role: "er_doctor", org: "ISPN", user: "er.doc", width: 390, navs: ["dashboard", "oncall", "directory"] },
+    { role: "er_director", org: "ISPN", user: "er.director", width: 430, navs: ["dashboard", "board", "broadcasts", "settings"] },
+    // the developer console carries the --inverse panels, and the DESKTOP
+    // shell (sidebar + topbar) has its own surfaces the phone shell never uses
+    { role: "developer", org: "DOCTURN", user: "dev", width: 1200, navs: ["dashboard", "enterprise", "settings", "users", "compliance", "compliance-monitor", "appearance"] },
+  ]) {
+    const ctx = await browser.newContext({ viewport: { width: leg.width, height: leg.width > 500 ? 900 : (ALL_WIDTHS[leg.width] || 844) }, isMobile: leg.width <= 500, hasTouch: leg.width <= 500, userAgent: leg.width <= 500 ? UA : undefined });
+    const page = await ctx.newPage();
+    const errs = [];
+    page.on("pageerror", (e) => errs.push(e.message.slice(0, 160)));
+    await page.addInitScript(SCANNER);
+    await page.goto(BASE + "/", { waitUntil: "networkidle" });
+    await page.waitForFunction(() => window.DT && window.DT.actions && window.DT.actions.login, null, { timeout: 25000 });
+    await signIn(page, leg.role, leg.org, leg.user);
+    for (const preset of ["night", "contrast"].filter((p) => PRESETS.includes(p))) {
+      cur = `[${leg.width}px ${leg.role} ${preset}] `;
+      await page.evaluate((p) => window.DT.actions.setMyTheme({ preset: p, textSize: "default", followDevice: false }), preset);
+      await sleep(900);
+      for (const nav of leg.navs) {
+        await go(page, nav);
+        const scan = await page.evaluate(() => window.__themeScan());
+        if (!scan.dark) { rec(nav + " renders the dark preset", false, "the page is not dark"); continue; }
+        rec(nav + " AA for every rendered text run", scan.text.length === 0,
+          scan.text.length ? scan.text.length + " below floor, e.g. " + scan.text.slice(0, 3).map((t) => `${t.at} ${t.r}:1 ${t.color} on ${t.bg}`).join(" | ") : scan.scanned + " elements scanned");
+        rec(nav + " no light surface survives on a dark canvas", scan.stray.length === 0,
+          scan.stray.length ? scan.stray.length + " stray, e.g. " + scan.stray.slice(0, 3).map((t) => `${t.at} ${t.bg} (${t.w}x${t.h})`).join(" | ") : "");
+        rec(nav + " nothing invisible", scan.invisible.length === 0,
+          scan.invisible.length ? scan.invisible.slice(0, 2).map((t) => `${t.at} ${t.bg} on ${t.behind}`).join(" | ") : "");
+        rec(nav + " no horizontal overflow", scan.overflow.doc <= 1 && scan.overflow.main <= 1, `doc +${scan.overflow.doc}px, main +${scan.overflow.main}px`);
+      }
+      rec("zero page errors", errs.length === 0, errs.slice(0, 3).join(" | "));
+      errs.length = 0;
+    }
+    await ctx.close();
+  }
+
   // ---- 2. it is the SERVER's, not the browser's --------------------------
   cur = "[round trip] ";
   const a = await newPage(browser, 390);

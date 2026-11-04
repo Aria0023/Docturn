@@ -245,6 +245,11 @@ const PARITY_ROWS: ParityRow[] = [
     act: (h) => { h.w.DT.set((s: any) => { s.soundPrefs = { stat: "siren", urgent: "alarm", routine: "ping" }; return s; }); return h.w.DT.actions.setSoundPref("stat", "none"); },
     msg: "Alert sounds are switched off for your organization.",
   },
+  {
+    module: "platform.userThemes", method: "PUT", path: /^\/api\/me\/theme$/,
+    act: (h) => { h.w.DT.set((s: any) => { s.userTheme = { preset: "org", textSize: "default", followDevice: false }; return s; }); return h.w.DT.actions.setMyTheme({ preset: "night" }); },
+    msg: "Personal display presets are switched off for your organization.",
+  },
 ];
 
 describe("web client: PerfectServe-parity modules refused mid-session", () => {
