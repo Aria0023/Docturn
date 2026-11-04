@@ -384,6 +384,31 @@ describe("realtime bus — in-process transport (two hubs, one process)", () => 
   });
   crossInstanceSuite(() => c);
 
+  it("a revoke / lock control frame arriving FROM the bus closes the matching sockets on this instance (1008 / 4423)", async () => {
+    // In one process both hubs also hear auth.ts's own listeners, so the
+    // cross-instance revoke/lock tests above cannot tell the bus path apart;
+    // this publishes the frames directly as a sibling instance would.
+    const wu = await loginCookie(c.app, "wu");
+    const wuOnB = await connect(c.b.port, wu);
+    await wuOnB.waitFor((m) => m.type === "CONNECTION_ESTABLISHED");
+    c.a.bus.publish({ kind: "revoke", revocation: { userId: c.seedResult.userIds.wu!, reason: "account_deactivated" } });
+    expect(await wuOnB.closed()).toEqual({ code: 1008, reason: "session_revoked" });
+
+    // (chen, not liu: an earlier test in this file deactivates liu.)
+    const chen = await loginCookie(c.app, "chen");
+    const chenOnB = await connect(c.b.port, chen);
+    await chenOnB.waitFor((m) => m.type === "CONNECTION_ESTABLISHED");
+    const other = await connect(c.b.port, await loginCookie(c.app, "chen"));
+    await other.waitFor((m) => m.type === "CONNECTION_ESTABLISHED");
+    // The lock names ONE session: the express-session id behind chen's first cookie.
+    const sid = decodeURIComponent(chen.split("=")[1]!).replace(/^s:/, "").split(".")[0]!;
+    c.a.bus.publish({ kind: "lock", userId: c.seedResult.userIds.chen!, connectionId: sid });
+    expect(await chenOnB.closed()).toEqual({ code: 4423, reason: "session_locked" });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(other.ws.readyState).toBe(WebSocket.OPEN); // chen's OTHER session is untouched
+    other.close();
+  });
+
   it("with no peer on the channel (a single process) nothing is encoded or published", () => {
     const lone = new InProcessBus({ channel: "lonely-" + Math.random(), instanceId: "solo" });
     lone.publish({ kind: "org", orgId: 1, message: { type: "ROTATION_UPDATED", pad: "x".repeat(20_000) } });
