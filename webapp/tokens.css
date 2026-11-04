@@ -231,7 +231,7 @@
 /* Headings in practice (§3.4) */
 .ds-page-title    { font-size: var(--text-2xl); font-weight: var(--weight-bold); color: var(--foreground); line-height: var(--leading-snug); }
 .ds-section-title { font-size: var(--text-lg);  font-weight: var(--weight-bold); color: var(--foreground); }
-.ds-hero          { font-size: var(--text-6xl); font-weight: var(--weight-bold); color: hsl(222 47% 11%); line-height: var(--leading-tight); letter-spacing: -0.02em; }
+.ds-hero          { font-size: var(--text-6xl); font-weight: var(--weight-bold); color: var(--foreground); line-height: var(--leading-tight); letter-spacing: -0.02em; }
 .ds-body          { font-size: var(--text-base); font-weight: var(--weight-normal); line-height: var(--leading-normal); color: var(--foreground); }
 .ds-muted         { font-size: var(--text-sm);  color: var(--muted-foreground); }
 .ds-mono          { font-family: var(--font-mono); }
