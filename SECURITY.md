@@ -99,6 +99,29 @@ automatically uses encrypted Postgres instead of the local file database.
   never sent while the user is DND, deactivated, or their org has push off.
   The sweep is a per-process timer (several instances can each send one per
   interval); its log lines carry a count only.
+- **Single sign-on is the hospital's identity provider, verified** (module
+  `enterprise.sso`, off by default — `docs/ENTERPRISE_READINESS.md` E2.1).
+  Generic OIDC: authorization code with PKCE S256, `state` and `nonce`, and an
+  id_token verified against the provider's JWKS — **RS256 only** (`none` and
+  HS256 refused), the `kid` must be in the live key set, and `iss`, `aud`,
+  `exp`, `iat` and `nonce` are all checked. Every claim DocTurn acts on comes
+  from that verified token; the discovery document must name the issuer the
+  director configured. The client secret is AES-256-GCM encrypted under
+  `INTEGRATION_KEY`, bound to the org, write-only and never logged; the issuer
+  URL faces the same SSRF control as every other hospital-supplied URL (https
+  only, public addresses only, re-checked on each redirect hop). A first
+  sign-in creates the account with NO password; a later one updates the role
+  from the current groups (demotion included) and can never re-role a
+  developer or revive a deactivated account. "SSO required" makes a password
+  sign in nobody for that org — checked after the credential verifies, so a
+  wrong password reveals nothing — except a developer, whose break-glass
+  sign-in is audited at HIGH risk every time. The org-code lookup behind the
+  "Sign in with …" button answers byte-identically for an unknown code, a
+  code with no connection, a disabled one and a module that is off, so it
+  cannot be used to enumerate hospitals. MFA: an SSO sign-in does not ask for
+  DocTurn's own TOTP, the org's MFA requirement still holds for privileged
+  roles, and only an id_token that ASSERTS multi-factor authentication
+  (`amr`/`acr`) stands that requirement down — recorded in the audit row.
 - **SCIM provisioning cannot escalate** (module `enterprise.scim`, off by
   default — `docs/ENTERPRISE_READINESS.md` E2.2). The identity provider
   authenticates with a per-organization bearer token of which only a SHA-256

@@ -2112,9 +2112,13 @@
       var why = String((e && e.message) || "");
       var msg = why === "validation_error" ? "Enter your organization code, username and password."
         : why === "insecure_transport" ? insecureTransportMessage()
+        // E2 single sign-on: the org requires it, so a DocTurn password signs
+        // nobody in. Say that, not "wrong password" — the password may well
+        // have been right (the server checks it first, then refuses).
+        : why === "sso_required" ? "Your organization signs in through its own single sign-on. Use the \u201cSign in with\u2026\u201d button above."
         : e && e.status === 429 ? "Too many sign-in attempts. Wait a few minutes and try again."
         : "Wrong organization code, username or password.";
-      if (role === "developer" && synthetic && why !== "insecure_transport") msg += " " + devAccountHint();
+      if (role === "developer" && synthetic && why !== "insecure_transport" && why !== "sso_required") msg += " " + devAccountHint();
       DT.set(function (s) {
         s.loginError = "Sign-in failed: " + msg;
         s.__toast = { tone: "rejected", title: "Sign-in failed", msg: msg };
@@ -4278,6 +4282,159 @@
       });
       return v;
     }, function (e) { sessionPolicyRefusal(e, "Not signed out"); return null; });
+  };
+
+  /* ── E2 single sign-on (module enterprise.sso) ────────────────────────────
+   * The sign-in screen asks the SERVER whether a typed org code has single
+   * sign-on, and the server answers the same thing for an unknown code, so
+   * nothing here can be used to discover which hospitals exist. The client
+   * never holds an issuer, a client secret or a token: `startSso` hands the
+   * browser the URL the server built and the identity provider takes over.
+   */
+  var ssoLookups = {};   // orgCode (upper) -> promise, so typing asks once
+  DT.actions.ssoAvailable = function (orgCode) {
+    var code = String(orgCode || "").trim().toUpperCase();
+    if (code.length < 2) return Promise.resolve(null);
+    if (ssoLookups[code]) return ssoLookups[code];
+    var p = rawApi("POST", "/api/auth/sso/available", { orgCode: code }).then(function (d) {
+      var v = (d && d.sso) ? { sso: true, label: String(d.label || "") } : { sso: false };
+      DT.set(function (s) {
+        s.ssoOffers = Object.assign({}, s.ssoOffers || {});
+        s.ssoOffers[code] = v;
+        return s;
+      });
+      return v;
+    }, function () {
+      // Unreachable server: offer nothing rather than a button that cannot work.
+      delete ssoLookups[code];
+      return null;
+    });
+    ssoLookups[code] = p;
+    return p;
+  };
+  // Send the person to their identity provider. The server builds the URL
+  // (PKCE, state and nonce are its session's, never the client's).
+  DT.actions.startSso = function (orgCode) {
+    var code = String(orgCode || "").trim();
+    DT.set(function (s) { s.loginError = null; s.ssoStarting = true; return s; });
+    return rawApi("POST", "/api/auth/sso/start", { orgCode: code }).then(function (d) {
+      if (!d || !d.url) throw new Error("sso_unavailable");
+      try { window.location.assign(d.url); } catch (e) { window.location.href = d.url; }
+      return d.url;
+    }, function (e) {
+      DT.set(function (s) {
+        s.ssoStarting = false;
+        s.loginError = (e && e.status === 404)
+          ? "Single sign-on isn't set up for that organization code."
+          : "Couldn't reach your organization's sign-in service. Try again, or sign in with your password.";
+        return s;
+      });
+      return null;
+    });
+  };
+  // The sign-in screen reads ?sso=<code> after the identity provider sends
+  // the browser back: "ok" is a successful sign-in (the session cookie is
+  // already set), anything else is a refusal the server named.
+  var SSO_RETURN = {
+    ok: null,
+    state: "That sign-in didn't complete — please start again.",
+    expired: "That sign-in took too long. Please start again.",
+    no_code: "Your organization's sign-in service didn't return a code.",
+    idp_refused: "Your organization's sign-in service refused the sign-in.",
+    not_available: "Single sign-on is no longer available for that organization.",
+    no_username: "Your organization's sign-in service didn't send a username DocTurn can use.",
+    no_role: "Your organization's sign-in service signed you in, but you are not in a group that DocTurn gives access to. Ask your administrator.",
+    disabled: "That account has been deactivated. Ask a director to restore it.",
+    discovery: "DocTurn couldn't reach your organization's sign-in service.",
+    issuer_mismatch: "Your organization's sign-in service is misconfigured (its issuer does not match).",
+    jwks: "DocTurn couldn't verify your organization's sign-in service.",
+    token: "Your organization's sign-in service refused DocTurn's request.",
+    id_token: "DocTurn couldn't verify the sign-in your organization's service returned.",
+  };
+  DT.actions.readSsoReturn = function () {
+    var code = null;
+    try { code = new URLSearchParams(window.location.search).get("sso"); } catch (e) { return null; }
+    if (!code) return null;
+    // Take it out of the address bar: it is a one-off result, not state.
+    try {
+      var clean = window.location.pathname + window.location.hash;
+      if (window.history && window.history.replaceState) window.history.replaceState({}, "", clean);
+    } catch (e) {}
+    var msg = SSO_RETURN[code];
+    if (msg === undefined) msg = "That sign-in didn't complete — please start again.";
+    if (msg) DT.set(function (s) { s.loginError = msg; return s; });
+    return code;
+  };
+
+  /* ── E2 the director's single-sign-on card ─────────────────────────────── */
+  function ssoAdminRefusal(e, title) {
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = moduleRefused(e) ? "Single sign-on is switched off for your organization."
+      : (e && e.status === 403) ? "Only a hospitalist director can change single sign-on."
+      : (e && e.body && e.body.message) ? e.body.message
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : "The server refused it — nothing was saved.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+  }
+  DT.actions.loadSsoConnection = function () {
+    if (DT.moduleOn && !DT.moduleOn("enterprise.sso")) {
+      DT.set(function (s) { s.ssoConnection = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/org/sso").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { s.ssoConnection = v; return s; });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.ssoConnection = null; return s; });
+      return null;
+    });
+  };
+  DT.actions.saveSsoConnection = function (patch) {
+    DT.set(function (s) { s.ssoSaving = true; return s; });
+    return api("PUT", "/api/org/sso", patch || {}).then(function (v) {
+      DT.set(function (s) {
+        s.ssoConnection = v; s.ssoSaving = false; s.ssoTest = null;
+        s.__toast = { tone: "accepted", title: "Single sign-on saved",
+          msg: v && v.ssoRequired ? "Your staff now sign in through your identity provider; passwords are refused." : "Your staff can now sign in through your identity provider." };
+        return s;
+      });
+      return v;
+    }, function (e) {
+      DT.set(function (s) { s.ssoSaving = false; return s; });
+      ssoAdminRefusal(e, "Not saved");
+      return null;
+    });
+  };
+  DT.actions.removeSsoConnection = function () {
+    DT.set(function (s) { s.ssoSaving = true; return s; });
+    return api("DELETE", "/api/org/sso").then(function (v) {
+      DT.set(function (s) {
+        s.ssoConnection = v; s.ssoSaving = false; s.ssoTest = null;
+        s.__toast = { tone: "accepted", title: "Single sign-on removed", msg: "Your staff sign in with their DocTurn passwords again." };
+        return s;
+      });
+      return v;
+    }, function (e) {
+      DT.set(function (s) { s.ssoSaving = false; return s; });
+      ssoAdminRefusal(e, "Not removed");
+      return null;
+    });
+  };
+  // "Test connection": the SERVER fetches the issuer and reports what came
+  // back. The client shows that answer and nothing of its own.
+  DT.actions.testSsoConnection = function () {
+    DT.set(function (s) { s.ssoTesting = true; s.ssoTest = null; return s; });
+    return api("POST", "/api/org/sso/test", {}).then(function (v) {
+      DT.set(function (s) { s.ssoTesting = false; s.ssoTest = v || null; return s; });
+      return v;
+    }, function (e) {
+      DT.set(function (s) { s.ssoTesting = false; s.ssoTest = { ok: false, reason: (e && e.message) || "error", message: "The test could not be run." }; return s; });
+      ssoAdminRefusal(e, "Not tested");
+      return null;
+    });
   };
 
   /* ── E2 SCIM provisioning (module enterprise.scim) ────────────────────────

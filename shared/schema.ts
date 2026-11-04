@@ -1004,6 +1004,20 @@ export const jobLeases = pgTable("job_leases", {
 });
 
 /**
+ * The non-secret half of an SSO connection (sso_connections.role_mapping).
+ * `map` is an IdP group / claim VALUE → DocTurn role; `defaultRole` is what
+ * someone no mapping matches gets (null = the sign-in is refused, which is
+ * how a hospital keeps DocTurn to a named group).
+ */
+export interface SsoConnectionConfig {
+  claim: string;
+  defaultRole: string | null;
+  map: Record<string, string>;
+  scopes: string;
+  acrMfaValue: string | null;
+}
+
+/**
  * Per-org OIDC single sign-on connection (module enterprise.sso). The client
  * secret (and anything else secret) is ONE AES-256-GCM ciphertext under
  * INTEGRATION_KEY (server/integrations/crypto.ts; AAD binds it to the org).
@@ -1023,8 +1037,13 @@ export const ssoConnections = pgTable(
     iv: text("iv").notNull(),
     authTag: text("auth_tag").notNull(),
     keyVersion: integer("key_version").notNull().default(1),
-    /** Non-secret: which IdP group / claim value maps to which DocTurn role. */
-    roleMapping: jsonb("role_mapping").$type<Record<string, string>>(),
+    /**
+     * Non-secret configuration (E2.1): which claim carries the IdP's groups,
+     * which value maps to which DocTurn role, the role for everyone else, the
+     * scopes to request, and the `acr` value (if any) that the hospital's IdP
+     * uses to say "this sign-in was multi-factor".
+     */
+    roleMapping: jsonb("role_mapping").$type<SsoConnectionConfig>(),
     ssoRequired: boolean("sso_required").notNull().default(false),
     enabled: boolean("enabled").notNull().default(true),
     updatedBy: integer("updated_by"),

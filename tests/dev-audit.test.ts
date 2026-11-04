@@ -677,7 +677,9 @@ describe("A.CON-SHO-32 — tenant delete is atomic and complete", () => {
     // (docs/ENTERPRISE_READINESS.md). Ciphertext fields are opaque here.
     await ctx.storage.upsertSsoConnection({
       organizationId: org.id, issuer: "https://idp.example.test", clientId: "docturn", ciphertext: "ct", iv: "iv",
-      authTag: "tag", keyVersion: 1, roleMapping: { clinicians: "hospitalist" }, ssoRequired: true, enabled: true,
+      authTag: "tag", keyVersion: 1,
+      roleMapping: { claim: "groups", defaultRole: null, map: { clinicians: "hospitalist" }, scopes: "openid profile email", acrMfaValue: null },
+      ssoRequired: true, enabled: true,
       updatedBy: user.id,
     });
     await ctx.storage.createScimToken({ organizationId: org.id, tokenHash: "h".repeat(64), label: "Okta", createdBy: user.id });

@@ -200,6 +200,12 @@ export const GATE_TABLE: readonly GateRule[] = [
   // middleware (server/scim/auth.ts), which answers 404 for an org that has
   // it off, exactly as this table would.
   { path: /^\/api\/org\/scim-tokens(\/|$)/, module: "enterprise.scim" },
+  // Single sign-on (server/routes/sso.ts): the director's connection card and
+  // its real "Test connection". The PUBLIC sign-in routes (/api/auth/sso/*)
+  // are unauthenticated, where this middleware deliberately passes through,
+  // so they check the module themselves — and answer exactly as they do for
+  // an org code that does not exist, so neither is an oracle.
+  { path: /^\/api\/org\/sso(\/|$)/, module: "enterprise.sso" },
 ];
 
 /** First gate rule that applies to this request, if any. */

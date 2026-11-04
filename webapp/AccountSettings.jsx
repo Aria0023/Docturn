@@ -553,6 +553,9 @@ function AccountSettings({ onLock }) {
     setSoeBusy(true);
     Promise.resolve(a.signOutEverywhere()).finally(() => setSoeBusy(false));
   };
+  // E2 single sign-on (module enterprise.sso): the director's connection.
+  const ssoOn = on("enterprise.sso");
+  React.useEffect(() => { if (ssoOn && role === "director" && a.loadSsoConnection) a.loadSsoConnection(); }, [ssoOn, role]);
   // E2 SCIM provisioning (module enterprise.scim): the director's bearer
   // tokens for their identity provider.
   const scimOn = on("enterprise.scim");
@@ -723,6 +726,8 @@ function AccountSettings({ onLock }) {
       {/* Session policy — the organization's, a director's to set. Every
           control sends ONE request and shows the server's answer. */}
       {policyOn && isDirector && role === "director" && <SessionPolicyCard policy={sessionPolicy} saving={!!st.sessionPolicySaving} />}
+      {/* Single sign-on — the hospital's own identity provider. */}
+      {ssoOn && role === "director" && <SsoCard conn={st.ssoConnection} saving={!!st.ssoSaving} testing={!!st.ssoTesting} test={st.ssoTest} />}
       {/* SCIM provisioning — the identity provider's bearer tokens. */}
       {scimOn && role === "director" && <ScimCard scim={st.scim} />}
       {pinOpen && <PinDialog changing={!!(pinStatus && pinStatus.set)} onClose={() => setPinOpen(false)} />}
@@ -877,4 +882,147 @@ function ScimCard({ scim }) {
   );
 }
 
-Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses, SessionPolicyCard, ScimCard });
+/**
+ * Settings → Security → Single sign-on (E2, module enterprise.sso).
+ * Everything here is the SERVER's: the redirect URI the hospital must
+ * register, what is stored (never the client secret), the roles single
+ * sign-on may grant, and a real "Test connection" whose answer comes from
+ * the server actually fetching the issuer.
+ */
+function SsoCard({ conn, saving, testing, test }) {
+  const a = useActions();
+  const [form, setForm] = React.useState(null);
+  const [open, setOpen] = React.useState(false);
+  const [groupName, setGroupName] = React.useState("");
+  const [groupRole, setGroupRole] = React.useState("hospitalist");
+  React.useEffect(() => {
+    if (!conn) return;
+    setForm({
+      issuer: conn.issuer || "",
+      clientId: conn.clientId || "",
+      clientSecret: "",
+      claim: (conn.config && conn.config.claim) || (conn.defaults && conn.defaults.claim) || "groups",
+      scopes: (conn.config && conn.config.scopes) || (conn.defaults && conn.defaults.scopes) || "openid profile email",
+      defaultRole: (conn.config && conn.config.defaultRole) || "",
+      map: Object.assign({}, (conn.config && conn.config.map) || {}),
+      ssoRequired: !!conn.ssoRequired,
+      enabled: conn.enabled !== false,
+    });
+  }, [conn && conn.issuer, conn && conn.clientId, conn && conn.ssoRequired, conn && conn.enabled, conn && JSON.stringify(conn.config || {})]);
+  if (!conn || !form) {
+    return (
+      <SettingsGroup title="Single sign-on">
+        <SettingsRow icon="building-2" title="Single sign-on" wrapSub rowProps={{ "data-sso-card": "loading" }} sub="Reading your organization's connection from the server…" />
+      </SettingsGroup>
+    );
+  }
+  const roles = conn.assignableRoles || [];
+  const field = (key, label, props) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
+      {label}
+      <input data-sso-field={key} value={form[key]} onChange={(e) => setForm(Object.assign({}, form, { [key]: e.target.value }))}
+        {...(props || {})}
+        style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+    </label>
+  );
+  const save = () => {
+    if (saving) return;
+    a.saveSsoConnection({
+      issuer: form.issuer.trim(),
+      clientId: form.clientId.trim(),
+      ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
+      ssoRequired: !!form.ssoRequired,
+      enabled: !!form.enabled,
+      config: { claim: form.claim.trim(), scopes: form.scopes.trim(), defaultRole: form.defaultRole || null, map: form.map },
+    }).then((v) => { if (v) setForm(Object.assign({}, form, { clientSecret: "" })); });
+  };
+  const addGroup = () => {
+    if (!groupName.trim()) return;
+    setForm(Object.assign({}, form, { map: Object.assign({}, form.map, { [groupName.trim()]: groupRole }) }));
+    setGroupName("");
+  };
+  const dropGroup = (g) => {
+    const next = Object.assign({}, form.map);
+    delete next[g];
+    setForm(Object.assign({}, form, { map: next }));
+  };
+  const sub = conn.configured
+    ? (conn.enabled === false ? "Configured but switched off — nobody can use it." : conn.ssoRequired ? "In use, and REQUIRED: your staff cannot sign in with a DocTurn password." : "In use — your staff may sign in through your identity provider or with their DocTurn password.")
+    : "Not set up. Your staff sign in with their DocTurn passwords.";
+  return (
+    <SettingsGroup title="Single sign-on">
+      <SettingsRow icon="building-2" title="Your identity provider (OIDC)" wrapSub rowProps={{ "data-sso-card": conn.configured ? "on" : "off" }}
+        sub={sub}
+        right={<ShiftBtn data-sso-edit onClick={() => setOpen(!open)}>{open ? "Close" : conn.configured ? "Edit" : "Set up"}</ShiftBtn>} />
+      <div data-sso-redirect style={{ padding: "0 14px 12px 60px", fontSize: 12.5, lineHeight: 1.5, overflowWrap: "anywhere", color: "var(--muted-foreground)" }}>
+        Register this redirect URI with your provider:{" "}
+        <span className="ds-mono" style={{ fontWeight: 600, color: "var(--foreground)" }}>{conn.redirectUri}</span>
+        {conn.insecureIssuersAllowed ? <React.Fragment><br />This server allows an <b>http://</b> issuer on its own machine (a test identity provider). Never on a server handling real patient data.</React.Fragment> : null}
+      </div>
+      {conn.configured && conn.secretReadable === false && (
+        <div data-sso-unreadable style={{ padding: "0 14px 12px 60px", fontSize: 12.5, color: "var(--status-rejected)" }}>
+          The stored client secret cannot be read on this server ({conn.unreadableReason === "no_key" ? "no INTEGRATION_KEY is set" : "it was encrypted with a different key"}). Save it again to repair the connection.
+        </div>
+      )}
+      {open && (
+        <div data-sso-form style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 10 }}>
+          {field("issuer", "Issuer URL", { placeholder: "https://your-hospital.okta.com", autoCapitalize: "none", autoCorrect: "off", spellCheck: false })}
+          {field("clientId", "Client ID", { autoCapitalize: "none", autoCorrect: "off", spellCheck: false })}
+          {field("clientSecret", conn.configured ? "Client secret (leave blank to keep the stored one)" : "Client secret", { type: "password", autoComplete: "new-password" })}
+          {field("scopes", "Scopes", { autoCapitalize: "none", autoCorrect: "off", spellCheck: false })}
+          {field("claim", "Claim carrying your groups", { autoCapitalize: "none", autoCorrect: "off", spellCheck: false })}
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--muted-foreground)" }}>
+            Role for everyone no group matches
+            <select data-sso-field="defaultRole" value={form.defaultRole} onChange={(e) => setForm(Object.assign({}, form, { defaultRole: e.target.value }))}
+              style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit" }}>
+              <option value="">Refuse the sign-in</option>
+              {roles.map((r) => <option key={r} value={r}>{String(r).replace(/_/g, " ")}</option>)}
+            </select>
+          </label>
+          <div data-sso-map style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--muted-foreground)" }}>Group → DocTurn role</span>
+            {Object.keys(form.map).map((g) => (
+              <div key={g} data-sso-map-row={g} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span className="ds-mono" style={{ fontSize: 12.5, flex: "1 1 120px", minWidth: 0, overflowWrap: "anywhere" }}>{g}</span>
+                <span style={{ fontSize: 12.5, flex: "none" }}>→ {String(form.map[g]).replace(/_/g, " ")}</span>
+                <ShiftBtn data-sso-map-remove={g} onClick={() => dropGroup(g)}>Remove</ShiftBtn>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input data-sso-map-name value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name from your provider" maxLength={200}
+                style={{ flex: "1 1 150px", minWidth: 0, minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", boxSizing: "border-box" }} />
+              <select data-sso-map-role value={groupRole} onChange={(e) => setGroupRole(e.target.value)}
+                style={{ minHeight: 44, fontSize: 16, padding: "0 8px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", flex: "none" }}>
+                {roles.map((r) => <option key={r} value={r}>{String(r).replace(/_/g, " ")}</option>)}
+              </select>
+              <ShiftBtn data-sso-map-add onClick={addGroup}>Add</ShiftBtn>
+            </div>
+          </div>
+          <SettingsRow icon="shield-check" title="Require single sign-on" wrapSub rowProps={{ "data-sso-required": form.ssoRequired ? "on" : "off" }}
+            sub="Your staff's DocTurn passwords stop working: everyone signs in through your provider. (DocTurn's operator keeps a break-glass sign-in, audited every time.)"
+            right={<Switch on={!!form.ssoRequired} onChange={() => setForm(Object.assign({}, form, { ssoRequired: !form.ssoRequired }))} label="Require single sign-on" />} />
+          <SettingsRow icon="power" title="Connection enabled" wrapSub rowProps={{ "data-sso-enabled": form.enabled ? "on" : "off" }}
+            sub="Off keeps the settings but offers nobody the button."
+            right={<Switch on={!!form.enabled} onChange={() => setForm(Object.assign({}, form, { enabled: !form.enabled }))} label="Connection enabled" />} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <ShiftBtn primary data-sso-save disabled={saving} onClick={save}>{saving ? "Saving…" : "Save connection"}</ShiftBtn>
+            {conn.configured && <ShiftBtn data-sso-test disabled={testing} onClick={() => a.testSsoConnection()}>{testing ? "Testing…" : "Test connection"}</ShiftBtn>}
+            {conn.configured && <ShiftBtn data-sso-remove disabled={saving} onClick={() => { if (window.confirm("Remove single sign-on? Your staff go back to DocTurn passwords.")) a.removeSsoConnection(); }}>Remove</ShiftBtn>}
+          </div>
+          {test && (
+            <div data-sso-test-result style={{ padding: "10px 12px", borderRadius: "var(--radius-md)", fontSize: 12.5, lineHeight: 1.45,
+              background: test.ok ? "var(--status-accepted-bg)" : "var(--status-rejected-bg)",
+              border: "1px solid " + (test.ok ? "var(--status-accepted)" : "var(--status-rejected)"),
+              color: test.ok ? "var(--status-accepted-fg)" : "var(--status-rejected-fg)" }}>
+              {test.ok
+                ? "Reached " + test.issuer + " — " + test.signingKeys + " signing key" + (test.signingKeys === 1 ? "" : "s") + ". DocTurn can verify sign-ins from it."
+                : (test.message || "The connection could not be tested.")}
+            </div>
+          )}
+        </div>
+      )}
+    </SettingsGroup>
+  );
+}
+
+Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses, SessionPolicyCard, ScimCard, SsoCard });

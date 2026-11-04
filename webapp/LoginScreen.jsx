@@ -35,7 +35,22 @@ function LoginScreen({ onLogin, appName }) {
   const [user, setUser] = React.useState("");
   const [pass, setPass] = React.useState("");
   const [role, setRole] = React.useState("hospitalist");
+  const [mode, setMode] = React.useState("signin"); // "signin" | "register"
   const touched = React.useRef(false);
+  // E2 single sign-on (module enterprise.sso): the button appears only when
+  // the SERVER says the typed org code has a connection. The server answers
+  // the same for a code that does not exist, so this is not a way to
+  // discover hospitals. One lookup per code, after a short pause.
+  const ssoOffers = _st.ssoOffers || {};
+  const ssoOffer = ssoOffers[String(org || "").trim().toUpperCase()] || null;
+  React.useEffect(() => {
+    const code = String(org || "").trim();
+    if (mode !== "signin" || code.length < 2 || !window.DT || !window.DT.actions.ssoAvailable) return undefined;
+    const t = setTimeout(() => { window.DT.actions.ssoAvailable(code); }, 350);
+    return () => clearTimeout(t);
+  }, [org, mode]);
+  // The identity provider sent the browser back with ?sso=<result>.
+  React.useEffect(() => { if (window.DT && window.DT.actions.readSsoReturn) window.DT.actions.readSsoReturn(); }, []);
   const demoFor = (r) => (window.DT && window.DT.demoAccount) ? window.DT.demoAccount(r) : { org: "ISPN", user: "chen", pass: "docturn" };
   const fill = (d) => { setOrg(d.org); setUser(d.user); setPass(d.pass); };
   const pickRole = (r) => { setRole(r); if (demoMode) fill(demoFor(r)); };
@@ -54,7 +69,6 @@ function LoginScreen({ onLogin, appName }) {
   const USER_PROPS = { name: "username", autoComplete: "username", autoCapitalize: "none", autoCorrect: "off", spellCheck: false, inputMode: "text", enterKeyHint: "next" };
 
   // Registration mode: request an account with the org code → pending approval.
-  const [mode, setMode] = React.useState("signin"); // "signin" | "register"
   const [reg, setReg] = React.useState({ org: "ISPN", name: "", user: "", pass: "", role: "hospitalist" });
   const [regBusy, setRegBusy] = React.useState(false);
   const [regMsg, setRegMsg] = React.useState(null);
@@ -182,6 +196,18 @@ function LoginScreen({ onLogin, appName }) {
               </div>
             )}
             <Button type="submit" full size="lg">Sign in</Button>
+
+            {/* Sign in with the hospital's own identity provider. The server
+                built the URL; this only follows it. */}
+            {ssoOffer && ssoOffer.sso && (
+              <span data-sso-button>
+                <Button type="button" full size="lg" variant="outline" icon="building-2"
+                  onClick={() => window.DT.actions.startSso(String(org || "").trim())}
+                  style={{ opacity: _st.ssoStarting ? 0.6 : 1 }}>
+                  {_st.ssoStarting ? "Opening your sign-in…" : "Sign in with " + (ssoOffer.label || "your organization")}
+                </Button>
+              </span>
+            )}
 
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)", justifyContent: "center", textAlign: "center" }}>
               <Icon name="shield-check" size={14} color="var(--status-accepted)" />

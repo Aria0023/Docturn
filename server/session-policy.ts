@@ -226,7 +226,7 @@ export async function applySessionPolicy(args: {
  * out everywhere) must be able to sign in again from the same browser, and
  * the dead cookie it still carries must not refuse that request.
  */
-const SIGN_IN_PATHS = /^\/(login|register)\/?$|^\/2fa(\/|$)/;
+const SIGN_IN_PATHS = /^\/(login|register)\/?$|^\/2fa(\/|$)|^\/auth\/sso(\/|$)/;
 
 /**
  * Paths that are answered NORMALLY after the ended session is destroyed: the

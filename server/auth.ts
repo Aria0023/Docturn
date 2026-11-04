@@ -91,6 +91,9 @@ export function mfaEnrollmentGate(): RequestHandler {
       // Unauthenticated requests are the routes' own business (401 there).
       if (!me || !isPrivilegedRole(me.role)) return next();
       if (isMfaGateExempt(req.path)) return next();
+      // E2.1: the identity provider asserted multi-factor authentication for
+      // THIS session (id_token amr/acr), so it already has a second factor.
+      if (req.session?.mfaSatisfiedByIdp === true) return next();
       if (await mfaEnrollmentRequired(me)) {
         return res.status(403).json({ error: "mfa_enrollment_required" });
       }
@@ -168,6 +171,10 @@ const APP_LOCK_PASSTHROUGH: readonly RegExp[] = [
   /^\/login\/?$/,
   /^\/logout\/?$/,
   /^\/2fa\/(complete-login|request-sms)\/?$/,
+  // Single sign-on (E2.1) IS re-authentication: a locked session must be able
+  // to go back through the identity provider, which regenerates the session
+  // and so replaces the locked one (exactly as POST /api/login does).
+  /^\/auth\/sso\/(available|start|callback)\/?$/,
 ];
 
 /** Paths (relative to /api) a locked (unexpired) session may still use. */
@@ -1485,10 +1492,39 @@ export function registerAuthRoutes(app: Express) {
     }
     passport.authenticate(
       "local",
-      (err: Error | null, user: User | false) => {
+      async (err: Error | null, user: User | false) => {
         if (err) return next(err);
         if (!user) {
           return res.status(401).json({ error: "invalid_credentials" });
+        }
+        // E2.1: the hospital said "DocTurn accounts are our identity
+        // provider's". A password then signs NOBODY in for that org — not
+        // even a correct one — except a developer (the operator's
+        // break-glass, audited at high risk). Checked AFTER the credential
+        // so an attacker learns nothing about which orgs require SSO from a
+        // wrong password, and audited either way.
+        if (await passwordSignInRefused(user)) {
+          await appendAudit({
+            organizationId: user.organizationId,
+            userId: user.id,
+            action: "auth.login_denied_sso_required",
+            resourceType: "user",
+            resourceId: user.id,
+            details: { role: user.role },
+            riskLevel: "medium",
+          });
+          return res.status(403).json({ error: "sso_required" });
+        }
+        if (user.role === "developer" && (await ssoRequiredForOrg(user.organizationId))) {
+          await appendAudit({
+            organizationId: user.organizationId,
+            userId: user.id,
+            action: "auth.sso_break_glass",
+            resourceType: "user",
+            resourceId: user.id,
+            details: { role: user.role },
+            riskLevel: "high",
+          });
         }
         // MFA gate: if enabled, hold the session pending a second factor —
         // bound to the password generation just verified.
@@ -1547,7 +1583,7 @@ export function registerAuthRoutes(app: Express) {
     const me = req.user as unknown as User;
     // Re-checked from the DB + module map on every call (not the session):
     // the UI polls this to learn the block has lifted after enrolment.
-    const required = await mfaEnrollmentRequired(me);
+    const required = req.session?.mfaSatisfiedByIdp === true ? false : await mfaEnrollmentRequired(me);
     if (req.session) {
       if (required) req.session.mfaEnrollmentRequired = true;
       else if (req.session.mfaEnrollmentRequired) delete req.session.mfaEnrollmentRequired;
@@ -1567,7 +1603,13 @@ export function registerAuthRoutes(app: Express) {
       // set, not disabled for this session). Only on the locked body — the
       // browser never stores it.
       const pin = (await pinUnlockAvailable(req, res)) ? { pinUnlock: true as const } : {};
-      return { ...body, locked: true as const, orgCode: org?.code ?? null, ...pin };
+      // E2.1: the lock screen may offer "Sign in with <hospital>" when the
+      // org has an enabled SSO connection (its password field is useless if
+      // the org requires SSO).
+      const sso = (await ssoRequiredForOrg(me.organizationId, { anyEnabled: true }))
+        ? { ssoAvailable: true as const }
+        : {};
+      return { ...body, locked: true as const, orgCode: org?.code ?? null, ...pin, ...sso };
     }
     return body;
   }
@@ -1653,6 +1695,7 @@ export function registerAuthRoutes(app: Express) {
 
 // Imported here to avoid a cycle at module top in some bundlers.
 import { isPrivilegedRole, requireAuth, requireRole } from "./rbac.js";
+import { passwordSignInRefused, ssoRequiredForOrg } from "./routes/sso.js";
 
 declare module "express-session" {
   interface SessionData {

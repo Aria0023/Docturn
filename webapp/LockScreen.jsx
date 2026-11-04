@@ -126,6 +126,23 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
       .finally(() => setBusy(false));
   }
 
+  // Does the SERVER say this org can be re-opened through its identity
+  // provider? Asked each time this screen opens, never remembered.
+  const [ssoOffered, setSsoOffered] = React.useState(false);
+  React.useEffect(() => {
+    let live = true;
+    fetch("/api/user", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((u) => { if (live) setSsoOffered(!!(u && u.ssoAvailable)); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  function startSso() {
+    const A = window.DT && window.DT.actions;
+    if (!A || !A.startSso) return;
+    A.startSso(session.org);
+  }
+
   function signOut() {
     // Leaving the device: end the session outright rather than sitting locked.
     try { if (window.DT && window.DT.actions && window.DT.actions.logout) window.DT.actions.logout(); } catch (e) { /* fall through */ }
@@ -177,6 +194,17 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
           {busy ? "Verifying…" : "Unlock"}
         </button>
         ); })()}
+
+        {/* E2 single sign-on: this org signs in through its identity
+            provider, so the locked session is re-opened there. The server
+            said so (GET /api/user ssoAvailable while locked); clicking it
+            goes to the provider, and the callback regenerates this session. */}
+        {ssoOffered && (
+          <button type="button" data-lock-sso onClick={startSso}
+            style={{ marginTop: 10, minHeight: 46, width: "100%", padding: "10px 16px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            Sign in with your organization
+          </button>
+        )}
 
         {pinOffered && (
           <button type="button" data-lock-switch onClick={() => (mode === "pin" ? toPassword(null) : (setMode("pin"), setErr(null), setTimeout(() => { if (pinRef.current) pinRef.current.focus(); }, 0)))}

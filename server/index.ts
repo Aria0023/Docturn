@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
 import { getRateLimitState, getSessionStoreState, resolveTrustProxy } from "./config.js";
+import { insecureIssuersAllowed } from "./sso/connection.js";
 import { initDbWithRecovery, withBootLock, type DbHandle } from "./db.js";
 import { INSTANCE_ID } from "./instance.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
@@ -195,6 +196,13 @@ async function main() {
         `job leases in job_leases; rate limits ${!limiter.enabled ? "OFF" : limiter.store === "database" ? "counted in Postgres (shared across instances)" : "counted in memory (per instance)"}`,
     );
     console.log(`  ↳ proxy trust: ${trust.description}${trust.source === "default" ? " (default)" : ""}`);
+    // E2.1 lab hatch: loud, because it lets an SSO issuer be a plain http URL
+    // on this machine. Never possible with NODE_ENV=production.
+    if (insecureIssuersAllowed()) {
+      console.warn(
+        "  ↳ WARNING SSO_ALLOW_INSECURE_ISSUER=1: a single-sign-on issuer may be http:// on this machine (a local test identity provider). Never set this on a deployment that handles real PHI.",
+      );
+    }
     if (HOST === "127.0.0.1" || HOST === "::1" || HOST === "localhost") {
       console.log(
         "  ↳ bound to loopback: reachable only through the reverse proxy on this host (set HOST=0.0.0.0 to accept network connections directly).",

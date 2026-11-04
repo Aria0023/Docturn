@@ -36,6 +36,7 @@ import { registerSessionPolicyRoutes } from "./session-policy.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
 import { registerSmsRoutes } from "./sms.js";
+import { registerSsoRoutes } from "./sso.js";
 import { registerWellKnownRoutes } from "./well-known.js";
 
 /** Mount every REST route onto the app. */
@@ -60,6 +61,7 @@ export function registerRoutes(app: Express) {
   registerSettingsRoutes(app);
   registerSessionPolicyRoutes(app);
   registerScimTokenRoutes(app);
+  registerSsoRoutes(app);
   // SCIM 2.0 at /scim/v2 (E2.2): outside /api, authenticated by a per-org
   // bearer token, with its own body parser for application/scim+json.
   registerScimRoutes(app, (app.locals.scimJson as RequestHandler | undefined) ?? ((_q, _s, n) => n()));

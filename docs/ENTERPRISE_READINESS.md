@@ -105,6 +105,92 @@ is unset; the in-process fake transport describe always runs.
 Four separate switches, all OFF by default, so nothing below changes how an
 existing tenant behaves until a developer turns it on for that tenant.
 
+### E2.1 OIDC single sign-on (module `enterprise.sso`)
+
+**Why it matters to a reviewer.** A hospital's security team wants one place
+where accounts are authenticated and one place where they are switched off.
+Generic OIDC covers Okta, Entra ID and Google without a per-vendor
+integration; SAML is a follow-up (noted under the gaps).
+
+| What | Where | Behaviour |
+|---|---|---|
+| **The connection** | `sso_connections` (one row per org), `server/sso/connection.ts` | Issuer, client id, scopes, the group claim and its role mapping, a default role, an optional `acr` value, "SSO required" and an enabled flag. The **client secret** is one AES-256-GCM ciphertext under `INTEGRATION_KEY` sealed by the SAME code as every other hospital credential (AAD bound to the org, so a row copied into another tenant cannot be decrypted); no route ever returns it, nothing logs it, and with no key configured saving is REFUSED rather than stored in plaintext. |
+| **SSRF** | `publicHttpsUrlProblem` at save, `guardedFetch` at call | The issuer is a director-controlled URL DocTurn fetches, so it faces the same control as Amion / Epic: https only, no credentials in the URL, no query or fragment, no private / loopback / link-local / metadata / non-global address — refused when saved, and the transport re-checks the resolved address on every redirect hop and at connect time under one 10 s deadline. |
+| **The flow** | `server/sso/oidc.ts`, `server/routes/sso.ts` | Discovery at `<issuer>/.well-known/openid-configuration` (cached 10 min, and the document's own `issuer` must equal the configured one, so a URL that merely HOSTS a configuration cannot redirect the flow); authorization code with **PKCE S256**, `state` and `nonce`; `client_secret_post` + `code_verifier` at the token endpoint; **RS256 id_token verification against the JWKS** — `alg` must be RS256 (`none` and HS256 refused), the `kid` must be in the live key set (one refetch on a miss, so a rotation needs no restart), and `iss`, `aud`, `exp`, `iat` and `nonce` are all checked. No implicit flow and no unsigned userinfo: every claim DocTurn acts on comes from the verified id_token. |
+| **JIT accounts** | `server/services/provisioning.ts` (shared with SCIM) | A first sign-in creates the account through the same path SCIM uses: no password (a random 32-byte scrypt hash nobody holds), a rotation profile for a hospitalist, audited. A later sign-in updates the display name and the ROLE from the current claims (a demotion as well as a promotion), and a `developer` is never re-roled by an identity provider. A deactivated account is refused (audited high) — SSO can never resurrect a leaver. |
+| **Role mapping** | `roleFromClaims` | claim value → role, matched case-insensitively, the mapping's declared order deciding for someone in several groups, with a default role (or null = refuse, which is how a hospital keeps DocTurn to a named group). `developer` can never be granted: the save is refused with the group named, not silently dropped. |
+| **Session creation** | `req.login` | The existing login path: the session id is REGENERATED (so a fixation attempt before the flow is worthless), the flow's state / nonce / verifier are read from the session BEFORE that and cleared, and a replay of the same `state` is refused. `/api/auth/sso/*` is in the app-lock passthrough and the session-policy sign-in paths, so a locked or ended session can re-authenticate through the IdP. |
+| **"SSO required"** | `passwordSignInRefused`, `POST /api/login` | A password then signs NOBODY in for that org — checked AFTER the credential verifies, so a wrong password reveals nothing about which orgs require SSO, and audited (`auth.login_denied_sso_required`). The one exception is a **developer**: the operator's break-glass, which is audited at HIGH risk (`auth.sso_break_glass`) every time it is used. |
+| **Not an org-code oracle** | `POST /api/auth/sso/available` | An unknown org code, a known org with no connection, a disabled connection and a module that is off all get the byte-identical `{ sso: false }` — and the same work is done in every case (the connection is looked up against an impossible org id when the code is unknown), so the timings match. A malformed body gets the same answer rather than a 400. `no-store`. The sign-in screen therefore shows "Sign in with <hospital>" only for a code that really has SSO, without becoming a way to enumerate hospitals. |
+| **The card** | Settings → Security → Single sign-on (director) | The redirect URI to register, the issuer / client id / secret (write-only), scopes, the claim and its mappings, the default role, "SSO required", enabled — and a **real** "Test connection" that fetches the issuer's discovery document and key set and reports what came back (it never sends the secret: the token endpoint is not called). |
+| **Rate limit** | `app.use("/api/auth/sso", authLimiter)` | The same per-address failure budget as a password sign-in. |
+
+**The MFA decision (asked for explicitly, so it is stated plainly).**
+
+1. An SSO sign-in does **not** also ask for DocTurn's own TOTP. The identity
+   provider is the authenticator; a second factor DocTurn holds adds nothing
+   to a federated login it cannot verify, and would strand a hospital that
+   requires SSO.
+2. The org's `security.mfaRequired` module **still holds**: a privileged user
+   (director / ER director / developer) without DocTurn MFA lands in exactly
+   the same enrolment-only session a password sign-in gives them.
+3. **Unless** the id_token proves the IdP performed multi-factor
+   authentication — `amr` contains one of `mfa, otp, hwk, swk, sc, pop, fido,
+   wia, mca`, or `acr` equals the value the director configured. Then that
+   session is treated as having a second factor (`session.mfaSatisfiedByIdp`,
+   honoured by the enrolment gate and by `GET /api/user`), and the fact is in
+   the `sso.login` audit row (`idpMfa: true`). DocTurn does not take the
+   hospital's word for it beyond what the token asserts, and it never writes
+   `twoFactorEnabled` on the user from a claim.
+
+### How it is tested
+
+| Test | What it proves | Result |
+|---|---|---|
+| `tests/sso.test.ts` with `tests/fixtures/oidc-issuer.ts` | A **local OIDC issuer** whose RS256 key is generated at runtime (no key material is committed) serves discovery, a JWKS and a token endpoint, and can break the signature, change the `kid`, rotate the key, lie about its issuer, or fail the exchange. Proven: the authorize URL's `response_type`/PKCE S256/state/nonce/scope/redirect_uri; the exchange carrying the code, the verifier and the secret; a real session afterwards; JIT creation with no password and a rotation profile; role mapping, promotion AND demotion; refusal with no default role; a deactivated account refused; nine id_token refusals (wrong nonce, broken signature, a key outside the JWKS, an unknown kid, `alg: none`, HS256, wrong audience, expired, wrong issuer); a key rotation followed without a restart; an issuer-mismatched discovery document; a token-endpoint error; a replayed state; the IdP's own `error=`; "SSO required" refusing staff passwords but not the developer's (audited); the `amr` MFA rule standing the enrolment gate down; the module switch closing every route; the card's refusals (http / private / localhost / query / not-a-url issuers and a `developer` mapping) and that no response, row or audit row ever carries the secret; the real "Test connection" and its failure; director-only access; and the lab hatch (`SSO_ALLOW_INSECURE_ISSUER`) being refused under `NODE_ENV=production` and relaxing nothing but an `http://127.0.0.1` issuer. | 28/28 (failed first: `/api/auth/sso` and the card did not exist) |
+| `tests/client-sso.test.ts` | The real client in jsdom: the sign-in screen asks the server once per typed org code and shows the button only when the SERVER says there is SSO; `start` sends the person to the IdP's URL and nothing else; `sso_required` on a password sign-in says to use the hospital's sign-in instead of "wrong password"; the director's card sends one request per change and never keeps the secret. | 12/12 (all 12 fail against HEAD's client) |
+| `scripts/sso-check.mjs` | Real Chromium, iPhone 375 / 390 / 430, against a local issuer fixture: the button appears only for a code with SSO (and NOT for an unknown code or a code whose module is off); the whole redirect round trip signs a brand-new person in; "SSO required" makes the password form refuse with the hospital's own sentence; the lock screen offers the IdP; the card's Test connection; ≥44px targets, no overflow, zero CSP violations. | 32/32 |
+
+### Honest gaps
+
+- **SAML is not implemented.** Okta, Entra ID and Google all speak OIDC, and
+  a hospital that can only do SAML needs a bridge today. It is the obvious
+  next step; the connection table and the card would hold it.
+- **No single logout.** Signing out of DocTurn does not sign the person out of
+  the identity provider (the discovery document's `end_session_endpoint` is
+  read but not used), and an IdP-side logout does not end a DocTurn session —
+  the session policy's idle / absolute windows and "sign out everywhere" are
+  the controls that bound it.
+- **No `externalId`.** As with SCIM, `userName` (from `preferred_username`,
+  else the local part of `email`, else `sub`) is the correlation key, so a
+  rename at the IdP creates a second account.
+- **Group membership is read at sign-in only.** Someone removed from a group
+  keeps their DocTurn role until their next SSO sign-in (SCIM, or a
+  director's own action, is the immediate path).
+- The authorization request is not signed (no PAR, no JAR) and the token
+  endpoint is called with `client_secret_post` rather than `private_key_jwt`.
+- **"SSO required" can lock a hospital out of its own settings.** If the
+  identity provider breaks while `ssoRequired` is on, the org's own director
+  cannot sign in with a password to turn it off — only DocTurn's operator can
+  (the developer break-glass, or switching the module off for that org). That
+  is the point of the break-glass, and it is audited at HIGH risk every time;
+  it is written here so nobody is surprised by it. The probe hit it for real.
+- **The lab hatch.** `SSO_ALLOW_INSECURE_ISSUER=1` lets an issuer be
+  `http://127.0.0.1…` so a local test identity provider (the browser probe,
+  or a hospital's own pilot) can be used. It is off by default, **refused
+  outright when `NODE_ENV=production`**, warned about on the boot log, shown
+  in `GET /api/org/sso` and on the card, and it relaxes nothing else: any
+  other URL still faces the full https / public-address control.
+
+**No new compliance control for SSO or SCIM, deliberately.** Neither is
+something the monitor can measure honestly from org state: a hospital that
+provisions accounts by hand and signs in with DocTurn passwords and MFA is
+not non-compliant, so a control that warned about it would be a false
+finding. The controls that DID change are the ones that measure a real
+posture: `session-timeout` now reads the org's own window (E2.3), and the
+existing `mfa-privileged-roles` control is unaffected because an SSO session's
+`amr` evidence is per sign-in, not per org.
+
 ### E2.2 SCIM 2.0 Users (module `enterprise.scim`)
 
 **Why it matters to a reviewer.** Workforce joiners/movers/leavers

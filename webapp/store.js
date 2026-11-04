@@ -854,7 +854,9 @@
     // (E2, module enterprise.sessionPolicy) — never the next person's
     "sessionPolicy", "sessionPolicySaving", "idleLockMinutes",
     // the previous person's org SCIM tokens (E2, module enterprise.scim)
-    "scim"];
+    "scim",
+    // the previous person's org single-sign-on connection and its test result
+    "ssoConnection", "ssoSaving", "ssoTest", "ssoTesting"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
