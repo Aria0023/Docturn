@@ -4280,6 +4280,54 @@
     }, function (e) { sessionPolicyRefusal(e, "Not signed out"); return null; });
   };
 
+  /* ── E2 SCIM provisioning (module enterprise.scim) ────────────────────────
+   * The card holds no secret: the token exists in the POST response only, is
+   * shown once and is never stored, persisted or re-read.
+   */
+  function scimRefusal(e, title) {
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = moduleRefused(e) ? "SCIM provisioning is switched off for your organization."
+      : (e && e.status === 403) ? "Only a hospitalist director can manage SCIM tokens."
+      : (e && e.status === 409) ? "You already have five active tokens — revoke one first."
+      : (e && e.status === 400) ? "Give the token a short label (what it is for)."
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : "The server refused it — nothing was changed.";
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+  }
+  DT.actions.loadScimTokens = function () {
+    if (DT.moduleOn && !DT.moduleOn("enterprise.scim")) {
+      DT.set(function (s) { s.scim = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/org/scim-tokens").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { s.scim = v; return s; });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.scim = null; return s; });
+      return null;
+    });
+  };
+  // Returns the token ONCE, for the screen to show; it is deliberately not put
+  // in the store (nothing persists it, nothing re-renders it later).
+  DT.actions.createScimToken = function (label) {
+    return api("POST", "/api/org/scim-tokens", { label: String(label || "").trim() }).then(function (v) {
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Token created", msg: "Copy it now — DocTurn keeps only a hash of it and cannot show it again." };
+        return s;
+      });
+      return DT.actions.loadScimTokens().then(function () { return v; });
+    }, function (e) { scimRefusal(e, "Not created"); return null; });
+  };
+  DT.actions.revokeScimToken = function (id) {
+    return api("DELETE", "/api/org/scim-tokens/" + Number(id)).then(function (v) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Token revoked", msg: "Any connector using it is refused from now on." }; return s; });
+      return DT.actions.loadScimTokens().then(function () { return v; });
+    }, function (e) { scimRefusal(e, "Not revoked"); return null; });
+  };
+
   DT.actions.loadPin = function () {
     if (DT.moduleOn && !DT.moduleOn("security.pin")) {
       DT.set(function (s) { s.pinStatus = null; return s; });

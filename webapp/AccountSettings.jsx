@@ -553,6 +553,10 @@ function AccountSettings({ onLock }) {
     setSoeBusy(true);
     Promise.resolve(a.signOutEverywhere()).finally(() => setSoeBusy(false));
   };
+  // E2 SCIM provisioning (module enterprise.scim): the director's bearer
+  // tokens for their identity provider.
+  const scimOn = on("enterprise.scim");
+  React.useEffect(() => { if (scimOn && role === "director" && a.loadScimTokens) a.loadScimTokens(); }, [scimOn, role]);
   const pinOn = on("security.pin");
   const pinStatus = st.pinStatus || null;
   const [pinOpen, setPinOpen] = React.useState(false);
@@ -719,6 +723,8 @@ function AccountSettings({ onLock }) {
       {/* Session policy — the organization's, a director's to set. Every
           control sends ONE request and shows the server's answer. */}
       {policyOn && isDirector && role === "director" && <SessionPolicyCard policy={sessionPolicy} saving={!!st.sessionPolicySaving} />}
+      {/* SCIM provisioning — the identity provider's bearer tokens. */}
+      {scimOn && role === "director" && <ScimCard scim={st.scim} />}
       {pinOpen && <PinDialog changing={!!(pinStatus && pinStatus.set)} onClose={() => setPinOpen(false)} />}
 
       {isDirector && (
@@ -799,4 +805,76 @@ function SessionPolicyCard({ policy, saving }) {
   );
 }
 
-Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses, SessionPolicyCard });
+/**
+ * Settings → Security → SCIM provisioning (E2, module enterprise.scim).
+ * The base URL the identity provider is pointed at, the tokens that exist
+ * (label, created, last used, revoked) and the two actions. A new token is
+ * shown ONCE, from the create response — it is never stored in the app.
+ */
+function ScimCard({ scim }) {
+  const a = useActions();
+  const [label, setLabel] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [fresh, setFresh] = React.useState(null);
+  if (!scim) {
+    return (
+      <SettingsGroup title="SCIM provisioning">
+        <SettingsRow icon="users" title="SCIM provisioning" wrapSub rowProps={{ "data-scim": "loading" }} sub="Reading your organization's tokens from the server…" />
+      </SettingsGroup>
+    );
+  }
+  const tokens = scim.tokens || [];
+  const live = tokens.filter((t) => t.active);
+  const create = () => {
+    if (busy || !label.trim()) return;
+    setBusy(true);
+    Promise.resolve(a.createScimToken(label.trim()))
+      .then((v) => { if (v && v.token) { setFresh(v); setLabel(""); } })
+      .finally(() => setBusy(false));
+  };
+  const revoke = (t) => {
+    if (busy || !window.confirm("Revoke \"" + t.label + "\"? Any connector using it stops working at once.")) return;
+    setBusy(true);
+    Promise.resolve(a.revokeScimToken(t.id)).finally(() => setBusy(false));
+  };
+  const when = (v) => (v ? ((window.dtFmt && window.dtFmt.dayLabel) ? window.dtFmt.dayLabel(v) : new Date(v).toLocaleDateString()) : null);
+  return (
+    <SettingsGroup title="SCIM provisioning">
+      <SettingsRow icon="users" title="Your organization's SCIM endpoint" wrapSub rowProps={{ "data-scim": "on" }}
+        sub={"Point your identity provider at this base URL and authenticate with a token below. It can create, update and deactivate accounts (" + (scim.assignableRoles || []).join(" / ") + "); directors stay DocTurn's to create."} />
+      <div data-scim-base style={{ padding: "0 14px 12px 60px", fontSize: 12.5, overflowWrap: "anywhere" }}>
+        <span className="ds-mono" style={{ fontWeight: 600 }}>{scim.baseUrl}</span>
+      </div>
+      {tokens.map((t) => (
+        <SettingsRow key={t.id} icon={t.active ? "key-round" : "ban"} title={t.label} wrapSub rowProps={{ "data-scim-token": String(t.id), "data-scim-token-active": t.active ? "1" : "0" }}
+          sub={(t.active ? "Active" : "Revoked" + (when(t.revokedAt) ? " " + when(t.revokedAt) : ""))
+            + (when(t.createdAt) ? " · created " + when(t.createdAt) : "")
+            + " · " + (t.lastUsedAt ? "last used " + when(t.lastUsedAt) : "never used")}
+          right={t.active ? <ShiftBtn data-scim-revoke={t.id} disabled={busy} onClick={() => revoke(t)}>Revoke</ShiftBtn> : null} />
+      ))}
+      {tokens.length === 0 && (
+        <SettingsRow icon="key-round" title="No token yet" wrapSub sub="Create one and paste it into your identity provider's DocTurn connector." />
+      )}
+      <div style={{ padding: "10px 14px 12px", borderTop: "1px solid var(--border)", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <input data-scim-label value={label} onChange={(e) => setLabel(e.target.value)} placeholder="What it is for (e.g. Okta production)" maxLength={80}
+          style={{ flex: "1 1 180px", minWidth: 0, minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", boxSizing: "border-box" }} />
+        <ShiftBtn primary data-scim-create disabled={busy || !label.trim() || live.length >= 5} onClick={create}>{busy ? "Creating…" : "Create token"}</ShiftBtn>
+      </div>
+      {live.length >= 5 && (
+        <div style={{ padding: "0 14px 12px", fontSize: 12, color: "var(--muted-foreground)" }}>Five active tokens is the server's limit — revoke one to create another.</div>
+      )}
+      {fresh && (
+        <div data-scim-new style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", background: "var(--status-pending-bg)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Copy this token now</div>
+          <div className="ds-mono" data-scim-new-token style={{ fontSize: 12.5, overflowWrap: "anywhere", userSelect: "all", padding: "8px 10px", borderRadius: "var(--radius-md)", background: "#fff", border: "1px solid var(--border)" }}>{fresh.token}</div>
+          <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 6, lineHeight: 1.45 }}>
+            DocTurn keeps only a hash of it and can never show it again. If it is lost, revoke it and create another.
+          </div>
+          <div style={{ marginTop: 8 }}><ShiftBtn data-scim-dismiss onClick={() => setFresh(null)}>Done</ShiftBtn></div>
+        </div>
+      )}
+    </SettingsGroup>
+  );
+}
+
+Object.assign(window, { AccountSettings, EnableAlertsCard, QuickResponses, SessionPolicyCard, ScimCard });

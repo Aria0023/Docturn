@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, RequestHandler } from "express";
 import { registerAuthRoutes } from "../auth.js";
 import { registerAmionRoutes } from "./amion.js";
 import { registerAssignmentRoutes } from "./assignments.js";
@@ -30,6 +30,8 @@ import { registerReminderRoutes } from "./reminders.js";
 import { registerPinRoutes } from "./pin.js";
 import { registerAlertSoundRoutes } from "./alert-sounds.js";
 import { registerResourceRoutes } from "./resources.js";
+import { registerScimRoutes } from "../scim/users.js";
+import { registerScimTokenRoutes } from "./scim-tokens.js";
 import { registerSessionPolicyRoutes } from "./session-policy.js";
 import { registerSettingsRoutes } from "./settings.js";
 import { registerShiftRoutes } from "./shift.js";
@@ -57,6 +59,10 @@ export function registerRoutes(app: Express) {
   registerConsultServiceRoutes(app);
   registerSettingsRoutes(app);
   registerSessionPolicyRoutes(app);
+  registerScimTokenRoutes(app);
+  // SCIM 2.0 at /scim/v2 (E2.2): outside /api, authenticated by a per-org
+  // bearer token, with its own body parser for application/scim+json.
+  registerScimRoutes(app, (app.locals.scimJson as RequestHandler | undefined) ?? ((_q, _s, n) => n()));
   registerShiftRoutes(app);
   registerConfigRoutes(app);
   registerComplianceRoutes(app);

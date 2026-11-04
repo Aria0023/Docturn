@@ -105,6 +105,41 @@ is unset; the in-process fake transport describe always runs.
 Four separate switches, all OFF by default, so nothing below changes how an
 existing tenant behaves until a developer turns it on for that tenant.
 
+### E2.2 SCIM 2.0 Users (module `enterprise.scim`)
+
+**Why it matters to a reviewer.** Workforce joiners/movers/leavers
+(§164.308(a)(3)(ii)(B)/(C)) are an access-review finding waiting to happen if
+each system is maintained by hand. SCIM lets the hospital's identity provider
+own DocTurn accounts: it creates them, renames them, and — the part that
+matters — deactivates them the moment HR does, without anyone remembering.
+
+| What | Where | Behaviour |
+|---|---|---|
+| **Endpoints** | `server/scim/users.ts`, mounted at `/scim/v2` | `GET /Users` (list, `filter=userName eq "x"`, 1-based `startIndex` + `count`), `GET /Users/:id`, `POST /Users`, `PUT /Users/:id`, `PATCH /Users/:id`, `DELETE /Users/:id`, plus `ServiceProviderConfig`, `Schemas`, `Schemas/:urn`, `ResourceTypes`, `ResourceTypes/:id`. Anything else under `/scim` is a SCIM 404 — the SPA fallback in `server/webapp-static.ts` now skips `/scim`, and a catch-all closes the gap, so a connector never gets the web app's HTML. |
+| **Auth** | `server/scim/auth.ts`, `scim_tokens` | A per-organization bearer token, `dts_` + 32 random bytes. Only its **SHA-256 is stored**; it is shown once, at creation; a revoked token keeps its row (`revoked_at`) for the trail; `last_used_at` is touched at most once a minute so a director can see whether the connector is alive. The token names the ORG — nothing in a request can change which tenant it acts in. Unknown and revoked get the same generic 401 with a `WWW-Authenticate` challenge. Five live tokens per org. |
+| **The module is enforced here** | same | `/scim` is outside `/api`, where the central gate never runs, so the bearer middleware checks `enterprise.scim` itself and answers **404** (the module's own promise) rather than 401 — a misconfigured connector is not reported to the IdP as a credential problem. The GATE_TABLE row covers the token-management API (`/api/org/scim-tokens`). |
+| **Content type** | `server/app.ts` `scimJson` | Okta and Entra send `application/scim+json`, which the global `express.json()` does **not** parse; the SCIM writes mount their own parser accepting both types, and every SCIM response is `application/scim+json`. |
+| **Writes go through the app's own paths** | `server/services/provisioning.ts` | `provisionUser` creates the account with a **random 32-byte scrypt hash nobody holds** (no password: sign-in is the IdP's job; `must_change_password` is deliberately NOT set, which would lock an SSO user out of every route) and gives a hospitalist a rotation profile, exactly as approving a registration does. `active:false` and `DELETE` call `deactivateAccount` — the same function `POST /api/accounts/:id/deactivate` uses: `disabled_at`, off the rotation at once, and every live session, socket and demo token ended now. `active:true` is the same reactivate path. |
+| **No hard delete** | `DELETE` → deactivate (204) | §164.316(b)(2)(i) wants the account's trail attributable, and the audit rows are FK-bound to the user. RFC 7644 §3.6 permits "MAY ... disable"; `ServiceProviderConfig` and these docs say so. |
+| **What a connector may touch** | `SCIM_ASSIGNABLE_ROLES` | `hospitalist` and `er_doctor` only. A director / ER director / developer is **invisible** to SCIM (404 on read, refused on write), so a compromised connector token cannot create or promote itself to a privileged account. |
+| **Attributes** | `server/scim/schemas.ts` | `userName`, `name.*`, `displayName`, `active`, `roles[0].value`. `emails`, `title`, `department` and the rest are accepted and dropped, and the `Schemas` endpoint advertises **only** what is stored, so nothing is promised that is discarded. PATCH reads both providers' dialects: Okta's `{op:"replace", value:{active:false}}` with no `path`, and Entra's `{op:"Replace", path:"active", value:"False"}` (capitalised op, string boolean). An unsupported filter is `400 invalidFilter` rather than a silent "everything", so an IdP that de-duplicates on a filter cannot create duplicates. |
+| **Rate limit** | `SCIM_RATE_LIMIT` (120/min/address) | `/scim` is outside `/api`, so the general limiter never sees it. |
+| **The card** | Settings → Security → SCIM provisioning (director) | The base URL to point the IdP at, the tokens (label, created, last used, revoked), create and revoke. A new token is rendered from the create response only: the client never puts it in the store or in `localStorage` (a test and the probe both assert that). |
+
+**Honest gap: `externalId`.** DocTurn has nowhere to store it, so it is
+accepted, echoed inside the request that sent it, and never persisted;
+`userName` is the correlation key. An IdP that renames a user's `userName`
+therefore creates a second account unless it correlates on `userName` — which
+Okta and Entra do by default. A column for `externalId` is the fix; not built.
+
+### How it is tested
+
+| Test | What it proves | Result |
+|---|---|---|
+| `tests/scim.test.ts` | The filter parser; a token created once, hashed, listed without the secret, touched on use and revocable (with its audit rows); director-only token management; the label and the five-token cap; the module owning both halves (404 for the endpoints and for the card); one generic 401 with a challenge; the discovery endpoints advertising only what is stored; an unknown SCIM path never serving HTML; create (no password, a rotation profile, audited, the token named but not its label); privileged-role / missing-userName / duplicate refusals; list + filter + 1-based paging never showing another tenant or a privileged account; Okta's and Entra's PATCH dialects; name and role PATCHes; PUT with a 409 on someone else's name; DELETE as an idempotent deactivation; a SCIM deactivation ending a live session; and 429 from `SCIM_RATE_LIMIT`. | 19/19 (failed first: `/scim` did not exist) |
+| `tests/client-scim.test.ts` | The real client in jsdom: nothing sent while the module is off; the created token is handed back to the caller and is in **no** store, **no** `localStorage` and **no** toast; revoke re-reads the list; every refusal says why and changes nothing. | 4/4 (all 4 fail against HEAD's client via `CLIENT_SRC_ROOT`) |
+| `scripts/scim-check.mjs` | Real Chromium, iPhone 375 / 390 / 430, with the SCIM API driven as an identity provider would: the card mints a token shown once that is in no store or storage; the full connector flow (ServiceProviderConfig, list, create, filter, PATCH, duplicate 409, no guessable password) against that token; the People screen listing the provisioned person; a SCIM `active:false` signing their OPEN app out; DELETE as a deactivation; revoking from the screen refusing the token; with the module off a SCIM 404 (never HTML) and no card. With `REAL_BASE_URL` (`SYNTHETIC_DATA=false`): a fresh tenant has it off, a token provisions into that tenant only, and a director is invisible to the connector. | 43/43 (including the non-synthetic leg) |
+
 ### E2.3 Session policy + "sign out everywhere" (module `enterprise.sessionPolicy`)
 
 **Why it matters to a reviewer.** "Automatic logoff" (§164.312(a)(2)(iii))

@@ -99,6 +99,23 @@ automatically uses encrypted Postgres instead of the local file database.
   never sent while the user is DND, deactivated, or their org has push off.
   The sweep is a per-process timer (several instances can each send one per
   interval); its log lines carry a count only.
+- **SCIM provisioning cannot escalate** (module `enterprise.scim`, off by
+  default — `docs/ENTERPRISE_READINESS.md` E2.2). The identity provider
+  authenticates with a per-organization bearer token of which only a SHA-256
+  is stored; it is shown once, revocable, and its `last_used_at` tells a
+  director whether the connector is alive. A connector may only create or
+  change `hospitalist` and `er_doctor` accounts: a director, ER director or
+  developer is invisible to it (404 on read, refused on write), so a stolen
+  token cannot create or promote a privileged account. Provisioned accounts
+  have NO password — a random 32-byte scrypt hash nobody holds — because
+  sign-in belongs to the identity provider. `active:false` and `DELETE` are
+  not a second, weaker deactivation: they call the same function the People
+  screen does, so `disabled_at` is set, the provider comes off the rotation
+  and every live session, socket and demo token of that person ends at once.
+  Nothing is ever hard-deleted (the audit trail must stay attributable). The
+  endpoints are enforced by the module themselves — `/scim` is outside `/api`
+  where the central gate runs — with their own rate limit, and they never
+  serve the web app's HTML.
 - **Session policy is the hospital's, and enforced by the server** (module
   `enterprise.sessionPolicy`, off by default — `docs/ENTERPRISE_READINESS.md`
   E2.3). A director sets the idle timeout (5–480 minutes; the platform default

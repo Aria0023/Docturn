@@ -275,7 +275,13 @@ export const REGISTER_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 10 };
  * Mounted by server/app.ts when rate limiting is enabled.
  */
 export const EXPORT_RATE_LIMIT = { windowMs: 60 * 60 * 1000, max: 20 };
-
+/**
+ * SCIM 2.0 (E2.2, `/scim/v2/*`). Outside `/api`, so the general limiter never
+ * sees it: an identity provider's reconciliation run is bursty but bounded
+ * (one request per user), and a wrong bearer token must not be retryable
+ * without limit. Counts every request.
+ */
+export const SCIM_RATE_LIMIT = { windowMs: 60 * 1000, max: 120 };
 
 /** The JSON body every limiter answers with (same shape as the API's errors). */
 export const RATE_LIMIT_RESPONSE = { error: "rate_limited" } as const;

@@ -17,6 +17,7 @@ import {
   AUTH_RATE_LIMIT,
   EXPORT_RATE_LIMIT,
   GENERAL_RATE_LIMIT,
+  SCIM_RATE_LIMIT,
   RATE_LIMIT_RESPONSE,
   SESSION_POLICY,
   clientIpKey,
@@ -287,6 +288,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     // same failure budget as a wrong sign-in, on top of the per-session cap.
     app.use("/api/session/unlock-pin", authLimiter);
     app.put("/api/security/pin", authLimiter);
+    // SCIM (E2): the identity provider's own budget. /scim is outside /api,
+    // so the general limiter never sees it.
+    app.use("/scim", rateLimit({ ...SCIM_RATE_LIMIT, ...common, ...sharedStore("scim") }));
     // Audit export (E2): one request reads a whole trail, so it has its own
     // hourly budget per address on top of the general limiter.
     app.use(
@@ -311,6 +315,13 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     next();
   };
   app.post(["/api/login", "/api/2fa/complete-login"], requireSecureTransport);
+
+  // SCIM 2.0 (E2.2): the identity provider sends `application/scim+json`,
+  // which the global express.json() above does NOT parse. One parser for the
+  // SCIM writes, accepting both content types; a body the global parser
+  // already read is left alone (express.json skips a parsed request).
+  const scimJson = express.json({ type: ["application/json", "application/scim+json"], limit: "256kb" });
+  app.locals.scimJson = scimJson;
 
   // Every numeric `:id`-style parameter is validated here, once, before any
   // route runs: malformed → 404 JSON instead of NaN reaching the database.

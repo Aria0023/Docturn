@@ -194,6 +194,12 @@ export const GATE_TABLE: readonly GateRule[] = [
   { path: /^\/api\/org\/session-policy$/, module: "enterprise.sessionPolicy" },
   { path: /^\/api\/account\/sessions\/revoke-all$/, module: "enterprise.sessionPolicy" },
   { path: /^\/api\/accounts\/[^/]+\/sessions\/revoke-all$/, module: "enterprise.sessionPolicy" },
+  // SCIM provisioning (server/routes/scim-tokens.ts): the director's bearer
+  // tokens. The SCIM API itself lives at /scim/v2 — OUTSIDE /api, where this
+  // middleware never runs — so the module is enforced there by the bearer
+  // middleware (server/scim/auth.ts), which answers 404 for an org that has
+  // it off, exactly as this table would.
+  { path: /^\/api\/org\/scim-tokens(\/|$)/, module: "enterprise.scim" },
 ];
 
 /** First gate rule that applies to this request, if any. */
