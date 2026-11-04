@@ -549,6 +549,9 @@ describe("SHO-13 rate limiter keys on the real client address", () => {
     expect(resolveTrustProxy("0")).toMatchObject({ value: false });
     expect(resolveTrustProxy("off")).toMatchObject({ value: false });
     expect(resolveTrustProxy("2")).toMatchObject({ value: 2, spoofable: true });
+    // Render: its router is the only possible peer and is not in a private range.
+    expect(resolveTrustProxy("peer")).toMatchObject({ value: 1, spoofable: false });
+    expect(resolveTrustProxy("PEER ")).toMatchObject({ value: 1 });
     expect(resolveTrustProxy("10.0.0.0/8, uniquelocal")).toMatchObject({ value: "10.0.0.0/8,uniquelocal", spoofable: false });
     expect(resolveTrustProxy("172.16.0.5")).toMatchObject({ value: "172.16.0.5" });
     // A typo must not widen trust to "everything".

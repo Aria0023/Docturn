@@ -156,6 +156,14 @@ export const securityHeaders: RequestHandler = (req, res, next) => {
  *                                           keywords loopback / linklocal /
  *                                           uniquelocal — for a proxy that is
  *                                           NOT on this host (PaaS, ALB, k8s)
+ *   TRUST_PROXY=peer                      → the direct TCP peer is trusted,
+ *                                           whoever it is, one hop (Express 1).
+ *                                           For a PaaS whose router is the ONLY
+ *                                           thing that can reach the port
+ *                                           (Render): its router does not
+ *                                           connect from a private-range
+ *                                           address, so uniquelocal refused
+ *                                           every sign-in there.
  *   TRUST_PROXY=<n ≥ 2>                   → legacy hop count. Accepted, but it
  *                                           is spoofable from any direct peer
  *                                           and is logged as such at boot.
@@ -189,6 +197,15 @@ export function resolveTrustProxy(raw: string | undefined): TrustProxyResolution
       source: "env",
       spoofable: false,
       description: "no proxy trusted; the TCP peer address is the client address",
+    };
+  }
+  if (v === "peer") {
+    return {
+      value: 1,
+      source: "env",
+      spoofable: false,
+      description:
+        "X-Forwarded-* honoured from the direct peer, one hop — only safe where nothing but the platform router can reach this port (Render)",
     };
   }
   if (/^\d+$/.test(v)) {

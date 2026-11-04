@@ -12,8 +12,10 @@
 # the sign-in screen; a director approves them.
 #
 # Network: NODE_ENV=production makes the app bind 127.0.0.1 and trust only a
-# loopback proxy by default (the AWS/Caddy topology). Render connects over its
-# private network, hence HOST=0.0.0.0 and TRUST_PROXY=uniquelocal below. Check
+# loopback proxy by default (the AWS/Caddy topology). On Render the platform
+# router is the ONLY thing that can reach the port and it does not connect from
+# a private-range address (uniquelocal refused every sign-in), hence
+# HOST=0.0.0.0 and TRUST_PROXY=peer below. Check
 # after a deploy: https://<service>.onrender.com/api/health → "secure":true
 # (false means X-Forwarded-Proto is not trusted and every sign-in is refused
 # with insecure_transport).
@@ -45,7 +47,7 @@ services:
       # HTTPS (the Secure session cookie; without it sign-in is refused with
       # insecure_transport).
       - key: TRUST_PROXY
-        value: uniquelocal
+        value: peer
       # Auth rate limiting stays ON (50 login attempts / 15 min / IP) — it is the
       # brute-force / credential-stuffing control (§164.308(a)(5)(ii)(C)). It was
       # previously disabled for demo role-switching; with real accounts in a

@@ -264,7 +264,7 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // Gated on the CONFIGURED flag, not on NODE_ENV, so dev over http still works.
   const requireSecureTransport: RequestHandler = (req, res, next) => {
     if (cookie.secure && !req.secure) {
-      warnInsecureLoginOnce();
+      warnInsecureLoginOnce(req);
       return res.status(400).json({ error: "insecure_transport" });
     }
     next();
@@ -368,12 +368,17 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 /* ── helpers ──────────────────────────────────────────────────────────────── */
 
 let warnedInsecureLogin = false;
-function warnInsecureLoginOnce() {
+function warnInsecureLoginOnce(req: Request) {
   if (warnedInsecureLogin) return;
   warnedInsecureLogin = true;
+  // The peer address and the forwarded-proto value are what the operator needs
+  // to pick a TRUST_PROXY value (no request body, no identity).
+  const peer = req.socket.remoteAddress ?? "?";
+  const xfp = req.get("x-forwarded-proto") ?? "(none)";
   console.warn(
     "[auth] login refused over a non-HTTPS request while the session cookie is Secure " +
-      "(insecure_transport). Check TLS termination, TRUST_PROXY and the proxy's X-Forwarded-Proto header.",
+      `(insecure_transport). TCP peer ${peer}, X-Forwarded-Proto ${xfp}, trust proxy ${String(req.app.get("trust proxy"))}. ` +
+      "Check TLS termination, TRUST_PROXY and the proxy's X-Forwarded-Proto header.",
   );
 }
 
