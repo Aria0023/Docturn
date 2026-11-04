@@ -153,9 +153,23 @@ async function dashboardTruths(tag, dev) {
   const tileSec = Number(await page.locator("[data-uptime-sec]").getAttribute("data-uptime-sec").catch(() => "NaN"));
   const health = (await api("GET", "/api/dev/platform-health")).json;
   const up = t["Server uptime"];
-  // The tile ticks from the server's figure; it must agree with a fresh
-  // reading to within a couple of seconds (the two reads are not simultaneous).
-  rec(`T${tag}: Server uptime tile is the server's measured uptime, not "99.98%" (#15)`, !/99\.98|%/.test(up) && Math.abs(tileSec - health.instance.uptimeSec) <= 3 && up === fmtUptime(tileSec) && !/Uptime \(30d\)/.test(await mainText(page)), up + " (" + tileSec + "s) vs server " + health.instance.uptimeSec + "s");
+  // The tile anchors to the server's uptimeSec at the moment the page received
+  // it and adds real elapsed time (DeveloperDashboard.jsx). So it sits BEHIND a
+  // fresh reading by however long that fetch took — a fixed offset that never
+  // grows, not a drifting clock. On a loaded box the lag reached 4 s and failed
+  // a flat 3 s tolerance while the tile was perfectly correct, so the window
+  // below is latency, not accuracy. What accuracy actually needs is the second
+  // assertion: the tile must ADVANCE in real time.
+  const drift = Math.abs(tileSec - health.instance.uptimeSec);
+  rec(`T${tag}: Server uptime tile is the server's measured uptime, not "99.98%" (#15)`, !/99\.98|%/.test(up) && drift <= 10 && up === fmtUptime(tileSec) && !/Uptime \(30d\)/.test(await mainText(page)), up + " (" + tileSec + "s) vs server " + health.instance.uptimeSec + "s, lag " + drift.toFixed(1) + "s");
+  // A frozen or fabricated tile passes the comparison above by luck; one that
+  // ticks in real time cannot be either.
+  const t0 = Date.now();
+  await sleep(4000);
+  const tileSec2 = Number(await page.locator("[data-uptime-sec]").getAttribute("data-uptime-sec").catch(() => "NaN"));
+  const realElapsed = (Date.now() - t0) / 1000;
+  const advanced = tileSec2 - tileSec;
+  rec(`T${tag}: the uptime tile advances in real time (it is a clock, not a constant)`, Math.abs(advanced - realElapsed) <= 1.5, `tile +${advanced}s over ${realElapsed.toFixed(1)}s`);
   const txt = await mainText(page);
   rec(`S${tag}: no constant health figures (1284, 142/500, 36/50) (#16)`, !/1284|142\/500|36\/50/.test(txt));
   const status = await page.locator("[data-health-status]").innerText();

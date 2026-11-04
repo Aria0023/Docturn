@@ -275,8 +275,14 @@ for (const width of [375, 390, 430]) {
   await sleep(5200); // the server's module cache
   const { ctx, page, api } = await open(BASE, 390, "ISPN", "director");
   await nav(page, "settings", 1200);
+  // The tab now carries TWO things with two switches: the organization's
+  // branding (platform.appearance) and the person's own preset
+  // (platform.userThemes). With branding off and personal presets still on the
+  // tab must stay — it is the only way to reach your own preset — and it must
+  // offer no organization control (asserted below). It disappears only when
+  // BOTH are off; that case is section E2.
   const tabs = await page.$$eval("button", (els) => els.map((e) => e.textContent.trim()).filter((x) => x === "Appearance"));
-  rec("E: the Appearance tab is gone while the module is off", tabs.length === 0, JSON.stringify(tabs));
+  rec("E: the Appearance tab stays (personal presets) while org branding is off", tabs.length === 1, JSON.stringify(tabs));
   await nav(page, "appearance", 1000);
   const off = await page.locator("[data-appearance-off]").count();
   const swatches = await page.locator('button[title="Violet"]').count();
@@ -289,6 +295,15 @@ for (const width of [375, 390, 430]) {
   rec("E: a theme write is refused (server keeps its accent) and rolled back on screen", after === before && cfg.theme.accent !== "#DC2626", `ui ${before}→${after} server=${cfg.theme.accent}`);
   rec("E: the refusal is shown", /Appearance not saved/.test(await toast(page)) && /switched off/.test(await toast(page)), await toast(page));
   await checkLayout(page, "Appearance (module off) @390");
+  // E2: both switches off — now the tab has nothing left to carry and goes.
+  await dev.api("PATCH", "/api/dev/modules/" + ispn.id, { id: "platform.userThemes", enabled: false });
+  await sleep(5200);
+  const { ctx: ctx2, page: page2 } = await open(BASE, 390, "ISPN", "director");
+  await nav(page2, "settings", 1200);
+  const tabs2 = await page2.$$eval("button", (els) => els.map((e) => e.textContent.trim()).filter((x) => x === "Appearance"));
+  rec("E2: with BOTH org branding and personal presets off, the Appearance tab is gone", tabs2.length === 0, JSON.stringify(tabs2));
+  await ctx2.close();
+  await dev.api("PATCH", "/api/dev/modules/" + ispn.id, { id: "platform.userThemes", enabled: true });
   await dev.api("PATCH", "/api/dev/modules/" + ispn.id, { id: "platform.appearance", enabled: true });
   await ctx.close(); await dev.ctx.close();
 }
