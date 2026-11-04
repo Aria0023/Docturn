@@ -5,7 +5,10 @@ installable: on a phone it *is* the mobile app (a Progressive Web App with a
 manifest, service worker, home-screen icons and Web Push), and on a desktop it
 is the clinical workstation. Same accounts, same session, same REST API, same
 WebSocket — a change on one surface is a change on both, so there is no
-feature drift between "phone" and "web".
+feature drift between "phone" and "web". On the App Store and Google Play the
+same web app ships inside a **native shell** (`mobile-app/`, the last
+sections of this document) that adds APNs/FCM push, universal / app links and
+the store presence — not a second client.
 
 - Source: `webapp/` (designer's kit + `api-bridge.js` live bridge) plus the
   PWA plumbing `webapp/manifest.webmanifest`, `webapp/sw.js`, `webapp/icons/`
@@ -155,7 +158,9 @@ not optimised for it.
   security posture. The app lock (Lock button, or 15 minutes without input)
   survives a reload, is shared by every tab, pauses background polling, and is
   cleared only by re-entering the password (checked by the server).
-  Biometric unlock / refresh tokens would need a native wrapper.
+  The native shell does not change this: v1 lock / PIN inside the shell is
+  the web app's server-backed screens, unchanged (nothing device-held);
+  biometric unlock / refresh tokens remain a follow-up.
 - **No delivery latency SLA yet.** Push delivery on physical iOS/Android
   devices has not been measured end-to-end; that is the next verification
   step.
@@ -185,30 +190,174 @@ not optimised for it.
   read only while it is on screen in a foreground tab. A send the server
   refuses or that never leaves the device shows "Not sent" with Retry / Edit.
 
-## The Expo native app (`mobile-app/`)
+## The native shell (`mobile-app/`) — Expo + react-native-webview
 
-`mobile-app/` remains an Expo / React Native **skeleton, not a shipped
-product**: a typed API client, a reconnecting WebSocket and four tabs (login,
-Messages, Assignments, Profile).
+`mobile-app/` is a **native shell** around the web app above: one WebView on
+the configured DocTurn host (`EXPO_PUBLIC_API_BASE_URL`, default
+`https://docturn.onrender.com`). The web app is the product; the shell adds
+what a web page cannot do on its own and nothing else. Nothing clinical lives
+in the shell and nothing is stored in it — no PHI, no credentials; the page's
+session cookie in the WebView's own cookie store is the only state. v1
+lock / PIN is the web app's server-backed screens, unchanged.
 
-- **Messages** is a text-only client of the same `/api/messaging/*` endpoints
-  the web app uses: the conversation list with unread counts, a thread, and a
-  new-conversation picker. An open thread applies the server's live frames —
-  `MESSAGE_RECEIVED` reloads it, `MESSAGE_RECALLED` removes the recalled
-  message at once (and refreshes the list and the tab badge), and
-  `MESSAGE_READ` turns the sender's receipt from "Sent" to "Read". A thread is
-  marked read only while the app is in the foreground. The sender's own unread
-  messages carry a **Recall** button (44 pt, with a confirm dialog) when the
-  org's `messaging.recall` module is on; a refused recall (already read,
-  module off) says why. The frame handling lives in
-  `mobile-app/src/threadEvents.ts` and is tested against the real server's
-  frames in `tests/mobile-thread-events.test.ts`. There are no attachments,
-  voice notes, priorities, acknowledgements, forwarding or broadcasts here.
-- **Assignments** is the realtime pending queue with accept / decline.
-- **Profile** signs out. At sign-in the app registers an Expo push token,
-  which the server's push service sends content-free titles to.
+The former native screens (login, Messages, Assignments, Profile), the typed
+API client, the native WebSocket client and `src/threadEvents.ts` with its
+root test are **retired**: inside the shell the complete web app is the
+client, and the frames those helpers handled are covered by
+`tests/client-realtime.test.ts` and `tests/recall.test.ts`.
 
-There is no directory, intake or director surface. The unified PWA above is
-the shipped phone client; the backend (`/api/mobile/*`, device-token storage,
-push-first notification service) is in place if a native app is ever needed
-for APNs/FCM or biometric unlock.
+### What the shell adds
+
+| | How |
+| --- | --- |
+| **Detection** | The WebView's user agent ends with `DocTurnShell/<version>` and `window.DocTurnShell = { version, platform }` is injected before any page script. `webapp/api-bridge.js` exposes `DT.shell` (null in a browser) and hides the browser Install banner and the one-time "Turn on STAT alerts" card — push goes through the shell. |
+| **Native push (APNs / FCM via Expo)** | When the page reports a session (`{type:"dt-session", state:"active"}`) the shell asks for the OS notification permission — the only moment it prompts, never before sign-in — reads its Expo push token and hands it to the page (`window.__dtShell.pushToken`). The page registers it with the signed-in account through the existing `POST /api/mobile/device-tokens` (platform `expo`) and only then shows **On** in Settings → Notifications. With permission already granted the token is handed on every page load. **Sign-out** `DELETE`s the token while the session still exists, before `POST /api/logout`, then tells the shell (`ended`), which clears delivered notifications and the badge. The server's push service already relays `expo` tokens through Expo's push API with content-free titles. |
+| **Android channels** | `stat` (max importance, bypasses Do Not Disturb, long vibration), `urgent` (high), `routine` (default) — defined by the shell at start. The **server names the channel** per push (`server/services/push-channels.ts`, from its own content-free title: a whole-word STAT → `stat`; urgent / consult / assignment → `urgent`; else `routine`, with `priority: "high"` for the first two), so a STAT wake-up is loud and a routine one is quiet. In the foreground the OS shows no banner and plays no sound (the page is live over its WebSocket and plays its own per-priority tone); the notification still lands in the shade. |
+| **Notification tap → Messages** | A tap opens the app on Messages for every message title (the rule `webapp/sw.js` applies), and simply opens the app for assignment / consult titles. Payloads carry **no thread id by design** (content-free), so a tap cannot open a specific thread; the newest unread thread is at the top of the list. |
+| **Universal / app links → the thread** | `https://<host>/messages/<id>` opens the app on that thread once the account's list is live (a thread the account does not have opens the list, nothing more); `https://<host>/?open=messages` opens Messages; `docturn://messages[/<id>]` is the app's own scheme. The server publishes exactly those two HTTPS shapes in `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` (`server/routes/well-known.ts`; from `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE`, `ANDROID_SHA256_CERT_FINGERPRINTS`; **404 until they are set — never a placeholder**, because Apple's CDN and Android's verifier cache what they fetch). The app declares the matching `applinks:` / `webcredentials:` associated domains and an `autoVerify` intent filter for the configured host. |
+| **Offline page** | When the host cannot be reached (no network, DNS, TLS, server down) the shell shows "Can't reach DocTurn" with **Try again**, and retries by itself when the app returns to the front. It says nothing about data: once the page loads, the web app's own offline rules above apply. |
+| **Pull to refresh** | `pullToRefreshEnabled` — **iOS only** in react-native-webview; on Android the error page's Try again and the foreground retry are the refresh. |
+| **Android back button** | The page is one document, so Back walks the WebView's own history when there is any (a link opened in-page) and otherwise lets the OS background the app. Predictive back is off. |
+| **Safe areas + status bar** | The top inset is painted with the page's `<meta name="theme-color">`, the bottom inset with the page's body background, and the status-bar icons are light or dark by luminance — live, through a watcher the shell injects, so a theme the user switches to is followed at once. (Android 16 is edge-to-edge; the shell paints the insets itself.) |
+| **Camera / microphone for the page** | `mediaCapturePermissionGrantType="grant"`, `allowsInlineMediaPlayback`, `mediaPlaybackRequiresUserAction={false}`, `android.permission.CAMERA` / `RECORD_AUDIO` / `MODIFY_AUDIO_SETTINGS`, `NSCameraUsageDescription` / `NSMicrophoneUsageDescription` — so the web app's voice messages (`getUserMedia` / `MediaRecorder`) and `<input type="file" capture>` image capture work inside the WebView. **Device checks only** (no simulator here) — see the list below. |
+| **Service worker inside WKWebView** | iOS allows a page's service worker only for *app-bound domains*: `WKAppBoundDomains` lists the configured host and the WebView sets `limitsNavigationsToAppBoundDomains`, so the precached offline shell and the lock / dismissed-banner storage work as in Safari. The shell never navigates elsewhere: any other `https:` / `mailto:` / `tel:` link leaves for the system browser, mail or dialer. |
+| **Store assets and config** | 1024 px opaque iOS icon, Android adaptive + monochrome icons, splash (brand blue, 160 px glyph), Android notification small icon — all generated from `webapp/icons/` by `mobile-app/scripts/make-assets.py` (the iOS icon is a 2× upscale of the 512 px master; replace with a 1024 px master before submission). `PrivacyInfo.xcprivacy` (no tracking; required-reason APIs UserDefaults / FileTimestamp / SystemBootTime / DiskSpace; collected data types Name, User ID, Health, Other User Content, Device ID — linked, app functionality — **must match the App Privacy answers in App Store Connect**). `ITSAppUsesNonExemptEncryption = false` (HTTPS only). Android `allowBackup=false` (no cloud backup of the WebView's cookie / storage). Bundle id / package `com.docturn.app`. `eas.json`: `development` (dev client), `preview` (internal, APK) and `production` profiles, each setting `EXPO_PUBLIC_API_BASE_URL`. |
+
+Verified here (no simulator or device in this environment): `npx expo-doctor`
+— 18 of 20 checks pass; the two that do not, "Check Expo config schema" and
+"Validate packages against React Native Directory", need `api.expo.dev` /
+`exp.host`, which this environment cannot reach, and must be run on a
+networked machine; `npx expo prebuild --no-install --platform all --clean`
+succeeds for both platforms and the generated `Info.plist`,
+`PrivacyInfo.xcprivacy`, entitlements (`aps-environment`, associated
+domains), `AndroidManifest.xml` (permissions, `allowBackup`, `autoVerify`
+intent filter, notification icon / colour, default channel) and splash
+resources were inspected; `tsc --noEmit` is clean; the pure shell logic and
+the page's half of the contract are tested from the repo root
+(`tests/mobile-shell.test.ts`, `tests/client-shell.test.ts`; the server files
+in `tests/well-known.test.ts`, `tests/push-channels.test.ts`).
+
+### Store requirements — verified 2026-11-04
+
+Established from the sources named, not from memory. `expo.dev` and
+`support.google.com` did not resolve from the verification environment; the
+Expo facts come from the search index of the pages named plus the npm
+registry and the installed package, the Google Play facts from
+developer.android.com, which restates the Play Console help page.
+
+| | Current | Source |
+| --- | --- | --- |
+| **Expo SDK** | **SDK 58** — `expo@58.0.23` is npm `latest`; it pins **React Native 0.88.1** (`node_modules/expo/bundledNativeModules.json`; the `sdk-58` template pins `react-native@0.88.1`, `react@19.3.0`, `typescript@~6.0.3`); minimum Node 22.13. `mobile-app/` is on it. | https://expo.dev/changelog/sdk-58 ("Expo SDK 58 ships with React Native 0.88"), https://docs.expo.dev/versions/v58.0.0/, `npm view expo dist-tags` |
+| **Apple — upload requirement** | Since **April 28, 2026**: "Apps uploaded to App Store Connect must be built with **Xcode 26** or later using an SDK for **iOS 26**, iPadOS 26, tvOS 26, visionOS 26, or watchOS 26." Since **September 9, 2026**: "iOS and iPadOS apps uploaded to App Store Connect must target iOS 13 or later." SDK 58 builds against the iOS 27 SDK and sets the deployment target to iOS 16.4 (`ios/Podfile`), so both are met; EAS Build's iOS image provides the Xcode. | https://developer.apple.com/news/upcoming-requirements/ |
+| **Google Play — target API level** | From **August 31, 2026**: new apps and app updates must target **Android 16 (API level 36)** or higher; existing apps must target Android 15 (API 35) to stay available to new users on newer devices; an extension to **November 1, 2026** can be requested in Play Console. SDK 58 builds with `targetSdk 36`, `compileSdk 37`, `minSdk 24` (React Native 0.88's Gradle version catalog), so it is met. | https://developer.android.com/google/play/requirements/target-sdk (restating https://support.google.com/googleplay/android-developer/answer/11926878) |
+
+**App Store Review Guideline 4.2 — Minimum Functionality** (text as fetched
+from https://developer.apple.com/app-store/review/guidelines/ on 2026-11-04):
+
+> **4.2 Minimum Functionality.** Your app should include features, content,
+> and UI that elevate it beyond a repackaged website. If your app is not
+> particularly useful, unique, or "app-like," it doesn't belong on the App
+> Store. If your App doesn't provide some sort of lasting entertainment value
+> or adequate utility, it may not be accepted. Apps that are simply a song or
+> movie should be submitted to the iTunes Store. Apps that are simply a book or
+> game guide should be submitted to the Apple Books Store.
+>
+> 4.2.1 Apps using ARKit should provide rich and integrated augmented reality
+> experiences; merely dropping a model into an AR view or replaying animation
+> is not enough.
+> 4.2.2 Other than catalogs, apps shouldn't primarily be marketing materials,
+> advertisements, web clippings, content aggregators, or a collection of links.
+> 4.2.3 (i) Your app should work on its own without requiring installation of
+> another app to function. (ii) If your app needs to download additional
+> resources in order to function on initial launch, disclose the size of the
+> download and prompt users before doing so.
+> 4.2.4 Intentionally omitted. 4.2.5 Intentionally omitted.
+> 4.2.6 Apps created from a commercialized template or app generation service
+> will be rejected unless they are submitted directly by the provider of the
+> app's content. […]
+> 4.2.7 Remote Desktop Clients: […] (e) Thin clients for cloud-based apps are
+> not appropriate for the App Store.
+
+How it applies to this app, honestly: a shell that only wraps a website is
+exactly what 4.2 refuses, and reviewers also cite 4.2.7(e). The case for
+DocTurn rests on what the native build provides that the web page cannot —
+APNs/FCM push with priority channels that wake a clinician's phone for a STAT
+message, universal links into a thread, camera and microphone capture for
+voice messages and images, the offline page, lock-screen and badge
+integration — and on the app being the product's own client submitted by the
+product's owner (4.2.6), with no third-party content, catalog or links. The
+**review risk is real**: a reviewer may still judge the first build "a
+repackaged website". Mitigations that help in practice: submit with push
+working end to end, a review note that explains the clinical use and the
+native capabilities, a demo account on a **synthetic-data** instance (never
+real PHI), and screenshots that show the app, not a browser.
+
+### What the founder must do
+
+1. **Apple Developer Program** — enrol as an **organization** (not an
+   individual): needs the legal entity's **D-U-N-S number**, legal authority
+   to bind the organization, and an Apple ID for the Account Holder. Then in
+   App Store Connect: create the app record for `com.docturn.app`, fill the
+   **App Privacy** questionnaire to match `PrivacyInfo.xcprivacy`
+   (`mobile-app/app.config.ts`), export compliance (standard HTTPS encryption
+   only — `ITSAppUsesNonExemptEncryption` is already `false`), and add review
+   notes with a synthetic-data demo account. The Team ID shown in the
+   membership page is `APPLE_TEAM_ID` for the server.
+2. **Google Play Console** — register a developer account **as an
+   organization** (Google applies extra identity and testing requirements to
+   new personal accounts), create the app for `com.docturn.app`, complete the
+   Data safety form to match the privacy manifest, and enable **Play App
+   Signing**. The **first** upload to Play must be done manually in the
+   console (a preview `.aab`); `eas submit` works from the second one. The
+   app-signing certificate's SHA-256 (Play Console → App integrity) and the
+   upload key's SHA-256 (`eas credentials`) are the
+   `ANDROID_SHA256_CERT_FINGERPRINTS` for the server (comma-separated).
+3. **Expo / EAS account** — `npm install -g eas-cli`, `eas login`, then in
+   `mobile-app/`: `eas init` (links the project; put the printed id in
+   `eas.json` under each profile's `env` as `EAS_PROJECT_ID` — without it
+   there is no push token), `eas credentials` for iOS (APNs key, created and
+   stored by EAS) and Android (keystore; **FCM V1** service-account JSON from a
+   Firebase project for `com.docturn.app`), and upload that project's
+   `google-services.json` as an EAS **file-type environment variable** named
+   `GOOGLE_SERVICES_JSON` — never commit it.
+4. **Server environment** (Render / the deploy) for the links:
+   `APPLE_TEAM_ID`, `IOS_BUNDLE_ID=com.docturn.app`,
+   `ANDROID_PACKAGE=com.docturn.app`, `ANDROID_SHA256_CERT_FINGERPRINTS`.
+   Check: `curl -i https://<host>/.well-known/apple-app-site-association` and
+   `/.well-known/assetlinks.json` answer `200 application/json` (404 means a
+   value is missing or malformed). Also set `EXPO_PUBLIC_API_BASE_URL` in
+   `eas.json` to the real production host if it is not
+   `docturn.onrender.com` (associated domains and app links are derived from
+   it at build time).
+5. **Build and submit** (from `mobile-app/`):
+   `eas build --profile development --platform all` (dev client for a
+   physical device), `eas build --profile preview --platform all` (internal
+   testers: TestFlight / an APK), `eas build --profile production --platform
+   all`, then `eas submit --platform ios --latest` and `eas submit --platform
+   android --latest`. Production builds get `aps-environment: production`
+   from EAS automatically.
+6. **Device-only checks** (nothing here runs on a device; each needs a
+   development or preview build on a real iPhone and Android phone):
+   - sign in → the OS notification prompt appears once, after sign-in; Settings
+     → Notifications shows **On**; `GET` the account's device tokens show one
+     `expo` row;
+   - a STAT message to a backgrounded / closed phone arrives on the `stat`
+     channel (loud, bypasses Do Not Disturb on Android), a routine one on
+     `routine`; tapping opens Messages; the title is content-free;
+   - sign out → the token row is gone and no further push arrives on that
+     phone; sign in as someone else → the row moves to that account;
+   - `https://<host>/messages/<id>` from Mail / Messages / another app opens
+     the app on that thread (iOS: after the AASA has been fetched — Apple's
+     CDN can take up to a day; Android: `adb shell pm get-app-links
+     com.docturn.app` shows `verified`);
+   - voice message: `getUserMedia` + `MediaRecorder` inside the WebView records
+     and the message sends (iOS 16.4+ WKWebView; Android System WebView);
+     attachment with `<input type="file" accept="image/*" capture>` opens the
+     camera; the permission prompts use the strings above;
+   - airplane mode at launch → the offline page; back online → the page loads
+     by itself when the app returns to the front; airplane mode while signed
+     in → the web app's own offline behaviour (above);
+   - status bar and insets follow the theme (switch themes in Settings);
+     Android back from a thread backgrounds the app rather than crashing;
+   - the lock screen / PIN, MFA and sign-in flows inside the WebView (the
+     web app's screens).
