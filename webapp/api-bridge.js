@@ -2279,6 +2279,66 @@
       lastDashSnap = dashSnapshot(DT.getState());
     }).catch(function () {});
   }
+  // ---- Native shell (mobile-app/: Expo + react-native-webview) --------------
+  // The shell appends "DocTurnShell/<version>" to the WebView's user agent and
+  // injects window.DocTurnShell = { version, platform } before any script
+  // runs. Inside it there is no browser-install UI (the app IS installed) and
+  // push goes through the shell (APNs/FCM via Expo): the shell hands its Expo
+  // push token to window.__dtShell.pushToken (defined with the notification
+  // navigation below) and the page registers it with whoever is signed in
+  // through the same POST /api/mobile/device-tokens the PWA uses — so every
+  // server call still carries this session's cookie and 401/module handling.
+  // The page tells the shell when a session exists / ends ({type:"dt-session"}).
+  var SHELL = (function () {
+    try {
+      var ua = navigator.userAgent || "";
+      var m = /DocTurnShell\/([^\s)]+)/.exec(ua);
+      var f = window.DocTurnShell;
+      if (m) return { version: m[1], platform: (f && f.platform) || (/Android/i.test(ua) ? "android" : "ios") };
+      if (f && typeof f === "object" && f.version) return { version: String(f.version), platform: String(f.platform || "") };
+    } catch (e) {}
+    return null;
+  })();
+  DT.shell = SHELL; // null in a browser
+  function shellPost(msg) {
+    try {
+      if (SHELL && window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === "function") window.ReactNativeWebView.postMessage(JSON.stringify(msg));
+    } catch (e) {}
+  }
+  // What the shell reported and what the server accepted. The status is
+  // "granted" only once POST /api/mobile/device-tokens answered for this
+  // account; "denied" when the shell says the OS permission was refused;
+  // otherwise "shell" (never a browser state — the one-time "Turn on alerts"
+  // card and the Install banner stay away, see AccountSettings / InstallPrompt).
+  var shellPush = { status: "shell", token: null, registered: null, posting: null };
+  function registerShellToken() {
+    if (!SHELL || !shellPush.token || !DT.getState().session) return Promise.resolve();
+    var token = shellPush.token;
+    if (shellPush.registered === token) return Promise.resolve();
+    if (shellPush.posting) return shellPush.posting;
+    shellPush.posting = api("POST", "/api/mobile/device-tokens", { token: token, platform: "expo" }).then(function () {
+      shellPush.registered = token;
+      shellPush.status = "granted";
+    }, function () { /* refused (push module off) or offline: the next sign-in / hand-over retries */ }).then(function () { shellPush.posting = null; });
+    return shellPush.posting;
+  }
+  // Sign-out: remove this device's Expo token from the server while the
+  // session still exists (the signed-out clinician's wake-ups must stop
+  // reaching this phone), the shell counterpart of the Web Push unsubscribe.
+  function unregisterShellToken() {
+    var token = shellPush.registered;
+    shellPush.registered = null;
+    if (SHELL && shellPush.status === "granted") shellPush.status = "shell";
+    if (!token) return Promise.resolve();
+    return withTimeout(rawApi("DELETE", "/api/mobile/device-tokens/" + encodeURIComponent(token)), 3000).catch(function () {});
+  }
+  var shellSessionState = null;
+  if (SHELL && DT.subscribe) DT.subscribe(function () {
+    var state = DT.getState().session ? "active" : "ended";
+    if (state === shellSessionState || (state === "ended" && shellSessionState === null)) return;
+    shellSessionState = state;
+    shellPost({ type: "dt-session", v: 1, state: state });
+  });
   // ---- Web Push (A.CON-SHO-62, A.CON-NEE-1, A.CON-SHO-68) -------------------
   // Subscribes this browser/PWA so STAT + new-message wake-ups reach a closed
   // phone (content-free payloads; the SW shows a generic title).
@@ -2322,6 +2382,7 @@
   //   "ios-update"      — Home Screen app on an iOS older than 16.4;
   //   "unsupported"     — no Web Push in this browser.
   DT.pushStatus = function () {
+    if (SHELL) return shellPush.status; // "shell" | "granted" | "denied" — see registerShellToken
     if (!pushApisPresent()) return !isIosDevice() ? "unsupported" : isStandalone() ? "ios-update" : "ios-home-screen";
     try { return Notification.permission || "default"; } catch (e) { return "unsupported"; }
   };
@@ -2349,6 +2410,7 @@
   }
   // Automatic path (sign-in, reload): no prompt, ever.
   function ensurePushSubscription() {
+    if (SHELL) { registerShellToken(); return; } // a token handed before sign-in is registered now
     try {
       if (!pushApisPresent() || Notification.permission !== "granted") return;
       subscribePush().catch(function () { /* push is optional */ });
@@ -2358,6 +2420,9 @@
   // be the first thing that happens (no await before it) for WebKit to accept
   // it. Resolves to the resulting DT.pushStatus() (or "error").
   DT.actions.enablePush = function () {
+    // In the shell the OS permission is the shell's to ask (it does so when the
+    // session starts); this just asks it again and reports what it last said.
+    if (SHELL) { shellPost({ type: "dt-push", v: 1, action: "request" }); return Promise.resolve(DT.pushStatus()); }
     if (!pushApisPresent()) return Promise.resolve(DT.pushStatus());
     if (Notification.permission === "denied") return Promise.resolve("denied");
     var asked;
@@ -2378,6 +2443,7 @@
   // session still exists) and unsubscribe it, so the signed-out clinician's
   // wake-ups stop reaching this device (A.CON-SHO-68). Resolves either way.
   function unsubscribePushForLogout() {
+    if (SHELL) return unregisterShellToken(); // no Web Push subscription inside the shell
     if (!pushApisPresent()) return Promise.resolve();
     return swRegistration(2000, false).then(function (reg) {
       return reg && reg.pushManager ? reg.pushManager.getSubscription() : null;
@@ -3600,14 +3666,22 @@
   // in the background; put the real count back when the app is in front again.
   try { document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") syncUnreadIndicators(true); }); } catch (e) {}
 
-  // A tapped notification (webapp/sw.js) asks the open app to show Messages;
-  // a freshly opened app arrives with ?open=messages.
-  function openFromNotification(nav) {
-    if (nav !== "messages") return;
-    if (DT.getState().session) DT.actions.setNav("messages");
-    else pendingOpenNav = "messages";
+  // A tapped notification (webapp/sw.js, or the native shell) asks the open
+  // app to show Messages — and, from a universal link, one thread; a freshly
+  // opened app arrives with ?open=messages or at /messages/<id>. The thread is
+  // opened only once this account's conversation list is live (and only if it
+  // lists that id: a link to someone else's thread opens the list, nothing more).
+  function showMessages(conversationId) {
+    DT.actions.setNav("messages");
+    if (conversationId != null && (DT.getState().conversations || []).some(function (c) { return c.id === conversationId; })) DT.actions.openConversation(conversationId);
   }
-  var pendingOpenNav = null;
+  function openFromNotification(nav, conversationId) {
+    if (nav !== "messages") return;
+    var id = conversationId != null && conversationId !== "" && isFinite(Number(conversationId)) ? Number(conversationId) : null;
+    if (DT.getState().session && (id == null || convosLiveEpoch === authEpoch)) { showMessages(id); return; }
+    pendingOpenNav = "messages"; pendingOpenConvo = id;
+  }
+  var pendingOpenNav = null, pendingOpenConvo = null;
   try {
     if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
       navigator.serviceWorker.addEventListener("message", function (e) {
@@ -3616,19 +3690,53 @@
       });
     }
     var qs = new URLSearchParams(window.location.search);
-    if (qs.get("open") === "messages") {
+    var linkedThread = /^\/messages\/(\d+)\/?$/.exec(window.location.pathname || "");
+    if (qs.get("open") === "messages" || linkedThread) {
       pendingOpenNav = "messages";
+      pendingOpenConvo = linkedThread ? Number(linkedThread[1]) : null;
       qs.delete("open");
       var rest = qs.toString();
-      window.history.replaceState(null, "", window.location.pathname + (rest ? "?" + rest : "") + window.location.hash);
+      // Consume the link: a reload must not re-open it, and no thread id stays in the address.
+      window.history.replaceState(null, "", (linkedThread ? "/" : window.location.pathname) + (rest ? "?" + rest : "") + window.location.hash);
     }
   } catch (e) {}
   if (DT.subscribe) DT.subscribe(function () {
     if (pendingOpenNav && DT.getState().session && convosLiveEpoch === authEpoch) {
-      var nav = pendingOpenNav; pendingOpenNav = null;
-      DT.actions.setNav(nav);
+      var id = pendingOpenConvo; pendingOpenNav = null; pendingOpenConvo = null;
+      showMessages(id);
     }
   });
+  // The native shell's entry points (mobile-app/src/shell/*): it calls these
+  // through injected JavaScript. Calls made before this script ran are queued
+  // by the shell's stub on window.__dtShellQueue and replayed here.
+  window.__dtShell = {
+    // The shell obtained (or re-read) its Expo push token: register it with
+    // whoever is signed in — now, or when the session arrives.
+    pushToken: function (token) {
+      if (!SHELL || typeof token !== "string" || !token) return;
+      shellPush.token = token;
+      if (shellPush.registered && shellPush.registered !== token) shellPush.registered = null;
+      if (shellPush.status === "denied") shellPush.status = "shell";
+      registerShellToken();
+    },
+    // The shell's OS permission outcome. "denied" shows as blocked in Settings
+    // (device settings); anything else leaves the status to the registration.
+    pushStatus: function (status) {
+      if (!SHELL) return;
+      if (status === "denied") { shellPush.status = "denied"; shellPush.token = null; }
+      else if (shellPush.status === "denied") shellPush.status = "shell";
+    },
+    // A tapped notification or a universal link while the app is up:
+    // { nav: "messages", conversationId? }.
+    open: function (target) {
+      var t = target && typeof target === "object" ? target : { nav: target };
+      openFromNotification(t.nav, t.conversationId);
+    },
+  };
+  try {
+    (window.__dtShellQueue || []).forEach(function (c) { var fn = c && window.__dtShell[c[0]]; if (typeof fn === "function") fn.apply(null, c.slice(1)); });
+    window.__dtShellQueue = null;
+  } catch (e) {}
 
   // Specialty-aware preview for the ER intake Quick hint: the server applies
   // the patient's specialty preference exactly as the real pick will.

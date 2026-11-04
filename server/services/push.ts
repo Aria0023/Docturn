@@ -2,6 +2,7 @@ import webpush from "web-push";
 import { storage } from "../storage.js";
 import type { PushTransport } from "./notifications.js";
 import { pushAllowedForOrg } from "../integrations/gates.js";
+import { expoMessageFor, type ExpoPushMessage } from "./push-channels.js";
 
 /**
  * Real push delivery — the "message reaches the doctor's pocket" transport.
@@ -25,7 +26,7 @@ export interface PushSenders {
     subscription: webpush.PushSubscription,
     payload: string,
   ) => Promise<unknown>;
-  expoSend?: (messages: Array<{ to: string; title: string }>) => Promise<unknown>;
+  expoSend?: (messages: ExpoPushMessage[]) => Promise<unknown>;
 }
 
 let vapidPublicKey: string | null = null;
@@ -90,7 +91,7 @@ export class LivePushTransport implements PushTransport {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
-            msgs.map((m) => ({ to: m.to, title: m.title, sound: "default" })),
+            msgs.map((m) => ({ ...m, sound: "default" })),
           ),
         }));
   }
@@ -102,7 +103,7 @@ export class LivePushTransport implements PushTransport {
     const user = await storage().getUserById(userId);
     if (!user || !(await pushAllowedForOrg(user.organizationId))) return;
     const tokens = await storage().listDeviceTokens(userId);
-    const expoBatch: Array<{ to: string; title: string }> = [];
+    const expoBatch: ExpoPushMessage[] = [];
     for (const t of tokens) {
       if (t.platform === "webpush") {
         try {
@@ -117,7 +118,7 @@ export class LivePushTransport implements PushTransport {
           // Everything else: swallow + continue (graceful degradation).
         }
       } else if (t.platform === "expo") {
-        expoBatch.push({ to: t.token, title: payload.title });
+        expoBatch.push(expoMessageFor(t.token, payload.title));
       }
       // Unknown platforms (raw FCM/APNs) are future transports.
     }
