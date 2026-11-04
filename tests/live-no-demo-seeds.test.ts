@@ -152,7 +152,9 @@ describe("live client: no demo clinical rows", () => {
   // until the server answers, and null again after sign-out.
   // "cluster" is the developer console's cluster view (E1, module
   // enterprise.multiInstance): the operator's view, never the next person's.
-  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs", "cluster"];
+  // "userTheme" is this person's own display preset (module platform.userThemes):
+  // their own choice, never the next clinician's on a shared ward workstation.
+  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs", "cluster", "userTheme"];
   it("parity status slices (shift, unread reminder …) start null and are cleared on sign-out", async () => {
     const h = await boot({ syntheticData: false });
     for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();
@@ -162,6 +164,26 @@ describe("live client: no demo clinical rows", () => {
     await h.w.DT.actions.logout();
     await sleep(30);
     for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();
+  });
+
+  // A display preset is not identifying, but it IS the person's: a shared ward
+  // workstation must not come back up wearing the previous clinician's theme
+  // (and a reload must not show it before the server has said who is signed
+  // in). So the slice is deliberately absent from PERSIST_KEYS — the page shows
+  // the ORGANIZATION's palette until /api/me/theme answers.
+  it("the person's display preset is never written to browser storage", async () => {
+    const h = await boot({ syntheticData: false });
+    await h.w.DT.actions.login("er_doctor", "LAKE", "er.doc", "pw-123456789");
+    await sleep(80);
+    h.w.DT.set((s: any) => { s.userTheme = { preset: "night", textSize: "large", followDevice: true }; return s; });
+    await sleep(60);
+    const keys = Object.keys(h.w.localStorage).filter((k) => /docturn/i.test(k));
+    expect(keys.length).toBeGreaterThan(0);
+    for (const k of keys) {
+      const raw = h.w.localStorage.getItem(k) || "";
+      expect(raw, k).not.toMatch(/userTheme/);
+      expect(raw, k).not.toMatch(/"night"/);
+    }
   });
 
   it("the labelled local demo (synthetic server, then unreachable) still has the kit's demo rows", async () => {

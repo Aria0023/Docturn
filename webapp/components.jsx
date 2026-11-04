@@ -36,12 +36,12 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     icon: { height: 40, width: 40, padding: 0 },
   };
   const variants = {
-    default: { background: "var(--primary)", color: "#fff", boxShadow: "var(--shadow-sm)" },
-    destructive: { background: "var(--destructive)", color: "#fff" },
-    outline: { background: "#fff", borderColor: "var(--border)", color: "var(--foreground)" },
+    default: { background: "var(--primary)", color: "var(--primary-foreground)", boxShadow: "var(--shadow-sm)" },
+    destructive: { background: "var(--destructive)", color: "var(--destructive-foreground)" },
+    outline: { background: "var(--card)", borderColor: "var(--border)", color: "var(--foreground)" },
     secondary: { background: "var(--secondary)", color: "var(--foreground)" },
     ghost: { background: "transparent", color: "var(--foreground)" },
-    link: { background: "transparent", color: "var(--primary)", textDecoration: "underline", height: "auto", padding: 0 },
+    link: { background: "transparent", color: "var(--primary-ink)", textDecoration: "underline", height: "auto", padding: 0 },
   };
   return (
     <button type={type || "button"} onClick={onClick} title={title} aria-label={ariaLabel || title}
@@ -74,10 +74,10 @@ function Badge({ status, variant, children, icon }) {
   const s = status ? STATUS[status] : null;
   const palette = s
     ? { background: s.bg, color: s.fg }
-    : variant === "outline" ? { background: "#fff", color: "var(--foreground)", border: "1px solid var(--border)" }
+    : variant === "outline" ? { background: "var(--card)", color: "var(--foreground)", border: "1px solid var(--border)" }
     : variant === "secondary" ? { background: "var(--secondary)", color: "var(--foreground)" }
-    : variant === "destructive" ? { background: "var(--destructive)", color: "#fff" }
-    : { background: "var(--primary)", color: "#fff" };
+    : variant === "destructive" ? { background: "var(--destructive)", color: "var(--destructive-foreground)" }
+    : { background: "var(--primary)", color: "var(--primary-foreground)" };
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, lineHeight: 1.6, ...palette }}>
       {(icon || s) && <Icon name={icon || s.icon} size={11} />}
@@ -156,7 +156,7 @@ function Field({ label, icon, value, onChange, placeholder, type, help, error, t
   return (
     <div>
       {label && <label htmlFor={fieldId} style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>{label}</label>}
-      <div className="dt-field" style={{ display: "flex", alignItems: textarea ? "flex-start" : "center", gap: 8, padding: textarea ? "10px 12px" : "0 12px", height: textarea ? "auto" : 40, border: `1px solid ${borderColor}`, borderRadius: "var(--radius-md)", background: "#fff", boxShadow: focus ? "0 0 0 2px hsl(221 83% 53% / .22)" : "none", transition: "border-color .15s, box-shadow .15s" }}>
+      <div className="dt-field" style={{ display: "flex", alignItems: textarea ? "flex-start" : "center", gap: 8, padding: textarea ? "10px 12px" : "0 12px", height: textarea ? "auto" : 40, border: `1px solid ${borderColor}`, borderRadius: "var(--radius-md)", background: "var(--card)", boxShadow: focus ? "0 0 0 2px hsl(221 83% 53% / .22)" : "none", transition: "border-color .15s, box-shadow .15s" }}>
         {icon && <Icon name={icon} size={16} color="var(--muted-foreground)" style={{ marginTop: textarea ? 2 : 0 }} />}
         {textarea
           ? <textarea {...common} rows={rows || 3} style={{ border: "none", outline: "none", fontSize: 14, width: "100%", fontFamily: "inherit", background: "transparent", resize: "vertical", color: "var(--foreground)" }} />
@@ -180,10 +180,10 @@ function Modal({ title, subtitle, icon, onClose, children, width = 460 }) {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(15,23,42,.35)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "dt-toast-in .18s ease" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: width, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: "#fff", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2xl, 0 24px 60px rgba(2,6,23,.28))", border: "1px solid var(--border)" }}>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "var(--overlay)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "dt-toast-in .18s ease" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: width, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2xl, 0 24px 60px rgba(2,6,23,.28))", border: "1px solid var(--border)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "18px 20px", borderBottom: "1px solid var(--border)" }}>
-          {icon && <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={18} /></span>}
+          {icon && <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={18} /></span>}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
             {subtitle && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 1 }}>{subtitle}</div>}
@@ -209,7 +209,7 @@ function EditableText({ value, onSave, placeholder, mono, size = 14, weight = 60
       onKeyDown: (e) => { if (e.key === "Enter" && !multiline) { e.preventDefault(); commit(); } if (e.key === "Escape") cancel(); },
       style: { font: "inherit", fontSize: size, fontWeight: weight, fontFamily: fontFam, color: color, width: width || "auto", minWidth: 60,
         border: "1px solid var(--ring)", borderRadius: "var(--radius-sm)", padding: multiline ? "6px 8px" : "1px 6px", outline: "none",
-        boxShadow: "0 0 0 2px hsl(221 83% 53% / .18)", background: "#fff", boxSizing: "border-box" } };
+        boxShadow: "0 0 0 2px hsl(221 83% 53% / .18)", background: "var(--card)", boxSizing: "border-box" } };
     return multiline ? <textarea rows={2} {...common} /> : <input {...common} />;
   }
   return (
@@ -315,13 +315,13 @@ function ConsultAdd({ services, onPick, label }) {
   return (
     <span style={{ display: "inline-flex" }}>
       <button ref={btnRef} onClick={toggle}
-        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "#fff", color: "var(--primary)" }}>
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "var(--card)", color: "var(--primary-ink)" }}>
         <Icon name={open ? "x" : "plus"} size={11} />{label || "Consult"}
       </button>
       {open && pos && (
         <React.Fragment>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
-          <div style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: "60vh", overflowY: "auto", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: "60vh", overflowY: "auto", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
             {list.map((s) => {
               const c = specialtyColor(s);
               return (
@@ -359,9 +359,15 @@ function ConsultRoster({ details, onRespond, compact }) {
         const c = specialtyColor(spec);
         return (
           <div key={spec} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: c.bg }}>
+            {/* The band carries THEME ink (the name, the counter), so its tint
+                is the specialty hue mixed into the current surface rather than
+                the palette's fixed light tint: on a dark canvas the fixed tint
+                stayed light and the muted counter on it read 1.78:1
+                (scripts/theme-check.mjs). The hue still names the service, and
+                the dot keeps the fixed shade. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "color-mix(in srgb, " + c.color + " 16%, var(--card))" }}>
               <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: c.color }}>{spec}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--foreground)" }}>{spec}</span>
               <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
             </div>
             {members.map((m, i) => {
@@ -376,7 +382,7 @@ function ConsultRoster({ details, onRespond, compact }) {
                   {onRespond && m.status !== "accepted" && m.status !== "declined" ? (
                     <span style={{ display: "inline-flex", gap: 4, flex: "none" }}>
                       <button onClick={() => onRespond(m.id, "declined")} title="Decline consult"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}><Icon name="x" size={11} />Decline</button>
+                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}><Icon name="x" size={11} />Decline</button>
                       <button onClick={() => onRespond(m.id, "accepted")} title="Accept consult"
                         style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--status-accepted)", background: "var(--status-accepted-bg)", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "var(--status-accepted-fg)", fontFamily: "var(--font-sans)" }}><Icon name="check" size={11} />Accept</button>
                     </span>

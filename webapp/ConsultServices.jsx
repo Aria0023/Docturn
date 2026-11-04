@@ -51,7 +51,7 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
     <Card style={{ padding: 14 }}>
       {/* top row: service name, on-call consultant, delete */}
       <div style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap" }}>
-        <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           <Icon name="stethoscope" size={17} />
         </span>
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -74,7 +74,7 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
           ) : (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center", flex: "0 1 auto", minWidth: 0 }}>
               <select value={onCallVal} onChange={(e) => pickOnCall(e.target.value)}
-                style={{ appearance: "none", WebkitAppearance: "none", height: 32, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer", maxWidth: 240, minWidth: 0 }}>
+                style={{ appearance: "none", WebkitAppearance: "none", height: 32, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontSize: 12.5, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer", maxWidth: 240, minWidth: 0 }}>
                 <option value="">Auto — synced from schedule</option>
                 {providerOpts.map((p, i) => <option key={i} value={p.name}>{p.name}{p.specialty ? " · " + p.specialty : ""}</option>)}
                 <option value="__custom__">✎ Enter name manually…</option>
@@ -106,11 +106,11 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
           {addable.length > 0 && (
             <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
               <select aria-label={"Add a registered PA / NP to " + s.name} value="" onChange={(e) => { const m = addable.find((x) => x.id === e.target.value); if (m) a.addConsultMember(s.id, { name: m.name, avatar: m.avatar, role: m.role }); }}
-                style={{ appearance: "none", WebkitAppearance: "none", height: 28, padding: "0 24px 0 10px", borderRadius: "var(--radius-full)", border: "1px dashed var(--border)", background: "#fff", fontSize: 12, fontWeight: 600, color: "var(--primary)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+                style={{ appearance: "none", WebkitAppearance: "none", height: 28, padding: "0 24px 0 10px", borderRadius: "var(--radius-full)", border: "1px dashed var(--border)", background: "var(--card)", fontSize: 12, fontWeight: 600, color: "var(--primary-ink)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
                 <option value="">+ Registered PA / NP</option>
                 {addable.map((m) => <option key={m.id} value={m.id}>{m.name} · {m.role}</option>)}
               </select>
-              <Icon name="chevron-down" size={12} color="var(--primary)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
+              <Icon name="chevron-down" size={12} color="var(--primary-ink)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />
             </div>
           )}
         </div>
@@ -119,7 +119,7 @@ function ConsultServiceRow({ s, providerOpts, midlevelOpts, canDelete, a }) {
           <div style={{ flex: 1, maxWidth: 280 }}><Field value={mlName} onChange={setMlName} placeholder="Add PA/NP by name (manual)" icon="user-plus" /></div>
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
             <select value={mlRole} onChange={(e) => setMlRole(e.target.value)}
-              style={{ appearance: "none", WebkitAppearance: "none", height: 40, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--input)", background: "#fff", fontSize: 13, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+              style={{ appearance: "none", WebkitAppearance: "none", height: 40, padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--input)", background: "var(--card)", fontSize: 13, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
               <option value="NP">NP</option><option value="PA">PA</option><option value="RN">RN</option>
             </select>
             <Icon name="chevron-down" size={13} color="var(--muted-foreground)" style={{ position: "absolute", right: 8, pointerEvents: "none" }} />

@@ -66,7 +66,7 @@ function Broadcasts({ onSend, broadcasts = [] }) {
                   <button key={id} onClick={() => setSeverity(id)} data-broadcast-severity={id} aria-pressed={on}
                     style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44, padding: "8px 6px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13.5, fontWeight: 600, minWidth: 0,
                       border: on ? `1.5px solid ${fg}` : "1px solid var(--border)",
-                      background: on ? bg : "#fff", color: on ? fg : "var(--foreground)" }}>
+                      background: on ? bg : "var(--card)", color: on ? fg : "var(--foreground)" }}>
                     <Icon name={icon} size={16} />{label}
                   </button>
                 );
@@ -87,7 +87,7 @@ function Broadcasts({ onSend, broadcasts = [] }) {
                 return (
                   <button key={id} onClick={() => toggleAud(id)} data-broadcast-audience={id} aria-pressed={on}
                     style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44, padding: "6px 14px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 13, fontWeight: 500,
-                      border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "#EFF6FF" : "#fff", color: on ? "var(--primary)" : "var(--foreground)" }}>
+                      border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "var(--primary-tint)" : "var(--card)", color: on ? "var(--primary-ink)" : "var(--foreground)" }}>
                     {on && <Icon name="check" size={13} />}{label}
                   </button>
                 );
@@ -134,7 +134,7 @@ function Broadcasts({ onSend, broadcasts = [] }) {
               return (
                 <Card key={b.id || i} style={{ padding: 16 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                    <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: sm[4], color: sm[3] === "#fff" ? "#fff" : sm[3], display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+                    <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: sm[4], color: sm[3], display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
                       <Icon name={sm[2]} size={18} />
                     </span>
                     <div style={{ flex: 1, minWidth: 0 }}>

@@ -37,8 +37,8 @@ function OCToggle({ on, onChange, label, disabled }) {
   return (
     <button type="button" onClick={() => { if (!disabled) onChange(!on); }} role="switch" aria-checked={!!on} aria-label={label} disabled={!!disabled}
       style={{ width: 52, height: 44, minWidth: 44, border: "none", background: "transparent", cursor: disabled ? "default" : "pointer", opacity: disabled ? .5 : 1, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
-      <span style={{ display: "block", width: 42, height: 24, borderRadius: 99, padding: 2, background: on ? "var(--primary)" : "#CBD5E1", transition: "background .15s" }}>
-        <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
+      <span style={{ display: "block", width: 42, height: 24, borderRadius: 99, padding: 2, background: on ? "var(--primary)" : "var(--border-strong)", transition: "background .15s" }}>
+        <span style={{ display: "block", width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transform: on ? "translateX(18px)" : "none", transition: "transform .15s" }} />
       </span>
     </button>
   );
@@ -49,7 +49,7 @@ function RuleRow({ icon, title, desc, control, note }) {
   // line (right-aligned) instead of squeezing the title.
   return (
     <div data-rule-row={title} style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "14px 16px", borderTop: "1px solid var(--border)" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={16} /></span>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--secondary)", color: "var(--primary-ink)", display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={16} /></span>
       <div style={{ flex: "1 1 180px", minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
         <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", lineHeight: 1.45 }}>{desc}</div>
@@ -166,7 +166,7 @@ function OrgConfig({ scope, org }) {
       {/* Header — wraps so the "Manage full portal" button lands under the
           title on phones instead of past the viewport edge */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
-        <span style={{ width: 42, height: 42, borderRadius: "var(--radius-md)", background: isEnt ? "#1E293B" : "#DBEAFE", color: isEnt ? "#7DD3FC" : "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+        <span style={{ width: 42, height: 42, borderRadius: "var(--radius-md)", background: isEnt ? "var(--inverse)" : "var(--status-active-bg)", color: isEnt ? "var(--inverse-accent)" : "var(--primary-ink)", fontWeight: 700, fontSize: 15, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
           {isEnt ? <Icon name="globe" size={20} /> : (scope || "").slice(0, 2)}
         </span>
         <div style={{ flex: "1 1 180px", minWidth: 0 }}>
@@ -183,7 +183,7 @@ function OrgConfig({ scope, org }) {
           const on = tab === id;
           return (
             <button key={id} type="button" onClick={() => setTab(id)} aria-pressed={on}
-              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", minHeight: mobile ? 44 : undefined, flex: "none", whiteSpace: "nowrap", border: "none", borderBottom: on ? "2px solid var(--primary)" : "2px solid transparent", background: "transparent", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", minHeight: mobile ? 44 : undefined, flex: "none", whiteSpace: "nowrap", border: "none", borderBottom: on ? "2px solid var(--primary)" : "2px solid transparent", background: "transparent", cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: on ? "var(--primary-ink)" : "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}>
               <Icon name={icon} size={15} />{label}
             </button>
           );
@@ -206,7 +206,7 @@ function OrgConfig({ scope, org }) {
             <RuleRow icon="git-branch" title="Rotation mode" desc="How the next hospitalist is chosen for round-robin routing."
               control={
                 <select aria-label="Rotation mode" value={rules.rotationMode} disabled={!fresh} onChange={(e) => setRule("rotationMode", e.target.value)}
-                  style={{ height: 44, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", background: "#fff", cursor: fresh ? "pointer" : "default", opacity: fresh ? 1 : .5, maxWidth: "100%" }}>
+                  style={{ height: 44, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", background: "var(--card)", cursor: fresh ? "pointer" : "default", opacity: fresh ? 1 : .5, maxWidth: "100%" }}>
                   <option value="lowest_census">Lowest census first</option>
                   <option value="sequential">Sequential order</option>
                 </select>

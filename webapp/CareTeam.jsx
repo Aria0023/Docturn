@@ -9,8 +9,8 @@
    accounts that can accept a request (hospitalists and directors). */
 
 const TEAM_ROLE = {
-  MD: { label: "MD", tint: "blue",    fg: "var(--primary-ink, #1D4ED8)" },
-  DO: { label: "DO", tint: "blue",    fg: "var(--primary-ink, #1D4ED8)" },
+  MD: { label: "MD", tint: "blue",    fg: "var(--primary-ink)" },
+  DO: { label: "DO", tint: "blue",    fg: "var(--primary-ink)" },
   PA: { label: "PA", tint: "emerald", fg: "var(--status-accepted)" },
   NP: { label: "NP", tint: "amber",   fg: "var(--status-pending)" },
   RN: { label: "RN", tint: "slate",   fg: "var(--status-neutral)" },
@@ -21,7 +21,7 @@ function RolePill({ role, label }) {
   const r = TEAM_ROLE[role];
   if (!r) return label ? <span style={{ padding: "1px 7px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, background: "var(--status-neutral-bg)", color: "var(--status-neutral)" }}>{label}</span> : null;
   return <span style={{ padding: "1px 7px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, letterSpacing: ".02em",
-    background: { blue: "#DBEAFE", emerald: "var(--status-accepted-bg)", amber: "var(--status-pending-bg)", slate: "var(--status-neutral-bg)" }[r.tint], color: r.fg }}>{r.label}</span>;
+    background: { blue: "var(--status-active-bg)", emerald: "var(--status-accepted-bg)", amber: "var(--status-pending-bg)", slate: "var(--status-neutral-bg)" }[r.tint], color: r.fg }}>{r.label}</span>;
 }
 const teamTint = (role) => (TEAM_ROLE[role] || {}).tint || "slate";
 
@@ -49,9 +49,9 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
   return (
     <PageWrap>
       {/* Explainer */}
-      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "13px 15px", marginBottom: 20, borderRadius: "var(--radius-md)", background: "#EFF6FF", border: "1px solid #BFDBFE" }}>
-        <Icon name="link" size={17} color="var(--primary)" style={{ marginTop: 1 }} />
-        <div style={{ fontSize: 13, lineHeight: 1.5, color: "#1E3A5F" }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", padding: "13px 15px", marginBottom: 20, borderRadius: "var(--radius-md)", background: "var(--primary-tint)", border: "1px solid var(--status-active-rim)" }}>
+        <Icon name="link" size={17} color="var(--primary-ink)" style={{ marginTop: 1 }} />
+        <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--primary-ink)" }}>
           <strong>Members you mark On call share your new admission requests.</strong> Each request routed to you also
           shows in their Incoming list, and any of them can accept it for you — the patient goes on your census. Only you
           can decline it. Changes are saved for everyone.
@@ -109,7 +109,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
             <div style={{ position: "relative", flex: "none" }}>
               <Avatar initials={p.avatar} size={36} tint={p.working ? "emerald" : "slate"} />
-              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
+              <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid var(--card)", borderRadius: 99 }}><StatusDot status={p.working ? "online" : "offline"} pulse={p.working} /></span>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
@@ -130,7 +130,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
           <div style={{ display: "flex", flexWrap: "wrap", gap: 9 }}>
             {consultants.map((c) => (
               <span key={c.spec} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: "var(--radius-full)", background: "var(--secondary)", border: "1px solid var(--border)" }}>
-                <Icon name="stethoscope" size={14} color="var(--primary)" />
+                <Icon name="stethoscope" size={14} color="var(--primary-ink)" />
                 <span style={{ fontSize: 13, fontWeight: 600 }}>{c.spec}</span>
                 <span style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{c.count} patient{c.count === 1 ? "" : "s"}</span>
               </span>
@@ -153,7 +153,7 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
             <div style={{ fontSize: 12, color: "var(--muted-foreground)", padding: "0 4px" }}>Hospitalists and directors only — the roles that can accept a request.</div>
             {pool.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", padding: "6px 4px" }}>{(candidates || []).some((c) => c.canJoinUnit !== false) ? "No matches." : "No one else in your organization to link."}</div>}
             {pool.map((c) => (
-              <div key={c.id} data-candidate={c.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 10px", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
+              <div key={c.id} data-candidate={c.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "8px 10px", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}>
                 <Avatar initials={c.avatar} size={32} tint={teamTint(c.role)} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>{c.name}<RolePill role={c.role} /></div>
@@ -184,12 +184,12 @@ function CareTeam({ me, team, candidates, onAdd, onRemove, onToggleCall, provide
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
               <button onClick={() => run("call" + m.id, () => onToggleCall(m.id))} aria-pressed={!!m.onCall}
-                style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 11px", minHeight: mobile ? 44 : 34, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", fontSize: 12.5, fontWeight: 500, opacity: busy ? .6 : 1 }}>
+                style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 11px", minHeight: mobile ? 44 : 34, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 12.5, fontWeight: 500, opacity: busy ? .6 : 1 }}>
                 <StatusDot status={m.onCall ? "online" : "offline"} pulse={m.onCall} />
                 {busy === "call" + m.id ? "Saving…" : m.onCall ? "On call" : "Off call"}
               </button>
               <button onClick={() => { if (window.confirm("Remove " + m.name + " from your on-call unit? They stop getting your admission requests.")) run("rm" + m.id, () => onRemove(m.id)); }} title="Remove from team" aria-label={"Remove " + m.name + " from your unit"}
-                style={{ width: mobile ? 44 : 34, height: mobile ? 44 : 34, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+                style={{ width: mobile ? 44 : 34, height: mobile ? 44 : 34, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
                 <Icon name="user-minus" size={16} />
               </button>
             </div>

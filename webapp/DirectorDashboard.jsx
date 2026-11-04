@@ -22,7 +22,7 @@ function Stepper({ label, value, onDec, onInc, mobile }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontWeight: 500 }}>{label}</span>
-      <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "#fff", overflow: "hidden" }}>
+      <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--card)", overflow: "hidden" }}>
         <button style={btn} onClick={onDec} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Decrease ${label}`}><Icon name="minus" size={13} /></button>
         <span style={{ minWidth: 22, textAlign: "center", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{value}</span>
         <button style={btn} onClick={onInc} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Increase ${label}`}><Icon name="plus" size={13} /></button>
@@ -301,7 +301,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const scheduleNode = (
     /* Schedule source — the server's selected source and its real sync state */
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={17} color="var(--primary)" /></span>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={17} color="var(--primary-ink)" /></span>
       <div data-schedule-panel={schedKey || (srcErr ? "error" : "loading")} style={{ minWidth: 0, flex: "1 1 200px" }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><span data-schedule-title>{schedTitle}</span>{schedBadge && <span data-schedule-badge style={{ whiteSpace: "nowrap" }}>{schedBadge}</span>}</div>
         <div data-schedule-line style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{schedLine}</div>
@@ -313,7 +313,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   const admissionsNode = (
     /* Admissions counter — rolling count since last reset; full history in the log */
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DCFCE7", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="scroll-text" size={17} color="var(--status-accepted)" /></span>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--status-accepted-bg)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="scroll-text" size={17} color="var(--status-accepted)" /></span>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700 }}>Admissions since last reset: <span data-admissions-since style={{ fontVariantNumeric: "tabular-nums" }}>{admSinceReset}</span></div>
         <div data-admissions-reset-line style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{admResetLine}</div>
@@ -329,9 +329,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     /* Bulk controls bar */
     <Card style={{ padding: "14px 16px", display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <Icon name="layers" size={16} color="var(--primary)" />
+        <Icon name="layers" size={16} color="var(--primary-ink)" />
         <span style={{ fontSize: 13, fontWeight: 700 }}>Mass set daily census limit</span>
-        <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#fff" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--card)" }}>
           <input value={capInput} onChange={(e) => setCapInput(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric"
             style={{ width: 52, height: 34, border: "none", outline: "none", textAlign: "center", fontSize: 14, fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-sans)" }} />
         </div>
@@ -359,7 +359,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     : null;
   const nextUpNode = (nextProvider || noNextMsg) && (
     /* Next up — who receives the next round-robin admission (server's pick) */
-    <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "linear-gradient(180deg,#EFF6FF,#fff)", border: "1px solid var(--primary)" }}>
+    <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "linear-gradient(180deg,var(--primary-tint),var(--card))", border: "1px solid var(--primary)" }}>
       {nextProvider ? <Avatar initials={nextProvider.avatar} size={40} tint="emerald" /> : <Icon name="user-x" size={22} color="var(--muted-foreground)" />}
       <div style={{ minWidth: 0, flex: "1 1 180px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
@@ -411,7 +411,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                     onDragOver={inRot ? (e) => { e.preventDefault(); if (overId !== p.id) setOverId(p.id); } : undefined}
                     onDrop={inRot ? (e) => { e.preventDefault(); handleDrop(p.id); } : undefined}
                     style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none",
-                      background: dragId === p.id ? "var(--secondary)" : (isNext ? "#EFF6FF" : "transparent"),
+                      background: dragId === p.id ? "var(--secondary)" : (isNext ? "var(--primary-tint)" : "transparent"),
                       borderLeft: isNext ? "3px solid var(--primary)" : "3px solid transparent",
                       opacity: dragId === p.id ? 0.5 : 1, cursor: inRot ? "grab" : "default", transition: "background .12s, opacity .12s" }}>
                     {/* round-robin position (the planner's pick order) */}
@@ -419,7 +419,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       {inRot && <Icon name="grip-vertical" size={14} color="var(--muted-foreground)" />}
                       {rotIndex[p.id] ? (
                         <span data-testid="rr-pos" data-provider={p.id} aria-label={"Round-robin position " + rotIndex[p.id]} title={"Round-robin position " + rotIndex[p.id]}
-                          style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "#fff" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{rotIndex[p.id]}</span>
+                          style={{ width: 20, height: 20, borderRadius: 99, background: isNext ? "var(--primary)" : "var(--secondary)", color: isNext ? "var(--primary-foreground)" : "var(--muted-foreground)", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{rotIndex[p.id]}</span>
                       ) : (
                         <span data-testid="rr-pos" data-provider={p.id} aria-label={noPosReason(p)} title={noPosReason(p)} style={{ color: "var(--muted-foreground)", fontSize: 13, paddingLeft: inRot ? 0 : 6 }}>—</span>
                       )}
@@ -443,13 +443,13 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       {!mobile && <div style={{ width: 1, height: 24, background: "var(--border)" }} />}
                       <button onClick={() => onToggleRotation(p.id)} title={p.inRotation ? "In round-robin — click to remove" : "Off rotation — click to add"}
                         style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",
-                          border: `1px solid ${p.inRotation ? "var(--primary)" : "var(--border)"}`, background: p.inRotation ? "var(--primary-tint, #EFF6FF)" : "#fff", color: p.inRotation ? "var(--primary)" : "var(--muted-foreground)" }}>
+                          border: `1px solid ${p.inRotation ? "var(--primary)" : "var(--border)"}`, background: p.inRotation ? "var(--primary-tint)" : "var(--card)", color: p.inRotation ? "var(--primary-ink)" : "var(--muted-foreground)" }}>
                         <Icon name={p.inRotation ? "route" : "route-off"} size={12} />{p.inRotation ? "Rotation" : "Off"}
                       </button>
                       <button onClick={() => onToggleWorking(p.id)} title="Toggle shift"
                         style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", border: "none", background: "transparent", fontFamily: "var(--font-sans)", minHeight: mobile ? 44 : undefined, padding: mobile ? "0 4px" : undefined }}>
                         <span style={{ width: 40, height: 24, borderRadius: 99, position: "relative", flex: "none", background: p.working ? "var(--status-accepted)" : "var(--status-neutral-bg)", transition: "background .2s" }}>
-                          <span style={{ position: "absolute", top: 3, left: p.working ? 19 : 3, width: 18, height: 18, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
+                          <span style={{ position: "absolute", top: 3, left: p.working ? 19 : 3, width: 18, height: 18, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
                         </span>
                         <span style={{ fontSize: 11, width: 38, textAlign: "left", color: p.working ? "var(--status-accepted)" : "var(--muted-foreground)", fontWeight: 600 }}>{p.working ? "On" : "Off"}</span>
                       </button>
@@ -470,7 +470,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     /* Round-robin config (the order itself lives in the provider rows above) */
     <Card style={{ padding: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <Icon name="route" size={18} color="var(--primary)" />
+        <Icon name="route" size={18} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Round-robin config</h3>
         <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)" }}>{rotMode === "lowest_census" ? "Lowest census first" : "Sequential"} · {rotation.length} in rotation</span>
       </div>
@@ -486,7 +486,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
             <button onClick={onToggleAutoReassign} title="Auto-reassign on decline"
               style={{ width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative", flex: "none",
                 background: (settings && settings.autoReassign) ? "var(--status-accepted)" : "var(--status-neutral-bg)", transition: "background .2s" }}>
-              <span style={{ position: "absolute", top: 3, left: (settings && settings.autoReassign) ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "#fff", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
+              <span style={{ position: "absolute", top: 3, left: (settings && settings.autoReassign) ? 21 : 3, width: 20, height: 20, borderRadius: 99, background: "var(--card)", boxShadow: "var(--shadow-sm)", transition: "left .2s" }} />
             </button>
           </div>
           {rotMode === "sequential"
@@ -552,7 +552,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                   {ROLE_OPTIONS.map((r) => (
                     <button key={r.id} onClick={() => setForm({ ...form, role: r.id })}
                       style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
-                        border: form.role === r.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.role === r.id ? "#EFF6FF" : "#fff", color: form.role === r.id ? "var(--primary)" : "var(--foreground)" }}>{r.label}</button>
+                        border: form.role === r.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.role === r.id ? "var(--primary-tint)" : "var(--card)", color: form.role === r.id ? "var(--primary-ink)" : "var(--foreground)" }}>{r.label}</button>
                   ))}
                 </div>
               </div>
@@ -569,7 +569,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                         {shifts.map((s) => (
                           <button key={s.id} onClick={() => setForm({ ...form, shift: s.id })}
                             style={{ flex: 1, padding: "9px 8px", borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 12.5, fontWeight: 600, overflowWrap: "anywhere",
-                              border: form.shift === s.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.shift === s.id ? "#EFF6FF" : "#fff", color: form.shift === s.id ? "var(--primary)" : "var(--foreground)" }}>{s.label}</button>
+                              border: form.shift === s.id ? "1px solid var(--primary)" : "1px solid var(--border)", background: form.shift === s.id ? "var(--primary-tint)" : "var(--card)", color: form.shift === s.id ? "var(--primary-ink)" : "var(--foreground)" }}>{s.label}</button>
                         ))}
                       </div>
                     </div>
@@ -587,6 +587,6 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   );
 }
 
-const timeStyle = { height: 24, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "#fff", fontSize: 11.5, fontFamily: "var(--font-sans)", color: "var(--foreground)", padding: "0 4px", fontVariantNumeric: "tabular-nums" };
+const timeStyle = { height: 24, border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", background: "var(--card)", fontSize: 11.5, fontFamily: "var(--font-sans)", color: "var(--foreground)", padding: "0 4px", fontVariantNumeric: "tabular-nums" };
 
 Object.assign(window, { DirectorDashboard });

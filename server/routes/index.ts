@@ -29,6 +29,7 @@ import { registerProviderRoutes } from "./providers.js";
 import { registerReminderRoutes } from "./reminders.js";
 import { registerPinRoutes } from "./pin.js";
 import { registerAlertSoundRoutes } from "./alert-sounds.js";
+import { registerThemeRoutes } from "./themes.js";
 import { registerResourceRoutes } from "./resources.js";
 import { registerScimRoutes } from "../scim/users.js";
 import { registerScimTokenRoutes } from "./scim-tokens.js";
@@ -54,6 +55,7 @@ export function registerRoutes(app: Express) {
   registerReminderRoutes(app);
   registerPinRoutes(app);
   registerAlertSoundRoutes(app);
+  registerThemeRoutes(app);
   registerMetricsRoutes(app);
   registerReportsRoutes(app);
   registerOrgRoutes(app);

@@ -24,7 +24,7 @@ function ComplianceTabs({ tab, setTab }) {
         return (
           <button key={id} onClick={() => setTab(id)} data-compliance-tab={id} aria-pressed={on}
             style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 14px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, whiteSpace: "nowrap", flex: "none",
-              background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+              background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
             <Icon name={icon} size={15} />{label}
           </button>
         );
@@ -37,7 +37,7 @@ const RISK = {
   low:      { label: "Low",      bg: "var(--status-neutral-bg)",  fg: "var(--status-neutral)" },
   medium:   { label: "Medium",   bg: "var(--status-pending-bg)",  fg: "var(--status-pending)" },
   high:     { label: "High",     bg: "var(--status-rejected-bg)", fg: "var(--status-rejected)" },
-  critical: { label: "Critical", bg: "var(--status-rejected)",    fg: "#fff" },
+  critical: { label: "Critical", bg: "var(--status-rejected)",    fg: "var(--on-status)" },
 };
 function RiskPill({ level }) {
   const r = RISK[level] || RISK.low;
@@ -123,7 +123,7 @@ function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = nul
               {label}
               <input type="date" data-export-date={key} value={range[key]} max="2999-12-31"
                 onChange={(e) => setRange(Object.assign({}, range, { [key]: e.target.value }))}
-                style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
+                style={{ minHeight: 44, fontSize: 16, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontFamily: "inherit", width: "100%", boxSizing: "border-box" }} />
             </label>
           ))}
           {(range.from || range.to) && (
@@ -163,7 +163,7 @@ function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = nul
                   <span className="ds-mono">{auditStamp(r.at)}</span>
                   {operatorNote(r)}
                 </div>
-                <div className="ds-mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--primary)", marginTop: 4, overflowWrap: "anywhere" }}>{r.action}</div>
+                <div className="ds-mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--primary-ink)", marginTop: 4, overflowWrap: "anywhere" }}>{r.action}</div>
                 {r.resource && <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>{r.resource}</div>}
               </div>
               <span style={{ flex: "none", textAlign: "right" }}><RiskPill level={r.risk} /></span>
@@ -177,7 +177,7 @@ function Compliance({ audit = [], phiLog = [], auditCount = null, phiCount = nul
                 {r.operator && <div style={{ fontSize: 11.5 }}>{operatorNote(r)}</div>}
               </div>
               <div style={{ flex: 1.4, minWidth: 0 }}>
-                <div className="ds-mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--primary)", overflowWrap: "anywhere" }}>{r.action}</div>
+                <div className="ds-mono" style={{ fontSize: 12.5, fontWeight: 600, color: "var(--primary-ink)", overflowWrap: "anywhere" }}>{r.action}</div>
                 <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>{r.resource}</div>
               </div>
               <span style={{ width: 70, flex: "none", textAlign: "right" }}><RiskPill level={r.risk} /></span>

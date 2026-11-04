@@ -19,19 +19,19 @@ const CUSTOM_STAT_TINTS = [
 ];
 const CUSTOM_SELECT_STYLE = {
   appearance: "none", WebkitAppearance: "none", width: "100%", height: 36, padding: "0 28px 0 10px",
-  borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 13,
+  borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontSize: 13,
   fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: "pointer",
 };
 // Builder text inputs. On phones the controls are 16px / 44px tall so iOS
 // Safari does not zoom on focus and the fields are comfortable tap targets.
 function customInputStyle(mobile) {
-  return { width: "100%", height: mobile ? 44 : 36, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: mobile ? 16 : 13, fontFamily: "var(--font-sans)", color: "var(--foreground)", outline: "none" };
+  return { width: "100%", height: mobile ? 44 : 36, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontSize: mobile ? 16 : 13, fontFamily: "var(--font-sans)", color: "var(--foreground)", outline: "none" };
 }
 // The builder / add-stat popovers are anchored to the control ROW (not the
 // button) and clamped to the viewport, so on a 375px phone they open fully
 // on-screen instead of 37–92px past the left edge.
 function popoverStyle(width, pad) {
-  return { position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(" + width + "px, calc(100vw - 32px))", maxWidth: "100%", maxHeight: "70vh", overflowY: "auto", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: pad };
+  return { position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41, width: "min(" + width + "px, calc(100vw - 32px))", maxWidth: "100%", maxHeight: "70vh", overflowY: "auto", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: pad };
 }
 
 function CustomStatSelect({ value, onChange, children }) {
@@ -186,7 +186,7 @@ function CustomizableStats({ statKey, stats, metrics }) {
                         style={{ display: "flex", alignItems: "center", gap: 9, width: "100%", textAlign: "left", padding: "9px 10px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600 }}>
                         <Icon name={byId[id].icon || "square"} size={15} color="var(--muted-foreground)" />
                         <span style={{ flex: 1, minWidth: 0 }}>{byId[id].label}</span>
-                        <Icon name="plus" size={14} color="var(--primary)" />
+                        <Icon name="plus" size={14} color="var(--primary-ink)" />
                       </button>
                     ))}
                   </div>
@@ -227,14 +227,14 @@ function CustomizableStats({ statKey, stats, metrics }) {
                 {editing && s.custom && (
                   <button onClick={() => a.removeCustomStat(statKey, id)} title="Delete custom stat"
                     onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                    style={{ position: "absolute", top: 6, right: 6, zIndex: 2, width: 24, height: 24, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+                    style={{ position: "absolute", top: 6, right: 6, zIndex: 2, width: 24, height: 24, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
                     <Icon name="trash-2" size={13} />
                   </button>
                 )}
                 {editing && !s.custom && (
                   <button onClick={() => a.toggleStat(statKey, id)} title="Hide stat"
                     onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-                    style={{ position: "absolute", top: 6, right: 6, zIndex: 2, width: 24, height: 24, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
+                    style={{ position: "absolute", top: 6, right: 6, zIndex: 2, width: 24, height: 24, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}>
                     <Icon name="eye-off" size={13} />
                   </button>
                 )}

@@ -91,15 +91,18 @@
   button, [role="button"], a, label, select, input, textarea { touch-action: manipulation; }
   :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: hsl(214 25% 86%); border-radius: 99px; border: 2px solid #fff; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px; border: 2px solid var(--card); }
   @keyframes dt-pulse { 0% { transform: scale(1); opacity: .55; } 70% { transform: scale(2.4); opacity: 0; } 100% { opacity: 0; } }
   @keyframes dt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
   /* Mobile shell height: 100vh for engines without dvh (iOS < 15.4), 100dvh
+     where supported — both divided by --dt-zoom, because a person on "large"
+     text zooms :root and viewport units do NOT shrink with it (the shell would
+     be exactly one zoom factor too tall and push the tab bar off screen).
      where supported so Safari's collapsing toolbar never leaves a gap. An
      inline style object cannot hold two values for one property, hence a class. */
-  .dt-mobile-shell { height: 100vh; height: 100dvh; }
+  .dt-mobile-shell { height: calc(100vh / var(--dt-zoom, 1)); height: calc(100dvh / var(--dt-zoom, 1)); }
   /* Demo-only topbar controls hide on narrow desktop windows (A.CON-MIN-10). */
   @media (max-width: 1000px) { .dt-hide-narrow { display: none !important; } }
   /* Phone: collapse the kit's inline multi-column grids to a single column so
@@ -246,9 +249,9 @@ class ErrorBoundary extends React.Component {
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={() => { this.setState({ err: null }); try { window.DT.actions.setNav("dashboard"); } catch (e) {} }}
-              style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Back to dashboard</button>
+              style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: "var(--primary)", color: "var(--primary-foreground)", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Back to dashboard</button>
             <button onClick={() => { try { localStorage.clear(); } catch (e) {} location.reload(); }}
-              style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Reset & sign out</button>
+              style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Reset & sign out</button>
           </div>
         </div>
       );
@@ -274,6 +277,10 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    // Appearance carries "Your theme (this account)" — a preference every role
+    // has, so every role needs a route to it (director / ER director reach the
+    // same screen through SettingsTabs).
+    { id: "appearance", label: "Appearance", icon: "palette" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_doctor: [
@@ -282,6 +289,7 @@ const NAV = {
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
     { id: "compliance", label: "My audit trail", icon: "shield-check" },
+    { id: "appearance", label: "Appearance", icon: "palette" },
     { id: "account",   label: "Settings", icon: "settings" },
   ],
   er_director: [
@@ -332,7 +340,14 @@ const NAV_MODULE = {
   admissions: "routing.assignments", history: "routing.assignments",
   resources: "ops.resources", appearance: "platform.appearance",
 };
-const navModuleOn = (it) => !NAV_MODULE[it.id] || !window.DT.moduleOn || window.DT.moduleOn(NAV_MODULE[it.id]);
+// Appearance is the one screen two modules share: the organization's branding
+// (platform.appearance) and the person's own preset (platform.userThemes).
+// Either one on keeps the screen — the card whose module is off says so.
+const navModuleOn = (it) => {
+  if (!window.DT.moduleOn) return true;
+  if (it.id === "appearance") return window.DT.moduleOn("platform.appearance") || window.DT.moduleOn("platform.userThemes");
+  return !NAV_MODULE[it.id] || window.DT.moduleOn(NAV_MODULE[it.id]);
+};
 
 // Topbar title/subtitle for the shared admin screens.
 const TOP = {
@@ -353,7 +368,7 @@ const TOP = {
   consult:    ["Consult services", "The services ER physicians can request — saved for your organization"],
   people:     ["People", "Your organization's accounts, as the server holds them"],
   access:     ["Access & people", "Your organization's people and the fixed roles that govern their access"],
-  appearance: ["Appearance & layout", "Your organization's branding and theme, and this device's navigation"],
+  appearance: ["Appearance & layout", "Your own colour scheme and text size, your organization's branding, and this device's navigation"],
   settings:   ["Organization settings", "Rotation rules, retention and integrations"],
   enterprise: ["Platform", "Operations that span every organization"],
   users:      ["Users by organization", "Support directory — every user grouped by tenant"],
@@ -384,7 +399,7 @@ function Toast({ toast }) {
   const fg = { accepted: "var(--status-accepted)", sent: "var(--status-active)", rejected: "var(--destructive)" }[tone];
   return (
     <div role="status" data-toast style={{ position: "fixed", top: below != null ? below + 8 : "calc(18px + var(--sai-top))", right: "calc(18px + var(--sai-right))", zIndex: 50, pointerEvents: "none", animation: "dt-toast-in .25s ease", maxWidth: "calc(100vw - 36px - var(--sai-left) - var(--sai-right))" }}>
-      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-lg)", padding: "12px 16px", maxWidth: 340 }}>
         <Icon name={ic} size={18} color={fg} style={{ marginTop: 1 }} />
         <div>
           <div style={{ fontSize: 13.5, fontWeight: 600 }}>{toast.title}</div>
@@ -402,7 +417,7 @@ function RoleSwitcher({ role, onChange }) {
       {roles.map(([id, label]) => (
         <button key={id} type="button" onClick={() => onChange(id)} aria-pressed={role === id}
           style={{ padding: "6px 11px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
-            background: role === id ? "#fff" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
+            background: role === id ? "var(--card)" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
             boxShadow: role === id ? "var(--shadow-sm)" : "none" }}>{label}</button>
       ))}
     </div>
@@ -445,10 +460,10 @@ function ImpersonationGateHold({ imp, gate, me, onReturn, onSignOut }) {
     ? who + " hasn't enrolled the two-factor authentication this organization requires for their role yet."
     : who + " still has the one-time password the account was created or reset with, and hasn't chosen their own yet.";
   return (
-    <div style={{ minHeight: "100dvh", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
+    <div style={{ minHeight: "calc(100dvh / var(--dt-zoom, 1))", display: "flex", flexDirection: "column", background: "var(--secondary)", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)", paddingBottom: "var(--sai-bottom)" }}>
       <ImpersonationBanner imp={imp} onReturn={onReturn} />
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: mobile ? "20px 16px" : 28 }}>
-        <div data-testid="impersonation-gate-hold" style={{ width: "100%", maxWidth: 440, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 20px" : "30px 28px", textAlign: "center" }}>
+        <div data-testid="impersonation-gate-hold" style={{ width: "100%", maxWidth: 440, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "24px 20px" : "30px 28px", textAlign: "center" }}>
           <span style={{ width: 40, height: 40, borderRadius: "var(--radius-md)", background: "var(--secondary)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icon name={gate === "mfa" ? "shield-check" : "key-round"} size={20} color="var(--primary)" /></span>
           <h1 style={{ fontSize: 19, fontWeight: 700, margin: "16px 0 8px" }}>{gate === "mfa" ? "Two-factor enrolment pending" : "Password change pending"}</h1>
           <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: "0 0 18px", lineHeight: 1.55 }}>
@@ -555,25 +570,25 @@ function App() {
     const sess = st.session || {};
     const identity = { org: lockFlag.org || sess.org, user: lockFlag.user || sess.user, name: lockFlag.name || sess.name || "", role: lockFlag.role || sess.role || role };
     const me = st.me || (identity.name ? { name: identity.name, avatar: identity.name.replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase(), role: identity.role } : null);
-    return <React.Fragment><ThemeStyle theme={st.theme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
+    return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><LockScreen me={me} identity={identity} appName={st.theme.appName} onUnlock={unlocked} onSignOut={signedOutFromLock} /></React.Fragment>;
   }
   // Second factor at sign-in for an enrolled account: the server holds the
   // login (202) until the code arrives, so there is no session yet.
-  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
-  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
+  if (!role && st.mfaChallenge) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><MfaChallengeScreen appName={st.theme.appName} challenge={st.mfaChallenge} onCancel={() => a.mfaCancelLogin && a.mfaCancelLogin()} /></React.Fragment>;
+  if (!role) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><InstallPrompt /><LoginScreen onLogin={(r, org, user, pass) => a.login(r, org, user, pass)} appName={st.theme.appName} /></React.Fragment>;
   // A developer inside a portal whose account is held by its own gate: show
   // why, with the way back (A.CON-SHO-38) — never the owner's enrolment /
   // change forms.
   // The toast is rendered here too: a failed Return ("Couldn't leave portal")
   // must be visible on this screen, not only inside the shell.
-  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
+  if (st.impersonating && (st.mfaEnrollmentRequired || st.passwordChangeRequired)) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><ImpersonationGateHold imp={st.impersonating} gate={st.mfaEnrollmentRequired ? "mfa" : "password"} me={st.me} onReturn={() => a.stopImpersonating()} onSignOut={a.logout} /><Toast toast={st.__toast} /></React.Fragment>;
   // The org requires MFA for this privileged role and the user hasn't enrolled:
   // the server 403s every other route, so hold the whole app (no navigation)
   // on the enrolment screen until /api/user says the block has lifted.
-  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
+  if (st.mfaEnrollmentRequired) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><MfaEnrollScreen me={st.me} appName={st.theme.appName} onDone={() => a.mfaEnrollmentDone && a.mfaEnrollmentDone()} onSignOut={a.logout} /></React.Fragment>;
   // A provisioned / admin-reset account still holds its one-time password: the
   // server 403s every other route, so hold the app on the change screen.
-  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
+  if (st.passwordChangeRequired) return <React.Fragment><ThemeStyle theme={st.theme} userTheme={st.userTheme} /><SyntheticBanner on={st.syntheticData} /><ChangePasswordScreen me={st.me} appName={st.theme.appName} onDone={() => {}} onSignOut={a.logout} /></React.Fragment>;
 
   const sortedProviders = DT.sortedProviders();
   // compose nav: master list → apply per-role hidden + custom order, keep dashboard first
@@ -653,7 +668,8 @@ function App() {
   else if (nav === "people") screen = <PeopleManager domainRoles={dirDomain.roles} />;
   else if (nav === "access") screen = <AccessPeople domainRoles={dirDomain.roles} />;
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
-    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave} />;
+    appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave}
+    userTheme={st.userTheme} userThemesOn={!window.DT.moduleOn || window.DT.moduleOn("platform.userThemes")} onSetMyTheme={a.setMyTheme} userThemeSave={st.userThemeSave} />;
   else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
   else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;
@@ -708,22 +724,22 @@ function App() {
     const TABBAR_TOTAL = "calc(var(--dt-tabbar-h, 58px) + var(--sai-bottom))";
     return (
       <div className="dt-mobile-shell" style={{ background: "var(--secondary)", display: "flex", flexDirection: "column", overflow: "hidden", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
-        <ThemeStyle theme={st.theme} />
+        <ThemeStyle theme={st.theme} userTheme={st.userTheme} />
         <SyntheticBanner on={st.syntheticData} />
         <div className="dt-install-slot"><InstallPrompt /><EnableAlertsCard /></div>
         {/* mobile top bar (nav lives in the bottom tab bar); 44×44 controls (A.CON-SHO-52) */}
-        <header className="dt-appbar" style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
+        <header className="dt-appbar" style={{ height: 56, flex: "none", position: "sticky", top: 0, zIndex: 20, background: "var(--topbar-bg)", backdropFilter: "blur(6px)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 14px" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h1 style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.15, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{topTitle}</h1>
           </div>
-          <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
+          <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "#fff" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "var(--card)" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
 
         {/* Bottom tab bar: full-bleed background, content inset by the side
             safe areas in landscape (A.CON-NEE-2), tab row above the home indicator. */}
-        <nav aria-label="Primary" className="dt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "rgba(255,255,255,.98)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
+        <nav aria-label="Primary" className="dt-tabbar" style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 30, height: TABBAR_TOTAL, display: "flex", background: "var(--card)", backdropFilter: "blur(8px)", borderTop: "1px solid var(--border)", paddingBottom: "var(--sai-bottom)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
           {primaryTabs.map((t) => {
             const on = nav === t.id;
             return (
@@ -731,7 +747,7 @@ function App() {
                 style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, color: on ? "var(--primary)" : "var(--muted-foreground)", fontFamily: "inherit", position: "relative", padding: 0 }}>
                 <div style={{ position: "relative" }}>
                   <Icon name={t.icon} size={22} />
-                  {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid #fff" }} />}
+                  {t.id === "messages" && msgUnread && <span style={{ position: "absolute", top: -2, right: -6, width: 9, height: 9, borderRadius: 99, background: "var(--destructive)", border: "2px solid var(--card)" }} />}
                 </div>
                 <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>{MOBILE_LABEL[t.id] || t.label}</span>
               </button>
@@ -747,8 +763,8 @@ function App() {
         {/* slide-out nav drawer */}
         {drawer && (
           <React.Fragment>
-            <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(15,23,42,.45)" }} />
-            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: "calc(264px + var(--sai-left))", maxWidth: "82vw", zIndex: 41, background: "#fff", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingBottom: "var(--sai-bottom)" }}>
+            <div onClick={() => setDrawer(false)} style={{ position: "fixed", inset: 0, zIndex: 40, background: "var(--overlay)" }} />
+            <div style={{ position: "fixed", top: 0, left: 0, bottom: 0, width: "calc(264px + var(--sai-left))", maxWidth: "82vw", zIndex: 41, background: "var(--card)", boxShadow: "var(--shadow-xl)", display: "flex", flexDirection: "column", paddingTop: "var(--sai-top)", paddingLeft: "var(--sai-left)", paddingBottom: "var(--sai-bottom)" }}>
               <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
                 <Sidebar fill role={role} nav={navItems} active={nav} onNav={(id) => { a.setNav(id); setDrawer(false); }} me={st.me} onLogout={a.logout} compact={false} appName={st.theme.appName} />
               </div>
@@ -771,8 +787,8 @@ function App() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
-      <ThemeStyle theme={st.theme} />
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh / var(--dt-zoom, 1))", background: "var(--secondary)", paddingLeft: "var(--sai-left)", paddingRight: "var(--sai-right)" }}>
+      <ThemeStyle theme={st.theme} userTheme={st.userTheme} />
       <SyntheticBanner on={st.syntheticData} />
       <InstallPrompt />
       <EnableAlertsCard />
@@ -786,14 +802,14 @@ function App() {
           right={st.syntheticData !== false ? <React.Fragment>
             <button type="button" className="dt-hide-narrow" onClick={() => window.open("/", "docturn_mobile_preview", "width=402,height=860,menubar=no,toolbar=no,location=no")}
               title="Preview this app at phone size — the same full app your clinicians install on their phones (Add to Home Screen)"
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
               <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
             </button>
             {/* The demo role switcher scrolls inside its slot instead of pushing the page wider (A.CON-MIN-10). */}
             <div style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}><RoleSwitcher role={role} onChange={a.setRole} /></div>
           </React.Fragment> : null} />
         {impersonationBanner}
-        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "#fff" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
+        <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "var(--card)" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       </div>
       <Toast toast={st.__toast} />

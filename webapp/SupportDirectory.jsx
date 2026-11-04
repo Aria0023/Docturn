@@ -25,10 +25,10 @@ function SupportDirectory({ users = [], organizations = [], roleColors = {}, onI
 
   return (
     <PageWrap>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 16, borderRadius: "var(--radius-md)", background: "#1E293B", color: "#fff" }}>
-        <Icon name="life-buoy" size={16} color="#7DD3FC" />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 16, borderRadius: "var(--radius-md)", background: "var(--inverse)", color: "var(--inverse-foreground)" }}>
+        <Icon name="life-buoy" size={16} color="var(--inverse-accent)" />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Users by organization</span>
-        <span style={{ fontSize: 12, color: "#94A3B8" }}>Tech-support directory — find a user in their tenant and open their portal to help in place.</span>
+        <span style={{ fontSize: 12, color: "var(--inverse-muted)" }}>Tech-support directory — find a user in their tenant and open their portal to help in place.</span>
       </div>
 
       <div style={{ display: "flex", gap: 14, marginBottom: 16 }}>
@@ -48,9 +48,9 @@ function SupportDirectory({ users = [], organizations = [], roleColors = {}, onI
           return (
             <Card key={code} style={{ padding: 0, overflow: "hidden" }}>
               <button onClick={() => setCollapsed((c) => Object.assign({}, c, { [code]: !c[code] }))}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px", border: "none", background: isOpen ? "var(--secondary)" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "11px 16px", border: "none", background: isOpen ? "var(--secondary)" : "var(--card)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flex: "none" }} />
-                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", fontWeight: 700, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code === "Platform (root)" ? "★" : code.slice(0, 2)}</span>
+                <span style={{ width: 28, height: 28, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "var(--primary-foreground)", fontWeight: 700, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{code === "Platform (root)" ? "★" : code.slice(0, 2)}</span>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700 }}>{code === "Platform (root)" ? code : orgName(code)}</div>
                   <div style={{ fontSize: 11.5, color: "var(--muted-foreground)" }}>{code === "Platform (root)" ? "spans all organizations" : <span className="ds-mono">{code}</span>}</div>
@@ -64,8 +64,8 @@ function SupportDirectory({ users = [], organizations = [], roleColors = {}, onI
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.name}{u.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 6 }}>{u.credential}</span> : null}</div>
                     <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{u.specialty ? u.specialty + " · " : ""}{ROLE_LABEL[u.role] || u.role}</div>
                   </div>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: roleColors[u.role] || "#888", background: (roleColors[u.role] || "#888") + "18", border: "1px solid " + (roleColors[u.role] || "#888") + "33", whiteSpace: "nowrap" }}>
-                    <span style={{ width: 7, height: 7, borderRadius: 99, background: roleColors[u.role] || "#888", flex: "none" }} />{ROLE_LABEL[u.role] || u.role}
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 10px", borderRadius: "var(--radius-full)", fontSize: 12, fontWeight: 600, color: window.readableInk(roleColors[u.role], 0.09) || "var(--muted-foreground)", background: (roleColors[u.role] || "var(--muted-foreground)") + "18", border: "1px solid " + (roleColors[u.role] || "var(--muted-foreground)") + "33", whiteSpace: "nowrap" }}>
+                    <span style={{ width: 7, height: 7, borderRadius: 99, background: roleColors[u.role] || "var(--muted-foreground)", flex: "none" }} />{ROLE_LABEL[u.role] || u.role}
                   </span>
                   {onImpersonate && u.role !== "developer" && (
                     <Button size="sm" variant="outline" icon="log-in" onClick={() => onImpersonate(u)}>Open portal</Button>

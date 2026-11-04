@@ -43,9 +43,9 @@ function ChangePasswordScreen({ me, appName, onDone, onSignOut }) {
 
   return (
     <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(180deg, var(--secondary), var(--background))", padding: mobile ? "20px 14px" : 28 }}>
-      <div style={{ width: "100%", maxWidth: 420, background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "26px 20px" : "32px 30px" }}>
+      <div style={{ width: "100%", maxWidth: 420, background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xl)", padding: mobile ? "26px 20px" : "32px 30px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-          <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="key-round" size={18} color="#fff" /></span>
+          <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--primary)", color: "var(--primary-foreground)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name="key-round" size={18} color="var(--primary-foreground)" /></span>
           <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-.02em" }}>{brand}</span>
         </div>
         <h1 style={{ fontSize: 20, fontWeight: 700, margin: "22px 0 6px", textAlign: "center" }}>Set your password</h1>

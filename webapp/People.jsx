@@ -154,7 +154,7 @@ function PeopleManager({ domainRoles }) {
               return (
                 <button key={id} type="button" onClick={() => set("role", id)} aria-pressed={on}
                   style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 14px", minHeight: 44, borderRadius: "var(--radius-md)", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)",
-                    border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "var(--primary-tint, #EFF6FF)" : "#fff", color: on ? "var(--primary-ink, var(--primary))" : "var(--foreground)" }}>
+                    border: on ? "1px solid var(--primary)" : "1px solid var(--border)", background: on ? "var(--primary-tint)" : "var(--card)", color: on ? "var(--primary-ink)" : "var(--foreground)" }}>
                   <Icon name={icon} size={15} />{label}
                 </button>
               );
@@ -211,7 +211,7 @@ function PeopleManager({ domainRoles }) {
           return (
             <Card key={rid} style={{ padding: 0, overflow: "hidden" }}>
               <button type="button" onClick={() => setCollapsed((c) => Object.assign({}, c, { [rid]: !c[rid] }))} aria-expanded={isOpen}
-                style={{ width: "100%", minHeight: 44, display: "flex", alignItems: "center", gap: 11, padding: "12px 16px", border: "none", background: isOpen ? "var(--secondary)" : "#fff", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
+                style={{ width: "100%", minHeight: 44, display: "flex", alignItems: "center", gap: 11, padding: "12px 16px", border: "none", background: isOpen ? "var(--secondary)" : "var(--card)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)" }}>
                 <Icon name="chevron-right" size={16} color="var(--muted-foreground)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s", flex: "none" }} />
                 <span style={{ width: 8, height: 8, borderRadius: 99, background: accent, flex: "none" }} />
                 <span style={{ fontSize: 13.5, fontWeight: 700 }}>{PEOPLE_ROLE_LABEL[rid]}</span>
@@ -276,7 +276,7 @@ function AccessPeople({ domainRoles }) {
             return (
               <button key={id} type="button" onClick={() => setTab(id)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", minHeight: mobile ? 44 : undefined, borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
-                  background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                  background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                 <Icon name={icon} size={15} />{label}
               </button>
             );

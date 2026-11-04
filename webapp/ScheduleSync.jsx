@@ -61,7 +61,7 @@ function SSInfo({ icon, children, tone, dataAttr }) {
   const warn = tone === "warn";
   const props = dataAttr ? { [dataAttr]: "" } : {};
   return (
-    <div {...props} style={{ display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap", marginTop: 14, background: warn ? "#FEF3C7" : "var(--secondary)", border: "1px solid " + (warn ? "#FCD34D" : "var(--border)"), borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: warn ? "#92400E" : "var(--muted-foreground)", lineHeight: 1.5 }}>
+    <div {...props} style={{ display: "flex", gap: 9, alignItems: "flex-start", flexWrap: "wrap", marginTop: 14, background: warn ? "var(--status-pending-bg)" : "var(--secondary)", border: "1px solid " + (warn ? "var(--status-pending-rim)" : "var(--border)"), borderRadius: "var(--radius-md)", padding: "11px 13px", fontSize: 12.5, color: warn ? "var(--status-pending-fg)" : "var(--muted-foreground)", lineHeight: 1.5 }}>
       <Icon name={icon} size={15} style={{ marginTop: 1, flex: "none" }} />
       {children}
     </div>
@@ -154,15 +154,15 @@ function ScheduleSync({ org }) {
       <div data-schedule-sync={srcKey} style={{ minWidth: 0 }}>
       {/* Feed banner — only for a real Amion connection. */}
       {srcKey === "amion" && liveOk && (
-        <div data-amion-banner="ok" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#D1FAE5", border: "1px solid #6EE7B7", flexWrap: "wrap" }}>
-          <Icon name="circle-check-big" size={15} color="#065F46" />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#065F46" }}>Live Amion feed · synced {ssAgo(amion.lastSyncAt)} · {amion.rowCount} slots</span>
+        <div data-amion-banner="ok" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "var(--status-accepted-bg)", border: "1px solid var(--status-accepted-rim)", flexWrap: "wrap" }}>
+          <Icon name="circle-check-big" size={15} color="var(--status-accepted-fg)" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--status-accepted-fg)" }}>Live Amion feed · synced {ssAgo(amion.lastSyncAt)} · {amion.rowCount} slots</span>
         </div>
       )}
       {srcKey === "amion" && liveErr && (
-        <div data-amion-banner="error" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "#FEF3C7", border: "1px solid #FCD34D", flexWrap: "wrap" }}>
-          <Icon name="triangle-alert" size={15} color="#92400E" />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: "#92400E" }}>The last Amion pull failed ({ssAgo(amion.lastSyncAt)}){amion.lastError ? ": " + amion.lastError : ""}{rows.length ? " — showing the last good pull." : "."}</span>
+        <div data-amion-banner="error" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 14, borderRadius: "var(--radius-md)", background: "var(--status-pending-bg)", border: "1px solid var(--status-pending-rim)", flexWrap: "wrap" }}>
+          <Icon name="triangle-alert" size={15} color="var(--status-pending-fg)" />
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--status-pending-fg)" }}>The last Amion pull failed ({ssAgo(amion.lastSyncAt)}){amion.lastError ? ": " + amion.lastError : ""}{rows.length ? " — showing the last good pull." : "."}</span>
         </div>
       )}
       {srcKey === "amion" && amionConnected && neverPulled && (
@@ -174,7 +174,7 @@ function ScheduleSync({ org }) {
 
       {/* header — wraps on phones: the Source picker and Sync now drop below the title. */}
       <div data-ss-header style={{ display: "flex", alignItems: "center", gap: 11, marginBottom: 4, flexWrap: "wrap", minWidth: 0 }}>
-        <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "#DBEAFE", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary)" /></span>
+        <span style={{ width: 38, height: 38, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="calendar-clock" size={19} color="var(--primary-ink)" /></span>
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>On-call schedule sync</h3>
@@ -190,7 +190,7 @@ function ScheduleSync({ org }) {
           <label htmlFor="ss-source" style={{ fontSize: 12, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Source</label>
           <div style={{ position: "relative", display: "inline-flex", alignItems: "center", minWidth: 0 }}>
             <select id="ss-source" value={srcKey || ""} onChange={(e) => pickSource(e.target.value)} disabled={!canEdit || picking || !srcKey}
-              style={{ appearance: "none", WebkitAppearance: "none", minHeight: 44, maxWidth: "100%", padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", fontSize: 16, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.6 }}>
+              style={{ appearance: "none", WebkitAppearance: "none", minHeight: 44, maxWidth: "100%", padding: "0 26px 0 11px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", fontSize: 16, fontWeight: 600, color: "var(--foreground)", fontFamily: "var(--font-sans)", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.6 }}>
               {!srcKey && <option value="">Loading…</option>}
               {SS_SOURCE_KEYS.map((k) => {
                 const off = SS_SOURCES[k].module && modulesOn[SS_SOURCES[k].module] === false;
@@ -223,7 +223,7 @@ function ScheduleSync({ org }) {
             <span style={{ flex: "1 1 220px", minWidth: 0 }}>Epic on-call is switched off for this organization. A director switches it on under <b>Integrations → Epic on-call (FHIR)</b> once it is set up.</span>
           </SSInfo>
         ) : epicConnected ? (
-          <div data-ss-epic="connected" style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 14, background: epicStatus.lastStatus === "error" ? "#FEF3C7" : "#D1FAE5", border: "1px solid " + (epicStatus.lastStatus === "error" ? "#FCD34D" : "#6EE7B7"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "#92400E" : "#065F46", flexWrap: "wrap" }}>
+          <div data-ss-epic="connected" style={{ display: "flex", gap: 9, alignItems: "center", marginTop: 14, background: epicStatus.lastStatus === "error" ? "var(--status-pending-bg)" : "var(--status-accepted-bg)", border: "1px solid " + (epicStatus.lastStatus === "error" ? "var(--status-pending-rim)" : "var(--status-accepted-rim)"), borderRadius: "var(--radius-md)", padding: "9px 13px", fontSize: 12.5, color: epicStatus.lastStatus === "error" ? "var(--status-pending-fg)" : "var(--status-accepted-fg)", flexWrap: "wrap" }}>
             <Icon name={epicStatus.lastStatus === "error" ? "triangle-alert" : "circle-check-big"} size={15} />
             <span style={{ fontWeight: 600, minWidth: 0 }}>Epic FHIR connected · {epicStatus.lastStatus === "error" ? "last sync failed" : epicStatus.lastSyncAt ? "synced " + ssAgo(epicStatus.lastSyncAt) : "not synced yet"} · {epicStatus.rowCount} on-call rows</span>
             {epicStatus.error && <span style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 11, overflowWrap: "anywhere" }}>{epicStatus.error}</span>}
@@ -241,7 +241,7 @@ function ScheduleSync({ org }) {
 
       {srcKey === "manual" && (
         <SSInfo icon="pencil">
-          <span style={{ flex: "1 1 220px", minWidth: 0 }}>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0, minHeight: 44 }}>Open the board →</button></span>
+          <span style={{ flex: "1 1 220px", minWidth: 0 }}>On-call slots are maintained by hand on the <b style={{ color: "var(--foreground)" }}>On call</b> board. <button onClick={() => a.setNav && a.setNav("oncall")} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12.5, padding: 0, minHeight: 44 }}>Open the board →</button></span>
         </SSInfo>
       )}
 
@@ -253,7 +253,7 @@ function ScheduleSync({ org }) {
             <b style={{ color: "var(--foreground)" }}>Amion isn't connected for {orgLabel}.</b> Add your schedule's OCS feed link under <b style={{ color: "var(--foreground)" }}>Integrations → Amion → Set up</b> (below). It is stored encrypted on the server; DocTurn then pulls the grid automatically and this panel shows it.
           </span>
           <button type="button" onClick={ssGoToIntegrations}
-            style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", color: "var(--primary)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Go to Integrations</button>
+            style={{ minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--primary-ink)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Go to Integrations</button>
         </SSInfo>
       )}
 
@@ -265,13 +265,13 @@ function ScheduleSync({ org }) {
               <Icon name="calendar-clock" size={13} color="var(--muted-foreground)" />
               <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--muted-foreground)" }}>Last pull · {ssAgo(amion.lastSyncAt)}</span>
             </div>
-            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "#fff" }}>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--card)" }}>
               <div style={{ maxHeight: 300, overflow: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>
                   <thead><tr>
-                    <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Assignment</th>
-                    <th style={{ textAlign: "left", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }}>Provider</th>
-                    <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "#fff" }} title="Secure-message ready in Amion">Sec</th>
+                    <th style={{ textAlign: "left", padding: "6px 10px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--card)" }}>Assignment</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--card)" }}>Provider</th>
+                    <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--muted-foreground)", fontWeight: 600, borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--card)" }} title="Secure-message ready in Amion">Sec</th>
                   </tr></thead>
                   <tbody>
                     {rows.map((r, i) => (
@@ -326,7 +326,7 @@ function ScheduleSync({ org }) {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 11, fontSize: 12, color: "var(--muted-foreground)", flexWrap: "wrap" }}>
               <Icon name="shield-check" size={13} color="var(--status-accepted)" />Read-only · the feed link is stored encrypted and never shown · every sync is in the audit trail.
-              {canEdit && <button type="button" onClick={ssGoToIntegrations} style={{ border: "none", background: "transparent", color: "var(--primary)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, padding: 0, minHeight: 44 }}>Change or remove it under Integrations →</button>}
+              {canEdit && <button type="button" onClick={ssGoToIntegrations} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, padding: 0, minHeight: 44 }}>Change or remove it under Integrations →</button>}
             </div>
           </div>
         </div>

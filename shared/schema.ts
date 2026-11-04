@@ -1142,10 +1142,35 @@ export const userSessions = pgTable(
 );
 
 /**
+ * The display presets a person may choose for themselves over their
+ * organization's branding (module platform.userThemes). The ORGANIZATION keeps
+ * appName / accent / radius / sidebar / contentWidth and its own `palette`
+ * (classic | calm | warm) — "org" means "follow whatever my organization
+ * chose", and is the default for everyone.
+ *   classic / calm / warm — the three light canvases, picked for yourself
+ *   night                 — a true dark canvas
+ *   contrast              — high contrast (AA+ on every pair)
+ */
+export const THEME_PRESETS = ["org", "classic", "calm", "warm", "night", "contrast"] as const;
+export type ThemePreset = (typeof THEME_PRESETS)[number];
+/** Root text size. `large` scales the whole app up; it is not a font swap. */
+export const THEME_TEXT_SIZES = ["default", "large"] as const;
+export type ThemeTextSize = (typeof THEME_TEXT_SIZES)[number];
+/**
+ * The presets that can follow the device's `prefers-color-scheme`: only the
+ * two with a light AND a dark reading ("org" → the org palette by day, night
+ * by night; "night" → night only while the device is dark). Choosing warm or
+ * high contrast is a deliberate choice the device must not override.
+ */
+export const THEME_FOLLOW_DEVICE_PRESETS = ["org", "night"] as const;
+/** What a user sees while they have made no choice (a missing or NULL row). */
+export const USER_THEME_DEFAULTS = { preset: "org", textSize: "default", followDevice: false } as const;
+
+/**
  * Per-user display preferences over the org's branding (module
- * platform.userThemes): preset (classic / calm / warm / night / contrast),
- * text size (default / large) and whether Night follows the device. Not PHI;
- * cleared with the user.
+ * platform.userThemes): preset (org / classic / calm / warm / night /
+ * contrast), text size (default / large) and whether it follows the device.
+ * Not PHI; cleared with the user.
  */
 export const userThemePrefs = pgTable(
   "user_theme_prefs",

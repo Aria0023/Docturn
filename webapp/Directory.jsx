@@ -18,7 +18,7 @@ function presenceOf(presence, userId) {
 function RoleContactRow({ rc, first, presence, mobile, onMessage, star }) {
   return (
     <div data-role-contact={rc.role} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: first ? "none" : "1px solid var(--border)" }}>
-      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary-tint, #EFF6FF)", color: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
+      <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--primary-tint)", color: "var(--primary-ink)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}>
         <Icon name={ROLE_KIND_ICON[rc.kind] || "users"} size={17} />
       </span>
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -80,7 +80,7 @@ function StarToggle({ kind, id, label, mobile }) {
   return (
     <button type="button" data-favorite={kind + ":" + key} aria-pressed={starred} aria-label={what} title={what} disabled={busy}
       onClick={() => { setBusy(true); Promise.resolve(a.toggleFavorite(kind, key)).then(() => setBusy(false), () => setBusy(false)); }}
-      style={{ width: size, height: size, minWidth: size, flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "#fff", cursor: busy ? "default" : "pointer", fontSize: 20, lineHeight: 1, color: starred ? "var(--status-pending-fg, #B45309)" : "var(--muted-foreground)", opacity: busy ? 0.6 : 1, padding: 0 }}>
+      style={{ width: size, height: size, minWidth: size, flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: busy ? "default" : "pointer", fontSize: 20, lineHeight: 1, color: starred ? "var(--status-pending-fg, var(--status-pending))" : "var(--muted-foreground)", opacity: busy ? 0.6 : 1, padding: 0 }}>
       <span aria-hidden="true">{starred ? "\u2605" : "\u2606"}</span>
     </button>
   );
@@ -93,7 +93,7 @@ function PersonRow({ person, first, presence, mobile, onMessage, sub }) {
     <div data-person-row={person.userId} style={{ display: "flex", alignItems: "center", gap: 13, padding: "10px 16px", borderTop: first ? "none" : "1px solid var(--border)" }}>
       <div style={{ position: "relative", flex: "none" }}>
         <Avatar initials={initials} size={34} tint={p === "online" ? "emerald" : "slate"} />
-        {p && <span data-presence={p} title={p === "online" ? "Online now" : "Not connected"} style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={p} /></span>}
+        {p && <span data-presence={p} title={p === "online" ? "Online now" : "Not connected"} style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid var(--card)", borderRadius: 99 }}><StatusDot status={p} /></span>}
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" }}>{person.displayName}</div>
@@ -155,7 +155,7 @@ function PresenceAvatar({ initials, size, working }) {
   return (
     <div style={{ position: "relative", flex: "none" }}>
       <Avatar initials={initials} size={size} tint={working ? "emerald" : "slate"} />
-      <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid #fff", borderRadius: 99 }}><StatusDot status={working ? "online" : "offline"} pulse={working} /></span>
+      <span style={{ position: "absolute", bottom: -1, right: -1, display: "flex", border: "2px solid var(--card)", borderRadius: 99 }}><StatusDot status={working ? "online" : "offline"} pulse={working} /></span>
     </div>
   );
 }
@@ -231,7 +231,7 @@ function DirectoryHub({ providers, onMessage, domainRoles }) {
             return (
               <button key={id} type="button" onClick={() => setTab(id)} aria-pressed={on}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", minHeight: mobile ? 44 : undefined, borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
-                  background: on ? "#fff" : "transparent", color: on ? "var(--primary)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
+                  background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                 <Icon name={icon} size={15} />{label}
               </button>
             );

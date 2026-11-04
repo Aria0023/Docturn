@@ -26,10 +26,10 @@ function ComplianceOverview({ onOpenOrg }) {
 
   return (
     <PageWrap>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 16, borderRadius: "var(--radius-md)", background: "#1E293B", color: "#fff" }}>
-        <Icon name="shield-check" size={16} color="#7DD3FC" />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 14px", marginBottom: 16, borderRadius: "var(--radius-md)", background: "var(--inverse)", color: "var(--inverse-foreground)" }}>
+        <Icon name="shield-check" size={16} color="var(--inverse-accent)" />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Compliance by organization</span>
-        <span style={{ fontSize: 12, color: "#94A3B8" }}>Each tenant's audit trail is isolated — open one for the full HIPAA log.</span>
+        <span style={{ fontSize: 12, color: "var(--inverse-muted)" }}>Each tenant's audit trail is isolated — open one for the full HIPAA log.</span>
       </div>
 
       <div style={{ display: "flex", gap: 14, marginBottom: 18 }}>
@@ -48,7 +48,7 @@ function ComplianceOverview({ onOpenOrg }) {
         {list.map((o) => (
           <Card key={o.code} style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: o.recent && o.recent.length ? "1px solid var(--border)" : "none" }}>
-              <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "#DBEAFE", color: "var(--primary-ink, #1D4ED8)", fontWeight: 700, fontSize: 12.5, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(o.code || "").slice(0, 2)}</span>
+              <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", fontWeight: 700, fontSize: 12.5, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none" }}>{(o.code || "").slice(0, 2)}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
                 <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}><span className="ds-mono">{o.code}</span></div>

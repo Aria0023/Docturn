@@ -97,7 +97,7 @@ function OcSourcePicker({ sources, onPick, busy }) {
             <button key={o.id} onClick={() => !disabled && !busy && onPick(o.id)} disabled={disabled}
               title={disabled ? "Module switched off for this organization (developer console)" : (st.message || "")}
               style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 5, border: "none", cursor: disabled ? "not-allowed" : "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)",
-                background: active ? "#fff" : "transparent", color: active ? "var(--primary)" : "var(--muted-foreground)", boxShadow: active ? "var(--shadow-sm)" : "none", opacity: disabled ? 0.5 : 1 }}>
+                background: active ? "var(--card)" : "transparent", color: active ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: active ? "var(--shadow-sm)" : "none", opacity: disabled ? 0.5 : 1 }}>
               <Icon name={o.icon} size={13} />{o.label}
               <span style={{ width: 7, height: 7, borderRadius: 99, background: st.configured ? (st.lastStatus === "error" ? "var(--status-rejected)" : "var(--status-accepted)") : "var(--status-neutral)" }} title={st.configured ? "configured" : "not configured"} />
             </button>
@@ -108,8 +108,8 @@ function OcSourcePicker({ sources, onPick, busy }) {
         const st = (sources.sources || {})[sources.selected];
         if (!st || st.configured) return null;
         return (
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "#92400E", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: "var(--radius-md)", padding: "9px 12px", lineHeight: 1.45 }}>
-            <Icon name="triangle-alert" size={14} color="#92400E" style={{ marginTop: 1, flex: "none" }} />
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "var(--status-pending-fg)", background: "var(--status-pending-bg)", border: "1px solid var(--status-pending-rim)", borderRadius: "var(--radius-md)", padding: "9px 12px", lineHeight: 1.45 }}>
+            <Icon name="triangle-alert" size={14} color="var(--status-pending-fg)" style={{ marginTop: 1, flex: "none" }} />
             <span>{st.message || "This source isn't configured yet."}</span>
           </div>
         );
@@ -135,11 +135,11 @@ function OcManualEditor({ slots, people, onAdd, onRemove, onUpdate }) {
       .then(() => { setSlot(""); setGroup(""); })
       .finally(() => setBusy(false));
   };
-  const inp = { height: 34, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13, fontFamily: "var(--font-sans)", background: "#fff", minWidth: 0 };
+  const inp = { height: 34, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13, fontFamily: "var(--font-sans)", background: "var(--card)", minWidth: 0 };
   return (
     <Card style={{ padding: 16, marginBottom: 18 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <Icon name="pencil" size={16} color="var(--primary)" />
+        <Icon name="pencil" size={16} color="var(--primary-ink)" />
         <h3 style={{ fontSize: 14.5, fontWeight: 700, margin: 0 }}>Manual on-call slots</h3>
         <Badge variant="secondary">{(slots || []).length}</Badge>
       </div>
@@ -285,14 +285,14 @@ function OpenInEhrButton({ patientId, compact }) {
     return (
       <button onClick={open} title={label}
         onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-        style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary)" }}>
+        style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--primary-ink)" }}>
         <Icon name="external-link" size={15} />
       </button>
     );
   }
   return (
     <button onClick={open}
-      style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+      style={{ flex: 1, height: 42, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, color: "var(--primary-ink)", fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}>
       <Icon name="external-link" size={16} />{label}
     </button>
   );

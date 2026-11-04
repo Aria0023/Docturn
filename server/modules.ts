@@ -171,6 +171,10 @@ export const GATE_TABLE: readonly GateRule[] = [
   // Platform — theming is written through PATCH /api/org/preferences { theme }.
   { path: /^\/api\/org\/preferences$/, module: "platform.appearance", methods: ["PATCH"], when: bodyHasTheme },
   { path: /^\/api\/cms(\/|$)/, module: "platform.cms" },
+  // Platform — each person's own display preset over the org's branding
+  // (server/routes/themes.ts). Off = nobody in the org can set one and the
+  // client shows the org's branding only.
+  { path: /^\/api\/me\/theme$/, module: "platform.userThemes" },
   // Enterprise — the developer console's cluster view (server/routes/dev.ts):
   // this instance, the realtime bus, the job leases and the limiter store.
   // The safety mechanisms themselves are never switchable per org.

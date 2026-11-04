@@ -151,9 +151,9 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
 
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="dt-lock-title" style={{ position: "fixed", inset: 0, zIndex: 80, background: "linear-gradient(160deg,#0b1220 0%,#172033 60%,#1e293b 100%)", display: "flex", alignItems: "center", justifyContent: "center", padding: "max(20px, var(--sai-top, 0px)) max(20px, var(--sai-right, 0px)) max(20px, var(--sai-bottom, 0px)) max(20px, var(--sai-left, 0px))", animation: "dt-toast-in .2s ease" }}>
-      <form onSubmit={mode === "pin" ? unlockPin : unlock} noValidate data-lock-mode={mode} style={{ width: 320, maxWidth: "100%", textAlign: "center", color: "#fff" }}>
+      <form onSubmit={mode === "pin" ? unlockPin : unlock} noValidate data-lock-mode={mode} style={{ width: 320, maxWidth: "100%", textAlign: "center", color: "var(--inverse-foreground)" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14, marginBottom: 22 }}>
-          <span style={{ width: 56, height: 56, borderRadius: 16, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px rgba(37,99,235,.4)" }}><Icon name="lock" size={26} color="#fff" /></span>
+          <span style={{ width: 56, height: 56, borderRadius: 16, background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px color-mix(in srgb, var(--primary) 40%, transparent)" }}><Icon name="lock" size={26} color="var(--card)" /></span>
           <div>
             <div id="dt-lock-title" style={{ fontSize: 18, fontWeight: 700 }}>{appName || "DocTurn"} locked</div>
             <div style={{ fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 3 }}>{mode === "pin" ? "Enter your PIN to continue" : (reason || "Enter your password to continue")}</div>
@@ -161,7 +161,7 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
         </div>
 
         <div style={{ display: "inline-flex", alignItems: "center", gap: 9, padding: "6px 14px 6px 6px", borderRadius: 99, background: "rgba(255,255,255,.08)", marginBottom: 18 }}>
-          <span style={{ width: 30, height: 30, borderRadius: 99, background: "rgba(255,255,255,.16)", color: "#fff", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{who.avatar}</span>
+          <span style={{ width: 30, height: 30, borderRadius: 99, background: "rgba(255,255,255,.16)", color: "var(--inverse-foreground)", fontWeight: 700, fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>{who.avatar}</span>
           <span style={{ fontSize: 13, fontWeight: 600 }}>{who.name}</span>
         </div>
 
@@ -169,7 +169,7 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
           <input ref={pinRef} type="password" name="pin" value={pin} inputMode="numeric" pattern="[0-9]*" autoComplete="off" enterKeyHint="go" aria-label="PIN" maxLength={8} data-lock-pin
             onChange={(e) => { setPin(e.target.value.replace(/\D/g, "").slice(0, 8)); if (err) setErr(null); }}
             placeholder="PIN"
-            style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.10)", color: "#fff", padding: "0 14px", fontSize: 16, letterSpacing: 4, textAlign: "center", fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
+            style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.10)", color: "var(--inverse-foreground)", padding: "0 14px", fontSize: 16, letterSpacing: 4, textAlign: "center", fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
         ) : (
           <React.Fragment>
           {/* The username travels with the form (hidden) so password managers can
@@ -178,19 +178,19 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
           <input ref={inputRef} type="password" name="password" value={pass} autoComplete="current-password" enterKeyHint="go" aria-label="Password"
             onChange={(e) => { setPass(e.target.value); if (err) setErr(null); }}
             placeholder="Password"
-            style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.10)", color: "#fff", padding: "0 14px", fontSize: 16, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
+            style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.25)", background: "rgba(255,255,255,.10)", color: "var(--inverse-foreground)", padding: "0 14px", fontSize: 16, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
           </React.Fragment>
         )}
 
         {err && (
-          <div role="alert" style={{ display: "flex", alignItems: "center", gap: 7, justifyContent: "center", padding: "8px 10px", marginBottom: 10, borderRadius: "var(--radius-md)", background: "rgba(185,28,28,.25)", border: "1px solid rgba(248,113,113,.5)", color: "#FCA5A5", fontSize: 12.5 }}>
-            <Icon name="alert-triangle" size={14} color="#FCA5A5" />{err}
+          <div role="alert" style={{ display: "flex", alignItems: "center", gap: 7, justifyContent: "center", padding: "8px 10px", marginBottom: 10, borderRadius: "var(--radius-md)", background: "color-mix(in srgb, var(--status-rejected) 28%, transparent)", border: "1px solid color-mix(in srgb, var(--inverse-danger) 55%, transparent)", color: "var(--inverse-danger)", fontSize: 12.5 }}>
+            <Icon name="alert-triangle" size={14} color="var(--inverse-danger)" />{err}
           </div>
         )}
 
         {(() => { const empty = mode === "pin" ? pin.length < 4 : !pass; return (
         <button type="submit" disabled={busy || empty}
-          style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "none", background: (busy || empty) ? "rgba(37,99,235,.45)" : "var(--primary)", color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: (busy || empty) ? "default" : "pointer" }}>
+          style={{ width: "100%", height: 46, borderRadius: "var(--radius-md)", border: "none", background: (busy || empty) ? "color-mix(in srgb, var(--primary) 45%, transparent)" : "var(--primary)", color: "var(--primary-foreground)", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: (busy || empty) ? "default" : "pointer" }}>
           {busy ? "Verifying…" : "Unlock"}
         </button>
         ); })()}
@@ -201,14 +201,14 @@ function LockScreen({ me, appName, reason, onUnlock, onSignOut, identity }) {
             goes to the provider, and the callback regenerates this session. */}
         {ssoOffered && (
           <button type="button" data-lock-sso onClick={startSso}
-            style={{ marginTop: 10, minHeight: 46, width: "100%", padding: "10px 16px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "#fff", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+            style={{ marginTop: 10, minHeight: 46, width: "100%", padding: "10px 16px", borderRadius: "var(--radius-md)", border: "1px solid rgba(255,255,255,.35)", background: "transparent", color: "var(--inverse-foreground)", fontSize: 14, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
             Sign in with your organization
           </button>
         )}
 
         {pinOffered && (
           <button type="button" data-lock-switch onClick={() => (mode === "pin" ? toPassword(null) : (setMode("pin"), setErr(null), setTimeout(() => { if (pinRef.current) pinRef.current.focus(); }, 0)))}
-            style={{ marginTop: 8, minHeight: 44, padding: "10px 16px", border: "none", background: "transparent", color: "#93C5FD", fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", display: "block", width: "100%" }}>
+            style={{ marginTop: 8, minHeight: 44, padding: "10px 16px", border: "none", background: "transparent", color: "var(--inverse-accent)", fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", display: "block", width: "100%" }}>
             {mode === "pin" ? "Use password instead" : "Use PIN instead"}
           </button>
         )}
