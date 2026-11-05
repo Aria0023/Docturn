@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { effectivePerSeatCents, resolveContract } from "../billing/contracts.js";
+import { seatEntitlementFor } from "../billing/entitlements.js";
 import { seatUsageFor } from "../billing/seats.js";
 import { stripeConfiguredForOrg } from "../billing/stripe-config.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -32,9 +33,12 @@ export function registerBillingRoutes(app: Express) {
     const me = currentUser(req);
     const db = storage();
     const orgId = me.organizationId;
-    const [{ contract, plan, view }, seats] = await Promise.all([
+    const [{ contract, plan, view }, seats, entitlement] = await Promise.all([
       resolveContract(db, orgId),
       seatUsageFor(db, orgId),
+      // The SAME computation the account-creation routes use, so the screen
+      // can never say "you have room" while the server refuses the account.
+      seatEntitlementFor(db, orgId),
     ]);
     const stripe = await stripeConfiguredForOrg(db, orgId);
     res.json({
@@ -47,6 +51,7 @@ export function registerBillingRoutes(app: Express) {
       perSeatCents: contract && plan ? effectivePerSeatCents(contract, plan) : null,
       currency: plan?.currency ?? null,
       seats,
+      entitlement,
       invoices: [],
       notice: contract
         ? null

@@ -7,6 +7,7 @@ import {
 } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { effectivePerSeatCents, resolveContract } from "../billing/contracts.js";
+import { seatEntitlementFor } from "../billing/entitlements.js";
 import { seatUsageFor } from "../billing/seats.js";
 import { isPlatformOrg } from "../billing/seats.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -206,6 +207,7 @@ export function registerDevBillingRoutes(app: Express) {
       plan: plan ? publicPlan(plan) : null,
       view,
       seats: await seatUsageFor(db, org.id),
+      entitlement: await seatEntitlementFor(db, org.id),
       stripeCustomerId: contract?.stripeCustomerId ?? null,
       stripeSendInvoiceEmail: contract?.stripeSendInvoiceEmail ?? false,
     });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { censusOverrideSchema, providerProfilePatchSchema, SHIFT_TYPE } from "@shared/schema";
 import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
+import { checkSeatAvailability, seatRefusalBody } from "../billing/entitlements.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -139,6 +140,39 @@ export function registerProviderRoutes(app: Express) {
         data.username,
       );
       if (existing) return res.status(409).json({ error: "username_taken" });
+
+      // ── BILLING, one of the only two places it can refuse anything ───────
+      // Creating a SEAT. A hospital with no contract on file — every hospital
+      // until the operator puts it on one — is unlimited and unbilled, so this
+      // is a no-op for them. A director past the contract's committed seats
+      // (or on a contract whose past-due grace has run out, or an expired one)
+      // is refused with a plain reason; the operator can still add the account
+      // from the developer console, audited. Nothing else about this
+      // organization changes: messaging, STAT, escalation and routing are
+      // untouched. See docs/BILLING.md and
+      // tests/billing-safety-invariant.test.ts.
+      const seat = await checkSeatAvailability(
+        storage(),
+        me.organizationId,
+        me.role === "developer" ? "operator" : "director",
+      );
+      if (!seat.allowed) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "billing.seat_refused",
+          resourceType: "organization",
+          resourceId: me.organizationId,
+          details: {
+            reason: seat.reason,
+            seatsInUse: seat.seatsInUse,
+            committedSeats: seat.committedSeats,
+            role: data.role,
+          },
+          riskLevel: "medium",
+        });
+        return res.status(402).json(seatRefusalBody(seat));
+      }
 
       // One-time credential: crypto-random, returned ONCE below for the director
       // to hand over out-of-band, and forced to change at first sign-in.

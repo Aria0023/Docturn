@@ -14,6 +14,7 @@ import {
 } from "@shared/schema";
 import { storage } from "./storage.js";
 import { appendAudit } from "./audit.js";
+import { checkSeatAvailability, seatRefusalBody } from "./billing/entitlements.js";
 import { getModules, isModuleEnabled } from "./modules.js";
 import { normalizeUsername, usernameKey } from "./usernames.js";
 import { REGISTER_RATE_LIMIT, RATE_LIMIT_RESPONSE, SESSION_POLICY, clientIpKey, getRateLimitState } from "./config.js";
@@ -1403,6 +1404,36 @@ export function registerAuthRoutes(app: Express) {
       if (reg.status === "rejected") return res.status(409).json({ error: "already_denied" });
       if (await storage().getUserByUsername(reg.organizationId, reg.username)) {
         return res.status(409).json({ error: "username_taken" });
+      }
+      // ── BILLING, one of the only two places it can refuse anything ───────
+      // Approving a registration creates a SEAT, so it goes through the same
+      // one check as the People screen (server/billing/entitlements.ts) — a
+      // director cannot route around the seat limit by approving instead of
+      // adding. With no contract on file nothing changes. SIGN-IN itself is
+      // never gated: this is the approval route, which happens to live in this
+      // file, and tests/billing-safety-invariant.test.ts asserts behaviourally
+      // that a past-due organization still signs in.
+      const seat = await checkSeatAvailability(
+        storage(),
+        reg.organizationId,
+        me.role === "developer" ? "operator" : "director",
+      );
+      if (!seat.allowed) {
+        await appendAudit({
+          organizationId: reg.organizationId,
+          userId: me.id,
+          action: "billing.seat_refused",
+          resourceType: "organization",
+          resourceId: reg.organizationId,
+          details: {
+            reason: seat.reason,
+            seatsInUse: seat.seatsInUse,
+            committedSeats: seat.committedSeats,
+            via: "registration_approval",
+          },
+          riskLevel: "medium",
+        });
+        return res.status(402).json(seatRefusalBody(seat));
       }
       let user: User;
       try {

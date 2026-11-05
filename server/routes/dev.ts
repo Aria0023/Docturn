@@ -14,6 +14,7 @@ import {
   revokeAllSessions,
 } from "../auth.js";
 import { appendAudit } from "../audit.js";
+import { checkOrgCreationAllowed, checkSeatAvailability } from "../billing/entitlements.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { externalExtractorActive, getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
@@ -195,6 +196,17 @@ export function registerDevRoutes(app: Express) {
       const me = currentUser(req);
       const b = req.body ?? {};
       if (!b.name) return res.status(400).json({ error: "validation_error" });
+      // ── BILLING: the SECOND and last place billing can refuse anything ───
+      // Creating an ORGANIZATION (docs/BILLING.md). Only the platform operator
+      // can, and the operator is not billed, so nothing is refused here today;
+      // the check is defence in depth behind requireRole("developer") and the
+      // one designated seam if a contract ever caps how many hospitals a
+      // customer may create. A new organization starts with NO CONTRACT —
+      // unlimited and unbilled — until the operator puts it on a plan.
+      const orgDecision = checkOrgCreationAllowed(me, await storage().getOrganization(me.organizationId) ?? null);
+      if (!orgDecision.allowed) {
+        return res.status(403).json({ error: orgDecision.reason, message: orgDecision.message });
+      }
       const code = String(b.code || codeFromName(b.name)).toUpperCase();
       const existing = await storage().getOrganizationByCode(code);
       if (existing) return res.status(409).json({ error: "code_taken" });
@@ -629,6 +641,33 @@ export function registerDevRoutes(app: Express) {
         // request, since an unhandled async error never sends a response).
         const dup = await storage().getUserByUsername(d.organizationId, d.username);
         if (dup) return res.status(409).json({ error: "username_taken" });
+
+        // ── BILLING: creating a SEAT (docs/BILLING.md) ───────────────────────
+        // The OPERATOR is never refused — they are the party doing the billing
+        // — but an add that takes a tenant past its committed seats is recorded
+        // in THAT TENANT's trail, so the overage line on the next invoice is
+        // not a surprise to anybody. A developer account in the platform org is
+        // not a seat at all and never reaches this.
+        if (!platform) {
+          const seat = await checkSeatAvailability(storage(), d.organizationId, "operator");
+          if (seat.override) {
+            await appendAudit({
+              organizationId: d.organizationId,
+              userId: me.id,
+              action: "billing.seat_override",
+              resourceType: "organization",
+              resourceId: d.organizationId,
+              details: {
+                reason: seat.reason,
+                seatsInUse: seat.seatsInUse,
+                committedSeats: seat.committedSeats,
+                role: d.role,
+                via: "developer_console",
+              },
+              riskLevel: "medium",
+            });
+          }
+        }
 
         // Audit the cross-tenant write before performing it. A new developer
         // is a new cross-tenant root account: high risk.
