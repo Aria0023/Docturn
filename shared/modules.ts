@@ -1,0 +1,150 @@
+/**
+ * Feature-module registry — the single list of switchable product functions.
+ *
+ * Every module can be turned on/off PER ORGANIZATION from the developer console
+ * with one click. The server is the source of truth: a disabled module's routes
+ * answer 404 { error: "module_disabled" } (see server/modules.ts), and the UI
+ * hides the corresponding navigation and controls. Defaults apply when an org has
+ * no explicit setting, so adding a module here is enough to ship it enabled.
+ *
+ * Add a module = add a row here + wrap its routes with requireModule(id) + gate
+ * its UI on DT.getState().modules[id]. Remove a module = delete the row (its
+ * routes then fall back to enabled-by-default unless you delete them too).
+ */
+export type ModuleGroup =
+  | "Messaging"
+  | "Routing"
+  | "Schedule"
+  | "EHR"
+  | "Operations"
+  | "Security"
+  | "Integrations"
+  | "Platform"
+  | "Enterprise";
+
+export interface ModuleDef {
+  id: string;
+  label: string;
+  group: ModuleGroup;
+  /** Enabled for an org that has never touched the switch. */
+  default: boolean;
+  /** One line shown in the console so an operator knows what flipping it does. */
+  blurb: string;
+  /** Modules that must be on for this one to work; enforced server-side. */
+  requires?: string[];
+}
+
+export const MODULES: readonly ModuleDef[] = [
+  // ---- Messaging
+  { id: "messaging.priority",     label: "Priority & STAT messaging",      group: "Messaging", default: true,  blurb: "Routine / urgent / STAT levels with acknowledgement." },
+  { id: "messaging.escalation",   label: "STAT escalation engine",         group: "Messaging", default: true,  blurb: "Unacknowledged STAT re-alerts, then escalates to the covering provider.", requires: ["messaging.priority"] },
+  { id: "messaging.forwarding",   label: "Message forwarding",             group: "Messaging", default: true,  blurb: "Forward a message or thread to a person, role or group with provenance." },
+  { id: "messaging.templates",    label: "Message templates",              group: "Messaging", default: true,  blurb: "Org and personal canned messages in the composer." },
+  { id: "messaging.attachments",  label: "Attachments",                    group: "Messaging", default: true,  blurb: "Images and documents in messages (type allow-list, participant-only access)." },
+  { id: "messaging.voice",        label: "Voice messages",                 group: "Messaging", default: true,  blurb: "Record and send short audio messages; stored as participant-only audio attachments.", requires: ["messaging.attachments"] },
+  { id: "messaging.patientThreads", label: "Patient-linked threads",       group: "Messaging", default: true,  blurb: "A care-team conversation bound to a patient." },
+  { id: "messaging.dnd",          label: "Do-not-disturb & covering",      group: "Messaging", default: true,  blurb: "DND with a covering provider; senders see an availability message." },
+  { id: "messaging.recall",       label: "Message recall",                 group: "Messaging", default: true,  blurb: "Sender can recall an unread message (audited)." },
+  // PerfectServe parity (docs/PERFECTSERVE_PARITY_BLUEPRINT.md).
+  { id: "messaging.done",         label: "Done (archive a thread)",        group: "Messaging", default: true,  blurb: "Mark a conversation Done for yourself: it leaves your main list (and the unread count) until a new message re-opens it. Synced to your other devices." },
+  { id: "messaging.unreadReminder", label: "Unread-message reminder",      group: "Messaging", default: true,  blurb: "Per-user opt-in: a content-free push reminder every N minutes while messages stay unread (respects DND). Off = no reminders and the setting is hidden." },
+  { id: "messaging.alertSounds",  label: "Priority alert sounds",          group: "Messaging", default: true,  blurb: "Per-user in-app sound per priority (STAT / urgent / routine), played by the open app only. iPhone lock-screen notifications use the system sound." },
+  { id: "directory.favorites",    label: "Favorites & recently contacted", group: "Messaging", default: true,  blurb: "Star people and on-call roles in the Directory; recently contacted is derived from your own conversations." },
+  { id: "broadcasts",             label: "Emergency broadcasts",           group: "Messaging", default: true,  blurb: "Org-wide broadcast with per-recipient acknowledgement." },
+
+  // ---- Routing
+  { id: "routing.assignments",    label: "Admission routing",              group: "Routing",   default: true,  blurb: "ER → hospitalist assignment with round-robin, caps, expiry re-route." },
+  { id: "routing.consults",       label: "Consult services",               group: "Routing",   default: true,  blurb: "Specialty consult fan-out to the on-call team." },
+  { id: "routing.roleMessaging",  label: "Message the on-call role",       group: "Routing",   default: true,  blurb: "Address a role/service; resolves to whoever is on now. The Directory lists these role contacts with everyone on them.", requires: ["oncall.board"] },
+
+  // ---- Schedule
+  { id: "oncall.board",           label: "Who's on call board",            group: "Schedule",  default: true,  blurb: "Every role/service and its current holder, from the configured schedule source." },
+  { id: "schedule.amion",         label: "Amion schedule sync",            group: "Schedule",  default: true,  blurb: "Automated pull of the Amion on-call grid — the hospital's own OCS feed (Settings → Integrations) or the operator's AMION_OCS_URL." },
+  { id: "schedule.epic",          label: "Epic on-call (FHIR)",            group: "Schedule",  default: false, blurb: "On-call from Epic via FHIR R4 — the hospital's own Epic backend-app credentials (Settings → Integrations) or the operator's EPIC_* env." },
+
+  { id: "shift.handoff",          label: "End shift / Start shift",        group: "Schedule",  default: true,  blurb: "One action ends a shift: off rotation, a covering provider (required while requests are pending), optional away message / DND, audited. Accepted patients are never re-routed." },
+
+  // ---- EHR
+  { id: "ehr.deepLinks",          label: "Open in EHR",                    group: "EHR",       default: false, blurb: "Deep-link a patient into Epic Haiku/Canto or Cerner from any patient row." },
+
+  // ---- Operations
+  { id: "ops.analytics",          label: "Director analytics",             group: "Operations", default: true, blurb: "Response/acceptance latency, volumes, KPIs (director roles only)." },
+  { id: "ops.resources",          label: "Beds & resources",               group: "Operations", default: true,  blurb: "Beds/equipment/department tracking and /api/resources metrics (legacy surface — switch off to retire it per org)." },
+  { id: "ops.retention",          label: "Message retention purge",        group: "Operations", default: true, blurb: "Hourly, audited hard-delete of messages (with their attachment files) older than the org's retention window. Off: nothing is purged, messages are kept indefinitely and directors cannot set a new window (never-sent uploads are still cleared after 24 h)." },
+
+  // ---- Security
+  { id: "security.mfaRequired",   label: "Require MFA for privileged roles", group: "Security", default: false, blurb: "Directors / ER directors / developers must enrol MFA before privileged access." },
+
+  { id: "security.pin",           label: "PIN unlock",                     group: "Security", default: false, blurb: "Re-open a locked session with a personal PIN (server-verified scrypt hash; 5 wrong PINs require the password). A PIN never signs anyone in." },
+
+  // ---- Integrations — third-party connections (server/integrations/registry.ts).
+  // Default ON so an org that never touched them behaves exactly as before:
+  // each one only does anything once its platform credentials exist. A
+  // director switches them per org from Settings → Integrations, which refuses
+  // to switch one ON while it is not configured (or, for OpenAI, has no BAA).
+  { id: "integration.sms",        label: "SMS texts (Twilio)",             group: "Integrations", default: true, blurb: "Content-free texts through the platform's Twilio account: STAT fallback nudges, escalation texts and SMS sign-in codes. Off = no texts for this org." },
+  { id: "integration.push",       label: "Push alerts (Web Push + Expo)",  group: "Integrations", default: true, blurb: "Content-free lock-screen wake-ups: Web Push (VAPID) for the web app / iPhone PWA, Expo for the native app. Off = no pushes; devices cannot register." },
+  { id: "integration.aiIntake",   label: "AI intake extraction (OpenAI)",  group: "Integrations", default: true, blurb: "Sends ER intake notes (PHI) to OpenAI — only when the operator attests a signed BAA (AI_EXTERNAL_PHI_OK=true). Off = the local extractor; notes never leave DocTurn." },
+
+  // ---- Platform
+  { id: "platform.appearance",    label: "Appearance / theming",           group: "Platform",  default: true,  blurb: "Per-org colours and branding." },
+  { id: "platform.cms",           label: "Landing / contact pages",        group: "Platform",  default: false, blurb: "Public landing and contact page content." },
+  // Per-user display presets over the org's branding (docs/ENTERPRISE_READINESS.md
+  // "Themes"): Classic / Calm / Warm / Night / High contrast, text size, follow
+  // device. Server-stored per user (user_theme_prefs). Off = everyone sees the
+  // org's branding only and the preference routes are not served.
+  { id: "platform.userThemes",    label: "Personal display presets",       group: "Platform",  default: true,  blurb: "Each person picks a preset (incl. Night / High contrast), text size and follow-device over the org's branding; stored server-side. Off = org branding only." },
+  // The native shell (Expo + WebView hosting this web app). Off = the shell's
+  // org-scoped endpoints (native device registration, hand-off) are not served.
+  { id: "mobile.nativeShell",     label: "Native app shell",               group: "Platform",  default: false, blurb: "The native iOS / Android shell for this org: native push device registration and the shell's hand-off endpoints. Off = the web app / PWA only." },
+
+  // ---- Enterprise — what a hospital IT security review asks for
+  // (docs/ENTERPRISE_READINESS.md). Every switch below gates ROUTES; the
+  // multi-instance safety mechanisms themselves (realtime bus, job leases,
+  // shared rate-limit store) are never per-org and are always on when the
+  // deployment has DATABASE_URL.
+  { id: "enterprise.multiInstance", label: "Cluster view",                 group: "Enterprise", default: false, blurb: "Developer console → Cluster: this instance's id, the realtime bus in use, which job leases each instance holds and which rate-limit / session store is active. Off = the view is not served." },
+  { id: "enterprise.sso",         label: "Single sign-on (OIDC)",          group: "Enterprise", default: false, blurb: "Sign in through the hospital's own identity provider (Okta / Entra / Google, generic OIDC): per-org connection stored encrypted, just-in-time accounts mapped to a role by group claim, optional 'SSO required'. Off = passwords only." },
+  { id: "enterprise.scim",        label: "SCIM user provisioning",         group: "Enterprise", default: false, blurb: "The identity provider creates, updates and deactivates accounts over SCIM 2.0 with a per-org bearer token; a SCIM deactivation ends the person's sessions. Off = the SCIM endpoints answer 404 for this org." },
+  { id: "enterprise.sessionPolicy", label: "Session policy",               group: "Enterprise", default: false, blurb: "Per-org idle timeout, maximum concurrent sessions and absolute session lifetime, plus 'sign out everywhere' for one person. Off = the platform defaults (15-minute idle timeout) apply." },
+  // ---- Enterprise — organization billing (docs/BILLING.md). DEFAULT OFF, so
+  // no existing tenant's screens change until the operator turns it on. The
+  // operator's own developer-console billing routes are NOT gated by it: the
+  // console has to work in order to switch it on. Billing can only ever refuse
+  // a NEW SEAT or a NEW ORGANIZATION — never messaging, STAT, escalation,
+  // broadcasts, assignments, on-call, the schedule or sign-in
+  // (tests/billing-safety-invariant.test.ts).
+  { id: "billing",                label: "Organization billing",           group: "Enterprise", default: false, blurb: "Settings → Billing for the hospital's directors: the plan, seats in use vs committed with the snapshot date, invoices and their download, and the billing contact. Off = the screen is not served and the hospital sees no billing at all. A lapsed contract never affects messaging, STAT, escalation, routing or sign-in — only adding a new account." },
+  { id: "billing.stripe",         label: "Stripe invoicing",               group: "Enterprise", default: false, blurb: "Collect through Stripe: a Stripe Customer per hospital and a send_invoice Stripe Invoice (ACH / PO / net terms), with signature-verified webhooks for paid / payment_failed / voided. The CONTRACT stays DocTurn's — Stripe is only the collection rail, and only billing data is ever sent (no PHI). Off = the operator issues and marks invoices paid by hand.", requires: ["billing"] },
+  { id: "enterprise.auditExport", label: "Audit export",                   group: "Enterprise", default: false, blurb: "Export the audit / PHI-access trail for a DATE RANGE, as CSV or JSON, streamed, PHI-free columns only — and, for a developer, another tenant's trail (audited there). Off = the plain whole-trail CSV on the Compliance screen still works; the date range, the JSON format and the cross-tenant read do not." },
+] as const;
+
+export type ModuleId = (typeof MODULES)[number]["id"];
+
+export const MODULE_IDS: readonly string[] = MODULES.map((m) => m.id);
+
+export function moduleDefaults(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const m of MODULES) out[m.id] = m.default;
+  return out;
+}
+
+/**
+ * Resolve the effective map for an org from its stored overrides, honouring
+ * `requires` (a module whose prerequisite is off is reported off).
+ */
+export function resolveModules(overrides: Record<string, unknown> | null | undefined): Record<string, boolean> {
+  const eff = moduleDefaults();
+  if (overrides && typeof overrides === "object") {
+    for (const [k, v] of Object.entries(overrides)) {
+      if (k in eff && typeof v === "boolean") eff[k] = v;
+    }
+  }
+  // Two passes are enough for the shallow dependency graph declared above.
+  for (let pass = 0; pass < 2; pass++) {
+    for (const m of MODULES) {
+      if (m.requires?.some((r) => eff[r] === false)) eff[m.id] = false;
+    }
+  }
+  return eff;
+}

@@ -3,7 +3,17 @@ import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "../storage.js";
 import { configureNotifications, type WsFanout } from "../services/notifications.js";
-import { resolveDemoUserId } from "../demoAuth.js";
+import { getBus, type BusFrame, type RealtimeBus } from "../services/bus.js";
+import { demoConnectionId, demoTokenLockedAt, resolveDemoUser } from "../demoAuth.js";
+import {
+  APP_LOCK_CLOSE_CODE,
+  onSessionLocked,
+  onSessionsRevoked,
+  parseSessionPrincipal,
+  resolveImpersonator,
+  resolveSessionUser,
+} from "../auth.js";
+import { applySessionPolicy, sidHashOf, type SessionEndReason } from "../session-policy.js";
 
 /**
  * WebSocket server mounted at /ws. On connect it runs the SAME express-session
@@ -11,15 +21,80 @@ import { resolveDemoUserId } from "../demoAuth.js";
  * organizationId, then stores the socket in a `clients` map keyed by userId.
  * Connections that fail session resolution close with code 1008. All fan-out is
  * tenant-scoped.
+ *
+ * Session validity is decided by the same rule as HTTP (server/auth.ts
+ * resolveSessionUser) for cookie sessions and demo bearer tokens alike: a
+ * deactivated account or a session/token issued before the user's last
+ * password change never connects, and when a password is changed or reset the
+ * hub closes that user's live sockets (code 1008 "session_revoked") except the
+ * ones belonging to the session (or token) that made the change.
+ *
+ * A developer's borrowed (impersonated / managed-org) session is held to the
+ * DEVELOPER's credential as well (server/auth.ts resolveImpersonator): it
+ * does not connect once the developer's password has changed or the
+ * developer was deactivated, and each socket remembers its impersonator so a
+ * password change, reset or deactivation of the developer closes the
+ * borrowed portals' sockets too — not only the sockets signed in as them.
+ *
+ * App lock (A.CON-SHO-7): a locked session (or demo token) never connects —
+ * the upgrade is closed with 4423 "session_locked" — and locking a session
+ * closes its open sockets the same way, so nothing is pushed to a locked tab
+ * and nothing it receives can make it re-fetch. 4423 is not 1008: the client
+ * keeps its lock screen instead of treating the session as dead.
+ *
+ * Multi-instance (E1, docs/ENTERPRISE_READINESS.md): the hub holds the
+ * sockets of THIS instance only. Every fan-out is delivered locally and then
+ * published on the realtime bus (server/services/bus.ts — Postgres
+ * LISTEN/NOTIFY when DATABASE_URL is set), and a frame that arrives from
+ * another instance is delivered locally only. Session control crosses the
+ * same way: a revocation or lock announced here closes the person's sockets
+ * on every instance, never only on the one that took the request. Graceful
+ * shutdown closes every socket with 1012 "server_restart" — a reconnect-class
+ * code the web client retries with backoff (webapp/api-bridge.js), never a
+ * sign-out.
  */
+
+/**
+ * What a closed socket SAYS, per revocation reason. The three E2 reasons are
+ * distinct strings because the web client turns each into a different
+ * sentence on the sign-in screen; everything else keeps the long-standing
+ * "session_revoked" the client already handles.
+ */
+const REVOCATION_CLOSE_REASON: Record<string, string> = {
+  session_evicted: "session_evicted",
+  session_expired: "session_expired",
+  sign_out_everywhere: "signed_out_everywhere",
+};
+
+/** RFC 6455 "Service Restart": the server is going away; reconnect later. */
+export const SERVER_RESTART_CLOSE_CODE = 1012;
+
+export interface WsHubOptions {
+  /** The bus to fan out through; defaults to the process bus (getBus()). */
+  bus?: RealtimeBus;
+}
 
 interface ClientMeta {
   userId: number;
   organizationId: number;
+  /** express-session id the socket authenticated with, or a demo token's demoConnectionId(). */
+  sessionId: string | null;
+  /** The developer behind a borrowed (impersonated / managed-org) session, else null. */
+  impersonatorId: number | null;
   isAlive: boolean;
+  /** When this socket last had a typing event relayed (throttle clock). */
+  typingLastAt: number;
+  /** The typing state that was last relayed for this socket. */
+  typingLastState: boolean | null;
 }
 
 const HEARTBEAT_MS = 20_000;
+/**
+ * Per-socket floor between relayed typing events. A real keyboard produces one
+ * typing_start then a typing_stop ~2.5 s later; anything faster is a flood,
+ * and every relayed event costs one conversation lookup plus a fan-out.
+ */
+export const TYPING_MIN_INTERVAL_MS = 500;
 
 export class WsHub implements WsFanout {
   private wss: WebSocketServer;
@@ -27,24 +102,91 @@ export class WsHub implements WsFanout {
   private clients = new Map<number, Set<WebSocket>>();
   private meta = new WeakMap<WebSocket, ClientMeta>();
   private heartbeat: NodeJS.Timeout | null = null;
+  private unsubscribeRevoker: () => void;
+  private unsubscribeLock: () => void;
+  private unsubscribeBus: () => void;
+  readonly bus: RealtimeBus;
 
   constructor(
     server: HttpServer,
     private sessionMiddleware: RequestHandler,
+    opts: WsHubOptions = {},
   ) {
+    this.bus = opts.bus ?? getBus();
     this.wss = new WebSocketServer({ server, path: "/ws" });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
+    // Session control announced in THIS process: apply here, then tell the
+    // other instances. A frame that comes back from the bus is applied only.
+    this.unsubscribeRevoker = onSessionsRevoked((r) => {
+      this.applyRevocation(r);
+      this.bus.publish({ kind: "revoke", revocation: r });
+    });
+    this.unsubscribeLock = onSessionLocked((e) => {
+      this.closeSessionSockets(e.userId, e.connectionId);
+      this.bus.publish({ kind: "lock", userId: e.userId, connectionId: e.connectionId });
+    });
+    this.unsubscribeBus = this.bus.subscribe((frame) => this.onBusFrame(frame));
     this.startHeartbeat();
+  }
+
+  /** A frame from another instance: deliver / apply locally, never re-publish. */
+  private onBusFrame(frame: BusFrame): void {
+    switch (frame.kind) {
+      case "users":
+        this.deliverToUsers(frame.userIds, JSON.stringify(frame.message));
+        break;
+      case "org":
+        this.deliverToOrg(frame.orgId, JSON.stringify(frame.message));
+        break;
+      case "revoke":
+        this.applyRevocation(frame.revocation);
+        break;
+      case "lock":
+        this.closeSessionSockets(frame.userId, frame.connectionId);
+        break;
+    }
+  }
+
+  private applyRevocation(r: Parameters<Parameters<typeof onSessionsRevoked>[0]>[0]): void {
+    if (r.all) this.closeAllSockets({ exceptSessionId: r.exceptSessionId });
+    else {
+      this.closeUserSockets(r.userId, {
+        ...(r.exceptSessionId ? { exceptSessionId: r.exceptSessionId } : {}),
+        ...(r.onlySidHash ? { onlySidHash: r.onlySidHash } : {}),
+        closeReason: REVOCATION_CLOSE_REASON[r.reason] ?? "session_revoked",
+      });
+    }
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage) {
     const session = await this.resolveSession(req);
+    if (session === "locked") {
+      ws.close(APP_LOCK_CLOSE_CODE, "session_locked");
+      return;
+    }
     if (!session) {
       ws.close(1008, "unauthorized");
       return;
     }
-    const { userId, organizationId } = session;
-    this.meta.set(ws, { userId, organizationId, isAlive: true });
+    // E2 session policy: refused WITH its reason, so the client can say
+    // "you were signed out because you signed in somewhere else".
+    if ("ended" in session) {
+      ws.close(1008, session.ended === "max_concurrent" ? "session_evicted" : "session_expired");
+      return;
+    }
+    const { userId, organizationId, sessionId, impersonatorId } = session;
+    this.meta.set(ws, {
+      userId,
+      organizationId,
+      sessionId,
+      impersonatorId,
+      isAlive: true,
+      typingLastAt: 0,
+      typingLastState: null,
+    });
+    // Presence counts the person's OWN sockets only: a developer's borrowed
+    // (impersonated / managed-org) session is not that user being here.
+    const wasOnline = this.isPresent(userId);
     if (!this.clients.has(userId)) this.clients.set(userId, new Set());
     this.clients.get(userId)!.add(ws);
 
@@ -56,12 +198,15 @@ export class WsHub implements WsFanout {
       }),
     );
 
-    // Presence: announce online to the tenant.
-    this.broadcast(organizationId, {
-      type: "USER_PRESENCE_CHANGED",
-      userId,
-      online: true,
-    });
+    // Presence: announce online to the tenant when the person's first own
+    // socket opens.
+    if (impersonatorId == null && !wasOnline) {
+      this.broadcast(organizationId, {
+        type: "USER_PRESENCE_CHANGED",
+        userId,
+        online: true,
+      });
+    }
 
     ws.on("pong", () => {
       const m = this.meta.get(ws);
@@ -76,7 +221,7 @@ export class WsHub implements WsFanout {
   private onMessage(ws: WebSocket, raw: string) {
     const m = this.meta.get(ws);
     if (!m) return;
-    let msg: { type?: string; conversationId?: number; participantIds?: number[] };
+    let msg: { type?: string; conversationId?: unknown };
     try {
       msg = JSON.parse(raw);
     } catch {
@@ -88,18 +233,40 @@ export class WsHub implements WsFanout {
         break;
       case "typing_start":
       case "typing_stop": {
-        // Relay typing intent to the other participants of the conversation.
-        const targets = (msg.participantIds ?? []).filter((id) => id !== m.userId);
-        this.sendToUsers(targets, {
-          type: "user_typing",
-          userId: m.userId,
-          conversationId: msg.conversationId,
-          typing: msg.type === "typing_start",
-        });
+        // Relay typing intent to the OTHER participants of the conversation —
+        // resolved server-side from the sender's own org. Any participant list
+        // the client sends is ignored: it used to be trusted verbatim, which
+        // let a socket push typing events to any user in any tenant.
+        const conversationId = msg.conversationId;
+        if (!Number.isInteger(conversationId) || (conversationId as number) <= 0) break;
+        const typing = msg.type === "typing_start";
+        // Throttle BEFORE the lookup so a flood never amplifies into database
+        // reads or fan-out. A start→stop transition always gets through once,
+        // so a peer is never left showing "typing…" because the stop was dropped.
+        const now = Date.now();
+        const stopAfterStart = !typing && m.typingLastState === true;
+        if (now - m.typingLastAt < TYPING_MIN_INTERVAL_MS && !stopAfterStart) break;
+        m.typingLastAt = now;
+        m.typingLastState = typing;
+        void this.relayTyping(m, conversationId as number, typing);
         break;
       }
       default:
         break;
+    }
+  }
+
+  /** Org-scoped lookup; the sender must be a member; fan out to the rest. */
+  private async relayTyping(m: ClientMeta, conversationId: number, typing: boolean) {
+    try {
+      const convo = await storage().getConversation(m.organizationId, conversationId);
+      if (!convo || !convo.participantIds.includes(m.userId)) return;
+      this.sendToUsers(
+        convo.participantIds.filter((id) => id !== m.userId),
+        { type: "user_typing", userId: m.userId, conversationId, typing },
+      );
+    } catch {
+      /* a failed lookup drops the event — typing is best-effort */
     }
   }
 
@@ -108,32 +275,76 @@ export class WsHub implements WsFanout {
     if (!m) return;
     const set = this.clients.get(m.userId);
     set?.delete(ws);
-    const stillOnline = set && set.size > 0;
-    if (!stillOnline) {
-      this.clients.delete(m.userId);
+    this.meta.delete(ws);
+    if (!set || set.size === 0) this.clients.delete(m.userId);
+    // Offline when the person's last OWN socket closes (a borrowed socket
+    // closing changes nothing).
+    if (m.impersonatorId == null && !this.isPresent(m.userId)) {
       this.broadcast(m.organizationId, {
         type: "USER_PRESENCE_CHANGED",
         userId: m.userId,
         online: false,
       });
     }
-    this.meta.delete(ws);
+  }
+
+  /** Does this user hold at least one registered socket of their own (not a borrowed one)? */
+  private isPresent(userId: number): boolean {
+    const set = this.clients.get(userId);
+    if (!set) return false;
+    for (const ws of set) {
+      const m = this.meta.get(ws);
+      if (m && m.impersonatorId == null) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Who in `orgId` is online right now: users holding a live socket of their
+   * own on this instance (A.CON comms-account #13). Ascending ids.
+   */
+  onlineUserIds(orgId: number): number[] {
+    const out: number[] = [];
+    for (const [userId, set] of this.clients) {
+      for (const ws of set) {
+        const m = this.meta.get(ws);
+        if (m && m.organizationId === orgId && m.impersonatorId == null && ws.readyState === WebSocket.OPEN) {
+          out.push(userId);
+          break;
+        }
+      }
+    }
+    return out.sort((a, b) => a - b);
   }
 
   /** Resolve the session by replaying the session middleware on the upgrade req. */
   private async resolveSession(
     req: IncomingMessage,
-  ): Promise<{ userId: number; organizationId: number } | null> {
+  ): Promise<
+    | { userId: number; organizationId: number; sessionId: string | null; impersonatorId: number | null }
+    /** E2: the session policy ended this session; the reason is the close reason. */
+    | { ended: SessionEndReason }
+    | "locked"
+    | null
+  > {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
+    // Same rule as a cookie session (resolveDemoUser → resolveSessionUser): a
+    // token issued before the user's last password change, or of a
+    // deactivated account, does not connect.
     try {
       const url = new URL(req.url ?? "", "http://localhost");
       const token = url.searchParams.get("token");
       if (token) {
-        const uid = resolveDemoUserId(token);
-        if (uid != null) {
-          const user = await storage().getUserById(uid);
-          if (user) return { userId: user.id, organizationId: user.organizationId };
+        const user = await resolveDemoUser(token);
+        if (user) {
+          if (demoTokenLockedAt(token) != null) return "locked";
+          return {
+            userId: user.id,
+            organizationId: user.organizationId,
+            sessionId: demoConnectionId(token),
+            impersonatorId: null, // a token is never a borrowed session
+          };
         }
       }
     } catch {
@@ -145,18 +356,116 @@ export class WsHub implements WsFanout {
       const res = new ServerResponse(req);
       this.sessionMiddleware(req as never, res as never, async () => {
         try {
-          const sess = (req as { session?: { passport?: { user?: number } } })
-            .session;
-          const userId = sess?.passport?.user;
-          if (!userId) return resolve(null);
-          const user = await storage().getUserById(userId);
+          const r = req as {
+            session?: {
+              passport?: { user?: unknown };
+              appLock?: { userId?: number; at?: number };
+              impersonatorId?: number;
+              impersonatorPg?: number;
+            };
+            sessionID?: string;
+          };
+          // ONE rule for "is this session still signed in" — shared with
+          // Passport's deserializeUser, so the realtime feed can never outlive
+          // the HTTP session (deactivation, password change/reset)…
+          const principal = parseSessionPrincipal(r.session?.passport?.user);
+          const user = await resolveSessionUser(r.session?.passport?.user);
           if (!user) return resolve(null);
-          resolve({ userId: user.id, organizationId: user.organizationId });
+          // …including, for a borrowed session, the developer behind it.
+          const imp = await resolveImpersonator(r.session, principal?.iat ?? 0);
+          if (imp.state === "revoked") return resolve(null);
+          // A locked session gets no realtime feed (A.CON-SHO-7).
+          if (r.session?.appLock?.userId === user.id) return resolve("locked");
+          // E2 session policy: a session the HTTP gate would end (evicted by
+          // the org's maximum-concurrent rule, or past its absolute maximum)
+          // gets no socket either — and is told which it was.
+          const decision = await applySessionPolicy({
+            user,
+            sid: r.sessionID ?? null,
+            issuedAt: principal?.iat ?? null,
+            borrowed: imp.state === "ok",
+          });
+          if (decision.endedBecause) return resolve({ ended: decision.endedBecause });
+          resolve({
+            userId: user.id,
+            organizationId: user.organizationId,
+            sessionId: r.sessionID ?? null,
+            impersonatorId: imp.state === "ok" ? imp.developer.id : null,
+          });
         } catch {
           resolve(null);
         }
       });
     });
+  }
+
+  /**
+   * Close every live socket of a user (1008 "session_revoked") — the sockets
+   * signed in AS them and the sockets of every borrowed (impersonated /
+   * managed-org) session they opened as a developer — optionally sparing the
+   * sockets of one session, the one that changed the password.
+   * Returns how many sockets were closed.
+   */
+  /**
+   * Close every live socket on this instance (1008 "session_revoked") — the
+   * operator's "Sign out all" — sparing only the operator's own session.
+   */
+  closeAllSockets(opts: { exceptSessionId?: string } = {}): number {
+    let closed = 0;
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        const m = this.meta.get(ws);
+        if (m && opts.exceptSessionId && m.sessionId === opts.exceptSessionId) continue;
+        try {
+          ws.close(1008, "session_revoked");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
+      }
+    }
+    return closed;
+  }
+
+  closeUserSockets(
+    userId: number,
+    opts: { exceptSessionId?: string; onlySidHash?: string; closeReason?: string } = {},
+  ): number {
+    let closed = 0;
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        const m = this.meta.get(ws);
+        if (!m || (m.userId !== userId && m.impersonatorId !== userId)) continue;
+        if (opts.exceptSessionId && m.sessionId === opts.exceptSessionId) continue;
+        // E2: one named session only. The plain session id never travels on
+        // the bus, so the socket's own id is hashed to compare.
+        if (opts.onlySidHash && (!m.sessionId || sidHashOf(m.sessionId) !== opts.onlySidHash)) continue;
+        try {
+          ws.close(1008, opts.closeReason ?? "session_revoked");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
+      }
+    }
+    return closed;
+  }
+
+  /** Close the sockets of ONE session (it was locked): 4423 "session_locked". */
+  closeSessionSockets(userId: number, sessionId: string): number {
+    const set = this.clients.get(userId);
+    if (!set) return 0;
+    let closed = 0;
+    for (const ws of [...set]) {
+      if (this.meta.get(ws)?.sessionId !== sessionId) continue;
+      try {
+        ws.close(APP_LOCK_CLOSE_CODE, "session_locked");
+      } catch {
+        ws.terminate();
+      }
+      closed++;
+    }
+    return closed;
   }
 
   private startHeartbeat() {
@@ -182,8 +491,18 @@ export class WsHub implements WsFanout {
   }
 
   // ── WsFanout ───────────────────────────────────────────────────────────────
+  // Local delivery first, then the bus for the other instances' sockets.
   sendToUsers(userIds: number[], message: unknown) {
-    const payload = JSON.stringify(message);
+    this.deliverToUsers(userIds, JSON.stringify(message));
+    this.bus.publish({ kind: "users", userIds: [...new Set(userIds)], message });
+  }
+
+  broadcast(orgId: number, message: unknown) {
+    this.deliverToOrg(orgId, JSON.stringify(message));
+    this.bus.publish({ kind: "org", orgId, message });
+  }
+
+  private deliverToUsers(userIds: number[], payload: string) {
     for (const uid of new Set(userIds)) {
       const set = this.clients.get(uid);
       if (!set) continue;
@@ -193,8 +512,7 @@ export class WsHub implements WsFanout {
     }
   }
 
-  broadcast(orgId: number, message: unknown) {
-    const payload = JSON.stringify(message);
+  private deliverToOrg(orgId: number, payload: string) {
     for (const set of this.clients.values()) {
       for (const ws of set) {
         const m = this.meta.get(ws);
@@ -205,18 +523,86 @@ export class WsHub implements WsFanout {
     }
   }
 
+  /**
+   * Graceful shutdown: close every socket with 1012 "server_restart" so the
+   * clients reconnect (to a sibling instance, or to this one after the
+   * restart) with backoff instead of signing out. Returns how many.
+   */
+  closeForRestart(): number {
+    let closed = 0;
+    for (const set of [...this.clients.values()]) {
+      for (const ws of [...set]) {
+        try {
+          ws.close(SERVER_RESTART_CLOSE_CODE, "server_restart");
+        } catch {
+          ws.terminate();
+        }
+        closed++;
+      }
+    }
+    return closed;
+  }
+
+  /**
+   * Live, authenticated sockets on THIS instance right now, and how many
+   * distinct users hold them (developer console → System health).
+   */
+  stats(): { connections: number; users: number } {
+    let connections = 0;
+    for (const set of this.clients.values()) connections += set.size;
+    return { connections, users: this.clients.size };
+  }
+
   close() {
     if (this.heartbeat) clearInterval(this.heartbeat);
+    this.unsubscribeRevoker();
+    this.unsubscribeLock();
+    this.unsubscribeBus();
     this.wss.close();
+    if (liveHub === this) liveHub = null;
   }
+}
+
+/** The hub serving this process (null until attached, and after close). */
+let liveHub: WsHub | null = null;
+
+/**
+ * This instance's live socket count, or null when no hub is attached (e.g. a
+ * process serving HTTP only) — never a made-up number.
+ */
+export function liveSocketStats(): { connections: number; users: number } | null {
+  return liveHub ? liveHub.stats() : null;
+}
+
+/**
+ * Who in `orgId` holds a live socket of their own right now, or null when no
+ * hub is attached (nobody can be said to be online — never a guess).
+ */
+export function liveOnlineUserIds(orgId: number): number[] | null {
+  return liveHub ? liveHub.onlineUserIds(orgId) : null;
+}
+
+/**
+ * The hub's socket count plus the bus it fans out through, for the cluster
+ * view; null when no hub is attached.
+ */
+export function liveHubBus(): RealtimeBus | null {
+  return liveHub ? liveHub.bus : null;
+}
+
+/** Close every socket of the live hub with 1012 (graceful shutdown); 0 when none. */
+export function closeLiveSocketsForRestart(): number {
+  return liveHub ? liveHub.closeForRestart() : 0;
 }
 
 /** Attach a WS hub to the HTTP server and route notifications through it. */
 export function attachWebSocket(
   server: HttpServer,
   sessionMiddleware: RequestHandler,
+  opts: WsHubOptions = {},
 ): WsHub {
-  const hub = new WsHub(server, sessionMiddleware);
+  const hub = new WsHub(server, sessionMiddleware, opts);
   configureNotifications({ ws: hub });
+  liveHub = hub;
   return hub;
 }
