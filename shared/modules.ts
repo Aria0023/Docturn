@@ -107,6 +107,15 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "enterprise.sso",         label: "Single sign-on (OIDC)",          group: "Enterprise", default: false, blurb: "Sign in through the hospital's own identity provider (Okta / Entra / Google, generic OIDC): per-org connection stored encrypted, just-in-time accounts mapped to a role by group claim, optional 'SSO required'. Off = passwords only." },
   { id: "enterprise.scim",        label: "SCIM user provisioning",         group: "Enterprise", default: false, blurb: "The identity provider creates, updates and deactivates accounts over SCIM 2.0 with a per-org bearer token; a SCIM deactivation ends the person's sessions. Off = the SCIM endpoints answer 404 for this org." },
   { id: "enterprise.sessionPolicy", label: "Session policy",               group: "Enterprise", default: false, blurb: "Per-org idle timeout, maximum concurrent sessions and absolute session lifetime, plus 'sign out everywhere' for one person. Off = the platform defaults (15-minute idle timeout) apply." },
+  // ---- Enterprise — organization billing (docs/BILLING.md). DEFAULT OFF, so
+  // no existing tenant's screens change until the operator turns it on. The
+  // operator's own developer-console billing routes are NOT gated by it: the
+  // console has to work in order to switch it on. Billing can only ever refuse
+  // a NEW SEAT or a NEW ORGANIZATION — never messaging, STAT, escalation,
+  // broadcasts, assignments, on-call, the schedule or sign-in
+  // (tests/billing-safety-invariant.test.ts).
+  { id: "billing",                label: "Organization billing",           group: "Enterprise", default: false, blurb: "Settings → Billing for the hospital's directors: the plan, seats in use vs committed with the snapshot date, invoices and their download, and the billing contact. Off = the screen is not served and the hospital sees no billing at all. A lapsed contract never affects messaging, STAT, escalation, routing or sign-in — only adding a new account." },
+  { id: "billing.stripe",         label: "Stripe invoicing",               group: "Enterprise", default: false, blurb: "Collect through Stripe: a Stripe Customer per hospital and a send_invoice Stripe Invoice (ACH / PO / net terms), with signature-verified webhooks for paid / payment_failed / voided. The CONTRACT stays DocTurn's — Stripe is only the collection rail, and only billing data is ever sent (no PHI). Off = the operator issues and marks invoices paid by hand.", requires: ["billing"] },
   { id: "enterprise.auditExport", label: "Audit export",                   group: "Enterprise", default: false, blurb: "Export the audit / PHI-access trail for a DATE RANGE, as CSV or JSON, streamed, PHI-free columns only — and, for a developer, another tenant's trail (audited there). Off = the plain whole-trail CSV on the Compliance screen still works; the date range, the JSON format and the cross-tenant read do not." },
 ] as const;
 

@@ -210,6 +210,16 @@ export const GATE_TABLE: readonly GateRule[] = [
   // so they check the module themselves — and answer exactly as they do for
   // an org code that does not exist, so neither is an oracle.
   { path: /^\/api\/org\/sso(\/|$)/, module: "enterprise.sso" },
+  // Organization billing (server/routes/billing.ts): the hospital's own
+  // Settings → Billing screen and its invoice download. DEFAULT OFF, so no
+  // existing tenant's screens change until the operator switches it on.
+  //
+  // THE SAFETY INVARIANT: this rule is the ONLY billing rule in this table and
+  // it may only ever match /api/billing*. The operator's console routes
+  // (/api/dev/billing/*) are deliberately NOT gated — the console has to work
+  // in order to turn billing on — and no care path is ever gated by billing.
+  // tests/billing-safety-invariant.test.ts asserts both.
+  { path: /^\/api\/billing(\/|$)/, module: "billing" },
 ];
 
 /** First gate rule that applies to this request, if any. */

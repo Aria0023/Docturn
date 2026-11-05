@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { MODULE_IDS } from "./modules.js";
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Enums (text columns with a fixed value set). `er_doctor` is canonical.
@@ -57,6 +58,14 @@ export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
 export const BROADCAST_AUDIENCE = ["hospitalist", "er_doctor", "er_director", "director"] as const;
 export type BroadcastAudienceRole = (typeof BROADCAST_AUDIENCE)[number];
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
+
+/* Billing (docs/BILLING.md). Kept here with the other enums so shared/billing.ts
+ * can re-export them without a circular import. */
+export const CONTRACT_TERMS = ["monthly", "annual"] as const;
+export const CONTRACT_STATUSES = ["trial", "active", "past_due", "cancelled", "expired"] as const;
+export const INVOICE_STATUSES = ["draft", "issued", "paid", "void"] as const;
+/** ISO 4217, upper case. A contract's currency is fixed. */
+export const BILLING_CURRENCIES = ["USD", "CAD", "EUR", "GBP"] as const;
 
 /**
  * Roles a stranger may REQUEST through the public self-registration form.
@@ -1230,6 +1239,86 @@ export const seatSnapshots = pgTable(
 );
 
 /**
+ * A plan the DocTurn OPERATOR sells: a code, a name, the module ids the plan
+ * GRANTS, and a per-seat price in integer cents with a fixed currency.
+ * Nothing is seeded — a price nobody typed would be demo data shown as real.
+ * A plan only ever grants: it never switches an organization's module off.
+ */
+export const billingPlans = pgTable(
+  "billing_plans",
+  {
+    id: serial("id").primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    /** Module ids from shared/modules.ts that this plan includes. */
+    moduleIds: jsonb("module_ids").$type<string[]>().notNull(),
+    perSeatPriceCents: integer("per_seat_price_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    archivedAt: timestamp("archived_at"),
+  },
+  (t) => ({
+    codeUniq: uniqueIndex("billing_plans_code_uniq").on(t.code),
+  }),
+);
+
+/**
+ * ONE contract per hospital — the operator's own record of what was agreed.
+ * Stripe, when it is configured at all, is only the collection rail: this row
+ * is the source of truth. A trial is a plan with an END DATE, not a special
+ * mode. `past_due_at` is when the clock started: the hospital's directors and
+ * the operator are warned from that day, and nothing changes at all until
+ * PAST_DUE_GRACE_DAYS have passed, when the only change is that a NEW SEAT is
+ * refused (never messaging, never STAT, never sign-in).
+ */
+export const orgContracts = pgTable(
+  "org_contracts",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    planId: integer("plan_id")
+      .notNull()
+      .references(() => billingPlans.id),
+    term: text("term", { enum: ["monthly", "annual"] }).notNull(),
+    /** YYYY-MM-DD. */
+    startDate: text("start_date").notNull(),
+    /** YYYY-MM-DD, or null for an open-ended contract. A trial has one. */
+    endDate: text("end_date"),
+    committedSeats: integer("committed_seats").notNull(),
+    /** Overrides the plan's per-seat price for this hospital only. */
+    priceOverrideCents: integer("price_override_cents"),
+    poNumber: text("po_number"),
+    billingContactName: text("billing_contact_name"),
+    billingContactEmail: text("billing_contact_email"),
+    status: text("status", {
+      enum: ["trial", "active", "past_due", "cancelled", "expired"],
+    })
+      .notNull()
+      .default("active"),
+    pastDueAt: timestamp("past_due_at"),
+    /** The Stripe Customer for this hospital, once Stripe is configured. */
+    stripeCustomerId: text("stripe_customer_id"),
+    /**
+     * Stripe's `send_invoice` makes STRIPE email the hospital. Off until the
+     * operator opts this contract in explicitly.
+     */
+    stripeSendInvoiceEmail: boolean("stripe_send_invoice_email").notNull().default(false),
+    /** Net terms: Stripe's days_until_due, and the manual path's due date. */
+    daysUntilDue: integer("days_until_due").notNull().default(30),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    onePerOrg: uniqueIndex("org_contracts_org_uniq").on(t.organizationId),
+  }),
+);
+
+/**
  * Shared rate-limit counters (E1): the Postgres-backed express-rate-limit
  * store, so N instances enforce ONE login / account / registration budget.
  * `key` = "<limiter>:<client key>"; a row is reset when its window lapses.
@@ -1339,6 +1428,57 @@ export type UserThemePrefs = typeof userThemePrefs.$inferSelect;
 export type RateLimitHit = typeof rateLimitHits.$inferSelect;
 export type SeatSnapshot = typeof seatSnapshots.$inferSelect;
 export type InsertSeatSnapshot = typeof seatSnapshots.$inferInsert;
+export type BillingPlan = typeof billingPlans.$inferSelect;
+export type InsertBillingPlan = typeof billingPlans.$inferInsert;
+export type OrgContract = typeof orgContracts.$inferSelect;
+export type InsertOrgContract = typeof orgContracts.$inferInsert;
+
+/* ── billing request bodies (every billing route safeParses one of these) ──
+ * Integer cents only — `z.number().int()` rejects 18.5 outright, so a float
+ * price can never reach the database. Module ids are checked against the
+ * registry, so a plan can never grant something that does not exist.
+ */
+const moduleIdSchema = z.string().refine((id) => MODULE_IDS.includes(id), {
+  message: "unknown_module",
+});
+const billingDaySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
+
+export const billingPlanCreateSchema = z.object({
+  code: z.string().min(2).max(60).regex(/^[a-z0-9][a-z0-9._-]*$/, "lower-case code"),
+  name: z.string().min(1).max(120),
+  moduleIds: z.array(moduleIdSchema).max(MODULE_IDS.length),
+  perSeatPriceCents: z.number().int().min(0).max(100_000_000),
+  currency: z.enum(BILLING_CURRENCIES),
+});
+export const billingPlanPatchSchema = billingPlanCreateSchema.partial().extend({
+  archived: z.boolean().optional(),
+});
+
+export const orgContractPutSchema = z
+  .object({
+    planId: z.number().int().positive(),
+    term: z.enum(CONTRACT_TERMS),
+    startDate: billingDaySchema,
+    endDate: billingDaySchema.nullable().optional(),
+    committedSeats: z.number().int().min(0).max(1_000_000),
+    priceOverrideCents: z.number().int().min(0).max(100_000_000).nullable().optional(),
+    poNumber: z.string().max(80).nullable().optional(),
+    billingContactName: z.string().max(120).nullable().optional(),
+    billingContactEmail: z.string().email().max(200).nullable().optional(),
+    status: z.enum(CONTRACT_STATUSES),
+    daysUntilDue: z.number().int().min(0).max(180).optional(),
+    stripeSendInvoiceEmail: z.boolean().optional(),
+  })
+  .refine((c) => !c.endDate || c.endDate >= c.startDate, {
+    message: "endDate must not precede startDate",
+    path: ["endDate"],
+  });
+
+/** What a DIRECTOR may change on their own contract: the billing contact. */
+export const billingContactPatchSchema = z.object({
+  billingContactName: z.string().max(120).nullable().optional(),
+  billingContactEmail: z.string().email().max(200).nullable().optional(),
+});
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;

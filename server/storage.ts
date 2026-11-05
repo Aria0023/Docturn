@@ -55,6 +55,8 @@ import {
   userThemePrefs,
   rateLimitHits,
   seatSnapshots,
+  billingPlans,
+  orgContracts,
   type JobLease,
   type SsoConnection,
   type ScimToken,
@@ -62,6 +64,10 @@ import {
   type UserThemePrefs,
   type SeatSnapshot,
   type InsertSeatSnapshot,
+  type BillingPlan,
+  type InsertBillingPlan,
+  type OrgContract,
+  type InsertOrgContract,
   type DirectoryFavorite,
   type FavoriteTargetKind,
   type UserPin,
@@ -2336,6 +2342,7 @@ export class DatabaseStorage implements IStorage {
       // a seat count is only meaningful while the tenant exists. INVOICES do
       // NOT: they are archived first, like the compliance trail (see below).
       await tx.delete(seatSnapshots).where(eq(seatSnapshots.organizationId, id));
+      await tx.delete(orgContracts).where(eq(orgContracts.organizationId, id));
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -3535,6 +3542,97 @@ export class DatabaseStorage implements IStorage {
   }
   async latestSeatSnapshot(orgId: number): Promise<SeatSnapshot | undefined> {
     const [row] = await this.listSeatSnapshots(orgId, 1);
+    return row;
+  }
+
+  /* ── billing: plans (platform-wide, operator-managed) ──────────────────── */
+  async listBillingPlans(includeArchived = false): Promise<BillingPlan[]> {
+    const rows = await this.db.select().from(billingPlans).orderBy(asc(billingPlans.code));
+    return includeArchived ? rows : rows.filter((p) => !p.archivedAt);
+  }
+  async getBillingPlan(id: number): Promise<BillingPlan | undefined> {
+    const [row] = await this.db.select().from(billingPlans).where(eq(billingPlans.id, id));
+    return row;
+  }
+  async getBillingPlanByCode(code: string): Promise<BillingPlan | undefined> {
+    const [row] = await this.db.select().from(billingPlans).where(eq(billingPlans.code, code));
+    return row;
+  }
+  async createBillingPlan(row: InsertBillingPlan): Promise<BillingPlan> {
+    const [saved] = await this.db.insert(billingPlans).values(row).returning();
+    return saved!;
+  }
+  async updateBillingPlan(id: number, patch: Partial<InsertBillingPlan>): Promise<BillingPlan | undefined> {
+    const [saved] = await this.db
+      .update(billingPlans)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(billingPlans.id, id))
+      .returning();
+    return saved;
+  }
+  /** Contracts that point at a plan (so a plan in use is never deleted). */
+  async countContractsOnPlan(planId: number): Promise<number> {
+    const rows = await this.db
+      .select({ id: orgContracts.id })
+      .from(orgContracts)
+      .where(eq(orgContracts.planId, planId));
+    return rows.length;
+  }
+
+  /* ── billing: one contract per organization ────────────────────────────── */
+  async getOrgContract(orgId: number): Promise<OrgContract | undefined> {
+    const [row] = await this.db.select().from(orgContracts).where(eq(orgContracts.organizationId, orgId));
+    return row;
+  }
+  async listOrgContracts(): Promise<OrgContract[]> {
+    return this.db.select().from(orgContracts).orderBy(asc(orgContracts.organizationId));
+  }
+  /** Create or replace the organization's one contract. */
+  async upsertOrgContract(row: InsertOrgContract): Promise<OrgContract> {
+    const updatedAt = new Date();
+    const [saved] = await this.db
+      .insert(orgContracts)
+      .values({ ...row, updatedAt })
+      .onConflictDoUpdate({
+        target: [orgContracts.organizationId],
+        set: {
+          planId: row.planId,
+          term: row.term,
+          startDate: row.startDate,
+          endDate: row.endDate ?? null,
+          committedSeats: row.committedSeats,
+          priceOverrideCents: row.priceOverrideCents ?? null,
+          poNumber: row.poNumber ?? null,
+          billingContactName: row.billingContactName ?? null,
+          billingContactEmail: row.billingContactEmail ?? null,
+          status: row.status,
+          pastDueAt: row.pastDueAt ?? null,
+          stripeCustomerId: row.stripeCustomerId ?? null,
+          stripeSendInvoiceEmail: row.stripeSendInvoiceEmail ?? false,
+          daysUntilDue: row.daysUntilDue ?? 30,
+          updatedAt,
+        },
+      })
+      .returning();
+    return saved!;
+  }
+  async updateOrgContract(orgId: number, patch: Partial<InsertOrgContract>): Promise<OrgContract | undefined> {
+    const [saved] = await this.db
+      .update(orgContracts)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(orgContracts.organizationId, orgId))
+      .returning();
+    return saved;
+  }
+  async deleteOrgContract(orgId: number): Promise<void> {
+    await this.db.delete(orgContracts).where(eq(orgContracts.organizationId, orgId));
+  }
+  /** The contract that owns a Stripe Customer (the webhook's only way in). */
+  async getOrgContractByStripeCustomer(customerId: string): Promise<OrgContract | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(orgContracts)
+      .where(eq(orgContracts.stripeCustomerId, customerId));
     return row;
   }
 

@@ -2,6 +2,8 @@ import type { Express, RequestHandler } from "express";
 import { registerAuthRoutes } from "../auth.js";
 import { registerAmionRoutes } from "./amion.js";
 import { registerAssignmentRoutes } from "./assignments.js";
+import { registerBillingRoutes } from "./billing.js";
+import { registerDevBillingRoutes } from "./dev-billing.js";
 import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
 import { registerCareTeamRoutes } from "./careteam.js";
@@ -77,6 +79,11 @@ export function registerRoutes(app: Express) {
   registerResourceRoutes(app);
   registerSmsRoutes(app);
   registerDevRoutes(app);
+  // Organization billing (docs/BILLING.md): the hospital's own screen (module
+  // `billing`, default off) and the operator's console (developer only, never
+  // module-gated — the console has to work in order to switch billing on).
+  registerBillingRoutes(app);
+  registerDevBillingRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);
   registerAmionRoutes(app);

@@ -11,7 +11,16 @@
  * assignments, on-call, the schedule or sign-in. See docs/BILLING.md and
  * tests/billing-safety-invariant.test.ts.
  */
-import { ROLES, type Role } from "./schema.js";
+import {
+  BILLING_CURRENCIES,
+  CONTRACT_STATUSES,
+  CONTRACT_TERMS,
+  INVOICE_STATUSES,
+  ROLES,
+  type Role,
+} from "./schema.js";
+
+export { BILLING_CURRENCIES, CONTRACT_STATUSES, CONTRACT_TERMS, INVOICE_STATUSES };
 
 /**
  * A BILLABLE SEAT is a user in a tenant organization who is not deactivated
@@ -37,10 +46,7 @@ export interface SeatCount {
 
 /* ── plans and contracts ──────────────────────────────────────────────────── */
 
-export const CONTRACT_TERMS = ["monthly", "annual"] as const;
 export type ContractTerm = (typeof CONTRACT_TERMS)[number];
-
-export const CONTRACT_STATUSES = ["trial", "active", "past_due", "cancelled", "expired"] as const;
 export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
 
 /** A contract in one of these states still bills and still grants seats. */
@@ -54,11 +60,7 @@ export const CONTRACT_STATUSES_IN_GOOD_STANDING: readonly ContractStatus[] = ["t
  */
 export const PAST_DUE_GRACE_DAYS = 30;
 
-export const INVOICE_STATUSES = ["draft", "issued", "paid", "void"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
-
-/** The currencies a contract may be priced in (ISO 4217, upper case). */
-export const BILLING_CURRENCIES = ["USD", "CAD", "EUR", "GBP"] as const;
 export type BillingCurrency = (typeof BILLING_CURRENCIES)[number];
 
 /* ── money ────────────────────────────────────────────────────────────────── */

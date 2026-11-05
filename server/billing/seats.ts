@@ -28,11 +28,20 @@
  * that the day an operator puts a hospital on a contract there is already
  * history to invoice from. A seat count is not PHI and not a product feature.
  */
-import type { Organization, SeatSnapshot, User } from "@shared/schema";
+import { PLATFORM_ORG_CODE, type Organization, type SeatSnapshot, type User } from "@shared/schema";
 import { isBillableSeatRole, type SeatCount } from "@shared/billing";
-import { isPlatformOrg } from "../auth.js";
 import { startLeasedInterval, type LeasedTimer } from "../services/job-leases.js";
 import { storage, type DatabaseStorage } from "../storage.js";
+
+/**
+ * The platform operator's own organization, compared on its CODE rather than
+ * through server/auth.ts — billing must not import the authentication module
+ * (server/auth.ts imports the entitlement module, and a cycle through it would
+ * make the order these two initialise in matter).
+ */
+export function isPlatformOrg(org: { code: string }): boolean {
+  return org.code.toUpperCase() === PLATFORM_ORG_CODE;
+}
 
 /** THE seat definition. Everything else in billing defers to this. */
 export function isBillableSeat(user: Pick<User, "role" | "disabledAt">): boolean {

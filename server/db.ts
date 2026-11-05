@@ -937,6 +937,47 @@ CREATE TABLE IF NOT EXISTS seat_snapshots (
 CREATE UNIQUE INDEX IF NOT EXISTS seat_snapshots_org_date_uniq ON seat_snapshots(organization_id, snapshot_date);
 CREATE INDEX IF NOT EXISTS seat_snapshots_org_idx ON seat_snapshots(organization_id);
 
+-- A plan the operator sells: the module ids it GRANTS and a per-seat price in
+-- integer cents. Nothing is seeded.
+CREATE TABLE IF NOT EXISTS billing_plans (
+  id SERIAL PRIMARY KEY,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  module_ids JSONB NOT NULL,
+  per_seat_price_cents INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  created_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  archived_at TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code);
+
+-- ONE contract per hospital — the operator's own record of what was agreed.
+-- Stripe is only the collection rail; this row is the source of truth.
+CREATE TABLE IF NOT EXISTS org_contracts (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  plan_id INTEGER NOT NULL REFERENCES billing_plans(id),
+  term TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT,
+  committed_seats INTEGER NOT NULL,
+  price_override_cents INTEGER,
+  po_number TEXT,
+  billing_contact_name TEXT,
+  billing_contact_email TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  past_due_at TIMESTAMP,
+  stripe_customer_id TEXT,
+  stripe_send_invoice_email BOOLEAN NOT NULL DEFAULT FALSE,
+  days_until_due INTEGER NOT NULL DEFAULT 30,
+  created_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS org_contracts_org_uniq ON org_contracts(organization_id);
+
 -- Shared rate-limit counters for the Postgres-backed limiter store.
 CREATE TABLE IF NOT EXISTS rate_limit_hits (
   key TEXT PRIMARY KEY,

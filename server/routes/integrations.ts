@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import type { Organization } from "@shared/schema";
 import { appendAudit } from "../audit.js";
+import { directorModuleDecision } from "../billing/contracts.js";
 import { setModule } from "../modules.js";
 import { parseId } from "../params.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -125,6 +126,20 @@ export function registerIntegrationRoutes(app: Express) {
     const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
     if (typeof enabled !== "boolean") return res.status(400).json({ error: "validation_error" });
     if (enabled) {
+      // PLANS ONLY GRANT (docs/BILLING.md), and this is checked BEFORE
+      // readiness: there is no point telling a hospital to go and configure
+      // something their contract does not include. With no contract on file —
+      // every hospital until the operator puts it on one — it is always
+      // allowed, so today's behaviour does not change for anybody. With a
+      // contract, a module the plan does not include is "not in your plan" FOR
+      // A DIRECTOR; the operator can still switch it on from the developer
+      // console, and nothing is ever switched OFF by a plan.
+      if (me.role !== "developer") {
+        const decision = await directorModuleDecision(storage(), org.id, def.module);
+        if (!decision.allowed) {
+          return res.status(409).json({ error: decision.reason, message: decision.message, integration: def.id });
+        }
+      }
       const before = await buildCard(storage(), def, org);
       if (!before.canEnable) return res.status(409).json(notReadyBody(before));
     }
