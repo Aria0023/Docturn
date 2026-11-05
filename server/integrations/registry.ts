@@ -308,7 +308,7 @@ const twilio: IntegrationDef = {
 // false and `baaRequired` is false, and why server/billing/stripe-payload.ts
 // enforces it with an allow-list that THROWS on anything else.
 const STRIPE_VARS: EnvVarSpec[] = [
-  { name: "STRIPE_SECRET_KEY", required: true, secret: true, placeholder: "restricted API key from the Stripe dashboard", description: "Stripe secret API key. A RESTRICTED key with write access to Customers, Invoice Items and Invoices is enough — DocTurn never reads a balance transaction or a payment method." },
+  { name: "STRIPE_SECRET_KEY", required: true, secret: true, placeholder: "restricted API key from the Stripe dashboard", description: "Stripe secret API key. A RESTRICTED key is enough, and these are the only permissions DocTurn uses: Customers read+write, Invoice Items write, Invoices read+write. Test connection reads GET /v1/customers?limit=1 — inside that same scope — so a key scoped this way passes it." },
   { name: "STRIPE_WEBHOOK_SECRET", required: true, secret: true, placeholder: "signing secret of the /webhooks/stripe endpoint", description: "The signing secret of the webhook endpoint you added in Stripe for invoice.paid, invoice.payment_failed and invoice.voided. Every delivery is verified against it." },
 ];
 

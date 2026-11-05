@@ -21,6 +21,7 @@ import {
   createStripeInvoice,
   createStripeInvoiceItem,
   finalizeStripeInvoice,
+  sendStripeInvoice,
 } from "../billing/stripe.js";
 import { isModuleEnabled } from "../modules.js";
 import { isPlatformOrg } from "../billing/seats.js";
@@ -555,6 +556,16 @@ export function registerDevBillingRoutes(app: Express) {
     const finalized = await finalizeStripeInvoice(config, made.body.id);
     if (!finalized.ok) return res.status(502).json({ error: "stripe_failed", stage: "finalize", detail: finalized.error });
 
+    // OUTBOUND EMAIL: one explicit call, made only on this contract's opt-in.
+    // With no opt-in there is no call at all, so `emailed` below can never
+    // claim something the server did not do.
+    let emailed = false;
+    if (contract.stripeSendInvoiceEmail) {
+      const sent = await sendStripeInvoice(config, made.body.id);
+      if (!sent.ok) return res.status(502).json({ error: "stripe_failed", stage: "send", detail: sent.error });
+      emailed = true;
+    }
+
     const saved = await storage().updateInvoice(inv.id, { stripeInvoiceId: made.body.id });
     await storage().recordBillingTransition({
       organizationId: org.id,
@@ -564,7 +575,7 @@ export function registerDevBillingRoutes(app: Express) {
       fromStatus: inv.status,
       toStatus: inv.status,
       actorUserId: me.id,
-      detail: { stripeInvoiceId: made.body.id, emailOptIn: contract.stripeSendInvoiceEmail },
+      detail: { stripeInvoiceId: made.body.id, emailOptIn: contract.stripeSendInvoiceEmail, emailed },
     });
     await appendAudit({
       organizationId: org.id,
@@ -576,17 +587,18 @@ export function registerDevBillingRoutes(app: Express) {
         number: inv.number,
         totalCents: inv.totalCents,
         currency: inv.currency,
-        // Whether STRIPE will email the hospital — off unless this contract
-        // opted in explicitly.
+        // Whether STRIPE emailed the hospital — off unless this contract
+        // opted in explicitly, and recorded as what actually happened.
         emailOptIn: contract.stripeSendInvoiceEmail,
+        emailed,
       },
       riskLevel: "medium",
     });
     res.json({
       invoice: publicInvoice(saved!),
       stripeInvoiceId: made.body.id,
-      /** Truthful: Stripe only emails when the contract opted in. */
-      emailed: contract.stripeSendInvoiceEmail,
+      /** Truthful: true only when the explicit `send` call was made and succeeded. */
+      emailed,
     });
   });
 }

@@ -112,7 +112,11 @@ export async function startStripeStub(port: number): Promise<StripeStub> {
       if (req.headers.authorization !== "Bearer " + fakeStripeSecretKey()) {
         return json(401, { error: { code: "api_key_invalid", message: "Invalid API Key provided." } });
       }
-      if (path === "/v1/balance") return json(200, { object: "balance", livemode: false });
+      // The test-connection read, inside the same permission scope the
+      // operator's key needs for everything else.
+      if (path === "/v1/customers" && req.method === "GET") {
+        return json(200, { object: "list", data: customers.map((id) => ({ id, object: "customer" })) });
+      }
       if (path === "/v1/customers") {
         const id = "cus_stub" + ++n;
         customers.push(id);
@@ -125,6 +129,10 @@ export async function startStripeStub(port: number): Promise<StripeStub> {
         return json(200, { id, object: "invoice", status: "draft" });
       }
       if (/^\/v1\/invoices\/[^/]+\/finalize$/.test(path)) {
+        return json(200, { id: path.split("/")[3], object: "invoice", status: "open" });
+      }
+      // The ONE call that makes Stripe email the hospital.
+      if (/^\/v1\/invoices\/[^/]+\/send$/.test(path)) {
         return json(200, { id: path.split("/")[3], object: "invoice", status: "open" });
       }
       return json(404, { error: { code: "resource_missing", message: "No such endpoint." } });

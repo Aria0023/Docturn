@@ -293,10 +293,24 @@ actually went over the wire.
 
 ### Outbound email is off by default
 
-`send_invoice` makes **Stripe email the hospital**. Finalizing with
-`auto_advance` is therefore only set when the contract carries the explicit
-per-contract opt-in `stripe_send_invoice_email`, which defaults to false. Until
-the founder confirms, no hospital receives an email it did not agree to.
+`send_invoice` makes **Stripe email the hospital**, so emailing is **one
+explicit call**, not a flag:
+
+* the Stripe Invoice is created and finalized with `auto_advance: false` at
+  both ends, so Stripe never chases or emails it on its own;
+* **only** when the contract carries `stripe_send_invoice_email` (false by
+  default) does DocTurn then call `POST /v1/invoices/:id/send`.
+
+With no opt-in that call is never made, so there is no setting anywhere that
+could quietly send one — and the route reports `emailed: true`, and the console
+says "Stripe will email the hospital's billing contact", only when that call
+actually succeeded. The audit row records both the opt-in and what happened.
+
+(An earlier shape passed the opt-in as `auto_advance` on the create and then
+finalized with `auto_advance: false`, silently overwriting it: the screen would
+have claimed an email the server never sent. `tests/billing-stripe.test.ts` now
+asserts the **finalize** form as well as the create form, and that the `send`
+call is absent without the opt-in and present with it.)
 
 ### Webhooks
 
@@ -418,14 +432,24 @@ To switch the Stripe rail on, the founder must:
    debit** and bank transfer as payment methods — those are what hospitals use;
    cards are rarely accepted for this.
 3. Set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` as server settings on
-   the deployment (Render dashboard / AWS SSM). Never in the repository.
+   the deployment (Render dashboard / AWS SSM). Never in the repository. A
+   **restricted** key is enough, and these are the only permissions DocTurn
+   uses: **Customers** read + write, **Invoice Items** write, **Invoices**
+   read + write. "Test connection" deliberately reads `GET /v1/customers?limit=1`
+   — inside that same scope — rather than the account balance, so a key scoped
+   as above does not fail the test.
 4. Add the webhook endpoint `https://<host>/webhooks/stripe` in the Stripe
    dashboard, subscribed to `invoice.paid`, `invoice.payment_failed` and
    `invoice.voided`, and copy its signing secret into
    `STRIPE_WEBHOOK_SECRET`.
 5. Switch `billing.stripe` on for the hospitals to be collected through
    Stripe, and press **Test connection** on the Stripe integration card.
-6. **Decide the outbound-email question.** `send_invoice` means Stripe emails
+6. Check that the API version DocTurn pins (`Stripe-Version: 2024-06-20`, in
+   `server/billing/stripe.ts`) is accepted by the account. It could not be
+   verified from the development environment, which has no Stripe account; if
+   Stripe has retired it, bump the constant and re-run
+   `tests/billing-stripe.test.ts`.
+7. **Decide the outbound-email question.** `send_invoice` means Stripe emails
    the hospital's billing contact. It is off until the founder says otherwise,
    per contract. Turning it on sends real email to a real customer from
    Stripe's domain, with Stripe's branding and a hosted payment page — that is

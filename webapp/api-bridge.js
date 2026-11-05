@@ -4646,7 +4646,7 @@
       DT.set(function (s) {
         s.devBilling = {
           tenants: contracts.tenants || [],
-          totals: contracts.totals || { tenants: 0, committedTotalCents: 0 },
+          totals: contracts.totals || { tenants: 0, committedByCurrency: {} },
           stripe: contracts.stripe || null,
           plans: (plans && plans.plans) || [],
           invoices: (invoices && invoices.invoices) || [],

@@ -411,6 +411,11 @@ try {
       rec("X: no Stripe SUBSCRIPTION object is ever created", !paths.some((p) => /subscription/i.test(p)), paths.join(","));
       const invReq = reqs.find((r) => r.path === "/v1/invoices");
       rec("X: collection_method is send_invoice with the contract's net terms, and auto_advance is false", !!invReq && invReq.form.collection_method === "send_invoice" && invReq.form.days_until_due === "30" && invReq.form.auto_advance === "false", JSON.stringify(invReq && invReq.form).slice(0, 200));
+      // auto_advance false at BOTH ends, and the ONE call that emails the
+      // hospital is absent because this contract did not opt in.
+      const finReq = reqs.find((r) => /\/finalize$/.test(r.path));
+      rec("X: finalize ALSO carries auto_advance false, so Stripe never chases it itself", !!finReq && finReq.form.auto_advance === "false", JSON.stringify(finReq && finReq.form));
+      rec("X: and /v1/invoices/:id/send is NEVER called without the contract's opt-in", !reqs.some((r) => /\/send$/.test(r.path)), reqs.map((r) => r.path).join(","));
       const wire = reqs.flatMap((r) => Object.entries(r.form).map(([k, v]) => k + "=" + v)).join("\n");
       rec("X: NOTHING clinical went over the wire", !/patient|mrn|room|complaint|diagnos|note|message|initials/i.test(wire), wire.slice(0, 160).replace(/\n/g, " | "));
 

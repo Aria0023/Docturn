@@ -174,7 +174,7 @@ describe("nothing of a hospital's money survives a sign-out", () => {
     const h = await bootDirector({ billing: true });
     h.routes.billing = (req) => (req.path === "/api/billing" ? { status: 200, body: SERVER_BILLING } : undefined);
     h.routes.dev = (req) => {
-      if (req.path === "/api/dev/billing/contracts") return { status: 200, body: { tenants: [], totals: { tenants: 0, committedTotalCents: 0 } } };
+      if (req.path === "/api/dev/billing/contracts") return { status: 200, body: { tenants: [], totals: { tenants: 0, committedByCurrency: {} } } };
       if (req.path === "/api/dev/billing/plans") return { status: 200, body: { plans: [] } };
       if (req.path === "/api/dev/billing/invoices") return { status: 200, body: { invoices: [] } };
       return undefined;
@@ -206,7 +206,7 @@ describe("the operator's console reads every tenant from the server", () => {
           seats: SERVER_BILLING.seats, perSeatCents: 1800, monthlyCents: 73800, overageSeats: 1,
         },
       ],
-      totals: { tenants: 1, committedTotalCents: 73800 },
+      totals: { tenants: 1, committedByCurrency: { USD: 73800 } },
     };
     h.routes.dev = (req) => {
       if (req.path === "/api/dev/billing/contracts") return { status: 200, body: contracts };
@@ -223,7 +223,8 @@ describe("the operator's console reads every tenant from the server", () => {
     expect(h.state().devBilling.tenants).toHaveLength(1);
     expect(h.state().devBilling.plans).toHaveLength(1);
     expect(h.state().devBilling.invoices).toHaveLength(1);
-    expect(h.state().devBilling.totals.committedTotalCents).toBe(73800);
+    // PER CURRENCY: adding USD cents to EUR cents would mean nothing.
+    expect(h.state().devBilling.totals.committedByCurrency).toEqual({ USD: 73800 });
 
     await h.w.DT.actions.saveDevContract(1, { planId: 4, term: "monthly", startDate: "2026-01-01", committedSeats: 50, status: "active" });
     await until(() => h.state().devBilling && h.state().devBilling.tenants[0].contract.committedSeats === 50);
@@ -233,7 +234,7 @@ describe("the operator's console reads every tenant from the server", () => {
   it("a refused operator write says so and leaves the console as the server described it", async () => {
     const h = await bootDirector({ billing: true });
     h.routes.dev = (req) => {
-      if (req.path === "/api/dev/billing/contracts" && req.method === "GET") return { status: 200, body: { tenants: [], totals: { tenants: 0, committedTotalCents: 0 } } };
+      if (req.path === "/api/dev/billing/contracts" && req.method === "GET") return { status: 200, body: { tenants: [], totals: { tenants: 0, committedByCurrency: {} } } };
       if (req.path === "/api/dev/billing/plans" && req.method === "GET") return { status: 200, body: { plans: [] } };
       if (req.path === "/api/dev/billing/invoices" && req.method === "GET") return { status: 200, body: { invoices: [] } };
       if (req.method === "POST" && req.path === "/api/dev/billing/plans") return { status: 400, body: { error: "validation_error" } };

@@ -196,6 +196,12 @@ describe("pushing an invoice to Stripe", () => {
     expect(invoiceReq.form.auto_advance).toBe("false");
     expect(invoiceReq.form["metadata[po_number]"]).toBe("PO-2026-77");
     expect(invoiceReq.form["metadata[docturn_invoice_number]"]).toBe(invoice.number);
+    // FINALIZE too, not just create: auto_advance false at BOTH ends, or
+    // Stripe would chase and email the hospital on its own.
+    const finalizeReq = stub.requests.find((r) => /\/finalize$/.test(r.path))!;
+    expect(finalizeReq.form.auto_advance).toBe("false");
+    // And with no opt-in the one call that emails is NEVER made.
+    expect(stub.requests.some((r) => /\/send$/.test(r.path))).toBe(false);
 
     // EVERY field of EVERY request is a billing field. Nothing clinical, no
     // patient, no room, no note, no message, no initials.
@@ -213,8 +219,15 @@ describe("pushing an invoice to Stripe", () => {
     const { dev, invoice } = await issuedInvoice({ emailOptIn: true });
     const pushed = await dev.post(`/api/dev/billing/invoices/${invoice.id}/stripe`).expect(200);
     expect(pushed.body.emailed).toBe(true);
-    const invoiceReq = stub.requests.find((r) => r.path === "/v1/invoices")!;
-    expect(invoiceReq.form.auto_advance).toBe("true");
+    // The opt-in is ONE EXPLICIT CALL, not a flag: /v1/invoices/:id/send.
+    const sendReq = stub.requests.find((r) => /\/send$/.test(r.path));
+    expect(sendReq, "the opt-in must produce the explicit send call").toBeTruthy();
+    // Automatic collection stays off either way; emailing is only ever that call.
+    expect(stub.requests.find((r) => r.path === "/v1/invoices")!.form.auto_advance).toBe("false");
+    expect(stub.requests.find((r) => /\/finalize$/.test(r.path))!.form.auto_advance).toBe("false");
+    // Audited as what actually happened, not as the intention.
+    const trail = await ctx.storage.listAuditLogs(ctx.seedResult.orgId, 60);
+    expect(trail.find((a) => a.action === "billing.stripe_push")!.details).toMatchObject({ emailOptIn: true, emailed: true });
   });
 
   it("refuses when the module is off, when the invoice is not issued, and twice over", async () => {
@@ -400,7 +413,7 @@ describe("the integration card", () => {
     expect(card!.baaRequired).toBe(false);
   });
 
-  it("'Test connection' is a real call: it passes against the stub and fails with a wrong key", async () => {
+  it("'Test connection' reads inside the permission scope the key description asks for", async () => {
     const { agent: dev } = await devLogin();
     await dev.patch(`/api/dev/modules/${ctx.seedResult.orgId}`).send({ id: "billing", enabled: true }).expect(200);
     await dev.patch(`/api/dev/modules/${ctx.seedResult.orgId}`).send({ id: "billing.stripe", enabled: true }).expect(200);

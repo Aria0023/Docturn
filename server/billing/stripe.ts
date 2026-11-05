@@ -17,12 +17,18 @@
  *   3. create a Stripe **Invoice** with `collection_method: "send_invoice"`
  *      and `days_until_due` from the contract — the ACH / PO / net-30 path
  *      hospitals actually use;
- *   4. finalize it, and record its id on our row.
+ *   4. finalize it with `auto_advance: false` — no automatic dunning, ever —
+ *      and record its id on our row;
+ *   5. ONLY when the contract carries the explicit per-contract opt-in
+ *      `stripe_send_invoice_email`, call `POST /v1/invoices/:id/send`.
  *
- * `send_invoice` makes STRIPE EMAIL THE HOSPITAL, so outbound email is OFF by
- * default: `auto_advance` is only set when the contract carries the explicit
- * per-contract opt-in `stripe_send_invoice_email`. Until the founder confirms,
- * no hospital receives an email it did not agree to.
+ * That last step is the whole of the outbound-email question, and it is one
+ * explicit call rather than a flag: with no opt-in there is no call, so Stripe
+ * cannot email the hospital at all, and the route only reports `emailed: true`
+ * when that call actually succeeded. (An earlier shape passed the opt-in as
+ * `auto_advance` on the CREATE and then finalized with `auto_advance: false`,
+ * which silently overwrote it — the screen would have claimed an email the
+ * server never sent.)
  *
  * Every payload goes through the allow-list projection in stripe-payload.ts,
  * which THROWS on any field outside the list. Nothing but billing data can
@@ -106,7 +112,11 @@ export async function stripeTestConnection(env: NodeJS.ProcessEnv = process.env)
   if (!config) {
     return { ok: false, code: "not_configured", message: "Missing server settings: " + missing.join(", ") };
   }
-  const res = await call<{ id?: string; object?: string }>(config, "/v1/balance", null);
+  // A harmless read INSIDE the permission scope STRIPE_SECRET_KEY's own
+  // description asks for (Customers / Invoice Items / Invoices). /v1/balance
+  // would need a Balance permission a key scoped that way does not have, so
+  // an operator who followed the instructions would see a false 401.
+  const res = await call<{ object?: string; data?: unknown[] }>(config, "/v1/customers?limit=1", null);
   if (!res.ok) return { ok: false, code: res.error!.code, message: res.error!.message };
   return { ok: true, code: "ok", message: "Stripe accepted the credentials." };
 }
@@ -169,10 +179,10 @@ export function invoicePayload(
     days_until_due: contract.daysUntilDue,
     currency: invoice.currency.toLowerCase(),
     description: "DocTurn " + invoice.number + " — " + invoice.periodStart + " to " + invoice.periodEnd,
-    // OUTBOUND EMAIL IS OFF BY DEFAULT: finalizing with auto_advance makes
-    // Stripe email the hospital, so it happens only on the explicit
-    // per-contract opt-in.
-    auto_advance: !!contract.stripeSendInvoiceEmail,
+    // NO AUTOMATIC COLLECTION. Stripe never chases this invoice by itself:
+    // emailing is the single explicit `send` call below, made only on the
+    // contract's opt-in, so the two can never disagree.
+    auto_advance: false,
     metadata: {
       docturn_invoice_id: invoice.id,
       docturn_invoice_number: invoice.number,
@@ -219,6 +229,21 @@ export async function finalizeStripeInvoice(config: StripePlatformConfig, stripe
   return call<{ id: string; status: string; hosted_invoice_url?: string }>(
     config,
     "/v1/invoices/" + encodeURIComponent(stripeInvoiceId) + "/finalize",
+    // Finalize, and nothing else: auto_advance false means Stripe will not
+    // email or chase this invoice on its own.
     { auto_advance: false },
+  );
+}
+
+/**
+ * THE ONLY thing that makes Stripe email the hospital. Called solely when the
+ * contract carries `stripe_send_invoice_email`; with no opt-in this call is
+ * never made, so there is no flag anywhere that could quietly send one.
+ */
+export async function sendStripeInvoice(config: StripePlatformConfig, stripeInvoiceId: string) {
+  return call<{ id: string; status: string; hosted_invoice_url?: string }>(
+    config,
+    "/v1/invoices/" + encodeURIComponent(stripeInvoiceId) + "/send",
+    {},
   );
 }
