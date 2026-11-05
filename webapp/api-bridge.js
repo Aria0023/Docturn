@@ -4544,6 +4544,163 @@
     }, function (e) { scimRefusal(e, "Not revoked"); return null; });
   };
 
+  /* ── Organization billing (module `billing`; docs/BILLING.md) ─────────────
+   * Every number on either billing screen is the server's. Nothing here
+   * decides a price, a seat count or whether an invoice is paid: the client
+   * reads /api/billing (the hospital) and /api/dev/billing/* (the operator)
+   * and sends the operator's actions back. A refused request says WHICH
+   * feature is off and re-reads the module map at once, so the control
+   * disappears instead of lying for a minute.
+   */
+  function billingRefusal(e, title, fallback) {
+    if (moduleRefused(e)) refreshModulesAfterRefusal();
+    var msg = moduleRefused(e) ? "Billing is switched off for your organization."
+      : (e && e.status === 403) ? "Your role cannot see or change billing."
+      : (e && e.status === 402) ? ((e.body && e.body.message) || "A billing limit refused it — nothing was changed.")
+      : (e && e.status === 409) ? ((e.body && e.body.message) || "The server refused it — nothing was changed.")
+      : (e && e.status === 400) ? "Check the values — the server refused them and nothing was changed."
+      : isNetworkError(e) ? "No connection — nothing was changed."
+      : (fallback || "The server refused it — nothing was changed.");
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+  }
+
+  DT.actions.loadBilling = function () {
+    if (DT.moduleOn && !DT.moduleOn("billing")) {
+      DT.set(function (s) { s.billing = null; return s; });
+      return Promise.resolve(null);
+    }
+    var epoch = authEpoch;
+    return get("/api/billing").then(function (v) {
+      if (epoch !== authEpoch || !v) return null;
+      DT.set(function (s) { s.billing = v; return s; });
+      return v;
+    }, function (e) {
+      if (moduleRefused(e)) refreshModulesAfterRefusal();
+      if (epoch === authEpoch) DT.set(function (s) { s.billing = null; return s; });
+      return null;
+    });
+  };
+
+  DT.actions.saveBillingContact = function (body) {
+    DT.set(function (s) { if (s.billing) s.billing = Object.assign({}, s.billing, { contactSaving: true }); return s; });
+    return api("PATCH", "/api/billing/contact", body).then(function (v) {
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Billing contact saved", msg: "DocTurn will send your invoices to this contact." };
+        return s;
+      });
+      return DT.actions.loadBilling().then(function () { return v; });
+    }, function (e) {
+      DT.set(function (s) { if (s.billing) s.billing = Object.assign({}, s.billing, { contactSaving: false }); return s; });
+      billingRefusal(e, "Not saved");
+      return null;
+    });
+  };
+
+  /** Stream one invoice to a file. The server renders it; nothing is built here. */
+  DT.actions.downloadInvoice = function (id) {
+    var path = "/api/billing/invoices/" + Number(id) + "/download";
+    var headers = {};
+    if (DEMO_TOKEN) headers.Authorization = "Bearer " + DEMO_TOKEN;
+    var req = lockActive() ? Promise.reject(lockedError()) : fetch(path, { credentials: "include", headers: headers });
+    return req.then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          var code = "download_failed";
+          try { var b = JSON.parse(t); if (b && b.error) code = b.error; } catch (_) {}
+          var e = new Error(code); e.status = res.status; throw e;
+        });
+      }
+      var cd = (res.headers && res.headers.get && res.headers.get("Content-Disposition")) || "";
+      var m = cd.match(/filename="([^"]+)"/);
+      var name = m ? m[1] : "docturn-invoice.csv";
+      return res.text().then(function (text) {
+        var url = URL.createObjectURL(new Blob([text], { type: res.headers.get("Content-Type") || "text/csv" }));
+        var link = document.createElement("a"); link.href = url; link.download = name;
+        document.body.appendChild(link); link.click(); link.remove();
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 1000);
+        DT.set(function (s) { s.__toast = { tone: "accepted", title: "Invoice downloaded", msg: name }; return s; });
+        return { name: name };
+      });
+    }).catch(function (e) {
+      billingRefusal(e, "Download failed", "The server refused the download — nothing was saved.");
+      return null;
+    });
+  };
+
+  /* ── the operator's console ─────────────────────────────────────────────── */
+
+  function devBillingBusy(on) {
+    DT.set(function (s) { s.devBilling = Object.assign({}, s.devBilling || {}, { busy: !!on }); return s; });
+  }
+
+  DT.actions.loadDevBilling = function () {
+    var epoch = authEpoch;
+    return Promise.all([
+      get("/api/dev/billing/contracts"),
+      get("/api/dev/billing/plans"),
+      get("/api/dev/billing/invoices"),
+    ]).then(function (r) {
+      if (epoch !== authEpoch) return null;
+      var contracts = r[0], plans = r[1], invoices = r[2];
+      if (!contracts) { DT.set(function (s) { s.devBilling = null; return s; }); return null; }
+      DT.set(function (s) {
+        s.devBilling = {
+          tenants: contracts.tenants || [],
+          totals: contracts.totals || { tenants: 0, committedTotalCents: 0 },
+          stripe: contracts.stripe || null,
+          plans: (plans && plans.plans) || [],
+          invoices: (invoices && invoices.invoices) || [],
+          busy: false,
+        };
+        return s;
+      });
+      return DT.getState().devBilling;
+    }, function () {
+      if (epoch === authEpoch) DT.set(function (s) { s.devBilling = null; return s; });
+      return null;
+    });
+  };
+
+  function devBillingWrite(p, title, msg) {
+    devBillingBusy(true);
+    return p.then(function (v) {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: title, msg: msg }; return s; });
+      return DT.actions.loadDevBilling().then(function () { return v || true; });
+    }, function (e) {
+      devBillingBusy(false);
+      billingRefusal(e, "Not saved");
+      return null;
+    });
+  }
+
+  DT.actions.createBillingPlan = function (body) {
+    return devBillingWrite(api("POST", "/api/dev/billing/plans", body), "Plan created", "It is now offerable on a contract.");
+  };
+  DT.actions.saveDevContract = function (orgId, body) {
+    return devBillingWrite(api("PUT", "/api/dev/billing/contracts/" + Number(orgId), body),
+      "Contract saved", "Recorded in this hospital's own audit trail.");
+  };
+  DT.actions.clearDevContract = function (orgId) {
+    return devBillingWrite(api("DELETE", "/api/dev/billing/contracts/" + Number(orgId)),
+      "Contract removed", "This hospital is unlimited and unbilled again.");
+  };
+  DT.actions.generateInvoice = function (orgId, periodStart, periodEnd) {
+    return devBillingWrite(api("POST", "/api/dev/billing/invoices", { orgId: Number(orgId), periodStart: periodStart, periodEnd: periodEnd }),
+      "Draft invoice created", "Every line cites the seat snapshots it counted.");
+  };
+  DT.actions.issueInvoice = function (id) {
+    return devBillingWrite(api("POST", "/api/dev/billing/invoices/" + Number(id) + "/issue", {}),
+      "Invoice issued", "Its number is fixed and the hospital can download it.");
+  };
+  DT.actions.voidInvoice = function (id, reason) {
+    return devBillingWrite(api("POST", "/api/dev/billing/invoices/" + Number(id) + "/void", { reason: reason }),
+      "Invoice voided", "The number is kept forever and is never reused.");
+  };
+  DT.actions.markInvoicePaid = function (id, reference) {
+    return devBillingWrite(api("POST", "/api/dev/billing/invoices/" + Number(id) + "/mark-paid", { reference: reference || null }),
+      "Invoice marked paid", "Recorded with your user id and the time, in the hospital's trail.");
+  };
+
   DT.actions.loadPin = function () {
     if (DT.moduleOn && !DT.moduleOn("security.pin")) {
       DT.set(function (s) { s.pinStatus = null; return s; });

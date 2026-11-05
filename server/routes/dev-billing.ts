@@ -183,7 +183,12 @@ export function registerDevBillingRoutes(app: Express) {
     const orgs = (await db.listOrganizations()).filter((o) => !isPlatformOrg(o));
     const plans = new Map((await db.listBillingPlans(true)).map((p) => [p.id, p]));
     const rows = [];
-    let committedTotalCents = 0;
+    /**
+     * Per CURRENCY, never one number: a contract's currency is fixed per
+     * contract, and adding USD cents to EUR cents would produce a total that
+     * means nothing. The console shows one line per currency.
+     */
+    const committedByCurrency: Record<string, number> = {};
     for (const org of orgs) {
       const { contract, view } = await resolveContract(db, org.id);
       const plan = contract ? plans.get(contract.planId) ?? null : null;
@@ -191,8 +196,8 @@ export function registerDevBillingRoutes(app: Express) {
       const perSeatCents = contract && plan ? effectivePerSeatCents(contract, plan) : null;
       const monthlyCents =
         contract && perSeatCents != null ? Math.max(contract.committedSeats, seats.live.total) * perSeatCents : null;
-      if (monthlyCents != null && (view.status === "active" || view.status === "trial" || view.status === "past_due")) {
-        committedTotalCents += monthlyCents;
+      if (monthlyCents != null && plan && (view.status === "active" || view.status === "trial" || view.status === "past_due")) {
+        committedByCurrency[plan.currency] = (committedByCurrency[plan.currency] ?? 0) + monthlyCents;
       }
       rows.push({
         orgId: org.id,
@@ -209,7 +214,7 @@ export function registerDevBillingRoutes(app: Express) {
         overageSeats: contract ? Math.max(0, seats.live.total - contract.committedSeats) : 0,
       });
     }
-    res.json({ tenants: rows, totals: { tenants: rows.length, committedTotalCents } });
+    res.json({ tenants: rows, totals: { tenants: rows.length, committedByCurrency } });
   });
 
   app.get("/api/dev/billing/contracts/:orgId", requireAuth, requireRole("developer"), async (req, res) => {

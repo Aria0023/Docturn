@@ -738,7 +738,9 @@ async function checkAccessStrip(page, label) {
 // (A.CON-SHO-52) its flex '0 1 auto' tabs shrank to 74-118px while their
 // labels need 123-185px, drawing each label 33-50px over the next tab
 // ('OrganizaⓅoAppea'); the strip must scroll instead of squashing.
-const SETTINGS_TAB_SCREENS = ["settings", "appearance", "compliance", "compliance-monitor"];
+// `billing` is included with the module OFF (its default), so the refusal
+// card itself is measured at every phone width.
+const SETTINGS_TAB_SCREENS = ["settings", "appearance", "billing", "compliance", "compliance-monitor"];
 async function checkSettingsTabs(page, label) {
   for (const id of SETTINGS_TAB_SCREENS) {
     await nav(page, id);
@@ -779,7 +781,7 @@ const SCREENS = {
   er_doctor: ["dashboard", "oncall", "messages", "directory", "compliance", "account"],
   director: ["dashboard", "board", "admissions", "oncall", "approvals", "consult", "roles", "broadcasts", "messages", "directory", "settings", "appearance", "compliance", "compliance-monitor", "account", "access"],
   er_director: ["dashboard", "board", "oncall", "approvals", "broadcasts", "messages", "directory", "settings", "appearance", "compliance", "compliance-monitor", "account", "access"],
-  developer: ["dashboard", "enterprise", "settings", "users", "compliance", "compliance-monitor", "appearance", "account"],
+  developer: ["dashboard", "enterprise", "dev-billing", "settings", "users", "compliance", "compliance-monitor", "appearance", "account"],
 };
 async function checkLabelsInside(page, label) {
   const bad = await page.evaluate(() => window.__m.spilledButtons());

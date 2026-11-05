@@ -718,8 +718,14 @@ function SettingsTabs() {
   // says so — and the tab disappears only when both are off.
   var moduleOn = function (id) { return !window.DT || !window.DT.moduleOn || window.DT.moduleOn(id); };
   var appearanceOn = moduleOn("platform.appearance") || moduleOn("platform.userThemes");
+  // Billing (module `billing`, default OFF): the tab appears only once the
+  // DocTurn operator has switched billing on for this hospital, so no existing
+  // tenant's Settings changes. Directors only — an ER director never sees it,
+  // which is the same rule the server's route enforces (403).
+  var billingOn = moduleOn("billing") && role === "director";
   var tabs = [["settings", "Organization", "sliders-horizontal"]]
     .concat(appearanceOn ? [["appearance", "Appearance", "palette"]] : [])
+    .concat(billingOn ? [["billing", "Billing", "receipt"]] : [])
     .concat([["compliance", "Compliance", "shield-check"], ["compliance-monitor", "Compliance monitor", "activity"]]);
   return (
     <div style={{ display: "inline-flex", gap: 4, padding: 4, background: "var(--secondary)", borderRadius: "var(--radius-md)", marginBottom: 18, maxWidth: "100%", overflowX: "auto" }}>

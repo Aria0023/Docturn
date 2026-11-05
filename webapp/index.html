@@ -225,6 +225,7 @@
 <script type="text/babel" src="/AccountSettings.jsx"></script>
 <script type="text/babel" src="/Integrations.jsx"></script>
 <script type="text/babel" src="/OrgSettings.jsx"></script>
+<script type="text/babel" src="/Billing.jsx"></script>
 <script type="text/babel" src="/RoleManagement.jsx"></script>
 <script type="text/babel" src="/People.jsx"></script>
 <script type="text/babel" src="/Appearance.jsx"></script>
@@ -324,6 +325,10 @@ const NAV = {
   developer: [
     { id: "dashboard",  label: "Organizations",   icon: "building-2" },
     { id: "enterprise", label: "Platform", icon: "globe" },
+    // The operator's own billing console. A separate nav id from the
+    // hospital's `billing` tab on purpose: this one is never gated by the
+    // tenant module (the console has to work in order to switch it on).
+    { id: "dev-billing", label: "Billing", icon: "receipt" },
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
@@ -367,6 +372,8 @@ const TOP = {
   roles:      ["Roles", "DocTurn's fixed roles and who holds them in your organization"],
   consult:    ["Consult services", "The services ER physicians can request — saved for your organization"],
   people:     ["People", "Your organization's accounts, as the server holds them"],
+  billing:    ["Billing", "Your DocTurn plan, accounts and invoices — from the server"],
+  "dev-billing": ["Billing", "Every hospital's accounts, contract and invoices — from the server"],
   access:     ["Access & people", "Your organization's people and the fixed roles that govern their access"],
   appearance: ["Appearance & layout", "Your own colour scheme and text size, your organization's branding, and this device's navigation"],
   settings:   ["Organization settings", "Rotation rules, retention and integrations"],
@@ -670,6 +677,8 @@ function App() {
   else if (nav === "appearance") screen = <Appearance theme={st.theme} role={role} master={NAV[role]} navHidden={st.navHidden[role] || []} navOrder={navItems.map((n) => n.id)} onSetTheme={a.setTheme} onToggleNav={a.toggleNavItem} onMoveNav={a.moveNavItem} onReset={() => a.resetLayout(role)}
     appearanceOn={!window.DT.moduleOn || window.DT.moduleOn("platform.appearance")} themeSave={st.themeSave}
     userTheme={st.userTheme} userThemesOn={!window.DT.moduleOn || window.DT.moduleOn("platform.userThemes")} onSetMyTheme={a.setMyTheme} userThemeSave={st.userThemeSave} />;
+  else if (nav === "dev-billing") screen = <DevBilling />;
+  else if (nav === "billing") screen = <BillingSettings />;
   else if (nav === "enterprise") screen = <OrgConfig scope="*" />;
   else if (nav === "settings" && role === "developer") screen = <OrgConfig scope={st.selectedOrg} org={(st.orgs || []).find((o) => o.code === st.selectedOrg)} />;
   else if (nav === "settings") screen = <OrgSettings />;

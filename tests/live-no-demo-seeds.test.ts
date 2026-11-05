@@ -154,7 +154,12 @@ describe("live client: no demo clinical rows", () => {
   // enterprise.multiInstance): the operator's view, never the next person's.
   // "userTheme" is this person's own display preset (module platform.userThemes):
   // their own choice, never the next clinician's on a shared ward workstation.
-  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs", "cluster", "userTheme"];
+  // "billing" is the HOSPITAL's own billing (module `billing`) and
+  // "devBilling" the operator's cross-tenant console: a plan, a seat count or
+  // an invoice must only ever come from the server, and never survive into the
+  // next person's session on a shared ward workstation.
+  const PARITY_NULL_SLICES = ["shiftStatus", "reminderPrefs", "pinStatus", "soundPrefs", "cluster", "userTheme",
+    "billing", "devBilling"];
   it("parity status slices (shift, unread reminder …) start null and are cleared on sign-out", async () => {
     const h = await boot({ syntheticData: false });
     for (const k of PARITY_NULL_SLICES) expect(h.state()[k], k).toBeNull();

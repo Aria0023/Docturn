@@ -264,6 +264,15 @@
       // choice. Deliberately NOT in PERSIST_KEYS — a shared ward workstation
       // must not show the previous clinician's theme to the next one.
       userTheme: null,
+      // Organization billing (module `billing`, docs/BILLING.md). null until
+      // the server answers: a billing screen must never show a plan, a seat
+      // count or an invoice the server did not send. `billing` is the
+      // hospital's own view, `devBilling` the operator's console. Both are in
+      // PERSONAL_SLICES (cleared on sign-out) and deliberately NOT in
+      // PERSIST_KEYS — a shared ward workstation must not keep the previous
+      // hospital's money on disk.
+      billing: null,
+      devBilling: null,
       navHidden: {},
       navOrder: {},
       // Per-role patient-board module visibility overrides (merged over the
@@ -865,7 +874,9 @@
     // the previous person's org single-sign-on connection and its test result
     "ssoConnection", "ssoSaving", "ssoTest", "ssoTesting",
     // the previous person's display preset (night / large text / follow device)
-    "userTheme"];
+    "userTheme",
+    // the previous hospital's billing, and the previous operator's console
+    "billing", "devBilling"];
   function clearPhiSlices(s) {
     var fresh = seed();
     PHI_SLICES.forEach(function (k) { s[k] = fresh[k]; });
@@ -1183,6 +1194,19 @@
     // offline kit reports "not connected" rather than changing the look of a
     // page it could not save (standing rule: no control that only moves pixels).
     loadMyTheme: function () { set(function (s) { s.userTheme = null; return s; }); return Promise.resolve(null); },
+    // Billing is entirely the server's: the offline kit shows nothing and
+    // claims nothing (api-bridge.js replaces all of these in the web app).
+    loadBilling: function () { set(function (s) { s.billing = null; return s; }); return Promise.resolve(null); },
+    loadDevBilling: function () { set(function (s) { s.devBilling = null; return s; }); return Promise.resolve(null); },
+    saveBillingContact: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    downloadInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    createBillingPlan: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    saveDevContract: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    clearDevContract: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    generateInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    issueInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    voidInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    markInvoicePaid: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
     setMyTheme: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     loadSoundPrefs: function () { set(function (s) { s.soundPrefs = null; return s; }); return Promise.resolve(null); },
     setSoundPref: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
