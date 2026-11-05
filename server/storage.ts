@@ -54,11 +54,14 @@ import {
   userSessions,
   userThemePrefs,
   rateLimitHits,
+  seatSnapshots,
   type JobLease,
   type SsoConnection,
   type ScimToken,
   type OrgSessionPolicy,
   type UserThemePrefs,
+  type SeatSnapshot,
+  type InsertSeatSnapshot,
   type DirectoryFavorite,
   type FavoriteTargetKind,
   type UserPin,
@@ -2329,6 +2332,10 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(scimTokens).where(eq(scimTokens.organizationId, id));
       await tx.delete(orgSessionPolicy).where(eq(orgSessionPolicy.organizationId, id));
       await tx.delete(userSessions).where(eq(userSessions.organizationId, id));
+      // Billing (docs/BILLING.md): the tenant's seat history leaves with it —
+      // a seat count is only meaningful while the tenant exists. INVOICES do
+      // NOT: they are archived first, like the compliance trail (see below).
+      await tx.delete(seatSnapshots).where(eq(seatSnapshots.organizationId, id));
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -3470,6 +3477,65 @@ export class DatabaseStorage implements IStorage {
   }
   async listJobLeases(): Promise<JobLease[]> {
     return this.db.select().from(jobLeases).orderBy(asc(jobLeases.name));
+  }
+
+  /* ── billing: seat snapshots (docs/BILLING.md) ───────────────────────────
+   * One row per organization per CALENDAR DAY IN THE ORG'S OWN TIMEZONE. The
+   * writer is idempotent on (organization_id, snapshot_date) so the hourly
+   * sweep can run on every instance and re-run after a deactivation without
+   * ever producing two rows for one day — an invoice line cites the date, so
+   * a duplicate would make the count unanswerable.
+   */
+  async upsertSeatSnapshot(row: InsertSeatSnapshot): Promise<SeatSnapshot> {
+    const updatedAt = new Date();
+    const [saved] = await this.db
+      .insert(seatSnapshots)
+      .values({ ...row, updatedAt })
+      .onConflictDoUpdate({
+        target: [seatSnapshots.organizationId, seatSnapshots.snapshotDate],
+        set: {
+          seatCount: row.seatCount,
+          breakdown: row.breakdown,
+          timezone: row.timezone,
+          updatedAt,
+        },
+      })
+      .returning();
+    return saved!;
+  }
+  async getSeatSnapshot(orgId: number, day: string): Promise<SeatSnapshot | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(seatSnapshots)
+      .where(and(eq(seatSnapshots.organizationId, orgId), eq(seatSnapshots.snapshotDate, day)));
+    return row;
+  }
+  /** Newest day first. */
+  async listSeatSnapshots(orgId: number, limit = 90): Promise<SeatSnapshot[]> {
+    return this.db
+      .select()
+      .from(seatSnapshots)
+      .where(eq(seatSnapshots.organizationId, orgId))
+      .orderBy(desc(seatSnapshots.snapshotDate))
+      .limit(limit);
+  }
+  /** Oldest day first, both bounds inclusive — what an invoice period cites. */
+  async listSeatSnapshotsInRange(orgId: number, from: string, to: string): Promise<SeatSnapshot[]> {
+    return this.db
+      .select()
+      .from(seatSnapshots)
+      .where(
+        and(
+          eq(seatSnapshots.organizationId, orgId),
+          gte(seatSnapshots.snapshotDate, from),
+          lte(seatSnapshots.snapshotDate, to),
+        ),
+      )
+      .orderBy(asc(seatSnapshots.snapshotDate));
+  }
+  async latestSeatSnapshot(orgId: number): Promise<SeatSnapshot | undefined> {
+    const [row] = await this.listSeatSnapshots(orgId, 1);
+    return row;
   }
 
   // ── per-org SSO connection (ciphertext + non-secret fields only) ────────────

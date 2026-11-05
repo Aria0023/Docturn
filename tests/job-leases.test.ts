@@ -15,6 +15,7 @@ import { startEpicSyncLoop, stopEpicSyncLoop } from "../server/services/schedule
 import { startStatEscalationLoop, stopStatEscalationLoop } from "../server/services/escalation.js";
 import { startUnreadReminderLoop, stopUnreadReminderLoop } from "../server/services/unread-reminder.js";
 import { startRetentionLoop, stopRetentionLoop } from "../server/services/retention.js";
+import { startSeatSnapshotLoop, stopSeatSnapshotLoop } from "../server/billing/seats.js";
 
 /**
  * E1 multi-instance safety — background-job leases (docs/ENTERPRISE_READINESS.md).
@@ -152,6 +153,7 @@ describe("job leases — two instances never run the same tick", () => {
     startStatEscalationLoop();
     startUnreadReminderLoop();
     startRetentionLoop();
+    startSeatSnapshotLoop();
     expect(leasedTimers()).toEqual([...JOB_NAMES].sort());
     stopExpiryLoop();
     stopAutoCleanLoop();
@@ -160,6 +162,7 @@ describe("job leases — two instances never run the same tick", () => {
     stopStatEscalationLoop();
     stopUnreadReminderLoop();
     stopRetentionLoop();
+    stopSeatSnapshotLoop();
     expect(leasedTimers()).toEqual([]);
   });
 });

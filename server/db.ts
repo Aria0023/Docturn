@@ -921,6 +921,22 @@ CREATE TABLE IF NOT EXISTS user_theme_prefs (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_theme_prefs_user_uniq ON user_theme_prefs(user_id);
 
+-- Billing (docs/BILLING.md) — one day's billable-seat count per organization.
+-- snapshot_date is the calendar day in the ORG's own timezone; an invoice line
+-- cites these dates. No PHI: a count and a role breakdown.
+CREATE TABLE IF NOT EXISTS seat_snapshots (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  snapshot_date TEXT NOT NULL,
+  seat_count INTEGER NOT NULL,
+  breakdown JSONB NOT NULL,
+  timezone TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS seat_snapshots_org_date_uniq ON seat_snapshots(organization_id, snapshot_date);
+CREATE INDEX IF NOT EXISTS seat_snapshots_org_idx ON seat_snapshots(organization_id);
+
 -- Shared rate-limit counters for the Postgres-backed limiter store.
 CREATE TABLE IF NOT EXISTS rate_limit_hits (
   key TEXT PRIMARY KEY,

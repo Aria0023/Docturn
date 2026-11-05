@@ -18,6 +18,7 @@ import { startEpicSyncLoop } from "./services/schedule-sources/epic-fhir.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
 import { startUnreadReminderLoop } from "./services/unread-reminder.js";
 import { startRetentionLoop } from "./services/retention.js";
+import { startSeatSnapshotLoop } from "./billing/seats.js";
 import { initWebPush, LivePushTransport } from "./services/push.js";
 import { configureNotifications } from "./services/notifications.js";
 import { initBus } from "./services/bus.js";
@@ -176,6 +177,10 @@ async function main() {
   startUnreadReminderLoop();
   // Per-org message retention purge (org setting messageRetentionDays; hourly).
   startRetentionLoop();
+  // Billing: one billable-seat snapshot per tenant per LOCAL day. Hourly,
+  // because every org's midnight falls in a different UTC hour
+  // (server/billing/seats.ts).
+  startSeatSnapshotLoop();
   // Real push: web-push (VAPID; generated + persisted on first boot) for the
   // PWA/browsers, Expo push for the native app. Content-free payloads only.
   const vapidKey = await initWebPush();

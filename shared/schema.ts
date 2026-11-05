@@ -1192,6 +1192,43 @@ export const userThemePrefs = pgTable(
   }),
 );
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Billing (docs/BILLING.md). DocTurn the PLATFORM operator bills each tenant
+ * hospital. Money is INTEGER CENTS; never a float. No PHI ever reaches these
+ * tables: a seat count, a hospital's billing contact and a PO number are the
+ * most personal things here.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * One day's billable-seat count for one organization, written by the
+ * `seat-snapshot` job lease. `snapshot_date` is the calendar day in the
+ * ORGANIZATION's own timezone (organizations.timezone), because that is the
+ * day a hospital argues about: an invoice line cites these dates, so
+ * "you charged me for 47 seats on 3 March" can be answered from the row.
+ */
+export const seatSnapshots = pgTable(
+  "seat_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** YYYY-MM-DD in the org's timezone. */
+    snapshotDate: text("snapshot_date").notNull(),
+    seatCount: integer("seat_count").notNull(),
+    /** role → count. Never a name. */
+    breakdown: jsonb("breakdown").$type<Record<string, number>>().notNull(),
+    /** The timezone the date was computed in, recorded so a later change is visible. */
+    timezone: text("timezone").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    onePerOrgDay: uniqueIndex("seat_snapshots_org_date_uniq").on(t.organizationId, t.snapshotDate),
+    byOrg: index("seat_snapshots_org_idx").on(t.organizationId),
+  }),
+);
+
 /**
  * Shared rate-limit counters (E1): the Postgres-backed express-rate-limit
  * store, so N instances enforce ONE login / account / registration budget.
@@ -1300,6 +1337,8 @@ export type OrgSessionPolicy = typeof orgSessionPolicy.$inferSelect;
 export type UserSession = typeof userSessions.$inferSelect;
 export type UserThemePrefs = typeof userThemePrefs.$inferSelect;
 export type RateLimitHit = typeof rateLimitHits.$inferSelect;
+export type SeatSnapshot = typeof seatSnapshots.$inferSelect;
+export type InsertSeatSnapshot = typeof seatSnapshots.$inferInsert;
 
 export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;

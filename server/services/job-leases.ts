@@ -31,6 +31,8 @@ export const JOB_NAMES = [
   "stat-escalation",
   "unread-reminder",
   "retention",
+  // Billing: one row per tenant per local day (server/billing/seats.ts).
+  "seat-snapshot",
 ] as const;
 export type JobName = (typeof JOB_NAMES)[number];
 
