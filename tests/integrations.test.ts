@@ -156,11 +156,11 @@ async function otherOrgWithDirector(code = "OTHR") {
 
 // ── registry status from live configuration ─────────────────────────────────
 describe("integration registry — status from live config", () => {
-  it("lists the five real integrations; nothing configured → not_configured with missing NAMES", async () => {
+  it("lists the six real integrations; nothing configured → not_configured with missing NAMES", async () => {
     const res = await (await director()).get("/api/integrations").expect(200);
     expect(res.body.orgId).toBe(ctx.seedResult.orgId);
     expect((res.body.integrations as any[]).map((c) => c.id)).toEqual([...INTEGRATION_IDS]);
-    expect([...INTEGRATION_IDS]).toEqual(["twilio-sms", "push", "openai-intake", "amion", "epic-fhir"]);
+    expect([...INTEGRATION_IDS]).toEqual(["twilio-sms", "push", "openai-intake", "amion", "epic-fhir", "stripe"]);
     // Push is Web Push + Expo — never "Firebase".
     expect(JSON.stringify(res.body)).not.toMatch(/firebase|FCM/i);
 
@@ -182,6 +182,20 @@ describe("integration registry — status from live config", () => {
     const push = card(res.body, "push");
     expect(push).toMatchObject({ scope: "platform", module: "integration.push", status: "not_configured" });
     expect(push.missing).toEqual(["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]);
+
+    // Stripe (docs/BILLING.md): the billing COLLECTION rail, platform-scope,
+    // and the only integration that is never sent PHI by construction (an
+    // allow-list payload builder throws on any other field), so it needs no
+    // BAA. Unconfigured here, naming the two server settings it wants.
+    const stripe = card(res.body, "stripe");
+    expect(stripe).toMatchObject({
+      scope: "platform",
+      module: "billing.stripe",
+      status: "not_configured",
+      phi: false,
+      baaRequired: false,
+    });
+    expect(stripe.missing).toEqual(["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]);
 
     // Platform-scope cards tell the operator exactly where to set each variable.
     const steps = JSON.stringify(tw.setup.steps);

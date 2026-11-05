@@ -1048,6 +1048,31 @@ CREATE TABLE IF NOT EXISTS retained_invoices (
 );
 CREATE INDEX IF NOT EXISTS retained_invoices_org_idx ON retained_invoices(organization_id);
 
+-- Every billing status transition, and every Stripe delivery. The unique index
+-- on stripe_event_id is the whole idempotency mechanism: a Stripe delivery is
+-- recorded here BEFORE it is applied, so a redelivery of the same event is
+-- recognised and answered 200 without being applied twice. It is a PLAIN
+-- unique index (Postgres treats NULLs as distinct), so our own transitions,
+-- which carry no Stripe event id, never collide with each other — and
+-- ON CONFLICT (stripe_event_id) can infer it, which a partial index would
+-- not allow.
+CREATE TABLE IF NOT EXISTS billing_events (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER,
+  invoice_id INTEGER,
+  stripe_event_id TEXT,
+  type TEXT NOT NULL,
+  from_status TEXT,
+  to_status TEXT,
+  actor_user_id INTEGER,
+  detail JSONB,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_events_stripe_event_uniq
+  ON billing_events(stripe_event_id);
+CREATE INDEX IF NOT EXISTS billing_events_org_idx ON billing_events(organization_id);
+CREATE INDEX IF NOT EXISTS billing_events_invoice_idx ON billing_events(invoice_id);
+
 -- Shared rate-limit counters for the Postgres-backed limiter store.
 CREATE TABLE IF NOT EXISTS rate_limit_hits (
   key TEXT PRIMARY KEY,

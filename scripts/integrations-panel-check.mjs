@@ -28,6 +28,10 @@ const BASE = process.env.BASE_URL || "http://127.0.0.1:3000";
 const CHROME = process.env.CHROME_PATH || "/opt/pw-browsers/chromium";
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 const ALL = { 375: 667, 390: 844, 430: 932 };
+// shared/… server/integrations/registry.ts INTEGRATION_IDS: twilio-sms, push,
+// openai-intake, amion, epic-fhir, stripe. One number, so adding the next
+// integration fails here once instead of in two unrelated places.
+const INTEGRATION_CARD_COUNT = 6;
 const WIDTHS = (process.env.WIDTHS || "375,390,430").split(",").map((w) => Number(w.trim())).filter((w) => ALL[w]);
 const SECRET = "PLAYWRIGHT-SECRET-" + Date.now();
 
@@ -77,7 +81,7 @@ for (const w of WIDTHS) {
   // 1. status matches the server; no fake "Connected".
   const s1 = await server();
   const u1 = await ui();
-  rec(`${tag}: five cards rendered`, u1.length === 5, u1.map((c) => c.id).join(","));
+  rec(`${tag}: ${INTEGRATION_CARD_COUNT} cards rendered`, u1.length === INTEGRATION_CARD_COUNT, u1.map((c) => c.id).join(","));
   for (const c of s1.integrations) {
     const u = u1.find((x) => x.id === c.id);
     rec(`${tag}: ${c.id} badge = server status (${c.status})`, !!u && u.status === c.status && u.badge === c.status && u.enabled === c.enabled, u ? `ui=${u.status}/${u.badge} enabled=${u.enabled}` : "missing");
@@ -243,7 +247,7 @@ for (const w of WIDTHS) {
       const srv = JSON.parse(await page.evaluate((id) => fetch("/api/integrations?orgId=" + id, { credentials: "include" }).then((r) => r.text()), orgId));
       const uiCards = await page.evaluate(() => [...document.querySelectorAll("[data-integrations-panel] [data-integration]")].map((el) => ({ id: el.getAttribute("data-integration"), status: el.getAttribute("data-status") })));
       const same = srv.integrations.every((c) => (uiCards.find((u) => u.id === c.id) || {}).status === c.status);
-      rec(`${tag}: Organization config → Integrations shows org #${orgId}'s server statuses`, same && uiCards.length === 5, uiCards.map((u) => u.id + "=" + u.status).join(" "));
+      rec(`${tag}: Organization config → Integrations shows org #${orgId}'s server statuses`, same && uiCards.length === INTEGRATION_CARD_COUNT, uiCards.map((u) => u.id + "=" + u.status).join(" "));
       const o2 = await page.evaluate(() => ({ vw: window.innerWidth, doc: document.documentElement.scrollWidth }));
       rec(`${tag}: no horizontal overflow on Organization config → Integrations`, o2.doc <= o2.vw, `doc=${o2.doc} vw=${o2.vw}`);
     } else {

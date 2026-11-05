@@ -212,6 +212,24 @@ automatically uses encrypted Postgres instead of the local file database.
 
 ---
 
+- **Billing cannot interrupt care, and no PHI reaches the payment rail**
+  (`docs/BILLING.md`). A billing state can only ever refuse a new user account
+  or a new organization — never messaging, STAT, escalation, broadcasts,
+  admission routing, the on-call board, the schedule or sign-in — and a test
+  asserts that statically (exactly five files may import the entitlement
+  module) and behaviourally (a past-due and an expired tenant still raise a
+  STAT and route an admission). Only a hospital's **directors** and the DocTurn
+  operator can see billing at all; everyone else gets 403. Stripe, when it is
+  switched on, receives only the hospital's name, its billing contact, a PO
+  number, seat counts and invoice line descriptions — no patient, no clinical
+  content — which a positive allow-list enforces by **throwing** on any other
+  field, so no BAA with Stripe is required. Stripe webhooks are rejected unless
+  their `Stripe-Signature` verifies against `STRIPE_WEBHOOK_SECRET` on the raw
+  body (timing-safe, 300-second tolerance) and are idempotent on the Stripe
+  event id, so a replayed or forged delivery cannot mark an invoice paid.
+  "Paid" is only ever the operator's own audited action or a verified Stripe
+  event id.
+
 ## Fix order before real PHI
 
 **P0 — blockers (must do):**

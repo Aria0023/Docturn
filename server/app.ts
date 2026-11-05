@@ -30,6 +30,7 @@ import { loggableError, pgErrorCode } from "./log-safe.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { moduleGate } from "./modules.js";
+import { STRIPE_WEBHOOK_PATH } from "./routes/stripe-webhook.js";
 import { registerNumericParams } from "./params.js";
 import { DatabaseRateLimitStore } from "./rate-limit-store.js";
 import { requestIdMiddleware, requestIdOf } from "./request-id.js";
@@ -101,6 +102,12 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   const globalJson = express.json({ limit: "1mb" });
   app.use((req, res, next) => {
     if (req.method === "POST" && req.path === "/api/messaging/attachments") {
+      return next();
+    }
+    // The Stripe webhook's signature covers the RAW bytes, so the global
+    // parser must not consume them: server/routes/stripe-webhook.ts mounts its
+    // own express.raw on this one path (docs/BILLING.md).
+    if (req.method === "POST" && req.path === STRIPE_WEBHOOK_PATH) {
       return next();
     }
     return globalJson(req, res, next);
@@ -308,6 +315,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       "/api/billing/invoices",
       rateLimit({ ...EXPORT_RATE_LIMIT, ...common, ...sharedStore("invoice") }),
     );
+    // The Stripe webhook is OUTSIDE /api, so the general limiter never sees
+    // it. It gets its own generous budget: Stripe retries a failed delivery,
+    // and a dropped delivery would silently lose a payment (docs/BILLING.md).
+    app.use(STRIPE_WEBHOOK_PATH, rateLimit({ windowMs: 60_000, max: 240, ...common, ...sharedStore("stripehook") }));
     app.use("/api", generalLimiter);
   }
 

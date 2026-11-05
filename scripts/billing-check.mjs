@@ -27,6 +27,11 @@
  *      tests/billing-entitlements.test.ts instead, which can write the row.)
  *   L. Layout at every width (≥44px targets, ≥16px inputs, no overflow);
  *      Z. zero CSP violations / page errors.
+ *   X. (STRIPE_STUB_URL) The Stripe rail against a LOCAL stub: the console's
+ *      "Send to Stripe" button is a server write, only billing data goes over
+ *      the wire, Stripe does NOT email unless the contract opted in, and a
+ *      SIGNED webhook marks the invoice paid with the event id while an
+ *      unsigned one changes nothing.
  *   Q. (REAL_BASE_URL) SYNTHETIC_DATA=false: a fresh tenant has billing OFF,
  *      no contract, no plan and no invoice — nothing is seeded.
  *
@@ -339,6 +344,95 @@ try {
     const refused = await director("POST", "/api/director/hospitalists", { username: "newdoc" + RUN, displayName: "Dr. New", role: "hospitalist" });
     rec("S: and the ONLY thing refused is a new account (402, with a reason)", refused.status === 402 && refused.json && refused.json.error === "seat_refused" && /STAT/i.test(String(refused.json.message)), refused.status + " " + String(refused.json && refused.json.message).slice(0, 120));
     await d.ctx.close();
+  }
+
+  /* ── X. the Stripe rail, against a local stub ────────────────────────── */
+  if (process.env.STRIPE_STUB_URL) {
+    console.log("\n=== the Stripe collection rail (local stub) ===");
+    const stubUrl = process.env.STRIPE_STUB_URL.replace(/\/+$/, "");
+    const reset = async () => fetch(stubUrl + "/__requests", { method: "DELETE" });
+    const seen = async () => (await (await fetch(stubUrl + "/__requests")).json()).requests;
+
+    // Put the hospital back on a live contract and issue a fresh invoice.
+    await dev("PUT", "/api/dev/billing/contracts/" + orgId, {
+      planId, term: "monthly", startDate: "2026-01-01", committedSeats: 1,
+      status: "active", daysUntilDue: 30, poNumber: "PO-" + RUN,
+      billingContactName: "A. Bursar", billingContactEmail: "billing@example.test",
+    });
+    await dev("PATCH", "/api/dev/modules/" + orgId, { id: "billing.stripe", enabled: true });
+    const card = (await dev("GET", "/api/dev/integrations")).json.integrations.find((c) => c.id === "stripe");
+    rec("X: Stripe is a configured PLATFORM integration with no PHI and no BAA", !!card && card.phi === false && card.baaRequired === false, JSON.stringify(card && { scope: card.scope, phi: card.phi, baaRequired: card.baaRequired }));
+
+    let inv2 = null;
+    for (const day of [today()]) {
+      const made = await dev("POST", "/api/dev/billing/invoices", { orgId, periodStart: day, periodEnd: day });
+      if (made.status === 201) inv2 = made.json.invoice;
+    }
+    if (!inv2) {
+      // Today's invoice already exists from the manual leg; make one for the
+      // snapshot's day under a different period by voiding and regenerating.
+      const list = (await dev("GET", "/api/dev/billing/invoices?orgId=" + orgId)).json.invoices;
+      inv2 = list.find((i) => i.status === "issued") || null;
+    }
+    if (inv2 && inv2.status === "draft") await dev("POST", "/api/dev/billing/invoices/" + inv2.id + "/issue");
+    rec("X: there is an issued invoice to collect", !!inv2, inv2 ? inv2.number : "none");
+
+    if (inv2) {
+      await reset();
+      const h = await open(BASE, 390, "DOCTURN", "dev");
+      await nav(h.page, "dev-billing", 3000);
+      // Open the tenant's row, then press the one Stripe control.
+      const pressed = await h.page.evaluate(async (num) => {
+        const open = document.querySelector("[data-tenant-open]");
+        if (open) open.click();
+        await new Promise((r) => setTimeout(r, 900));
+        const row = [...document.querySelectorAll("[data-dev-invoice]")].find((e) => e.getAttribute("data-dev-invoice") === num);
+        const btn = row && row.querySelector("[data-invoice-stripe]");
+        if (!btn) return { found: false };
+        btn.click();
+        // A toast is cleared once the shell has shown it, so catch the FIRST
+        // one rather than reading the store four seconds later.
+        let toast = null;
+        for (let i = 0; i < 80 && !toast; i++) {
+          const t = window.DT.getState().__toast;
+          if (t) toast = t.title + ": " + t.msg;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+        return { found: true, toast };
+      }, inv2.number);
+      rec("X: the console offers exactly one Stripe control for an issued invoice", pressed.found === true, JSON.stringify(pressed));
+      rec("X: and it says Stripe will NOT email the hospital (no opt-in on this contract)", !!pressed.toast && /will NOT email/i.test(pressed.toast), String(pressed.toast).slice(0, 140));
+      await h.ctx.close();
+
+      const reqs = await seen();
+      const paths = reqs.map((r) => r.path);
+      rec("X: a Customer, an item per line and a send_invoice Invoice were created", paths.includes("/v1/customers") && paths.includes("/v1/invoiceitems") && paths.includes("/v1/invoices"), paths.join(","));
+      rec("X: no Stripe SUBSCRIPTION object is ever created", !paths.some((p) => /subscription/i.test(p)), paths.join(","));
+      const invReq = reqs.find((r) => r.path === "/v1/invoices");
+      rec("X: collection_method is send_invoice with the contract's net terms, and auto_advance is false", !!invReq && invReq.form.collection_method === "send_invoice" && invReq.form.days_until_due === "30" && invReq.form.auto_advance === "false", JSON.stringify(invReq && invReq.form).slice(0, 200));
+      const wire = reqs.flatMap((r) => Object.entries(r.form).map(([k, v]) => k + "=" + v)).join("\n");
+      rec("X: NOTHING clinical went over the wire", !/patient|mrn|room|complaint|diagnos|note|message|initials/i.test(wire), wire.slice(0, 160).replace(/\n/g, " | "));
+
+      // A SIGNED webhook marks our invoice paid with the EVENT ID; an unsigned
+      // one changes nothing.
+      const stripeId = (await dev("GET", "/api/dev/billing/invoices?orgId=" + orgId)).json.invoices.find((i) => i.number === inv2.number).stripeInvoiceId;
+      const event = { id: "evt_check_" + RUN, type: "invoice.paid", data: { object: { id: stripeId, metadata: { docturn_invoice_id: String(inv2.id) } } } };
+      const unsigned = await fetch(BASE + "/webhooks/stripe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(event) });
+      rec("X: an UNSIGNED webhook is refused 400 and changes nothing", unsigned.status === 400, String(unsigned.status));
+      const signedRes = await (await fetch(stubUrl + "/__deliver", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: BASE + "/webhooks/stripe", event }),
+      })).json();
+      rec("X: a SIGNED webhook is applied", signedRes.status === 200 && signedRes.body && signedRes.body.applied === "invoice.paid", JSON.stringify(signedRes).slice(0, 160));
+      const after = (await dev("GET", "/api/dev/billing/invoices?orgId=" + orgId)).json.invoices.find((i) => i.number === inv2.number);
+      rec("X: our invoice is paid, with the STRIPE EVENT ID as its source", after.status === "paid" && after.paidSource === "stripe" && after.paidReference === event.id, JSON.stringify({ status: after.status, source: after.paidSource, ref: after.paidReference }));
+      const replay = await (await fetch(stubUrl + "/__deliver", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target: BASE + "/webhooks/stripe", event }),
+      })).json();
+      rec("X: a REDELIVERY of the same event id is recognised, not applied twice", replay.status === 200 && replay.body && replay.body.duplicate === true, JSON.stringify(replay).slice(0, 120));
+    }
   }
 
   /* ── Q. no demo data on a synthetic-data-off server ──────────────────── */

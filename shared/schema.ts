@@ -1425,6 +1425,50 @@ export const retainedInvoices = pgTable("retained_invoices", {
   archivedReason: text("archived_reason").notNull().default("organization_deleted"),
 });
 
+
+/**
+ * Every billing status transition, and every Stripe delivery.
+ *
+ * Two jobs in one table, on purpose:
+ *   • IDEMPOTENCY. A Stripe delivery is recorded here FIRST, keyed on the
+ *     Stripe EVENT ID under a unique index, before anything is applied. A
+ *     redelivery of the same event is recognised and answered 200 without
+ *     being applied twice — Stripe must not keep retrying a delivery we have
+ *     already honoured.
+ *   • HISTORY. Every status transition is appended too (`stripe_event_id`
+ *     null), whoever caused it, so "when did this invoice become paid, and
+ *     why" is answerable from one table.
+ *
+ * No PHI: ids, a type, two statuses and a small detail object.
+ */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: serial("id").primaryKey(),
+    /** Null only for a delivery we could not attribute to a tenant. */
+    organizationId: integer("organization_id"),
+    invoiceId: integer("invoice_id"),
+    /** The Stripe event id, or null for a transition we made ourselves. */
+    stripeEventId: text("stripe_event_id"),
+    type: text("type").notNull(),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    actorUserId: integer("actor_user_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    // A PLAIN unique index, not a partial one: Postgres treats NULLs as
+    // distinct, so our own transitions (stripe_event_id NULL) never collide,
+    // and `ON CONFLICT (stripe_event_id) DO NOTHING` can infer this index — a
+    // partial index would make that statement fail with "no unique or
+    // exclusion constraint matching the ON CONFLICT specification".
+    stripeEventUniq: uniqueIndex("billing_events_stripe_event_uniq").on(t.stripeEventId),
+    byOrg: index("billing_events_org_idx").on(t.organizationId),
+    byInvoice: index("billing_events_invoice_idx").on(t.invoiceId),
+  }),
+);
+
 /**
  * Shared rate-limit counters (E1): the Postgres-backed express-rate-limit
  * store, so N instances enforce ONE login / account / registration budget.
@@ -1543,6 +1587,7 @@ export type BillingInvoice = typeof billingInvoices.$inferSelect;
 export type InsertBillingInvoice = typeof billingInvoices.$inferInsert;
 export type BillingCounter = typeof billingCounters.$inferSelect;
 export type RetainedInvoice = typeof retainedInvoices.$inferSelect;
+export type BillingEvent = typeof billingEvents.$inferSelect;
 
 /* ── billing request bodies (every billing route safeParses one of these) ──
  * Integer cents only — `z.number().int()` rejects 18.5 outright, so a float

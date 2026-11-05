@@ -60,6 +60,7 @@ import {
   billingInvoices,
   billingCounters,
   retainedInvoices,
+  billingEvents,
   type JobLease,
   type SsoConnection,
   type ScimToken,
@@ -74,6 +75,7 @@ import {
   type BillingInvoice,
   type InsertBillingInvoice,
   type RetainedInvoice,
+  type BillingEvent,
   type DirectoryFavorite,
   type FavoriteTargetKind,
   type UserPin,
@@ -2394,6 +2396,9 @@ export class DatabaseStorage implements IStorage {
       // code and name) INSIDE this transaction and only then deleted — exactly
       // the way the compliance trail is archived above, so a rolled-back
       // attempt leaves no duplicate copy. docs/BILLING.md states the decision.
+      // The tenant's billing EVENTS (its Stripe deliveries and status
+      // transitions) leave with it: they describe rows that are going.
+      await tx.delete(billingEvents).where(eq(billingEvents.organizationId, id));
       await this.archiveInvoicesIn(tx, id, "organization_deleted");
       await tx.delete(billingInvoices).where(eq(billingInvoices.organizationId, id));
       // user-keyed rows with no org column
@@ -3744,6 +3749,75 @@ export class DatabaseStorage implements IStorage {
       .where(eq(billingInvoices.stripeInvoiceId, stripeInvoiceId));
     return row;
   }
+
+  /* ── billing: events + idempotency ─────────────────────────────────────────
+   * A Stripe delivery is CLAIMED here before it is applied. The unique index
+   * on stripe_event_id is the whole mechanism: ON CONFLICT DO NOTHING returns
+   * no row for an event we have already seen, so the caller answers 200
+   * without applying it a second time.
+   */
+  async recordStripeEvent(row: {
+    organizationId: number | null;
+    invoiceId: number | null;
+    stripeEventId: string;
+    type: string;
+    detail?: Record<string, unknown>;
+  }): Promise<boolean> {
+    const inserted = await this.db
+      .insert(billingEvents)
+      .values({
+        organizationId: row.organizationId,
+        invoiceId: row.invoiceId,
+        stripeEventId: row.stripeEventId,
+        type: row.type,
+        detail: row.detail ?? {},
+      })
+      .onConflictDoNothing({ target: billingEvents.stripeEventId })
+      .returning({ id: billingEvents.id });
+    return inserted.length > 0;
+  }
+  /** Append one status transition (ours or Stripe's). Never deduplicated. */
+  async recordBillingTransition(row: {
+    organizationId: number | null;
+    invoiceId: number | null;
+    stripeEventId: string | null;
+    type: string;
+    fromStatus?: string | null;
+    toStatus?: string | null;
+    actorUserId?: number | null;
+    detail?: Record<string, unknown>;
+  }): Promise<BillingEvent> {
+    const [saved] = await this.db
+      .insert(billingEvents)
+      .values({
+        organizationId: row.organizationId,
+        invoiceId: row.invoiceId,
+        stripeEventId: row.stripeEventId,
+        type: row.type,
+        fromStatus: row.fromStatus ?? null,
+        toStatus: row.toStatus ?? null,
+        actorUserId: row.actorUserId ?? null,
+        detail: row.detail ?? {},
+      })
+      .returning();
+    return saved!;
+  }
+  async listBillingEvents(orgId: number, limit = 100): Promise<BillingEvent[]> {
+    return this.db
+      .select()
+      .from(billingEvents)
+      .where(eq(billingEvents.organizationId, orgId))
+      .orderBy(desc(billingEvents.id))
+      .limit(limit);
+  }
+  async getBillingEventByStripeId(stripeEventId: string): Promise<BillingEvent | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(billingEvents)
+      .where(eq(billingEvents.stripeEventId, stripeEventId));
+    return row;
+  }
+
   /** The platform's archive of a deleted tenant's invoices. */
   async listRetainedInvoices(orgId: number): Promise<RetainedInvoice[]> {
     return this.db

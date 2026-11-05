@@ -444,6 +444,44 @@ that have both a light and a dark reading).
 
 ---
 
+## Organization billing (in code and tested)
+
+Full design, decisions and the operator runbook: **`docs/BILLING.md`**. In
+brief, because an IT security review will ask:
+
+- Modules `billing` (the hospital's Settings → Billing) and `billing.stripe`
+  (the collection rail) are **both default OFF**, so no existing tenant's
+  screens or behaviour change until the DocTurn operator switches them on. A
+  tenant with **no contract on file is unlimited and unbilled** — there is no
+  implicit default plan.
+- **Billing can never interrupt patient care.** Entitlement checks exist in
+  exactly two places — creating a seat and creating an organization — and
+  `tests/billing-safety-invariant.test.ts` proves it both statically (an exact
+  allow-list of files may import `server/billing/entitlements.ts`; no care path
+  mentions billing; the single billing gate rule cannot match a care route) and
+  behaviourally (a past-due and an expired organization still sign in, send a
+  STAT, route an admission, acknowledge a broadcast and read the on-call
+  board). A past-due contract warns for 30 days and then refuses only a **new
+  account**.
+- A **billable seat** is one exported function (`isBillableSeat`): a user who
+  is not deactivated and is not a developer. `seat_snapshots` records it daily
+  **in the organization's own timezone**, so an invoice line can cite the day a
+  hospital is being charged for.
+- Invoice numbers are **gap-free and never reused** (allocated inside the
+  invoice's own transaction); an issued invoice is immutable except for its
+  status, so a mid-term plan change prorates on the **next** invoice and never
+  retroactively.
+- **Plans only grant.** A contract never switches a module off and never
+  changes the effective module map.
+- On tenant delete the seat history and the contract leave with the tenant;
+  **invoices are archived** to `retained_invoices` first, the way the
+  compliance trail is.
+- **No PHI ever reaches Stripe**, enforced by an allow-list payload builder
+  that throws on any other field; webhooks are signature-verified and
+  idempotent on the Stripe event id. Stripe needs **no BAA** for this.
+
+---
+
 ## Organizational (never satisfied by code)
 
 These stay *manual* controls in the compliance monitor; a named owner

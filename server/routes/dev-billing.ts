@@ -15,6 +15,14 @@ import { effectivePerSeatCents, resolveContract } from "../billing/contracts.js"
 import { seatEntitlementFor } from "../billing/entitlements.js";
 import { generateInvoiceLines } from "../billing/invoices.js";
 import { seatUsageFor } from "../billing/seats.js";
+import { stripePlatformConfig } from "../billing/stripe-config.js";
+import {
+  createStripeCustomer,
+  createStripeInvoice,
+  createStripeInvoiceItem,
+  finalizeStripeInvoice,
+} from "../billing/stripe.js";
+import { isModuleEnabled } from "../modules.js";
 import { isPlatformOrg } from "../billing/seats.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
@@ -214,7 +222,15 @@ export function registerDevBillingRoutes(app: Express) {
         overageSeats: contract ? Math.max(0, seats.live.total - contract.committedSeats) : 0,
       });
     }
-    res.json({ tenants: rows, totals: { tenants: rows.length, committedByCurrency } });
+    // Whether the operator has configured Stripe AT ALL, so the console can
+    // say in plain words who issues invoices and who marks them paid. The
+    // per-tenant switch is `billing.stripe`; this is the platform half.
+    const { config, missing } = stripePlatformConfig();
+    res.json({
+      tenants: rows,
+      totals: { tenants: rows.length, committedByCurrency },
+      stripe: { configured: !!config, missing },
+    });
   });
 
   app.get("/api/dev/billing/contracts/:orgId", requireAuth, requireRole("developer"), async (req, res) => {
@@ -488,5 +504,89 @@ export function registerDevBillingRoutes(app: Express) {
       riskLevel: "medium",
     });
     res.json({ invoice: publicInvoice(saved!) });
+  });
+
+  /**
+   * Push an ISSUED invoice to Stripe for collection (module `billing.stripe`).
+   *
+   * Stripe is the collection rail, so this changes nothing about OUR invoice
+   * except remembering the Stripe id: the amount, the lines and the period are
+   * already fixed. One Stripe Customer per hospital (remembered on the
+   * contract), one Invoice Item per line of our invoice, then a Stripe Invoice
+   * with collection_method "send_invoice" and the contract's net terms.
+   *
+   * No Stripe Subscription object is ever created — see server/billing/stripe.ts
+   * for why.
+   */
+  app.post("/api/dev/billing/invoices/:id/stripe", requireAuth, requireRole("developer"), async (req, res) => {
+    const me = currentUser(req);
+    const inv = await invoiceOr404(req, res);
+    if (!inv) return;
+    const { config, missing } = stripePlatformConfig();
+    if (!config) return res.status(409).json({ error: "stripe_not_configured", missing });
+    if (!(await isModuleEnabled(inv.organizationId, "billing.stripe"))) {
+      return res.status(409).json({ error: "module_disabled", module: "billing.stripe" });
+    }
+    if (inv.status !== "issued") return res.status(409).json({ error: "not_issued", status: inv.status });
+    if (inv.stripeInvoiceId) return res.status(409).json({ error: "already_pushed", stripeInvoiceId: inv.stripeInvoiceId });
+
+    const org = await storage().getOrganization(inv.organizationId);
+    const contract = await storage().getOrgContract(inv.organizationId);
+    if (!org || !contract) return res.status(409).json({ error: "no_contract" });
+    const plan = await storage().getBillingPlan(contract.planId);
+    if (!plan) return res.status(409).json({ error: "no_plan" });
+
+    // One Customer per hospital, remembered on the contract.
+    let customerId = contract.stripeCustomerId;
+    if (!customerId) {
+      const made = await createStripeCustomer(config, { org, contract });
+      if (!made.ok || !made.body?.id) return res.status(502).json({ error: "stripe_failed", stage: "customer", detail: made.error });
+      customerId = made.body.id;
+      await storage().updateOrgContract(org.id, { stripeCustomerId: customerId });
+    }
+
+    for (const line of inv.lines) {
+      const item = await createStripeInvoiceItem(config, customerId, inv, line);
+      if (!item.ok) return res.status(502).json({ error: "stripe_failed", stage: "invoice_item", detail: item.error });
+    }
+    const peakSeats = Math.max(contract.committedSeats, ...inv.lines.map((l) => l.quantity), 0);
+    const made = await createStripeInvoice(config, customerId, inv, contract, plan.code, peakSeats);
+    if (!made.ok || !made.body?.id) return res.status(502).json({ error: "stripe_failed", stage: "invoice", detail: made.error });
+    const finalized = await finalizeStripeInvoice(config, made.body.id);
+    if (!finalized.ok) return res.status(502).json({ error: "stripe_failed", stage: "finalize", detail: finalized.error });
+
+    const saved = await storage().updateInvoice(inv.id, { stripeInvoiceId: made.body.id });
+    await storage().recordBillingTransition({
+      organizationId: org.id,
+      invoiceId: inv.id,
+      stripeEventId: null,
+      type: "stripe_push",
+      fromStatus: inv.status,
+      toStatus: inv.status,
+      actorUserId: me.id,
+      detail: { stripeInvoiceId: made.body.id, emailOptIn: contract.stripeSendInvoiceEmail },
+    });
+    await appendAudit({
+      organizationId: org.id,
+      userId: me.id,
+      action: "billing.stripe_push",
+      resourceType: "billing_invoice",
+      resourceId: inv.id,
+      details: {
+        number: inv.number,
+        totalCents: inv.totalCents,
+        currency: inv.currency,
+        // Whether STRIPE will email the hospital — off unless this contract
+        // opted in explicitly.
+        emailOptIn: contract.stripeSendInvoiceEmail,
+      },
+      riskLevel: "medium",
+    });
+    res.json({
+      invoice: publicInvoice(saved!),
+      stripeInvoiceId: made.body.id,
+      /** Truthful: Stripe only emails when the contract opted in. */
+      emailed: contract.stripeSendInvoiceEmail,
+    });
   });
 }

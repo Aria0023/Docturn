@@ -416,7 +416,7 @@ function ContractForm({ row, plans, onSave, onClear, busy }) {
   );
 }
 
-function InvoiceActions({ inv, onIssue, onVoid, onPaid, busy }) {
+function InvoiceActions({ inv, onIssue, onVoid, onPaid, onStripe, stripeOn, busy }) {
   const [reason, setReason] = React.useState("");
   const [ref, setRef] = React.useState("");
   return (
@@ -425,6 +425,17 @@ function InvoiceActions({ inv, onIssue, onVoid, onPaid, busy }) {
         {inv.status === "draft" && <BillButton primary icon="send" dataAttr="data-invoice-issue" disabled={busy} onClick={onIssue}>Issue</BillButton>}
         {(inv.status === "issued") && (
           <BillButton primary icon="circle-check-big" dataAttr="data-invoice-paid" disabled={busy} onClick={() => onPaid(ref.trim() || null)}>Mark paid</BillButton>
+        )}
+        {/* Stripe is the COLLECTION rail, so this only appears for an invoice
+            that has been issued, when Stripe is configured and this hospital's
+            billing.stripe is on, and only until it has been sent once. */}
+        {inv.status === "issued" && stripeOn && !inv.stripeInvoiceId && (
+          <BillButton icon="credit-card" dataAttr="data-invoice-stripe" disabled={busy} onClick={onStripe}>Send to Stripe</BillButton>
+        )}
+        {inv.stripeInvoiceId && (
+          <span data-invoice-stripe-id style={{ fontSize: 12, color: "var(--muted-foreground)", alignSelf: "center", overflowWrap: "anywhere" }}>
+            Stripe {inv.stripeInvoiceId}
+          </span>
         )}
         {(inv.status === "draft" || inv.status === "issued") && (
           <BillButton danger icon="ban" dataAttr="data-invoice-void" disabled={busy || reason.trim().length < 3} onClick={() => onVoid(reason.trim())}
@@ -445,7 +456,7 @@ function InvoiceActions({ inv, onIssue, onVoid, onPaid, busy }) {
   );
 }
 
-function TenantRow({ row, plans, invoices, actions, busy }) {
+function TenantRow({ row, plans, invoices, actions, busy, stripeOn }) {
   const [open, setOpen] = React.useState(false);
   const [gen, setGen] = React.useState({ periodStart: "", periodEnd: "" });
   const ent = row.view || {};
@@ -511,10 +522,11 @@ function TenantRow({ row, plans, invoices, actions, busy }) {
                   </div>
                 )}
                 {(inv.status === "draft" || inv.status === "issued") && (
-                  <InvoiceActions inv={inv} busy={busy}
+                  <InvoiceActions inv={inv} busy={busy} stripeOn={stripeOn}
                     onIssue={() => actions.issueInvoice(inv.id)}
                     onVoid={(reason) => actions.voidInvoice(inv.id, reason)}
-                    onPaid={(ref) => actions.markInvoicePaid(inv.id, ref)} />
+                    onPaid={(ref) => actions.markInvoicePaid(inv.id, ref)}
+                    onStripe={() => actions.pushInvoiceToStripe(inv.id)} />
                 )}
               </div>
             ))}
@@ -649,10 +661,12 @@ function DevBilling() {
         <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
           {(d.tenants || []).map((row) => (
             <TenantRow key={row.orgId} row={row} plans={plans} invoices={byOrg[row.orgId]} busy={!!d.busy}
+              stripeOn={!!(d.stripe && d.stripe.configured)}
               actions={{
                 saveContract: a.saveDevContract, clearContract: a.clearDevContract,
                 generateInvoice: a.generateInvoice, issueInvoice: a.issueInvoice,
                 voidInvoice: a.voidInvoice, markInvoicePaid: a.markInvoicePaid,
+                pushInvoiceToStripe: a.pushInvoiceToStripe,
               }} />
           ))}
         </div>

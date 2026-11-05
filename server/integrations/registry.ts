@@ -24,6 +24,7 @@ import {
 } from "../services/schedule-sources/epic-fhir.js";
 import { getSelectedSource } from "../services/schedule-sources/index.js";
 import type { ScheduleSourceId } from "../services/schedule-sources/types.js";
+import { stripeTestConnection } from "../billing/stripe.js";
 import { credentialKeyState } from "./crypto.js";
 import { CREDENTIAL_FIELDS, readOrgCredentials, type CredentialField, type StoredCredentials } from "./credentials.js";
 import { INTEGRATION_MODULES } from "./gates.js";
@@ -53,7 +54,7 @@ import { guardedFetch, integrationDeps, integrationFetch, IntegrationCallError }
  * claim an effect the server does not have.
  */
 
-export const INTEGRATION_IDS = ["twilio-sms", "push", "openai-intake", "amion", "epic-fhir"] as const;
+export const INTEGRATION_IDS = ["twilio-sms", "push", "openai-intake", "amion", "epic-fhir", "stripe"] as const;
 export type IntegrationId = (typeof INTEGRATION_IDS)[number];
 export type IntegrationStatus = "active" | "off" | "not_configured" | "needs_baa" | "error";
 export type IntegrationScope = "platform" | "organization";
@@ -294,6 +295,63 @@ const twilio: IntegrationDef = {
       return fail(`account_${body.status}`.slice(0, 40), `Twilio says the account is ${body.status}; texts will not be delivered.`);
     }
     return { ok: true, code: "ok", message: "Twilio accepted the Account SID and Auth Token; the account is active.", detail: "No text was sent." };
+  },
+};
+
+
+// ── Stripe (billing collection rail; docs/BILLING.md) ───────────────────────
+// A PLATFORM-scope entry, so it inherits the real "Test connection", the
+// statuses and the Integrations panel exactly like Twilio and OpenAI. The
+// CONTRACT is DocTurn's — Stripe only collects — and the only things ever sent
+// are billing facts (hospital name, billing contact, PO number, seat counts,
+// line descriptions). That is not PHI and needs no BAA, which is why `phi` is
+// false and `baaRequired` is false, and why server/billing/stripe-payload.ts
+// enforces it with an allow-list that THROWS on anything else.
+const STRIPE_VARS: EnvVarSpec[] = [
+  { name: "STRIPE_SECRET_KEY", required: true, secret: true, placeholder: "restricted API key from the Stripe dashboard", description: "Stripe secret API key. A RESTRICTED key with write access to Customers, Invoice Items and Invoices is enough — DocTurn never reads a balance transaction or a payment method." },
+  { name: "STRIPE_WEBHOOK_SECRET", required: true, secret: true, placeholder: "signing secret of the /webhooks/stripe endpoint", description: "The signing secret of the webhook endpoint you added in Stripe for invoice.paid, invoice.payment_failed and invoice.voided. Every delivery is verified against it." },
+];
+
+const stripe: IntegrationDef = {
+  id: "stripe",
+  name: "Stripe invoicing",
+  vendor: "Stripe",
+  icon: "credit-card",
+  purpose:
+    "Collect hospital invoices through Stripe: a Customer per hospital and a send_invoice Stripe Invoice with your contract's net terms — the ACH / PO / net-30 path hospitals use. DocTurn's contract stays the source of truth; Stripe is only the collection rail, and no Stripe Subscription is ever created.",
+  scope: "platform",
+  module: "billing.stripe",
+  phi: false,
+  baaRequired: false,
+  phiNote:
+    "Only billing data is sent: the hospital's name, its billing contact's name and email, the PO number, the currency, the net terms, seat counts and the invoice line descriptions. No patient, no clinical content, no message text — so Stripe receives no PHI and needs no BAA. A payload builder refuses any field outside that allow-list.",
+  offEffect:
+    "Nothing is sent to Stripe for this organization and its webhooks are ignored: the DocTurn operator issues its invoices and marks them paid by hand.",
+  activeText:
+    "Connected — this organization's issued invoices can be pushed to Stripe for collection, and Stripe's paid / failed / voided events are honoured.",
+  envVars: STRIPE_VARS,
+  async evaluate(_db, _org, env) {
+    const missing = present(env, STRIPE_VARS.map((v) => v.name));
+    const fp = fingerprint(["stripe", env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET, env.STRIPE_API_BASE]);
+    if (missing.length) return { configured: false, missing, invalid: [], source: null, note: null, fingerprint: fp };
+    const base = (env.STRIPE_API_BASE ?? "").trim();
+    return {
+      configured: true,
+      missing: [],
+      invalid: [],
+      source: "env",
+      // Say so out loud when the operator has pointed this server at something
+      // other than Stripe — a developer's local stub must never look live.
+      note: base && !/^https:\/\/api\.stripe\.com\/?$/.test(base)
+        ? `STRIPE_API_BASE points at ${base}, not Stripe's own API — this server is talking to a stand-in, not to Stripe.`
+        : null,
+      fingerprint: fp,
+    };
+  },
+  async test(_db, _org, env) {
+    const out = await stripeTestConnection(env);
+    if (!out.ok) return fail(out.code.slice(0, 40), out.message);
+    return { ok: true, code: "ok", message: out.message, detail: "No invoice was created and nothing was charged." };
   },
 };
 
@@ -606,7 +664,7 @@ const epic: IntegrationDef = {
   lastSync: async (db, org) => syncCheck(await readEpicSync(db, org.id)),
 };
 
-export const INTEGRATIONS: readonly IntegrationDef[] = [twilio, push, openai, amion, epic];
+export const INTEGRATIONS: readonly IntegrationDef[] = [twilio, push, openai, amion, epic, stripe];
 
 export function integrationDef(id: string): IntegrationDef | undefined {
   return INTEGRATIONS.find((d) => d.id === id);

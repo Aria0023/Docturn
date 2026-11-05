@@ -4696,6 +4696,34 @@
     return devBillingWrite(api("POST", "/api/dev/billing/invoices/" + Number(id) + "/void", { reason: reason }),
       "Invoice voided", "The number is kept forever and is never reused.");
   };
+  /**
+   * Push an ISSUED invoice to Stripe for collection (module `billing.stripe`).
+   * The hospital is emailed by STRIPE only if the contract opted in, so the
+   * confirmation says which of the two happened — never "emailed" when it was
+   * not.
+   */
+  DT.actions.pushInvoiceToStripe = function (id) {
+    devBillingBusy(true);
+    return api("POST", "/api/dev/billing/invoices/" + Number(id) + "/stripe", {}).then(function (v) {
+      DT.set(function (s) {
+        s.__toast = {
+          tone: "accepted",
+          title: "Sent to Stripe",
+          msg: (v && v.emailed)
+            ? "Stripe will email the hospital's billing contact (this contract opted in)."
+            : "Stripe is holding it for collection. It will NOT email the hospital — this contract has not opted in.",
+        };
+        return s;
+      });
+      return DT.actions.loadDevBilling().then(function () { return v || true; });
+    }, function (e) {
+      devBillingBusy(false);
+      billingRefusal(e, "Not sent to Stripe",
+        "The server refused it — nothing was sent to Stripe and nothing was changed.");
+      return null;
+    });
+  };
+
   DT.actions.markInvoicePaid = function (id, reference) {
     return devBillingWrite(api("POST", "/api/dev/billing/invoices/" + Number(id) + "/mark-paid", { reference: reference || null }),
       "Invoice marked paid", "Recorded with your user id and the time, in the hospital's trail.");

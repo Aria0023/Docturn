@@ -4,6 +4,7 @@ import { registerAmionRoutes } from "./amion.js";
 import { registerAssignmentRoutes } from "./assignments.js";
 import { registerBillingRoutes } from "./billing.js";
 import { registerDevBillingRoutes } from "./dev-billing.js";
+import { registerStripeWebhookRoutes } from "./stripe-webhook.js";
 import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
 import { registerCareTeamRoutes } from "./careteam.js";
@@ -84,6 +85,10 @@ export function registerRoutes(app: Express) {
   // module-gated — the console has to work in order to switch billing on).
   registerBillingRoutes(app);
   registerDevBillingRoutes(app);
+  // Stripe's webhook, OUTSIDE /api: unauthenticated (the signature IS the
+  // authentication), with its own raw-body parser and its own rate-limit
+  // budget, so a retrying Stripe can never spend a clinician's.
+  registerStripeWebhookRoutes(app);
   registerCmsRoutes(app);
   registerMobileRoutes(app);
   registerAmionRoutes(app);

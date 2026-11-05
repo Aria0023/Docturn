@@ -1207,6 +1207,7 @@
     issueInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
     voidInvoice: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
     markInvoicePaid: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
+    pushInvoiceToStripe: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(null); },
     setMyTheme: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
     loadSoundPrefs: function () { set(function (s) { s.soundPrefs = null; return s; }); return Promise.resolve(null); },
     setSoundPref: function () { set(function (s) { s.__toast = notConnected(); return s; }); return Promise.resolve(false); },
