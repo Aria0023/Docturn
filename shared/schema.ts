@@ -1318,6 +1318,113 @@ export const orgContracts = pgTable(
   }),
 );
 
+
+/**
+ * One invoice. Generated from the contract and the seat snapshots, and it
+ * CITES the snapshot dates each line counted (lines[].citedDates), so a
+ * hospital can audit every number against `seat_snapshots`.
+ *
+ * `number` is gap-free and never reused: it is allocated from
+ * `billing_counters` inside the SAME transaction as this row. An issued
+ * invoice is immutable except for its status — the only correction is
+ * void-and-reissue, and a void keeps its number forever.
+ *
+ * "Paid" has exactly two possible sources, both recorded: the operator's own
+ * action (`paid_source` = 'operator', with their user id) or a Stripe webhook
+ * event (`paid_source` = 'stripe', with the event id in `paid_reference`).
+ * There is no third source and there are no mock invoices.
+ */
+export const billingInvoices = pgTable(
+  "billing_invoices",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    /** The contract as it was when this invoice was generated. */
+    contractId: integer("contract_id"),
+    number: text("number").notNull(),
+    /** Inclusive period, in the organization's own days (YYYY-MM-DD). */
+    periodStart: text("period_start").notNull(),
+    periodEnd: text("period_end").notNull(),
+    currency: text("currency").notNull(),
+    lines: jsonb("lines")
+      .$type<
+        Array<{
+          description: string;
+          quantity: number;
+          unitCents: number;
+          amountCents: number;
+          citedDates: string[];
+        }>
+      >()
+      .notNull(),
+    subtotalCents: integer("subtotal_cents").notNull(),
+    totalCents: integer("total_cents").notNull(),
+    status: text("status", { enum: INVOICE_STATUSES }).notNull().default("draft"),
+    issuedAt: timestamp("issued_at"),
+    /** Net terms applied at issue (YYYY-MM-DD). */
+    dueOn: text("due_on"),
+    paidAt: timestamp("paid_at"),
+    /** 'operator' | 'stripe' — never anything else. */
+    paidSource: text("paid_source"),
+    /** The operator who marked it paid, when paid_source = 'operator'. */
+    paidByUserId: integer("paid_by_user_id"),
+    /** The Stripe event id, or the operator's own reference (a cheque number). */
+    paidReference: text("paid_reference"),
+    stripeInvoiceId: text("stripe_invoice_id"),
+    voidReason: text("void_reason"),
+    createdBy: integer("created_by"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => ({
+    numberUniq: uniqueIndex("billing_invoices_number_uniq").on(t.number),
+    byOrg: index("billing_invoices_org_idx").on(t.organizationId),
+  }),
+);
+
+/**
+ * Monotonic counters. One row, `invoice`, whose value is bumped inside the
+ * invoice transaction so numbers are gap-free and never reused.
+ */
+export const billingCounters = pgTable("billing_counters", {
+  name: text("name").primaryKey(),
+  value: integer("value").notNull().default(0),
+});
+
+/**
+ * Invoices of a DELETED tenant. The seat history leaves with the tenant — a
+ * count means nothing without it — but an invoice is a financial record of the
+ * operator's own business, so it is copied here (no foreign keys,
+ * denormalized) inside the delete transaction and only then removed, exactly
+ * the way `retained_compliance_records` keeps the compliance trail.
+ */
+export const retainedInvoices = pgTable("retained_invoices", {
+  id: serial("id").primaryKey(),
+  sourceId: integer("source_id").notNull(),
+  organizationId: integer("organization_id"),
+  organizationCode: text("organization_code"),
+  organizationName: text("organization_name"),
+  number: text("number").notNull(),
+  periodStart: text("period_start").notNull(),
+  periodEnd: text("period_end").notNull(),
+  currency: text("currency").notNull(),
+  lines: jsonb("lines").$type<Record<string, unknown>[]>().notNull(),
+  subtotalCents: integer("subtotal_cents").notNull(),
+  totalCents: integer("total_cents").notNull(),
+  status: text("status").notNull(),
+  issuedAt: timestamp("issued_at"),
+  dueOn: text("due_on"),
+  paidAt: timestamp("paid_at"),
+  paidSource: text("paid_source"),
+  paidByUserId: integer("paid_by_user_id"),
+  paidReference: text("paid_reference"),
+  stripeInvoiceId: text("stripe_invoice_id"),
+  archivedAt: timestamp("archived_at").notNull().defaultNow(),
+  archivedReason: text("archived_reason").notNull().default("organization_deleted"),
+});
+
 /**
  * Shared rate-limit counters (E1): the Postgres-backed express-rate-limit
  * store, so N instances enforce ONE login / account / registration budget.
@@ -1432,6 +1539,10 @@ export type BillingPlan = typeof billingPlans.$inferSelect;
 export type InsertBillingPlan = typeof billingPlans.$inferInsert;
 export type OrgContract = typeof orgContracts.$inferSelect;
 export type InsertOrgContract = typeof orgContracts.$inferInsert;
+export type BillingInvoice = typeof billingInvoices.$inferSelect;
+export type InsertBillingInvoice = typeof billingInvoices.$inferInsert;
+export type BillingCounter = typeof billingCounters.$inferSelect;
+export type RetainedInvoice = typeof retainedInvoices.$inferSelect;
 
 /* ── billing request bodies (every billing route safeParses one of these) ──
  * Integer cents only — `z.number().int()` rejects 18.5 outright, so a float
@@ -1473,6 +1584,17 @@ export const orgContractPutSchema = z
     message: "endDate must not precede startDate",
     path: ["endDate"],
   });
+
+export const invoiceGenerateSchema = z
+  .object({
+    orgId: z.number().int().positive(),
+    periodStart: billingDaySchema,
+    periodEnd: billingDaySchema,
+  })
+  .refine((v) => v.periodEnd >= v.periodStart, { message: "periodEnd must not precede periodStart", path: ["periodEnd"] });
+
+export const invoiceVoidSchema = z.object({ reason: z.string().min(3).max(300) });
+export const invoicePaidSchema = z.object({ reference: z.string().max(200).nullable().optional() });
 
 /** What a DIRECTOR may change on their own contract: the billing contact. */
 export const billingContactPatchSchema = z.object({

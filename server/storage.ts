@@ -57,6 +57,9 @@ import {
   seatSnapshots,
   billingPlans,
   orgContracts,
+  billingInvoices,
+  billingCounters,
+  retainedInvoices,
   type JobLease,
   type SsoConnection,
   type ScimToken,
@@ -68,6 +71,9 @@ import {
   type InsertBillingPlan,
   type OrgContract,
   type InsertOrgContract,
+  type BillingInvoice,
+  type InsertBillingInvoice,
+  type RetainedInvoice,
   type DirectoryFavorite,
   type FavoriteTargetKind,
   type UserPin,
@@ -1850,6 +1856,45 @@ export class DatabaseStorage implements IStorage {
    * is still that tenant's history, must be retained with it — and must leave
    * with it, or its users FK blocks the delete.
    */
+  /**
+   * Copy a tenant's INVOICES into `retained_invoices` — no foreign keys,
+   * denormalized with the organization's code and name — on a caller-supplied
+   * transaction, so "archived AND deleted" commits atomically. Unlike the seat
+   * snapshots (which mean nothing without the tenant), an invoice is a
+   * financial record of the operator's own business and must outlive it.
+   * docs/BILLING.md records the decision.
+   */
+  private async archiveInvoicesIn(tx: Tx, orgId: number, reason: string) {
+    const [org] = await tx.select().from(organizations).where(eq(organizations.id, orgId));
+    const rows = await tx.select().from(billingInvoices).where(eq(billingInvoices.organizationId, orgId));
+    if (rows.length === 0) return 0;
+    await tx.insert(retainedInvoices).values(
+      rows.map((i) => ({
+        sourceId: i.id,
+        organizationId: orgId,
+        organizationCode: org?.code ?? null,
+        organizationName: org?.name ?? null,
+        number: i.number,
+        periodStart: i.periodStart,
+        periodEnd: i.periodEnd,
+        currency: i.currency,
+        lines: i.lines as unknown as Record<string, unknown>[],
+        subtotalCents: i.subtotalCents,
+        totalCents: i.totalCents,
+        status: i.status,
+        issuedAt: i.issuedAt,
+        dueOn: i.dueOn,
+        paidAt: i.paidAt,
+        paidSource: i.paidSource,
+        paidByUserId: i.paidByUserId,
+        paidReference: i.paidReference,
+        stripeInvoiceId: i.stripeInvoiceId,
+        archivedReason: reason,
+      })),
+    );
+    return rows.length;
+  }
+
   private async archiveComplianceRecordsIn(tx: Tx, orgId: number, reason: string) {
     const [org] = await tx
       .select()
@@ -2343,6 +2388,14 @@ export class DatabaseStorage implements IStorage {
       // NOT: they are archived first, like the compliance trail (see below).
       await tx.delete(seatSnapshots).where(eq(seatSnapshots.organizationId, id));
       await tx.delete(orgContracts).where(eq(orgContracts.organizationId, id));
+      // INVOICES are not cascaded: a financial record of the operator's own
+      // business outlives the tenant it describes. Each one is copied into
+      // `retained_invoices` (no foreign keys, denormalized, carrying the org's
+      // code and name) INSIDE this transaction and only then deleted — exactly
+      // the way the compliance trail is archived above, so a rolled-back
+      // attempt leaves no duplicate copy. docs/BILLING.md states the decision.
+      await this.archiveInvoicesIn(tx, id, "organization_deleted");
+      await tx.delete(billingInvoices).where(eq(billingInvoices.organizationId, id));
       // user-keyed rows with no org column
       if (userIds.length) {
         await tx.delete(mfaBackupCodes).where(inArray(mfaBackupCodes.userId, userIds));
@@ -3627,6 +3680,79 @@ export class DatabaseStorage implements IStorage {
   async deleteOrgContract(orgId: number): Promise<void> {
     await this.db.delete(orgContracts).where(eq(orgContracts.organizationId, orgId));
   }
+
+  /* ── billing: invoices ─────────────────────────────────────────────────────
+   * INVOICE NUMBERS ARE GAP-FREE AND NEVER REUSED. The number is allocated
+   * from `billing_counters` INSIDE THE SAME TRANSACTION as the invoice row:
+   * `UPDATE … SET value = value + 1 RETURNING value` takes a row lock, so two
+   * concurrent generations serialise instead of racing, and a transaction that
+   * rolls back gives its number back. Nothing outside this method allocates a
+   * number.
+   */
+  async createInvoiceWithNumber(
+    row: Omit<InsertBillingInvoice, "number">,
+  ): Promise<BillingInvoice> {
+    return this.db.transaction(async (tx) => {
+      // Create the counter row on first use, then claim the next value. Both
+      // statements are inside this transaction, so a rollback un-claims it.
+      await tx.insert(billingCounters).values({ name: "invoice", value: 0 }).onConflictDoNothing();
+      const [counter] = await tx
+        .update(billingCounters)
+        .set({ value: sql`${billingCounters.value} + 1` })
+        .where(eq(billingCounters.name, "invoice"))
+        .returning({ value: billingCounters.value });
+      const number = "DT-" + String(counter!.value).padStart(6, "0");
+      const [created] = await tx.insert(billingInvoices).values({ ...row, number }).returning();
+      return created!;
+    });
+  }
+  async getInvoice(id: number): Promise<BillingInvoice | undefined> {
+    const [row] = await this.db.select().from(billingInvoices).where(eq(billingInvoices.id, id));
+    return row;
+  }
+  /** Scoped read: another tenant's invoice is simply not found. */
+  async getOrgInvoice(orgId: number, id: number): Promise<BillingInvoice | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(billingInvoices)
+      .where(and(eq(billingInvoices.organizationId, orgId), eq(billingInvoices.id, id)));
+    return row;
+  }
+  async listOrgInvoices(orgId: number, limit = 100): Promise<BillingInvoice[]> {
+    return this.db
+      .select()
+      .from(billingInvoices)
+      .where(eq(billingInvoices.organizationId, orgId))
+      .orderBy(desc(billingInvoices.id))
+      .limit(limit);
+  }
+  async listAllInvoices(limit = 500): Promise<BillingInvoice[]> {
+    return this.db.select().from(billingInvoices).orderBy(desc(billingInvoices.id)).limit(limit);
+  }
+  async updateInvoice(id: number, patch: Partial<InsertBillingInvoice>): Promise<BillingInvoice | undefined> {
+    const [saved] = await this.db
+      .update(billingInvoices)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(billingInvoices.id, id))
+      .returning();
+    return saved;
+  }
+  async getInvoiceByStripeId(stripeInvoiceId: string): Promise<BillingInvoice | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(billingInvoices)
+      .where(eq(billingInvoices.stripeInvoiceId, stripeInvoiceId));
+    return row;
+  }
+  /** The platform's archive of a deleted tenant's invoices. */
+  async listRetainedInvoices(orgId: number): Promise<RetainedInvoice[]> {
+    return this.db
+      .select()
+      .from(retainedInvoices)
+      .where(eq(retainedInvoices.organizationId, orgId))
+      .orderBy(asc(retainedInvoices.number));
+  }
+
   /** The contract that owns a Stripe Customer (the webhook's only way in). */
   async getOrgContractByStripeCustomer(customerId: string): Promise<OrgContract | undefined> {
     const [row] = await this.db

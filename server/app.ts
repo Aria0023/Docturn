@@ -300,6 +300,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
       "/api/audit/export",
       rateLimit({ ...EXPORT_RATE_LIMIT, ...common, ...sharedStore("export") }),
     );
+    // An invoice download streams a whole invoice, so it gets the same hourly
+    // budget per address as the audit export, on top of the general limiter
+    // (docs/BILLING.md). Only the /api/billing/invoices/* paths — the billing
+    // screen itself is an ordinary read.
+    app.use(
+      "/api/billing/invoices",
+      rateLimit({ ...EXPORT_RATE_LIMIT, ...common, ...sharedStore("invoice") }),
+    );
     app.use("/api", generalLimiter);
   }
 

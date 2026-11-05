@@ -599,6 +599,12 @@ describe("A.CON-SHO-32 — tenant delete is atomic and complete", () => {
       resourceId: 1, details: {}, riskLevel: "medium",
     });
     const auditBefore = await ctx.storage.countAuditLogs(org.id);
+    // A billing invoice too: it is ARCHIVED rather than cascaded, so the
+    // rollback has to undo the archive copy as well as the delete.
+    await ctx.storage.createInvoiceWithNumber({
+      organizationId: org.id, contractId: null, periodStart: "2026-03-01", periodEnd: "2026-03-31",
+      currency: "USD", lines: [], subtotalCents: 0, totalCents: 0, status: "draft", createdBy: null,
+    });
 
     // A foreign-key the cascade cannot know about: another tenant's setting
     // row pointing at this tenant's user. The users delete — the LAST step —
@@ -621,6 +627,11 @@ describe("A.CON-SHO-32 — tenant delete is atomic and complete", () => {
     expect(await ctx.storage.countAuditLogs(org.id)).toBe(auditBefore);
     // The archive copy was rolled back too (no duplicate history on retry).
     expect(await ctx.storage.countRetainedComplianceRecords(org.id)).toBe(0);
+    // And so was the INVOICE archive (docs/BILLING.md): invoices are copied to
+    // `retained_invoices` inside the same transaction, so a rolled-back delete
+    // must leave the live invoice in place and no archived duplicate.
+    expect(await ctx.storage.listRetainedInvoices(org.id)).toEqual([]);
+    expect(await ctx.storage.listOrgInvoices(org.id, 10)).toHaveLength(1);
     // The failed attempt is itself on the record, at high risk, in the platform org.
     const failed = (await audit(platformId)).find((a) => a.action === "dev.org_delete_failed");
     expect(failed).toBeTruthy();

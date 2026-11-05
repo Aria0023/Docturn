@@ -2,17 +2,23 @@ import type { Express, Request, Response } from "express";
 import {
   billingPlanCreateSchema,
   billingPlanPatchSchema,
+  invoiceGenerateSchema,
+  invoicePaidSchema,
+  invoiceVoidSchema,
   orgContractPutSchema,
+  type BillingInvoice,
   type Organization,
 } from "@shared/schema";
+import { addDays } from "@shared/billing";
 import { appendAudit } from "../audit.js";
 import { effectivePerSeatCents, resolveContract } from "../billing/contracts.js";
 import { seatEntitlementFor } from "../billing/entitlements.js";
+import { generateInvoiceLines } from "../billing/invoices.js";
 import { seatUsageFor } from "../billing/seats.js";
 import { isPlatformOrg } from "../billing/seats.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
-import { publicContract, publicPlan } from "./billing.js";
+import { publicContract, publicInvoice, publicPlan } from "./billing.js";
 
 /**
  * The OPERATOR's billing console (developer console → Billing). Plans are
@@ -60,6 +66,31 @@ async function tenantOr404(req: Request, res: Response): Promise<Organization | 
     return null;
   }
   return org;
+}
+
+async function invoiceOr404(req: Request, res: Response): Promise<BillingInvoice | null> {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "validation_error" });
+    return null;
+  }
+  const inv = await storage().getInvoice(id);
+  if (!inv) {
+    res.status(404).json({ error: "not_found" });
+    return null;
+  }
+  return inv;
+}
+
+/** Console roll-ups. Only ISSUED invoices are money the operator is owed. */
+function invoiceTotals(invoices: readonly BillingInvoice[]) {
+  let issuedCents = 0;
+  let paidCents = 0;
+  for (const i of invoices) {
+    if (i.status === "issued") issuedCents += i.totalCents;
+    if (i.status === "paid") paidCents += i.totalCents;
+  }
+  return { count: invoices.length, issuedCents, paidCents };
 }
 
 export function registerDevBillingRoutes(app: Express) {
@@ -288,5 +319,169 @@ export function registerDevBillingRoutes(app: Express) {
       riskLevel: "medium",
     });
     res.status(204).end();
+  });
+
+  /* ── invoices (the manual path — complete and real on its own) ──────────── */
+
+  app.get("/api/dev/billing/invoices", requireAuth, requireRole("developer"), async (req, res) => {
+    const db = storage();
+    const orgIdRaw = String(req.query.orgId ?? "");
+    const orgs = new Map((await db.listOrganizations()).map((o) => [o.id, o]));
+    let invoices;
+    if (orgIdRaw) {
+      const orgId = Number(orgIdRaw);
+      if (!Number.isInteger(orgId) || orgId <= 0) return res.status(400).json({ error: "validation_error" });
+      invoices = await db.listOrgInvoices(orgId, 200);
+    } else {
+      invoices = await db.listAllInvoices(500);
+    }
+    res.json({
+      invoices: invoices.map((i) => ({
+        ...publicInvoice(i),
+        orgId: i.organizationId,
+        orgCode: orgs.get(i.organizationId)?.code ?? "—",
+        orgName: orgs.get(i.organizationId)?.name ?? "—",
+      })),
+      totals: invoiceTotals(invoices),
+    });
+  });
+
+  /** Generate a DRAFT from the contract and the period's seat snapshots. */
+  app.post("/api/dev/billing/invoices", requireAuth, requireRole("developer"), async (req, res) => {
+    const me = currentUser(req);
+    const parsed = invoiceGenerateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const d = parsed.data;
+    const db = storage();
+    const org = await db.getOrganization(d.orgId);
+    if (!org) return res.status(404).json({ error: "not_found" });
+    if (isPlatformOrg(org)) return res.status(409).json({ error: "platform_org_not_billable" });
+    const contract = await db.getOrgContract(d.orgId);
+    if (!contract) return res.status(409).json({ error: "no_contract" });
+    const plan = await db.getBillingPlan(contract.planId);
+    if (!plan) return res.status(409).json({ error: "no_plan" });
+
+    const snapshots = await db.listSeatSnapshotsInRange(d.orgId, d.periodStart, d.periodEnd);
+    if (snapshots.length === 0) {
+      // Never invent a count. Without a snapshot there is nothing to cite.
+      return res.status(409).json({ error: "no_snapshots", message: "No seat snapshot exists in that period, so there is nothing an invoice line could cite." });
+    }
+    const generated = generateInvoiceLines(contract, plan, snapshots);
+    const invoice = await db.createInvoiceWithNumber({
+      organizationId: d.orgId,
+      contractId: contract.id,
+      periodStart: d.periodStart,
+      periodEnd: d.periodEnd,
+      currency: generated.currency,
+      lines: generated.lines,
+      subtotalCents: generated.subtotalCents,
+      totalCents: generated.totalCents,
+      status: "draft",
+      createdBy: me.id,
+    });
+    await appendAudit({
+      organizationId: d.orgId,
+      userId: me.id,
+      action: "billing.invoice_create",
+      resourceType: "billing_invoice",
+      resourceId: invoice.id,
+      details: {
+        number: invoice.number,
+        periodStart: invoice.periodStart,
+        periodEnd: invoice.periodEnd,
+        totalCents: invoice.totalCents,
+        currency: invoice.currency,
+        peakSeats: generated.peakSeats,
+        snapshotDays: generated.snapshotDays,
+      },
+      riskLevel: "medium",
+    });
+    res.status(201).json({ invoice: publicInvoice(invoice), generated });
+  });
+
+  /**
+   * ISSUE. The number is already fixed (allocated with the row); issuing sets
+   * the issue time and the due date from the contract's net terms. An issued
+   * invoice is immutable except for its status.
+   */
+  app.post("/api/dev/billing/invoices/:id/issue", requireAuth, requireRole("developer"), async (req, res) => {
+    const me = currentUser(req);
+    const inv = await invoiceOr404(req, res);
+    if (!inv) return;
+    if (inv.status !== "draft") return res.status(409).json({ error: "not_draft", status: inv.status });
+    const contract = await storage().getOrgContract(inv.organizationId);
+    const issuedAt = new Date();
+    const dueOn = addDays(issuedAt.toISOString().slice(0, 10), contract?.daysUntilDue ?? 30);
+    const saved = await storage().updateInvoice(inv.id, { status: "issued", issuedAt, dueOn });
+    await appendAudit({
+      organizationId: inv.organizationId,
+      userId: me.id,
+      action: "billing.invoice_issue",
+      resourceType: "billing_invoice",
+      resourceId: inv.id,
+      details: { number: inv.number, totalCents: inv.totalCents, currency: inv.currency, dueOn },
+      riskLevel: "medium",
+    });
+    res.json({ invoice: publicInvoice(saved!) });
+  });
+
+  /**
+   * VOID. The only correction path — an issued invoice is never recomputed.
+   * The NUMBER IS KEPT FOREVER and is never reused, so the sequence stays
+   * gap-free and a hospital's records still line up.
+   */
+  app.post("/api/dev/billing/invoices/:id/void", requireAuth, requireRole("developer"), async (req, res) => {
+    const me = currentUser(req);
+    const inv = await invoiceOr404(req, res);
+    if (!inv) return;
+    const parsed = invoiceVoidSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    if (inv.status === "paid") return res.status(409).json({ error: "already_paid" });
+    if (inv.status === "void") return res.json({ invoice: publicInvoice(inv) });
+    const saved = await storage().updateInvoice(inv.id, { status: "void", voidReason: parsed.data.reason });
+    await appendAudit({
+      organizationId: inv.organizationId,
+      userId: me.id,
+      action: "billing.invoice_void",
+      resourceType: "billing_invoice",
+      resourceId: inv.id,
+      details: { number: inv.number, reason: parsed.data.reason, previousStatus: inv.status },
+      riskLevel: "medium",
+    });
+    res.json({ invoice: publicInvoice(saved!) });
+  });
+
+  /**
+   * MARK PAID — the operator's own action. "Paid" is never a guess: the row
+   * records WHO (their user id), WHEN, the source (`operator`) and their
+   * reference. The only other source is a Stripe webhook event id.
+   */
+  app.post("/api/dev/billing/invoices/:id/mark-paid", requireAuth, requireRole("developer"), async (req, res) => {
+    const me = currentUser(req);
+    const inv = await invoiceOr404(req, res);
+    if (!inv) return;
+    const parsed = invoicePaidSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    if (inv.status === "void") return res.status(409).json({ error: "is_void" });
+    if (inv.status === "draft") return res.status(409).json({ error: "not_issued" });
+    if (inv.status === "paid") return res.json({ invoice: publicInvoice(inv) });
+    const paidAt = new Date();
+    const saved = await storage().updateInvoice(inv.id, {
+      status: "paid",
+      paidAt,
+      paidSource: "operator",
+      paidByUserId: me.id,
+      paidReference: parsed.data.reference ?? null,
+    });
+    await appendAudit({
+      organizationId: inv.organizationId,
+      userId: me.id,
+      action: "billing.invoice_paid",
+      resourceType: "billing_invoice",
+      resourceId: inv.id,
+      details: { number: inv.number, totalCents: inv.totalCents, currency: inv.currency, source: "operator" },
+      riskLevel: "medium",
+    });
+    res.json({ invoice: publicInvoice(saved!) });
   });
 }

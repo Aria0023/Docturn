@@ -978,6 +978,76 @@ CREATE TABLE IF NOT EXISTS org_contracts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS org_contracts_org_uniq ON org_contracts(organization_id);
 
+-- One invoice. Generated from the contract and the seat snapshots; each line
+-- CITES the snapshot dates it counted (lines[].citedDates). The number is
+-- gap-free and never reused — allocated from billing_counters inside the SAME
+-- transaction as this row. "Paid" has exactly two sources, both recorded:
+-- paid_source='operator' (with the operator's user id) or 'stripe' (with the
+-- Stripe event id in paid_reference).
+CREATE TABLE IF NOT EXISTS billing_invoices (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  contract_id INTEGER,
+  number TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  lines JSONB NOT NULL,
+  subtotal_cents INTEGER NOT NULL,
+  total_cents INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  issued_at TIMESTAMP,
+  due_on TEXT,
+  paid_at TIMESTAMP,
+  paid_source TEXT,
+  paid_by_user_id INTEGER,
+  paid_reference TEXT,
+  stripe_invoice_id TEXT,
+  void_reason TEXT,
+  created_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_invoices_number_uniq ON billing_invoices(number);
+CREATE INDEX IF NOT EXISTS billing_invoices_org_idx ON billing_invoices(organization_id);
+
+-- Monotonic counters. One row, 'invoice', bumped inside the invoice
+-- transaction so numbers are gap-free and never reused.
+CREATE TABLE IF NOT EXISTS billing_counters (
+  name TEXT PRIMARY KEY,
+  value INTEGER NOT NULL DEFAULT 0
+);
+
+-- Invoices of a DELETED tenant. The seat history leaves with the tenant; a
+-- financial record of the operator's own business does not, so each invoice is
+-- copied here (no foreign keys, denormalized) inside the delete transaction
+-- and only then removed — the retained_compliance_records pattern.
+CREATE TABLE IF NOT EXISTS retained_invoices (
+  id SERIAL PRIMARY KEY,
+  source_id INTEGER NOT NULL,
+  organization_id INTEGER,
+  organization_code TEXT,
+  organization_name TEXT,
+  number TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  lines JSONB NOT NULL,
+  subtotal_cents INTEGER NOT NULL,
+  total_cents INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  issued_at TIMESTAMP,
+  due_on TEXT,
+  paid_at TIMESTAMP,
+  paid_source TEXT,
+  paid_by_user_id INTEGER,
+  paid_reference TEXT,
+  stripe_invoice_id TEXT,
+  archived_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  archived_reason TEXT NOT NULL DEFAULT 'organization_deleted'
+);
+CREATE INDEX IF NOT EXISTS retained_invoices_org_idx ON retained_invoices(organization_id);
+
 -- Shared rate-limit counters for the Postgres-backed limiter store.
 CREATE TABLE IF NOT EXISTS rate_limit_hits (
   key TEXT PRIMARY KEY,

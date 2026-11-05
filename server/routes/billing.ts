@@ -1,4 +1,7 @@
 import type { Express } from "express";
+import { billingContactPatchSchema } from "@shared/schema";
+import { appendAudit } from "../audit.js";
+import { invoiceCsvLines } from "../billing/invoices.js";
 import { effectivePerSeatCents, resolveContract } from "../billing/contracts.js";
 import { seatEntitlementFor } from "../billing/entitlements.js";
 import { seatUsageFor } from "../billing/seats.js";
@@ -33,12 +36,13 @@ export function registerBillingRoutes(app: Express) {
     const me = currentUser(req);
     const db = storage();
     const orgId = me.organizationId;
-    const [{ contract, plan, view }, seats, entitlement] = await Promise.all([
+    const [{ contract, plan, view }, seats, entitlement, invoices] = await Promise.all([
       resolveContract(db, orgId),
       seatUsageFor(db, orgId),
       // The SAME computation the account-creation routes use, so the screen
       // can never say "you have room" while the server refuses the account.
       seatEntitlementFor(db, orgId),
+      db.listOrgInvoices(orgId, 100),
     ]);
     const stripe = await stripeConfiguredForOrg(db, orgId);
     res.json({
@@ -52,7 +56,11 @@ export function registerBillingRoutes(app: Express) {
       currency: plan?.currency ?? null,
       seats,
       entitlement,
-      invoices: [],
+      /**
+       * The hospital's OWN invoices, drafts excluded: a draft is the
+       * operator's working copy and has been issued to nobody.
+       */
+      invoices: invoices.filter((i) => i.status !== "draft").map(publicInvoice),
       notice: contract
         ? null
         : "No billing contract is on file for this organization. Nothing is billed. " +
@@ -70,6 +78,72 @@ export function registerBillingRoutes(app: Express) {
       prorationNote:
         "A mid-term plan change is prorated on your NEXT invoice. Invoices already issued are never changed.",
     });
+  });
+
+  /**
+   * The hospital edits its own BILLING CONTACT — the only contract field a
+   * director may change, because it is their own staff's name and email, not a
+   * commercial term. Everything else is the operator's.
+   */
+  app.patch("/api/billing/contact", requireAuth, requireRole(...BILLING_ROLES), async (req, res) => {
+    const me = currentUser(req);
+    const parsed = billingContactPatchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const contract = await storage().getOrgContract(me.organizationId);
+    if (!contract) return res.status(409).json({ error: "no_contract" });
+    const d = parsed.data;
+    const saved = await storage().updateOrgContract(me.organizationId, {
+      ...(d.billingContactName !== undefined ? { billingContactName: d.billingContactName } : {}),
+      ...(d.billingContactEmail !== undefined ? { billingContactEmail: d.billingContactEmail } : {}),
+    });
+    // The CHANGED KEYS are audited, never the values: a billing contact's name
+    // and email are personal data the trail does not need to copy.
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "billing.contact_update",
+      resourceType: "organization",
+      resourceId: me.organizationId,
+      details: { changedKeys: Object.keys(d).sort() },
+      riskLevel: "low",
+    });
+    res.json({ contract: publicContract(saved!) });
+  });
+
+  /**
+   * The hospital downloads one of its own invoices as CSV. Streamed in the
+   * audit-export shape (server/compliance/audit-export.ts): the rows are
+   * written as they are produced, every cell goes through `csvCell` so nothing
+   * a spreadsheet would run as a formula escapes, and the file carries no PHI
+   * — an invoice number, a status, the hospital's own name, dates, counts and
+   * cents. Rate-limited in server/app.ts on its own budget.
+   *
+   * A DRAFT is never downloadable: it is the operator's working copy and has
+   * not been issued to anybody.
+   */
+  app.get("/api/billing/invoices/:id/download", requireAuth, requireRole(...BILLING_ROLES), async (req, res) => {
+    const me = currentUser(req);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: "validation_error" });
+    // Scoped read: another tenant's invoice is simply not found.
+    const invoice = await storage().getOrgInvoice(me.organizationId, id);
+    if (!invoice) return res.status(404).json({ error: "not_found" });
+    if (invoice.status === "draft") return res.status(404).json({ error: "not_found" });
+    const org = await storage().getOrganization(me.organizationId);
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "billing.invoice_download",
+      resourceType: "billing_invoice",
+      resourceId: invoice.id,
+      details: { number: invoice.number, format: "csv" },
+      riskLevel: "low",
+    });
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="docturn-invoice-${invoice.number}.csv"`);
+    res.setHeader("Cache-Control", "no-store");
+    for (const line of invoiceCsvLines(invoice, { orgName: org?.name ?? "" })) res.write(line);
+    res.end();
   });
 }
 
@@ -102,6 +176,51 @@ export function publicContract(c: {
     /** When the past-due clock started, so the grace period is auditable. */
     pastDueAt: c.pastDueAt ? c.pastDueAt.toISOString() : null,
     daysUntilDue: c.daysUntilDue,
+  };
+}
+
+/** One invoice as either side may see it. Nothing here is PHI. */
+export function publicInvoice(i: {
+  id: number;
+  organizationId: number;
+  number: string;
+  periodStart: string;
+  periodEnd: string;
+  currency: string;
+  lines: Array<{ description: string; quantity: number; unitCents: number; amountCents: number; citedDates: string[] }>;
+  subtotalCents: number;
+  totalCents: number;
+  status: string;
+  issuedAt: Date | null;
+  dueOn: string | null;
+  paidAt: Date | null;
+  paidSource: string | null;
+  paidByUserId: number | null;
+  paidReference: string | null;
+  stripeInvoiceId: string | null;
+  voidReason: string | null;
+}) {
+  return {
+    id: i.id,
+    number: i.number,
+    periodStart: i.periodStart,
+    periodEnd: i.periodEnd,
+    currency: i.currency,
+    lines: i.lines,
+    subtotalCents: i.subtotalCents,
+    totalCents: i.totalCents,
+    status: i.status,
+    issuedAt: i.issuedAt ? i.issuedAt.toISOString() : null,
+    dueOn: i.dueOn,
+    paidAt: i.paidAt ? i.paidAt.toISOString() : null,
+    /**
+     * WHERE a "Paid" came from, always shown: 'operator' (a named person's own
+     * action) or 'stripe' (a webhook event id). Never a guess.
+     */
+    paidSource: i.paidSource,
+    paidReference: i.paidReference,
+    stripeInvoiceId: i.stripeInvoiceId,
+    voidReason: i.voidReason,
   };
 }
 
