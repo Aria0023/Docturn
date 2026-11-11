@@ -84,6 +84,7 @@ Cross-tenant access answers `404` everywhere (no existence oracle).
 | 14 | A sender "acknowledging" their own STAT announced an acknowledgement to the thread that the recipient never gave. | Only acknowledgements that were really recorded are announced. |
 | 15 | Any signed-in account could rewrite any consult's status or consultant, including pointing it at another tenant's user id, with no audit row. | Clinical roles only, the consultant must be an active account of the same organization, and every change is audited. |
 | 16 | A message body had no size limit. | 20,000 characters. |
+| 17 | A do-not-disturb clinician's **covering provider** was still used after that provider's account was deactivated — a forwarded STAT would land in an inbox nobody can open. On-call roles likewise resolved to deactivated holders. | A deactivated account is never a covering provider, and a role held by one is not offered. |
 
 ## Enhancements made
 
@@ -126,6 +127,20 @@ product.
 6. **Self-serve account recovery.** There is no e-mail on an account, so a
    forgotten password is a director's reset. Correct for a pilot; an
    enterprise will expect SSO (built) to make this moot.
+
+## Verification (final code)
+
+* Server suite: 113 files, 1,159 tests passing (8 skipped by design).
+* Real-browser checks, each on its own freshly seeded server: phone layout at
+  375 / 390 / 430 px 1,344 · themes 1,723 · phone shell 227 · org-admin 162 ·
+  final 116 · developer 111 · UI smoke 106 · clinical 98 · comms 96 ·
+  quick responses 93 · PIN 85 · integrations 85 · phone messaging 82 ·
+  shift hand-off 69 · billing 68 · Done 63 · unread reminder 59 · realtime 58 ·
+  favourites 51 · CSP 45 · audit export 45 · next-up 43 · login 41 ·
+  alert sounds 41 · retention 41 · session policy 40 · SCIM 37 ·
+  role contacts 36 · SSO 32 · cross-device interop 21 — no failures.
+* Production bundle: load check 27 / 27 and login 41 / 41 against the compiled
+  client.
 
 ## Still not provable from here
 
