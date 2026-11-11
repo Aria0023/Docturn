@@ -334,3 +334,65 @@ describe("a role change keeps the rotation consistent (identity-provider path)",
     expect((await agent.post("/api/shift/start").send({})).status).toBe(200);
   });
 });
+
+describe("a director changes a person's role in place", () => {
+  it("hospitalist → ER physician: off the rotation, signed out, same account; audited", async () => {
+    const { patient, assignment } = await routedPatient("RD");
+    const owner = await userOfHospitalist(assignment.hospitalistId);
+    const ownerAgent = await as(owner.username);
+    expect((await ownerAgent.get("/api/user")).status).toBe(200);
+
+    const director = await as("director");
+    const res = await director.post(`/api/accounts/${owner.id}/role`).send({ role: "er_doctor" });
+    expect(res.status).toBe(200);
+    expect(res.body.changed).toBe(true);
+    expect((await ctx.storage.getUserById(owner.id))!.role).toBe("er_doctor");
+    // Their open session ended: they sign in again into the new workspace.
+    expect((await ownerAgent.get("/api/messaging/conversations")).status).toBe(401);
+    // Off the round-robin, and the waiting request moved on.
+    expect((await ctx.storage.listWorkingHospitalists(orgId())).some((h) => h.userId === owner.id)).toBe(false);
+    const live = (await ctx.storage.listAssignments(orgId())).filter((a) => a.patientId === patient.id && a.status === "pending");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.hospitalistId).not.toBe(assignment.hospitalistId);
+    const trail = await ctx.storage.listAuditLogs(orgId(), 100);
+    const row = trail.find((a) => a.action === "account.role_change");
+    expect(row).toBeTruthy();
+    expect(row!.details).toMatchObject({ from: "hospitalist", to: "er_doctor" });
+    // The same person, re-signed-in, now works as an ER physician.
+    const again = await as(owner.username);
+    expect((await again.get("/api/assignments/sent")).status).toBe(200);
+    expect((await again.get("/api/assignments/pending")).status).toBe(403);
+  });
+
+  it("ER physician → hospitalist gets a rotation profile; the seat count does not move", async () => {
+    const before = (await countBillableSeats(ctx.storage, orgId())).total;
+    const erDoc = (await ctx.storage.getUserByUsername(orgId(), "er.doc"))!;
+    const director = await as("director");
+    expect((await director.post(`/api/accounts/${erDoc.id}/role`).send({ role: "hospitalist" })).status).toBe(200);
+    expect(await ctx.storage.getHospitalistByUser(orgId(), erDoc.id)).toBeTruthy();
+    expect((await countBillableSeats(ctx.storage, orgId())).total).toBe(before);
+  });
+
+  it("is the hospitalist director's alone: never an ER director's, never on yourself, never to or from developer", async () => {
+    const erDoc = (await ctx.storage.getUserByUsername(orgId(), "er.doc"))!;
+    const erDirector = await as("er.director");
+    expect((await erDirector.post(`/api/accounts/${erDoc.id}/role`).send({ role: "hospitalist" })).status).toBe(403);
+    const director = await as("director");
+    const me = (await ctx.storage.getUserByUsername(orgId(), "director"))!;
+    expect((await director.post(`/api/accounts/${me.id}/role`).send({ role: "hospitalist" })).status).toBe(409);
+    expect((await director.post(`/api/accounts/${erDoc.id}/role`).send({ role: "developer" })).status).toBe(400);
+    const dev = (await ctx.storage.getUserByUsername(ctx.seedResult.platformOrgId, "dev"))!;
+    expect((await director.post(`/api/accounts/${dev.id}/role`).send({ role: "hospitalist" })).status).toBe(404);
+    expect((await ctx.storage.getUserById(erDoc.id))!.role).toBe("er_doctor");
+    expect((await ctx.storage.getUserById(dev.id))!.role).toBe("developer");
+  });
+
+  it("a hospitalist promoted to director keeps their place in the rotation", async () => {
+    const hosps = await ctx.storage.listHospitalists(orgId());
+    const h = hosps.find((x) => x.working)!;
+    const director = await as("director");
+    expect((await director.post(`/api/accounts/${h.userId}/role`).send({ role: "director" })).status).toBe(200);
+    expect((await ctx.storage.getHospitalist(orgId(), h.id))!.working).toBe(true);
+    expect((await ctx.storage.listWorkingHospitalists(orgId())).some((x) => x.id === h.id)).toBe(true);
+  });
+});

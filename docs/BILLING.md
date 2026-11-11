@@ -34,7 +34,8 @@ every later gate:
 * **Static.** `server/billing/entitlements.ts` is the one module that can
   refuse anything. The test walks every `.ts` file under `server/` and asserts
   that the set which imports it equals an exact allow-list
-  (`server/routes/providers.ts`, `server/auth.ts`, `server/routes/dev.ts`, and
+  (`server/routes/providers.ts`, `server/auth.ts`, `server/routes/dev.ts`,
+  `server/routes/accounts.ts` — reactivation, see §2 — and
   the two billing read surfaces `server/routes/billing.ts` and
   `server/routes/dev-billing.ts`). Adding the import anywhere else fails the
   suite. It also asserts that no care-path file mentions billing at all, and
@@ -75,6 +76,15 @@ organization is never counted and never snapshotted.
 
 Deactivating a leaver frees the seat immediately — the same
 `users.disabled_at` the account routes and SCIM `active:false` already set.
+
+**Reactivating is creating a seat.** Because a deactivated account is not a
+seat, restoring one goes through the same single check as adding an account
+(`POST /api/accounts/:id/reactivate`): a director at the commitment, or on a
+contract whose grace has run out, is refused `402 seat_refused` with the same
+sentence, audited `billing.seat_refused` (`via: "reactivation"`); the operator
+is never refused. Without this, "deactivate one person, add another,
+reactivate the first" walked past the limit the Add screen enforces. A SCIM
+`active:true` is still never refused (§4) — it becomes an overage line.
 
 ### Seat snapshots
 
@@ -188,6 +198,14 @@ An invoice is generated from the contract and the seat snapshots, and it
   line item, never a refusal.
 * With **no snapshot in the period** the generator refuses (409 `no_snapshots`)
   rather than invent a count. There is nothing a line could cite.
+
+### A period is invoiced once
+
+Generating an invoice whose period overlaps a **draft, issued or paid**
+invoice of the same hospital is refused — `409 period_already_invoiced`,
+naming the invoice in the way — so the same seats cannot be billed twice by a
+second click or a mistyped date. A **voided** invoice does not block: voiding
+is how a period is corrected and billed again.
 
 ### Invoice numbers are gap-free and never reused
 

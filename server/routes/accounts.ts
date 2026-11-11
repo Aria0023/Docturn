@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import type { User } from "@shared/schema";
+import type { Role, User } from "@shared/schema";
 import { endSessionsOfDeactivatedUser, issueTemporaryPassword, rotatePassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { checkSeatAvailability, seatRefusalBody } from "../billing/entitlements.js";
@@ -7,6 +7,7 @@ import { isBillableSeatRole } from "@shared/billing";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { releasePendingForHospitalist } from "../services/assignments.js";
 import { broadcastRotationChange } from "../services/notifications.js";
+import { syncRotationAfterRoleChange } from "../services/provisioning.js";
 import { signOutEverywhere } from "./session-policy.js";
 import { storage } from "../storage.js";
 
@@ -30,6 +31,8 @@ import { storage } from "../storage.js";
  */
 
 const MANAGE_ROLES = ["director", "er_director", "developer"] as const;
+/** The roles a director may move a person between (never `developer`). */
+const CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director"] as const;
 
 async function reachableTarget(req: Request, res: Response): Promise<User | null> {
   const me = currentUser(req);
@@ -242,6 +245,52 @@ export function registerAccountRoutes(app: Express) {
       riskLevel: "high",
     });
     res.json({ ok: true, id: target.id, username: target.username, temporaryPassword });
+  });
+
+  /**
+   * Change a person's ROLE — a hospitalist who becomes a director, an ER
+   * physician who moves to the hospitalist group — without a second account
+   * (which would split their message history and cost a second seat).
+   *
+   * A hospitalist DIRECTOR's decision only (or the operator's): an ER
+   * director manages ER physicians' access, not what role anyone holds. Never
+   * to or from `developer`, never on yourself (reachableTarget). What follows
+   * from the change, all at once:
+   *   • the rotation is kept consistent (services/provisioning.ts
+   *     syncRotationAfterRoleChange): a new hospitalist gets a rotation
+   *     profile; someone who can no longer accept admissions comes off shift
+   *     and their waiting requests go to the next provider;
+   *   • every session of theirs ends, so they sign in again INTO the new
+   *     role's workspace instead of driving the old one against new rules;
+   *   • a newly privileged account meets the MFA enrolment gate on that
+   *     sign-in exactly as any director does.
+   * The seat count does not change (every clinical role is one seat).
+   */
+  app.post("/api/accounts/:id/role", requireAuth, requireRole("director", "developer"), async (req, res) => {
+    const me = currentUser(req);
+    const target = await reachableTarget(req, res);
+    if (!target) return;
+    const role = String((req.body ?? {}).role ?? "") as Role;
+    if (!(CHANGEABLE_ROLES as readonly string[]).includes(role)) {
+      return res.status(400).json({ error: "validation_error" });
+    }
+    if (target.role === "developer") return res.status(404).json({ error: "not_found" });
+    if (target.disabledAt) return res.status(409).json({ error: "user_deactivated" });
+    if (target.role === role) return res.json({ ok: true, id: target.id, role, changed: false });
+    const from = target.role as Role;
+    await storage().updateUser(target.id, { role });
+    await syncRotationAfterRoleChange(target, from, role);
+    const ended = await signOutEverywhere(target, {});
+    await appendAudit({
+      organizationId: target.organizationId,
+      userId: me.id,
+      action: "account.role_change",
+      resourceType: "user",
+      resourceId: target.id,
+      details: { username: target.username, from, to: role, sessionsEnded: ended },
+      riskLevel: "high",
+    });
+    res.json({ ok: true, id: target.id, role, changed: true, sessionsEnded: ended });
   });
 
   // Administrative MFA reset for a locked-out clinician (lost phone, no backup

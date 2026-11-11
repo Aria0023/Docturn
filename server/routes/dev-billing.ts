@@ -383,6 +383,23 @@ export function registerDevBillingRoutes(app: Express) {
     const plan = await db.getBillingPlan(contract.planId);
     if (!plan) return res.status(409).json({ error: "no_plan" });
 
+    // One invoice per day of service. A second invoice whose period overlaps
+    // a draft, issued or paid one would bill the hospital twice for the same
+    // seats; a VOIDED invoice does not block (voiding is how a period is
+    // re-billed). The refusal names the invoice in the way.
+    const overlapping = (await db.listOrgInvoices(d.orgId, 1000)).find(
+      (i) => i.status !== "void" && i.periodStart <= d.periodEnd && i.periodEnd >= d.periodStart,
+    );
+    if (overlapping) {
+      return res.status(409).json({
+        error: "period_already_invoiced",
+        message:
+          `Invoice ${overlapping.number} (${overlapping.status}) already covers ${overlapping.periodStart} to ${overlapping.periodEnd}. ` +
+          "Void it first to bill that period again.",
+        invoice: { id: overlapping.id, number: overlapping.number, status: overlapping.status },
+      });
+    }
+
     const snapshots = await db.listSeatSnapshotsInRange(d.orgId, d.periodStart, d.periodEnd);
     if (snapshots.length === 0) {
       // Never invent a count. Without a snapshot there is nothing to cite.

@@ -94,8 +94,20 @@ async function fillAndSubmit(page, org, user, pass) {
     await page.click('button:has-text("Create an account")');
     await sleep(300);
     const w = "@" + width + " ";
-    const roleLabels = await page.evaluate(() => [...document.querySelectorAll("form button[aria-pressed]")].map((b) => b.textContent.trim()));
+    // (The password field's show/hide control is a toggle too — it is not a role.)
+    const roleLabels = await page.evaluate(() => [...document.querySelectorAll("form button[aria-pressed]:not(.dt-reveal)")].map((b) => b.textContent.trim()));
     if (width === 390) rec("register: role picker offers only Hospitalist + ER physician", roleLabels.join("|") === "Hospitalist|ER physician", roleLabels.join("|"));
+    // Show/hide password: a real toggle on the real input, off by default.
+    const reveal = await page.evaluate(async () => {
+      const input = document.querySelector('form input[name="new-password"]');
+      const btn = input && input.parentElement.querySelector("button.dt-reveal");
+      if (!input || !btn) return null;
+      const before = input.type; btn.click(); await new Promise((r) => setTimeout(r, 150));
+      const shown = input.type, label = btn.getAttribute("aria-label"); btn.click(); await new Promise((r) => setTimeout(r, 150));
+      const box = btn.getBoundingClientRect();
+      return { before, shown, after: input.type, label, w: Math.round(box.width), h: Math.round(box.height) };
+    });
+    rec(w + "register: the password can be shown and hidden again (hidden by default)", !!reveal && reveal.before === "password" && reveal.shown === "text" && reveal.after === "password" && reveal.label === "Hide password", JSON.stringify(reveal));
     const body = await text(page);
     if (width === 390) rec("register: the password hint states 8+ characters and no demo/default password (no '6+')", /At least 8 characters, not a demo or default password/.test(body) && !/6\+|at least 6/i.test(body));
 

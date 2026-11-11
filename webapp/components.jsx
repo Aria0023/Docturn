@@ -167,7 +167,7 @@ function Field({ label, icon, value, onChange, placeholder, type, help, error, t
           : <input {...common} type={isPassword && reveal ? "text" : (type || "text")} style={{ border: "none", outline: "none", fontSize: 16, width: "100%", minWidth: 0, fontFamily: "inherit", background: "transparent", color: "var(--foreground)" }} />}
         {isPassword && !disabled && (
           <button type="button" className="dt-reveal" onClick={() => setReveal(!reveal)} aria-label={reveal ? "Hide password" : "Show password"} aria-pressed={reveal} title={reveal ? "Hide password" : "Show password"}
-            style={{ flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", width: 44, height: 38, marginRight: -12, border: "none", background: "transparent", color: "var(--muted-foreground)", cursor: "pointer", borderRadius: "var(--radius-md)" }}>
+            style={{ flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", width: 44, height: 44, margin: "-2px -12px -2px 0", border: "none", background: "transparent", color: "var(--muted-foreground)", cursor: "pointer", borderRadius: "var(--radius-md)" }}>
             <Icon name={reveal ? "eye-off" : "eye"} size={16} />
           </button>
         )}

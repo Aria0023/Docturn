@@ -94,7 +94,8 @@ export async function provisionUser(input: ProvisionInput): Promise<User> {
  * moving someone between hospitalist and ER physician):
  *   • INTO hospitalist — they get the rotation profile every hospitalist
  *     has (off shift), or they could never start a shift or be routed to;
- *   • OUT OF hospitalist — they come off shift at once and any request still
+ *   • INTO a role that cannot accept an admission (ER physician, ER
+ *     director) — they come off shift at once and any request still
  *     waiting on them goes to the next provider: an ER physician cannot accept
  *     an admission, so leaving them in the round-robin would route patients
  *     to someone the server will refuse. The profile row itself stays (past
@@ -121,7 +122,10 @@ export async function syncRotationAfterRoleChange(user: Pick<User, "id" | "organ
     }
     return;
   }
-  if (from === "hospitalist" && profile) {
+  // A role that can still accept an admission (a director who also takes
+  // patients) keeps their place; only a role the accept route refuses leaves.
+  const canAccept = to === "director" || to === "developer";
+  if (profile && !canAccept) {
     if (profile.working) {
       await storage().updateHospitalist(user.organizationId, profile.id, { working: false });
       broadcastRotationChange(user.organizationId);

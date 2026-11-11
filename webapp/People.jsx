@@ -40,6 +40,18 @@ function peopleAddableRoles(myRole) {
   if (myRole === "er_director") return ["er_doctor"];
   return [];
 }
+// The roles a director may move a person between (server/routes/accounts.ts
+// CHANGEABLE_ROLES). "PA / NP" is a credential on a hospitalist account, not a
+// role, so it is not offered here.
+const PEOPLE_CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director"];
+// What the server does on a role change, in the director's words.
+function peopleRoleChangeNote(from, to) {
+  var parts = ["They are signed out everywhere and sign in again as " + (PEOPLE_ROLE_LABEL[to] || to) + ". Same account, same messages."];
+  if (to === "hospitalist") parts.push("They get a place in the rotation, off shift until they start one.");
+  if (from === "hospitalist" && (to === "er_doctor" || to === "er_director")) parts.push("They come off the rotation now; any admission waiting on them goes to the next hospitalist.");
+  if (to === "director" || to === "er_director") parts.push("Director accounts set up two-factor at their next sign-in where your organization requires it.");
+  return parts.join(" ");
+}
 // Org codes are case-insensitive (the sign-in form keeps what was typed).
 function peopleSameOrg(x, y) { return String(x || "").toUpperCase() === String(y || "").toUpperCase(); }
 function suggestUsername(name) {
@@ -86,6 +98,10 @@ function PeopleManager({ domainRoles }) {
   const [busy, setBusy] = React.useState(false);
   const [roleFilter, setRoleFilter] = React.useState("ALL");
   const [collapsed, setCollapsed] = React.useState({});
+  // Change role (POST /api/accounts/:id/role): a hospitalist DIRECTOR's
+  // decision only — the server refuses everyone else, so nobody else sees it.
+  const [roleEdit, setRoleEdit] = React.useState(null); // { id, role, busy }
+  const canChangeRoles = myRole === "director";
   const blank = { name: "", username: "", usernameTouched: false, role: addable[0] || "", specialty: "Hospital Medicine", credential: "NP" };
   const [form, setForm] = React.useState(blank);
   const set = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }));
@@ -238,6 +254,10 @@ function PeopleManager({ domainRoles }) {
                     {manage && (
                       <div style={{ display: "flex", marginLeft: "auto", flex: "none" }}>
                         <PeopleIconButton title={"Reset password for " + u.name + " (issues a one-time password)"} icon="key-round" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Reset " + u.name + "'s password? Their current sessions end and you'll be shown a one-time password to hand over.")) a.resetUserPassword(u.id, u.name); }} />
+                        {canChangeRoles && !u.disabled && (
+                          <PeopleIconButton title={"Change role for " + u.name} icon="user-cog" hoverColor="var(--primary)"
+                            onClick={() => setRoleEdit(roleEdit && roleEdit.id === u.id ? null : { id: u.id, role: u.role, busy: false })} />
+                        )}
                         <PeopleIconButton title={"Reset two-factor for " + u.name} icon="shield-off" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
                         {/* Sign out everywhere (E2, module enterprise.sessionPolicy):
                             a forgotten tablet or a lost phone. Not a deactivation —
@@ -249,6 +269,31 @@ function PeopleManager({ domainRoles }) {
                         {u.disabled
                           ? <PeopleIconButton title={"Restore access for " + u.name} icon="user-check" hoverColor="var(--status-accepted)" onClick={() => a.reactivateUser(u.id)} />
                           : <PeopleIconButton title={"Remove access for " + u.name} icon="user-x" hoverColor="var(--destructive)" onClick={() => { if (window.confirm("Remove " + u.name + "'s access? They are signed out now and cannot sign in until restored.")) a.deactivateUser(u.id); }} />}
+                      </div>
+                    )}
+                    {/* Change role — inline, so the consequence is read before it is
+                        applied. The same person keeps their account, their message
+                        history and their one seat. */}
+                    {manage && canChangeRoles && roleEdit && roleEdit.id === u.id && (
+                      <div data-role-edit={u.username} style={{ flex: "1 1 100%", display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--muted)" }}>
+                        <label htmlFor={"role-edit-" + u.id} style={{ fontSize: 12.5, fontWeight: 600 }}>New role for {u.name}</label>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <select id={"role-edit-" + u.id} value={roleEdit.role} disabled={roleEdit.busy}
+                            onChange={(e) => setRoleEdit(Object.assign({}, roleEdit, { role: e.target.value }))}
+                            style={{ flex: "1 1 180px", minWidth: 0, height: 44, padding: "0 10px", fontSize: 16, borderRadius: "var(--radius-md)", border: "1px solid var(--input)", background: "var(--card)", color: "var(--foreground)", fontFamily: "inherit" }}>
+                            {PEOPLE_CHANGEABLE_ROLES.map((rid) => <option key={rid} value={rid}>{PEOPLE_ROLE_LABEL[rid]}</option>)}
+                          </select>
+                          <Button size="sm" onClick={() => {
+                            if (roleEdit.busy || roleEdit.role === u.role) return;
+                            setRoleEdit(Object.assign({}, roleEdit, { busy: true }));
+                            Promise.resolve(a.changeUserRole(u.id, roleEdit.role, u.name)).then((ok) => setRoleEdit(ok ? null : Object.assign({}, roleEdit, { busy: false })));
+                          }} style={{ opacity: roleEdit.busy || roleEdit.role === u.role ? 0.55 : 1 }}>{roleEdit.busy ? "Changing…" : "Change role"}</Button>
+                          <Button size="sm" variant="outline" onClick={() => setRoleEdit(null)}>Cancel</Button>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>
+                          {roleEdit.role === u.role ? "Pick a different role to change it."
+                            : peopleRoleChangeNote(u.role, roleEdit.role)}
+                        </div>
                       </div>
                     )}
                   </div>

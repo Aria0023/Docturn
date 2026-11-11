@@ -3061,6 +3061,24 @@
   DT.actions.mfaRegenerateBackupCodes = function (currentPassword, code) {
     return rawApi("POST", "/api/mfa/backup-codes/regenerate", { currentPassword: currentPassword, code: String(code || "") });
   };
+  // Director: change a person's role (POST /api/accounts/:id/role). Resolves
+  // true only when the server changed it; the roster is re-read from the server.
+  DT.actions.changeUserRole = function (id, role, name) {
+    return api("POST", "/api/accounts/" + id + "/role", { role: role }).then(function (r) {
+      refreshPeople();
+      DT.set(function (s) {
+        s.__toast = { tone: "accepted", title: "Role changed", msg: (name || "They") + " will sign in again in the new role." + (r && r.sessionsEnded ? " Their open sessions were ended." : "") };
+        return s;
+      });
+      return true;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      if (m === "user_deactivated") {
+        DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not change role", msg: "Restore this person's access first." }; return s; });
+      } else accountError(e, "change the role of");
+      return false;
+    });
+  };
   // Administrator: clear a locked-out clinician's second factor (audited).
   DT.actions.resetUserMfa = function (id, name) {
     return api("POST", "/api/accounts/" + id + "/reset-mfa").then(function () {

@@ -361,3 +361,37 @@ describe("tenant delete keeps the invoices and drops the seat history", () => {
     expect(retained[0]!.organizationCode).toBe("ISPN");
   });
 });
+
+describe("a period is invoiced once", () => {
+  it("a second invoice overlapping a live one is refused; voiding the first lets the period be re-billed", async () => {
+    const { dev } = await onContract(10);
+    await seedSnapshots({ "2026-05-01": 10, "2026-05-15": 12 });
+    const org = ctx.seedResult.orgId;
+    const first = (
+      await dev.post("/api/dev/billing/invoices").send({ orgId: org, periodStart: "2026-05-01", periodEnd: "2026-05-31" }).expect(201)
+    ).body.invoice;
+
+    // The same period, and one that merely overlaps it, are both refused —
+    // while the first is a draft, and again once it is issued.
+    for (const period of [
+      { periodStart: "2026-05-01", periodEnd: "2026-05-31" },
+      { periodStart: "2026-05-15", periodEnd: "2026-06-14" },
+    ]) {
+      const dup = await dev.post("/api/dev/billing/invoices").send({ orgId: org, ...period });
+      expect(dup.status).toBe(409);
+      expect(dup.body.error).toBe("period_already_invoiced");
+      expect(dup.body.invoice.number).toBe(first.number);
+      expect(dup.body.message).toContain(first.number);
+    }
+    await dev.post(`/api/dev/billing/invoices/${first.id}/issue`).send({}).expect(200);
+    const afterIssue = await dev.post("/api/dev/billing/invoices").send({ orgId: org, periodStart: "2026-05-01", periodEnd: "2026-05-31" });
+    expect(afterIssue.status).toBe(409);
+    expect((await ctx.storage.listOrgInvoices(org)).length).toBe(1);
+
+    // Voiding is how a period is corrected: after it, the period can be billed again.
+    await dev.post(`/api/dev/billing/invoices/${first.id}/void`).send({ reason: "wrong seat count" }).expect(200);
+    const rebill = await dev.post("/api/dev/billing/invoices").send({ orgId: org, periodStart: "2026-05-01", periodEnd: "2026-05-31" });
+    expect(rebill.status).toBe(201);
+    expect(rebill.body.invoice.number).not.toBe(first.number);
+  });
+});

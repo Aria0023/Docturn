@@ -172,6 +172,26 @@ for (const width of [375, 390, 430]) {
     const reveal2 = await page.evaluate(() => (window.DT.getState().__credentialReveal || {}).temporaryPassword || "");
     rec("A: Reset password reaches the server for a real account and reveals a new password", !!r2 && reveal2.length >= 8 && reveal2 !== reveal, String(r2));
     await page.evaluate(() => window.DT.actions.dismissCredentialReveal());
+    // Change role → the server's role, in place (same account id), audited.
+    const beforeRole = (await api("GET", "/api/accounts")).json.find((u) => u.username === NEW_USER);
+    await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Change role"]`).click();
+    await sleep(300);
+    const editor = page.locator(`[data-role-edit="${NEW_USER}"]`);
+    rec("A: Change role opens an inline editor that says what will happen", (await editor.count()) === 1 && /Pick a different role/.test(await editor.textContent()));
+    await editor.locator("select").selectOption("er_doctor");
+    await sleep(200);
+    rec("A: the editor states the consequences before anything is sent", /signed out everywhere/.test(await editor.textContent()) && /come off the rotation/.test(await editor.textContent()), (await editor.textContent()).slice(-160));
+    await checkLayout(page, "People change-role editor @390");
+    const b3 = apiLog.length;
+    await editor.locator("button").filter({ hasText: /^Change role$/ }).click();
+    await sleep(1500);
+    const r3 = apiLog.slice(b3).find((x) => /\/role$/.test(x));
+    const afterRole = (await api("GET", "/api/accounts")).json.find((u) => u.username === NEW_USER);
+    rec("A: Change role POSTs /api/accounts/:id/role and the server holds the new role on the SAME account", !!r3 && !!afterRole && afterRole.role === "er_doctor" && afterRole.id === beforeRole.id, String(r3) + " " + JSON.stringify(afterRole && { id: afterRole.id, role: afterRole.role }));
+    rec("A: the roster shows them under their new role and the editor is closed", (await page.locator(`[data-role-edit="${NEW_USER}"]`).count()) === 0 && (await page.locator(`[data-person="${NEW_USER}"]`).count()) === 1);
+    const trail = (await api("GET", "/api/audit")).json;
+    const rows = (trail && trail.audit) || [];
+    rec("A: the role change is on the audit trail", rows.some((x) => x.action === "account.role_change"), "rows=" + rows.length);
     // Remove access → server says disabled.
     await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Remove access"]`).click();
     await sleep(1200);
@@ -208,6 +228,7 @@ for (const width of [375, 390, 430]) {
   const ctl = await page.$$eval("[data-person]", (els) => els.map((e) => [e.getAttribute("data-person"), !!e.querySelector('button[aria-label^="Remove access"], button[aria-label^="Restore access"]')]));
   const ok = ctl.every(([u, has]) => { const a = accounts.find((x) => x.username === u); return a && has === (a.role === "er_doctor"); });
   rec("A(ER): account controls only on ER physicians (the server's rule)", ok, JSON.stringify(ctl));
+  rec("A(ER): no Change role control (a hospitalist director's decision; the server answers 403)", (await page.locator('button[aria-label^="Change role"]').count()) === 0);
   await clickText(page, "button", /^Add person$/);
   await sleep(300);
   const chips = await page.$$eval("button[aria-pressed]", (els) => els.map((e) => e.textContent.trim()).filter((t) => /physician|director|Hospitalist|PA/.test(t)));
