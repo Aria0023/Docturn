@@ -377,27 +377,33 @@ function ConsultRoster({ details, onRespond, compact }) {
                 the dot keeps the fixed shade. */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "color-mix(in srgb, " + c.color + " 16%, var(--card))" }}>
               <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--foreground)" }}>{spec}</span>
-              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--foreground)", minWidth: 0, overflowWrap: "anywhere" }}>{spec}</span>
+              <span style={{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
             </div>
             {members.map((m, i) => {
               const ss = consultStatusStyle(m.status);
               return (
-                <div key={m.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 9px", borderTop: "1px solid var(--border)" }}>
-                  <Avatar initials={(m.name || "?").replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()} size={26} tint="slate" />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 600 }}>{m.name || "On-call team"}</span>
-                    {m.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 5 }}>{m.credential}</span> : null}
+                // The name keeps a readable minimum and never breaks word by
+                // word; when the name and the answer controls don't both fit,
+                // the controls drop to their own line, right-aligned, instead
+                // of sitting on top of the name.
+                <div key={m.id || i} data-consult-member style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8, rowGap: 6, padding: "6px 9px", borderTop: "1px solid var(--border)" }}>
+                  <div style={{ flex: "1 1 auto", minWidth: 0, maxWidth: "100%", display: "flex", alignItems: "center", gap: 8 }}>
+                    <Avatar initials={(m.name || "?").replace(/^Dr\.?\s*/, "").split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()} size={26} tint="slate" />
+                    <div style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={m.name || "On-call team"}>
+                      <span style={{ fontSize: 12.5, fontWeight: 600 }}>{m.name || "On-call team"}</span>
+                      {m.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 5 }}>{m.credential}</span> : null}
+                    </div>
                   </div>
                   {onRespond && m.status !== "accepted" && m.status !== "declined" ? (
-                    <span style={{ display: "inline-flex", gap: 4, flex: "none" }}>
+                    <span data-consult-answer style={{ display: "inline-flex", gap: 4, flex: "none", marginLeft: "auto" }}>
                       <button onClick={() => onRespond(m.id, "declined")} title="Decline consult"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)" }}><Icon name="x" size={11} />Decline</button>
+                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}><Icon name="x" size={11} />Decline</button>
                       <button onClick={() => onRespond(m.id, "accepted")} title="Accept consult"
-                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--status-accepted)", background: "var(--status-accepted-bg)", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "var(--status-accepted-fg)", fontFamily: "var(--font-sans)" }}><Icon name="check" size={11} />Accept</button>
+                        style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--status-accepted)", background: "var(--status-accepted-bg)", cursor: "pointer", fontSize: 11, fontWeight: 700, color: "var(--status-accepted-fg)", fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}><Icon name="check" size={11} />Accept</button>
                     </span>
                   ) : (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none" }} title={m.respondedAt ? ss.label + " at " + new Date(m.respondedAt).toLocaleString() : ss.label}><Icon name={ss.icon} size={10} />{ss.label}{m.respondedAt && window.dtFmt ? " · " + window.dtFmt.hhmm(m.respondedAt) : ""}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none", marginLeft: "auto", whiteSpace: "nowrap" }} title={m.respondedAt ? ss.label + " at " + new Date(m.respondedAt).toLocaleString() : ss.label}><Icon name={ss.icon} size={10} />{ss.label}{m.respondedAt && window.dtFmt ? " · " + window.dtFmt.hhmm(m.respondedAt) : ""}</span>
                   )}
                 </div>
               );

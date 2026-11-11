@@ -56,11 +56,11 @@ const boardStatusOf = (st) => BOARD_STATUS[st] || { status: "offline", label: st
 
 function BoardReassign({ providers, onPick, label }) {
   return (
-    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", marginTop: 2 }}>
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", marginTop: 2, maxWidth: "100%" }}>
       <Icon name="repeat" size={11} color="var(--primary-ink)" style={{ position: "absolute", left: 8, pointerEvents: "none" }} />
       <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
-        style={{ appearance: "none", WebkitAppearance: "none", height: 26, padding: "0 22px 0 24px", borderRadius: "var(--radius-md)",
-          border: "1px solid var(--border)", background: "var(--card)", fontSize: 11.5, fontWeight: 600, color: "var(--primary-ink)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+        style={{ appearance: "none", WebkitAppearance: "none", height: 26, width: "auto", maxWidth: "min(100%, 190px)", padding: "0 22px 0 24px", borderRadius: "var(--radius-md)",
+          textOverflow: "ellipsis", border: "1px solid var(--border)", background: "var(--card)", fontSize: 11.5, fontWeight: 600, color: "var(--primary-ink)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         <option value="">{label}</option>
         {providers.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
       </select>
@@ -297,9 +297,24 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
   const awaiting = patients.filter((p) => p.status === "pending").length;
   const withConsult = patients.filter((p) => (p.consultants || []).length).length;
 
-  const Th = ({ children, w, grow }) => (
-    <span style={{ width: w, flex: grow ? grow + " 1 0" : (w ? "none" : 1), fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>{children}</span>
+  // A touch screen gets 44px controls (index.html), so the icon tracks widen.
+  const coarse = (() => { try { return window.matchMedia("(hover: none) and (pointer: coarse)").matches; } catch (e) { return false; } })();
+  const Th = ({ children }) => (
+    <span style={{ minWidth: 0, fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)" }}>{children}</span>
   );
+  // ONE column template for the header and every row, so a heading always
+  // sits over its own column (the header and the rows used to carry separate
+  // flex weights and drifted apart). Consultants gets the most room: it holds
+  // a name AND two buttons. The actions track is sized for its two icon
+  // buttons whether or not a row has them, so Status lines up down the table.
+  // Care-team thread, open-in-EHR, remove — a slot only for the ones this
+  // organization and role actually have, so the space goes to the columns.
+  const ehrOn = !!(window.DT && DT.moduleOn && DT.moduleOn("ehr.deepLinks"));
+  const actionSlots = Math.max(1, (threadsOn ? 1 : 0) + (ehrOn ? 1 : 0) + (canEdit ? 1 : 0));
+  const actionSize = coarse ? 44 : 32;
+  const boardCols = "minmax(164px, 1.1fr) minmax(110px, 1.5fr) minmax(140px, 1fr) minmax(290px, 2fr) minmax(130px, 1fr) "
+    + (actionSlots * actionSize + (actionSlots - 1) * 6) + "px 132px";
+  const boardRow = { display: "grid", gridTemplateColumns: boardCols, alignItems: "center", columnGap: 12 };
 
   const tiles = [
     ["admissions",  "Admissions", patients.length, "layout-list", "blue"],
@@ -396,23 +411,23 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
         </Card>
       ) : (
       <div style={{ overflowX: "auto", borderRadius: "var(--radius-lg)" }}>
-      <Card style={{ padding: 0, overflow: "hidden", minWidth: 1080 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" }}>
-          <Th w={150}>Patient</Th>
-          <Th grow={1.5}>Issue</Th>
-          <Th grow={1.4}>Responsible</Th>
-          <Th grow={1.2}>Consultants</Th>
-          <Th grow={1}>Admitted by</Th>
-          <Th w={132}>Status</Th>
-          {canEdit && <span style={{ width: 32, flex: "none" }} />}
+      <Card style={{ padding: 0, overflow: "hidden", minWidth: coarse ? 1180 : 1140 }}>
+        <div data-board-head style={Object.assign({}, boardRow, { padding: "10px 18px", background: "var(--secondary)", borderBottom: "1px solid var(--border)" })}>
+          <Th>Patient</Th>
+          <Th>Issue</Th>
+          <Th>Responsible</Th>
+          <Th>Consultants</Th>
+          <Th>Admitted by</Th>
+          <span />
+          <Th>Status</Th>
         </div>
 
         {rows.map((p, i) => {
           const bs = boardStatusOf(p.status);
           return (
-            <div key={p.id || i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 18px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <div key={p.id || i} data-board-row style={Object.assign({}, boardRow, { padding: "13px 18px", borderTop: i ? "1px solid var(--border)" : "none" })}>
               {/* Patient */}
-              <div style={{ width: 150, flex: "none", display: "flex", alignItems: "center", gap: 11 }}>
+              <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 11 }}>
                 <Avatar initials={p.initials} size={36} tint={p.status === "pending" ? "amber" : "slate"} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -420,26 +435,32 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
                     {p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}
                     {p.synced && <Icon name="cloud" size={12} color="var(--status-accepted)" title="Synced from EHR" />}
                   </div>
-                  <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 3 }}>
-                    Rm {canEdit ? <EditableText value={p.room} onSave={(v) => onUpdate(p.id, { room: v })} size={11.5} weight={400} color="var(--muted-foreground)" /> : p.room} · {p.dept}
+                  {/* Room and unit each stay whole; if both don't fit, the unit
+                      drops to its own line instead of breaking mid-phrase. */}
+                  <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", columnGap: 5, rowGap: 1, flexWrap: "wrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap" }}>Rm {canEdit ? <EditableText value={p.room} onSave={(v) => onUpdate(p.id, { room: v })} size={11.5} weight={400} color="var(--muted-foreground)" /> : p.room}</span>
+                    {p.dept ? <span style={{ whiteSpace: "nowrap" }}>· {p.dept}</span> : null}
                   </div>
                 </div>
               </div>
               {/* Issue */}
-              <span style={{ flex: "1.5 1 0", fontSize: 13, color: "var(--foreground)", minWidth: 0, paddingRight: 8 }}>{canEdit ? <EditableText value={p.issue} onSave={(v) => onUpdate(p.id, { issue: v })} size={13} weight={400} multiline /> : p.issue}</span>
+              <span style={{ fontSize: 13, color: "var(--foreground)", minWidth: 0, overflowWrap: "anywhere" }}>{canEdit ? <EditableText value={p.issue} onSave={(v) => onUpdate(p.id, { issue: v })} size={13} weight={400} multiline /> : p.issue}</span>
               {/* Responsible */}
-              <div style={{ flex: "1.4 1 0", minWidth: 0 }}>
+              <div style={{ minWidth: 0 }}>
                 <ResponsibleCell p={p} providers={providers} canEdit={canEdit} onReassign={onReassign} />
               </div>
               {/* Consultants — who was consulted + who accepted/declined */}
-              <div style={{ flex: "1.6 1 0", minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+              <div style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
                 <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
               </div>
               {/* Admitted by */}
-              <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>
                 <Avatar initials={p.er.avatar} size={26} tint="slate" />
-                <span style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
+                <span title={p.er.name} style={{ fontSize: 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.er.name}</span>
               </div>
+              {/* Row actions: one fixed track, so a row without them keeps
+                  Status in the same place as a row with them. */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, minWidth: 0 }}>
               {/* Patient-linked care-team thread */}
               {p.patientId != null && threadsOn && (
                 <button onClick={() => window.DT.actions.openPatientThread(p.patientId)} title="Message the care team about this patient"
@@ -450,14 +471,15 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
               )}
               {/* EHR deep link (module ehr.deepLinks + org template) — see OnCallBoard.jsx */}
               {p.patientId != null && window.OpenInEhrButton && <window.OpenInEhrButton patientId={p.patientId} compact />}
-              {/* Status */}
-              <span data-board-status={p.status} style={{ width: 132, flex: "none" }}><Badge status={bs.status}>{bs.label}</Badge></span>
               {/* Remove */}
               {canEdit && (
                 <button onClick={() => { if (window.confirm("Delete patient " + p.initials + " and everything linked to them (assignments, consults, care-team thread) for everyone? This can't be undone.")) onRemove(p.id); }} title="Remove admission" aria-label={"Remove patient " + p.initials}
                   onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
                   style={{ width: 32, height: 32, flex: "none", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="trash-2" size={16} /></button>
               )}
+              </div>
+              {/* Status */}
+              <span data-board-status={p.status} style={{ minWidth: 0 }}><Badge status={bs.status}>{bs.label}</Badge></span>
             </div>
           );
         })}
