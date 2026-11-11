@@ -26,7 +26,7 @@ import type { Express, Request, Response } from "express";
 import type { Role, User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
 import { normalizeUsername } from "../usernames.js";
-import { deactivateAccount, provisionUser, reactivateAccount } from "../services/provisioning.js";
+import { deactivateAccount, provisionUser, reactivateAccount, syncRotationAfterRoleChange } from "../services/provisioning.js";
 import { storage } from "../storage.js";
 import { scimAuth, scimContext, sendScimError, type ScimContext } from "./auth.js";
 import {
@@ -342,6 +342,7 @@ async function applyChanges(scim: ScimContext, user: User, patch: PendingChanges
   if (patch.role && patch.role !== user.role) fields.role = patch.role;
   if (Object.keys(fields).length > 0) {
     await storage().updateUser(user.id, fields);
+    if (fields.role) await syncRotationAfterRoleChange(user, user.role, fields.role);
     await auditScim(scim, "scim.user_update", user.id, { username: user.username, changedKeys: Object.keys(fields) }, "medium");
   }
   if (patch.active === false && !user.disabledAt) {

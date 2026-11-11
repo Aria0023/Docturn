@@ -2,7 +2,10 @@ import type { Express, Request, Response } from "express";
 import type { User } from "@shared/schema";
 import { endSessionsOfDeactivatedUser, issueTemporaryPassword, rotatePassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
+import { checkSeatAvailability, seatRefusalBody } from "../billing/entitlements.js";
+import { isBillableSeatRole } from "@shared/billing";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { releasePendingForHospitalist } from "../services/assignments.js";
 import { broadcastRotationChange } from "../services/notifications.js";
 import { signOutEverywhere } from "./session-policy.js";
 import { storage } from "../storage.js";
@@ -118,6 +121,9 @@ export function registerAccountRoutes(app: Express) {
         await storage().updateHospitalist(target.organizationId, profile.id, { working: false });
         broadcastRotationChange(target.organizationId);
       }
+      // Requests still waiting on them go to the next provider NOW, not after
+      // the timeout: nobody can answer for an account that cannot sign in.
+      if (profile) await releasePendingForHospitalist(storage(), target.organizationId, profile.id);
     }
     // The live transports end now, not at the next reconnect: the target's
     // sockets and demo tokens, and the sockets of every borrowed session a
@@ -139,7 +145,41 @@ export function registerAccountRoutes(app: Express) {
     const me = currentUser(req);
     const target = await reachableTarget(req, res);
     if (!target) return;
-    if (target.disabledAt) await storage().updateUser(target.id, { disabledAt: null });
+    if (target.disabledAt) {
+      // ── BILLING ─────────────────────────────────────────────────────────
+      // A deactivated account is not a seat (server/billing/seats.ts), so
+      // reactivating one CREATES a seat — the same event as adding an account,
+      // through the same one check. Without it "deactivate someone, add
+      // someone, reactivate the first" walks straight past the commitment the
+      // Add screen enforces. The operator is never refused (audited by the
+      // row below); a hospital with no contract is unaffected. Nothing
+      // clinical is gated: the account simply stays deactivated.
+      if (isBillableSeatRole(target.role)) {
+        const seat = await checkSeatAvailability(
+          storage(),
+          target.organizationId,
+          me.role === "developer" ? "operator" : "director",
+        );
+        if (!seat.allowed) {
+          await appendAudit({
+            organizationId: target.organizationId,
+            userId: me.id,
+            action: "billing.seat_refused",
+            resourceType: "organization",
+            resourceId: target.organizationId,
+            details: {
+              reason: seat.reason,
+              seatsInUse: seat.seatsInUse,
+              committedSeats: seat.committedSeats,
+              via: "reactivation",
+            },
+            riskLevel: "medium",
+          });
+          return res.status(402).json(seatRefusalBody(seat));
+        }
+      }
+      await storage().updateUser(target.id, { disabledAt: null });
+    }
     await appendAudit({
       organizationId: target.organizationId,
       userId: me.id,

@@ -342,8 +342,18 @@
   function bid(kitId) { return Number(String(kitId).replace(/^h/, "")); }
 
   // ---- mappers: backend shape -> kit shape --------------------------------
+  // A DEACTIVATED account is left out: it can't be routed a patient, put on
+  // shift or messaged (the server refuses all three), so no picker, roster or
+  // count should offer it. Its name still resolves on past records through
+  // formerProviderNames below. The account itself is managed under People.
+  var formerProviderNames = {};
   function mapProviders(hosps, usersById) {
-    return (hosps || []).map(function (h) {
+    formerProviderNames = {};
+    return (hosps || []).filter(function (h) {
+      var u = usersById[h.userId];
+      if (u && u.active === false) { formerProviderNames["h" + h.id] = u.displayName || null; return false; }
+      return true;
+    }).map(function (h) {
       var u = usersById[h.userId] || {};
       return {
         id: "h" + h.id,
@@ -547,7 +557,7 @@
       var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3];
       var usersById = {};
       (directory || []).forEach(function (d) {
-        usersById[d.userId] = { displayName: d.displayName, credential: d.credential };
+        usersById[d.userId] = { displayName: d.displayName, credential: d.credential, active: d.active !== false };
       });
       var users = directory; // truthy gate below
       var patientsById = {};
@@ -3367,7 +3377,19 @@
     // the hospitalist directory) is used as-is; otherwise match by name.
     var other = participant && participant.userId != null ? { id: participant.userId }
       : (DT.getState().directory || []).find(function (d) { return d.name === participant.name; });
-    if (!other || meId == null) { if (origStartConversation) origStartConversation(participant); return; } // not a registered user → local only
+    // A local-only thread exists ONLY in the labelled offline demo. In a signed-in
+    // session a thread the server did not create would be a conversation nobody
+    // else can ever see, so a failure says so instead of faking one.
+    function couldNotStart(e) {
+      if (localDemoSession || meId == null) { if (origStartConversation) origStartConversation(participant); return; }
+      var why = String((e && e.message) || "");
+      var msg = /user_deactivated/.test(why) ? "That account is deactivated, so it can't receive messages."
+        : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — try again when you're back online."
+        : !other ? "That person doesn't have a DocTurn account in your organization."
+        : "Try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't start the conversation", msg: msg }; return s; });
+    }
+    if (!other || meId == null) { couldNotStart(null); return; }
     return get("/api/messaging/conversations").then(function (convos) {
       var existing = (convos || []).find(function (c) { return c.type === "direct" && (c.participantIds || []).indexOf(other.id) >= 0 && (c.participantIds || []).indexOf(meId) >= 0; });
       if (existing) {
@@ -3376,7 +3398,7 @@
       return api("POST", "/api/messaging/conversations", { type: "direct", participantIds: [other.id] }).then(function (convo) {
         return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; s.__openThread = convo.id; return s; }); });
       });
-    }).catch(function () { if (origStartConversation) origStartConversation(participant); });
+    }).catch(couldNotStart);
   };
 
   // On-call / role addressing: fetch the server-resolved list of addressable
@@ -3506,7 +3528,15 @@
       return api("POST", "/api/messaging/conversations", { type: "direct", name: target.label, participantIds: [target.userId] }).then(function (convo) {
         return ensureConversation(convo.id).then(function () { DT.set(function (s) { s.__activeConvo = convo.id; s.__openThread = convo.id; return s; }); });
       });
-    }).catch(function () {});
+    }).catch(function (e) {
+      // Never a silent no-op: tapping a role and seeing nothing happen reads as
+      // "the page went through".
+      var why = String((e && e.message) || "");
+      var msg = /user_deactivated/.test(why) ? "The account holding that role is deactivated — ask a director to update the on-call schedule."
+        : (typeof navigator !== "undefined" && navigator.onLine === false) || isNetworkError(e) ? "No connection — try again when you're back online."
+        : "Try again.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't start the conversation", msg: msg }; return s; });
+    });
   };
 
   // ---- message forwarding (server-backed, with provenance) -----------------
@@ -3852,7 +3882,7 @@
     var routingLabel = mode === "manual" ? provider.name : "Round-robin (routing…)";
     function nameForHospitalist(hid) {
       var p = (DT.getState().providers || []).find(function (x) { return x.id === "h" + hid; });
-      return p ? p.name : null;
+      return p ? p.name : (formerProviderNames["h" + hid] || null);
     }
     function settle(name, toast) {
       DT.set(function (s) {
@@ -5358,6 +5388,9 @@
     var msg = m === "cannot_act_on_self" ? "You can't " + what + " your own account."
       : m === "not_found" ? "That account isn't one you manage."
       : m === "forbidden" ? "Your role can't " + what + " accounts."
+      // Reactivating restores a seat, so the contract's seat limit applies
+      // exactly as it does to adding an account; the server's own sentence.
+      : (e && e.status === 402) ? ((e.body && e.body.message) || "A billing limit refused it — nothing was changed.")
       : "The server rejected the request.";
     DT.set(function (s) { s.__toast = { tone: "rejected", title: "Could not " + what, msg: msg }; return s; });
   }

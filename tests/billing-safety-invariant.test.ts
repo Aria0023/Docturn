@@ -29,6 +29,9 @@ import { createTestApp, login, type TestContext } from "./helpers.js";
  *   server/routes/providers.ts — a director / ER director adds an account
  *   server/auth.ts             — a director approves a pending registration
  *   server/routes/dev.ts       — the operator creates a user or an organization
+ *   server/routes/accounts.ts  — a director REACTIVATES a deactivated account
+ *                                (a deactivated account is not a seat, so
+ *                                restoring one creates a seat)
  * Plus the billing surfaces that READ the same computation to show it:
  *   server/routes/billing.ts, server/routes/dev-billing.ts
  *
@@ -44,6 +47,7 @@ const ENTITLEMENT_MODULE = "server/billing/entitlements.ts";
 
 const ENTITLEMENT_IMPORTERS = [
   "server/auth.ts",
+  "server/routes/accounts.ts",
   "server/routes/billing.ts",
   "server/routes/dev-billing.ts",
   "server/routes/dev.ts",

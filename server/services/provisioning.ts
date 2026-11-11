@@ -22,6 +22,7 @@
 import { randomBytes } from "node:crypto";
 import type { Role, User } from "@shared/schema";
 import { appendAudit } from "../audit.js";
+import { releasePendingForHospitalist } from "./assignments.js";
 import { endSessionsOfDeactivatedUser, hashPassword } from "../auth.js";
 import { broadcastRotationChange } from "./notifications.js";
 import { storage } from "../storage.js";
@@ -89,6 +90,47 @@ export async function provisionUser(input: ProvisionInput): Promise<User> {
 }
 
 /**
+ * Keep the rotation consistent with a ROLE CHANGE (the identity provider
+ * moving someone between hospitalist and ER physician):
+ *   • INTO hospitalist — they get the rotation profile every hospitalist
+ *     has (off shift), or they could never start a shift or be routed to;
+ *   • OUT OF hospitalist — they come off shift at once and any request still
+ *     waiting on them goes to the next provider: an ER physician cannot accept
+ *     an admission, so leaving them in the round-robin would route patients
+ *     to someone the server will refuse. The profile row itself stays (past
+ *     assignments reference it).
+ * The caller has already written users.role.
+ */
+export async function syncRotationAfterRoleChange(user: Pick<User, "id" | "organizationId">, from: Role, to: Role): Promise<void> {
+  if (from === to) return;
+  const profile = await storage().getHospitalistByUser(user.organizationId, user.id);
+  if (to === "hospitalist") {
+    if (!profile) {
+      const existing = await storage().listHospitalists(user.organizationId);
+      await storage().createHospitalist({
+        organizationId: user.organizationId,
+        userId: user.id,
+        specialty: "Hospital Medicine",
+        currentPatientCount: 0,
+        patientCap: 12,
+        rotationOrder: existing.length,
+        working: false,
+        shiftType: "day",
+      });
+      broadcastRotationChange(user.organizationId);
+    }
+    return;
+  }
+  if (from === "hospitalist" && profile) {
+    if (profile.working) {
+      await storage().updateHospitalist(user.organizationId, profile.id, { working: false });
+      broadcastRotationChange(user.organizationId);
+    }
+    await releasePendingForHospitalist(storage(), user.organizationId, profile.id);
+  }
+}
+
+/**
  * End a person's access — the SAME path as POST /api/accounts/:id/deactivate:
  * the row carries disabled_at (so sign-in is refused and every live session
  * stops deserialising on its next request), the provider comes off shift at
@@ -102,6 +144,7 @@ export async function deactivateAccount(target: User): Promise<void> {
       await storage().updateHospitalist(target.organizationId, profile.id, { working: false });
       broadcastRotationChange(target.organizationId);
     }
+    if (profile) await releasePendingForHospitalist(storage(), target.organizationId, profile.id);
   }
   endSessionsOfDeactivatedUser(target.id);
 }

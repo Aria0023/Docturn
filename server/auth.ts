@@ -9,6 +9,7 @@ import {
   registerSchema,
   toSafeUser,
   PLATFORM_ORG_CODE,
+  MAX_PASSWORD_LENGTH,
   SELF_REGISTRABLE_ROLES,
   type User,
 } from "@shared/schema";
@@ -370,7 +371,8 @@ export function appLockGate(): RequestHandler {
  * Seed data is the only place it may exist.
  */
 export function isForbiddenPassword(pw: string): boolean {
-  if (pw.length < 8) return true;
+  // Too long is refused too: a password is hashed on every sign-in attempt.
+  if (pw.length < 8 || pw.length > MAX_PASSWORD_LENGTH) return true;
   const demo = process.env.DEMO_PASSWORD || "docturn";
   return pw === demo || pw.toLowerCase() === "docturn" || pw.toLowerCase() === "password";
 }
@@ -1361,14 +1363,21 @@ export function registerAuthRoutes(app: Express) {
     }),
   );
 
-  // Approval queue — directors AND ER directors (and developers) can review.
+  // Approval queue — directors AND ER directors (and developers) can review,
+  // each within the SAME reach they have everywhere else (accounts.ts,
+  // providers.ts): an ER director adds, manages and therefore approves ER
+  // physicians only. A hospitalist's request is the hospitalist director's —
+  // an ER director neither sees it nor can act on it (404, like any account
+  // outside their reach).
   app.get(
     "/api/registrations",
     requireAuth,
     requireRole("director", "er_director", "developer"),
     wrap(async (req, res) => {
       const me = req.user as unknown as User;
-      const rows = await storage().listPendingRegistrations(me.organizationId);
+      const rows = (await storage().listPendingRegistrations(me.organizationId)).filter((r) =>
+        mayReviewRegistration(me, r.requestedRole),
+      );
       // The reviewer legitimately knows their own roster: flag requests whose
       // username already belongs to an account (approving one is refused).
       // Compared like sign-in compares: case- and whitespace-insensitively.
@@ -1395,7 +1404,7 @@ export function registerAuthRoutes(app: Express) {
       const me = req.user as unknown as User;
       const id = Number(req.params.id);
       const reg = await storage().getPendingRegistration(me.organizationId, id);
-      if (!reg) return res.status(404).json({ error: "not_found" });
+      if (!reg || !mayReviewRegistration(me, reg.requestedRole)) return res.status(404).json({ error: "not_found" });
       const approvedUser = async () =>
         (await storage().getUserByUsername(reg.organizationId, reg.username))?.id ?? null;
       if (reg.status === "approved") {
@@ -1497,7 +1506,7 @@ export function registerAuthRoutes(app: Express) {
       const me = req.user as unknown as User;
       const id = Number(req.params.id);
       const reg = await storage().getPendingRegistration(me.organizationId, id);
-      if (!reg) return res.status(404).json({ error: "not_found" });
+      if (!reg || !mayReviewRegistration(me, reg.requestedRole)) return res.status(404).json({ error: "not_found" });
       if (reg.status === "approved") return res.status(409).json({ error: "already_approved" });
       if (reg.status === "rejected") return res.json({ ok: true, alreadyDenied: true });
       await storage().updatePendingRegistration(me.organizationId, id, {
@@ -1726,6 +1735,12 @@ export function registerAuthRoutes(app: Express) {
       res.json({ ok: true });
     }),
   );
+}
+
+/** May this reviewer see / decide a self-registration for `requestedRole`? */
+function mayReviewRegistration(me: Pick<User, "role">, requestedRole: string): boolean {
+  if (me.role === "er_director") return requestedRole === "er_doctor";
+  return me.role === "director" || me.role === "developer";
 }
 
 // Imported here to avoid a cycle at module top in some bundlers.

@@ -82,6 +82,7 @@ import {
   type UserReminderPrefs,
   type UserSoundPrefs,
   type Assignment,
+  type AssignmentStatus,
   type AuditLog,
   type Bed,
   type BroadcastAck,
@@ -720,6 +721,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(hospitalists.organizationId, orgId))
       .orderBy(asc(hospitalists.rotationOrder), asc(hospitalists.id));
   }
+  /**
+   * On shift AND able to answer: the account can sign in (not deactivated)
+   * and holds a role that may accept an admission (the same three the accept
+   * route allows). Whatever a profile row says, nobody else is "working" —
+   * this is what round-robin draws from, so the rule lives in the query, not
+   * in every caller.
+   */
   async listWorkingHospitalists(orgId: number) {
     return this.db
       .select()
@@ -728,6 +736,7 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(hospitalists.organizationId, orgId),
           eq(hospitalists.working, true),
+          sql`EXISTS (SELECT 1 FROM users u WHERE u.id = ${hospitalists.userId} AND u.disabled_at IS NULL AND u.role IN ('hospitalist', 'director', 'developer'))`,
         ),
       )
       .orderBy(asc(hospitalists.rotationOrder), asc(hospitalists.id));
@@ -757,11 +766,19 @@ export class DatabaseStorage implements IStorage {
         and(eq(hospitalists.organizationId, orgId), eq(hospitalists.id, id)),
       );
   }
+  /** "All on shift" never puts an account that cannot answer back on the rotation. */
   async bulkSetWorking(orgId: number, working: boolean) {
     await this.db
       .update(hospitalists)
       .set({ working })
-      .where(eq(hospitalists.organizationId, orgId));
+      .where(
+        working
+          ? and(
+              eq(hospitalists.organizationId, orgId),
+              sql`EXISTS (SELECT 1 FROM users u WHERE u.id = ${hospitalists.userId} AND u.disabled_at IS NULL AND u.role IN ('hospitalist', 'director', 'developer'))`,
+            )
+          : eq(hospitalists.organizationId, orgId),
+      );
   }
 
   // ── patients ─────────────────────────────────────────────────────────────────
@@ -1051,6 +1068,61 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  /**
+   * Move an assignment to a new state ONLY if it is still in one of `from`.
+   * The check and the write are one statement, so two people answering the
+   * same request at the same moment (the attending and an on-call unit
+   * member, or an accept racing the expiry sweep) cannot both win. Returns
+   * the updated row, or undefined when the assignment had already moved.
+   */
+  async transitionAssignment(
+    orgId: number,
+    id: number,
+    from: AssignmentStatus[],
+    patch: Partial<Assignment>,
+  ) {
+    const [row] = await this.db
+      .update(assignments)
+      .set(patch)
+      .where(
+        and(
+          eq(assignments.organizationId, orgId),
+          eq(assignments.id, id),
+          inArray(assignments.status, from),
+        ),
+      )
+      .returning();
+    return row;
+  }
+  /** The patient's pending or accepted assignment, if any (newest first). */
+  async activeAssignmentForPatient(orgId: number, patientId: number) {
+    const [row] = await this.db
+      .select()
+      .from(assignments)
+      .where(
+        and(
+          eq(assignments.organizationId, orgId),
+          eq(assignments.patientId, patientId),
+          inArray(assignments.status, ["pending", "accepted"]),
+        ),
+      )
+      .orderBy(desc(assignments.id))
+      .limit(1);
+    return row;
+  }
+  /**
+   * Census ±1 as ONE statement (never read-then-write): two accepts for the
+   * same provider landing together must both count. Floors at zero.
+   */
+  async adjustCensus(orgId: number, hospitalistId: number, delta: number) {
+    const [row] = await this.db
+      .update(hospitalists)
+      .set({ currentPatientCount: sql`GREATEST(0, ${hospitalists.currentPatientCount} + ${delta})` })
+      .where(and(eq(hospitalists.organizationId, orgId), eq(hospitalists.id, hospitalistId)))
+      .returning();
+    return row;
+  }
+
   // ── messaging ────────────────────────────────────────────────────────────────
   async listConversationsForUser(orgId: number, userId: number) {
     const rows = await this.db
@@ -1246,10 +1318,16 @@ export class DatabaseStorage implements IStorage {
         ),
       );
   }
-  async acknowledgeMessages(userId: number, messageIds: number[]) {
-    if (messageIds.length === 0) return;
+  /**
+   * Returns the ids whose acknowledgement THIS call recorded — the caller's
+   * own delivery rows that were still unacknowledged. A sender has no
+   * delivery row for their own message, and a repeat call changes nothing, so
+   * neither comes back: the route announces only real acknowledgements.
+   */
+  async acknowledgeMessages(userId: number, messageIds: number[]): Promise<number[]> {
+    if (messageIds.length === 0) return [];
     // Acknowledging also marks read (a STAT you acked was, by definition, seen).
-    await this.db
+    const rows = await this.db
       .update(messageDeliveryStatus)
       .set({ acknowledgedAt: new Date(), readAt: new Date() })
       .where(
@@ -1258,7 +1336,9 @@ export class DatabaseStorage implements IStorage {
           inArray(messageDeliveryStatus.messageId, messageIds),
           isNull(messageDeliveryStatus.acknowledgedAt),
         ),
-      );
+      )
+      .returning({ messageId: messageDeliveryStatus.messageId });
+    return rows.map((r) => r.messageId);
   }
   async listDeliveryForMessages(messageIds: number[]) {
     if (messageIds.length === 0) return [];

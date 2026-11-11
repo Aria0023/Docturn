@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { censusOverrideSchema, providerProfilePatchSchema, SHIFT_TYPE } from "@shared/schema";
+import { censusOverrideSchema, providerProfilePatchSchema, SHIFT_TYPE, MAX_DISPLAY_NAME_LENGTH, MAX_USERNAME_LENGTH, USERNAME_PATTERN } from "@shared/schema";
 import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { checkSeatAvailability, seatRefusalBody } from "../billing/entitlements.js";
@@ -9,13 +9,13 @@ import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 const createProviderSchema = z.object({
-  username: z.string().min(3),
+  username: z.string().trim().min(3).max(MAX_USERNAME_LENGTH).regex(USERNAME_PATTERN),
   // Accepted for backwards compatibility but IGNORED: the server mints a
   // one-time credential and returns it once (see the handler). A director can
   // never choose — let alone reuse the demo — password for someone else.
   password: z.string().optional(),
-  displayName: z.string().min(1),
-  specialty: z.string().default("General"),
+  displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
+  specialty: z.string().trim().max(80).default("General"),
   patientCap: z.number().int().min(1).max(50).default(12),
   shiftType: z.enum(["day", "night", "swing"]).default("day"),
   role: z
@@ -107,8 +107,11 @@ export function registerProviderRoutes(app: Express) {
         displayName: byId.get(h.userId)?.displayName ?? "Unknown",
         credential: byId.get(h.userId)?.credential ?? null,
         specialty: h.specialty,
-        working: h.working,
+        // A deactivated account is never on shift and is flagged, so pickers
+        // can leave it out while names on past records still resolve.
+        working: h.working && !byId.get(h.userId)?.disabledAt,
         shiftType: h.shiftType,
+        active: !byId.get(h.userId)?.disabledAt,
       })),
     );
   });
@@ -281,6 +284,11 @@ export function registerProviderRoutes(app: Express) {
       }
       // Already so: nothing changes, nothing to announce or audit.
       if (h.working === parsed.data.working) return res.json(h);
+      // A deactivated account cannot go on shift: it cannot sign in to answer.
+      if (parsed.data.working) {
+        const owner = await storage().getUser(me.organizationId, h.userId);
+        if (!owner || owner.disabledAt) return res.status(409).json({ error: "user_deactivated" });
+      }
       const updated = await storage().updateHospitalist(me.organizationId, id, {
         working: parsed.data.working,
       });

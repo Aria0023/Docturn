@@ -137,6 +137,10 @@ function Card({ children, style, onClick, hover }) {
 function Field({ label, icon, value, onChange, placeholder, type, help, error, textarea, rows, inputProps,
   name, id, autoComplete, autoCapitalize, autoCorrect, inputMode, spellCheck, enterKeyHint, required, disabled, onKeyDown, onFocus, onBlur }) {
   const [focus, setFocus] = React.useState(false);
+  // Password fields get a show/hide control: on a phone keyboard a mistyped
+  // new password is otherwise invisible until the next sign-in fails.
+  const [reveal, setReveal] = React.useState(false);
+  const isPassword = type === "password" && !textarea;
   const autoId = (typeof React.useId === "function") ? React.useId() : null;
   const fieldId = id || (inputProps && inputProps.id) || (autoId ? "dtf" + String(autoId).replace(/[^a-zA-Z0-9_-]/g, "") : undefined);
   const noteId = fieldId && (error || help) ? fieldId + "-note" : undefined;
@@ -160,7 +164,13 @@ function Field({ label, icon, value, onChange, placeholder, type, help, error, t
         {icon && <Icon name={icon} size={16} color="var(--muted-foreground)" style={{ marginTop: textarea ? 2 : 0 }} />}
         {textarea
           ? <textarea {...common} rows={rows || 3} style={{ border: "none", outline: "none", fontSize: 14, width: "100%", fontFamily: "inherit", background: "transparent", resize: "vertical", color: "var(--foreground)" }} />
-          : <input {...common} type={type || "text"} style={{ border: "none", outline: "none", fontSize: 16, width: "100%", minWidth: 0, fontFamily: "inherit", background: "transparent", color: "var(--foreground)" }} />}
+          : <input {...common} type={isPassword && reveal ? "text" : (type || "text")} style={{ border: "none", outline: "none", fontSize: 16, width: "100%", minWidth: 0, fontFamily: "inherit", background: "transparent", color: "var(--foreground)" }} />}
+        {isPassword && !disabled && (
+          <button type="button" className="dt-reveal" onClick={() => setReveal(!reveal)} aria-label={reveal ? "Hide password" : "Show password"} aria-pressed={reveal} title={reveal ? "Hide password" : "Show password"}
+            style={{ flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", width: 44, height: 38, marginRight: -12, border: "none", background: "transparent", color: "var(--muted-foreground)", cursor: "pointer", borderRadius: "var(--radius-md)" }}>
+            <Icon name={reveal ? "eye-off" : "eye"} size={16} />
+          </button>
+        )}
       </div>
       {error ? <div id={noteId} role="alert" style={{ fontSize: 12, color: "var(--destructive)", marginTop: 5, display: "flex", gap: 4, alignItems: "center" }}><Icon name="alert-circle" size={12} />{error}</div>
         : help ? <div id={noteId} style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 5 }}>{help}</div> : null}

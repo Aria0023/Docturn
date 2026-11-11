@@ -25,6 +25,9 @@
  *
  *   server/routes/providers.ts  a director / ER director adds an account  → CHECKED
  *   server/auth.ts              a director approves a registration        → CHECKED
+ *   server/routes/accounts.ts   a director reactivates an account         → CHECKED (a
+ *                                                                           deactivated account
+ *                                                                           is not a seat)
  *   server/routes/dev.ts        the operator adds an account              → CHECKED, never
  *                                                                           refused, an
  *                                                                           over-limit add

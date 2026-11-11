@@ -103,7 +103,7 @@ function LoginScreen({ onLogin, appName }) {
     if (!status && /Failed to fetch|NetworkError|Load failed|fetch failed|ERR_NETWORK/i.test(code)) return "Can't reach the server. Check your connection and try again.";
     if (status === 400 && code === "weak_password") return "Choose a stronger password: at least " + REG_MIN_PASSWORD + " characters, and not a demo or default password.";
     if (status === 400 && code === "role_not_self_registrable") return "Director, ER director and developer accounts are set up by an administrator. Request a Hospitalist or ER physician account.";
-    if (status === 400 && code === "validation_error") return "Check the form: an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).";
+    if (status === 400 && code === "validation_error") return "Check the form: an org code, your name, a username (3–64 letters, digits or . _ - @, no spaces) and a password (" + REG_MIN_PASSWORD + "+ characters).";
     if (status === 409 && code === "request_pending") return "A request for that username is already waiting for a director's approval. You'll be able to sign in once it's approved.";
     if (status === 429 || code === "rate_limited") return "Too many requests from this device. Wait a few minutes and try again.";
     return "Couldn't send the request — please try again.";
@@ -115,6 +115,12 @@ function LoginScreen({ onLogin, appName }) {
     if (!regRoles.some((r) => r.id === reg.role)) { setRegErr(registerErrorText({ status: 400, message: "role_not_self_registrable" })); return; }
     if (!reg.org.trim() || !reg.name.trim() || reg.user.trim().length < 3 || reg.pass.length < REG_MIN_PASSWORD) {
       setRegErr("Enter an org code, your name, a username (3+ characters) and a password (" + REG_MIN_PASSWORD + "+ characters).");
+      return;
+    }
+    // The server's username rule (USERNAME_PATTERN, shared/schema.ts), said
+    // before the request so the reason is specific.
+    if (!/^[A-Za-z0-9._@+-]{3,64}$/.test(reg.user.trim())) {
+      setRegErr("Usernames use letters, digits and . _ - @ only — no spaces. Your work e-mail address works.");
       return;
     }
     setRegBusy(true);

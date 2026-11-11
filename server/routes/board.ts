@@ -283,11 +283,28 @@ export function registerBoardRoutes(app: Express) {
     },
   );
 
-  app.patch("/api/consults/:id", requireAuth, async (req, res) => {
+  // Recording a consult's answer. Same audience as reading and requesting
+  // one — the clinical roles; a consultant without an account can't answer in
+  // the app, so the requester's side records it for them, and the audit row
+  // says whether the person recording it was the named consultant. A
+  // re-pointed consultant must be an ACTIVE account of this org, exactly as
+  // at request time (never another tenant's id, never a deactivated one).
+  app.patch(
+    "/api/consults/:id",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
     const me = currentUser(req);
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(404).json({ error: "not_found" });
     const parsed = updateConsultSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const before = await storage().getConsult(me.organizationId, id);
+    if (!before) return res.status(404).json({ error: "not_found" });
+    if (parsed.data.consultantUserId !== undefined) {
+      const u = await storage().getUser(me.organizationId, parsed.data.consultantUserId);
+      if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
+    }
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
@@ -297,10 +314,28 @@ export function registerBoardRoutes(app: Express) {
         : {}),
     });
     if (!updated) return res.status(404).json({ error: "not_found" });
+    if (parsed.data.status !== undefined || parsed.data.consultantUserId !== undefined) {
+      // Ids and states only — no specialty, no patient text.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "consult.update",
+        resourceType: "patient",
+        resourceId: before.patientId,
+        details: {
+          consultId: id,
+          ...(parsed.data.status !== undefined ? { from: before.status, to: parsed.data.status } : {}),
+          ...(parsed.data.consultantUserId !== undefined ? { consultantUserId: parsed.data.consultantUserId } : {}),
+          byNamedConsultant: before.consultantUserId != null && before.consultantUserId === me.id,
+        },
+        riskLevel: "low",
+      });
+    }
     notificationDeps().ws.broadcast(me.organizationId, {
       type: "CONSULT_UPDATED",
       consult: updated,
     });
     res.json(updated);
-  });
+    },
+  );
 }

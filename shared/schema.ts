@@ -1702,22 +1702,34 @@ export function toSafeUser(u: User): SafeUser {
 
 /* ── Request-body schemas shared by server validation and client forms ─────── */
 
+/** Upper bounds on identity fields — every one is stored, hashed or shown. */
+export const MAX_USERNAME_LENGTH = 64;
+export const MAX_DISPLAY_NAME_LENGTH = 120;
+export const MAX_PASSWORD_LENGTH = 256;
+/**
+ * What a NEW username may contain: letters, digits and . _ - @ + (so a work
+ * e-mail address is a valid username, which is what an identity provider
+ * sends). No spaces or control characters — a name two people would read as
+ * the same must not be two accounts. Existing accounts are not re-validated.
+ */
+export const USERNAME_PATTERN = /^[A-Za-z0-9._@+-]+$/;
+
 export const loginSchema = z.object({
-  orgCode: z.string().min(1),
-  username: z.string().min(1),
-  password: z.string().min(1),
+  orgCode: z.string().min(1).max(64),
+  username: z.string().min(1).max(MAX_USERNAME_LENGTH + 16),
+  password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
 });
 
 /** Minimum password length, shared by self-registration and password change. */
 export const MIN_PASSWORD_LENGTH = 8;
 
 export const registerSchema = z.object({
-  orgCode: z.string().min(1),
-  username: z.string().min(3),
+  orgCode: z.string().min(1).max(64),
+  username: z.string().trim().min(3).max(MAX_USERNAME_LENGTH).regex(USERNAME_PATTERN),
   // Same floor as PATCH /api/account/password (server/auth.ts
   // isForbiddenPassword additionally refuses the demo password there and here).
-  password: z.string().min(MIN_PASSWORD_LENGTH),
-  displayName: z.string().min(1),
+  password: z.string().min(MIN_PASSWORD_LENGTH).max(MAX_PASSWORD_LENGTH),
+  displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
   // Self-selected role; a director / ER director approves. Only clinical,
   // non-privileged roles can be requested (SELF_REGISTRABLE_ROLES) — a
   // director / ER director / developer account is provisioned by an existing
@@ -1758,7 +1770,7 @@ export const sendMessageSchema = z.object({
   conversationId: z.number().int().positive(),
   // Empty allowed so a message can be attachment-only. The send route rejects a
   // message that has NEITHER text nor attachments (400 empty_message).
-  content: z.string().default(""),
+  content: z.string().max(20_000).default(""),
   priority: z.enum(MESSAGE_PRIORITY).default("routine"),
   attachmentIds: z.array(z.number().int().positive()).max(10).optional(),
 });

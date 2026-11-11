@@ -1141,6 +1141,9 @@ export function registerMessagingRoutes(app: Express) {
     for (const pid of participantIds) {
       const u = await storage().getUser(me.organizationId, pid);
       if (!u) return res.status(400).json({ error: "participant_not_in_org" });
+      // A new thread with someone whose account is deactivated would be a
+      // message nobody can ever read. (Existing threads keep their history.)
+      if (u.disabledAt) return res.status(409).json({ error: "user_deactivated", userId: u.id });
     }
 
     const convo = await storage().createConversation({
@@ -1696,9 +1699,12 @@ export function registerMessagingRoutes(app: Express) {
       if (convo && convo.participantIds.includes(me.id)) owned.push(mid);
     }
     if (owned.length === 0) return res.status(404).json({ error: "not_found" });
-    await storage().acknowledgeMessages(me.id, owned);
+    // Only acknowledgements that were really recorded are announced: a sender
+    // "acknowledging" their own STAT (no delivery row) or a repeat tap must
+    // not put an "Acknowledged" on anyone's screen that the recipient never gave.
+    const recorded = await storage().acknowledgeMessages(me.id, owned);
     // Tell participants (sender included) so the ack reflects live.
-    for (const mid of owned) {
+    for (const mid of recorded) {
       const msg = await storage().getMessage(me.organizationId, mid);
       if (!msg) continue;
       const convo = await storage().getConversation(
