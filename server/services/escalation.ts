@@ -110,7 +110,10 @@ export async function resolveCovering(
   if (!Number.isInteger(coveringId) || coveringId <= 0 || coveringId === userId)
     return null;
   const u = await s.getUser(orgId, coveringId);
-  return u ? u.id : null; // must be a real user in the SAME org
+  // Must be a real user in the SAME org who can still sign in: a covering
+  // provider whose account was deactivated covers nobody, and a STAT copied
+  // to them would be read by no one. Callers treat null as "no covering".
+  return u && !u.disabledAt ? u.id : null;
 }
 
 export async function isDnd(s: IStorage, userId: number): Promise<boolean> {

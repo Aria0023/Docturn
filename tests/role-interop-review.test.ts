@@ -3,6 +3,7 @@ import supertest from "supertest";
 import { createTestApp, login, type TestContext } from "./helpers.js";
 import { countBillableSeats } from "../server/billing/seats.js";
 import { invalidateModules, setModule } from "../server/modules.js";
+import { resolveCovering } from "../server/services/escalation.js";
 
 /**
  * Role-logic and cross-role interoperability review (2026-11).
@@ -394,5 +395,26 @@ describe("a director changes a person's role in place", () => {
     expect((await director.post(`/api/accounts/${h.userId}/role`).send({ role: "director" })).status).toBe(200);
     expect((await ctx.storage.getHospitalist(orgId(), h.id))!.working).toBe(true);
     expect((await ctx.storage.listWorkingHospitalists(orgId())).some((x) => x.id === h.id)).toBe(true);
+  });
+});
+
+describe("a deactivated account never stands in for anyone", () => {
+  it("is not resolved as a covering provider, and its on-call role is not offered", async () => {
+    const chen = (await ctx.storage.getUserByUsername(orgId(), "chen"))!;
+    const patel = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    await ctx.storage.setUserPreference(orgId(), chen.id, "coveringUserId", patel.id);
+    expect(await resolveCovering(ctx.storage, orgId(), chen.id)).toBe(patel.id);
+
+    const er = await as("er.doc");
+    const before = await er.get("/api/messaging/on-call-targets");
+    expect(before.status).toBe(200);
+
+    const director = await as("director");
+    expect((await director.post(`/api/accounts/${patel.id}/deactivate`)).status).toBe(200);
+    expect(await resolveCovering(ctx.storage, orgId(), chen.id)).toBeNull();
+
+    // No role on the list resolves to — or is covered by — the deactivated account.
+    const after = await er.get("/api/messaging/on-call-targets");
+    expect(after.body.every((t: { userId: number; onCallUserId?: number }) => t.userId !== patel.id && t.onCallUserId !== patel.id)).toBe(true);
   });
 });

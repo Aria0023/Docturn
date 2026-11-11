@@ -62,6 +62,13 @@ Ordered by value-for-effort for a hospitalist/ED pilot. Lift is honest: some of
 these are separate **products** the competitors license individually (alarm
 management, scheduling engines, operator consoles), not quick features.
 
+*Status 2026-11: since this list was written, attachments (item 7), SSO +
+SCIM + session policy / sign-out-everywhere (item 8), EHR deep links (part of
+item 10), the native iPhone / Android shell and organization seat billing
+have been BUILT. A role-by-role functional review is in
+`docs/ROLE_INTEROP_REVIEW.md`; its largest remaining gap is that nurses and
+unit staff are not yet users — both incumbents are nurse-first.*
+
 ### Tier 1 — closes obvious demo gaps, buildable on current architecture
 *Status 2026-09: items 1–4 are BUILT (see §1); item 5 remains.*
 1. **Message forwarding + message templates.** Forward a thread/message to another person/role/group; canned templates ("Please call back re: bed X"). Cheap, expected in every demo.

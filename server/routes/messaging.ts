@@ -410,7 +410,10 @@ export interface OnCallTarget {
 export async function resolveOnCallTargets(me: User): Promise<OnCallTarget[]> {
   // The org's user roster is the single source of truth for "is this a real,
   // messageable user in my tenant?" — resolution never looks outside it.
-  const users = await storage().listUsers(me.organizationId);
+  // "Messageable" means ACTIVE: a role whose holder's account is deactivated
+  // is not offered at all (the schedule is stale; a director fixes it) rather
+  // than resolving to an inbox nobody can open.
+  const users = (await storage().listUsers(me.organizationId)).filter((u) => !u.disabledAt);
   const byId = new Map(users.map((u) => [u.id, u]));
   const byName = new Map(
     users.map((u) => [u.displayName.trim().toLowerCase(), u]),
