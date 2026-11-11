@@ -31,7 +31,9 @@ installable PWA / native shell, so one review covers both).
 | Reassign | ✔ | ✔ | ✔ | — |
 | Cancel an admission | ✔ | — | — | — |
 | Start / end shift, hand off | ✔ (if in rotation) | — | — | ✔ |
-| Request a consult, record its answer | ✔ | ✔ | ✔ | ✔ |
+| Request a consult | ✔ | ✔ | ✔ | ✔ |
+| Record a consult's answer (accept / decline) | only one addressed to them | ✔ | ✔ | ✔ |
+| Remove a consult | ✔ | ✔ | — | — |
 | Send a broadcast | ✔ | ✔ | — | — |
 | Add / deactivate / reset accounts | every clinical account | ER physicians only | — | — |
 | Approve a self-registration | any request | ER-physician requests only | — | — |

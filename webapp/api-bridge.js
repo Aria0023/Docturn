@@ -500,6 +500,8 @@
         name: c.name || (c.consultantUserId ? "Consultant" : "On-call team"),
         credential: c.credential || "", status: c.status || "requested",
         userId: c.consultantUserId || null,
+        // Addressed to ME — the one consult a director may answer themself.
+        mine: c.consultantUserId != null && c.consultantUserId === meId,
         respondedAt: c.respondedAt ? new Date(c.respondedAt).getTime() : null,
         requestedAt: c.requestedAt ? new Date(c.requestedAt).getTime() : null,
       };
@@ -2281,20 +2283,53 @@
   // Optimistically flips the matching consultDetails row, then re-hydrates.
   DT.actions.respondConsult = function (consultId, status) {
     if (consultId == null) return;
-    api("PATCH", "/api/consults/" + consultId, { status: status }).then(rehydrate).catch(function (e) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update consult", msg: String((e && e.message) || "Try again.") }; return s; });
+    // The row flips at once; the confirmation is said only when the SERVER
+    // has recorded the answer, and a refusal puts the row back.
+    var setStatus = function (to) {
+      DT.set(function (s) {
+        var flip = function (list) {
+          return (list || []).map(function (row) {
+            if (!row.consultDetails) return row;
+            var cd = row.consultDetails.map(function (c) { return c.id === consultId ? Object.assign({}, c, { status: to }) : c; });
+            return Object.assign({}, row, { consultDetails: cd });
+          });
+        };
+        s.board = flip(s.board); s.sent = flip(s.sent);
+        return s;
+      });
+    };
+    setStatus(status);
+    return api("PATCH", "/api/consults/" + consultId, { status: status }).then(function () {
+      DT.set(function (s) { s.__toast = { tone: status === "accepted" ? "accepted" : "rejected", title: status === "accepted" ? "Consult accepted" : "Consult declined", msg: "" }; return s; });
+      return rehydrate();
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      setStatus("requested");
+      var msg = m === "director_cannot_answer_consult" ? "The answer is the consultant's to give. You can remove this consult or add another."
+        : isNetworkError(e) ? "No connection — nothing was changed."
+        : m === "not_found" ? "That consult is no longer on the board."
+        : "The server refused it — nothing was changed.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update consult", msg: msg }; return s; });
+      rehydrate();
     });
-    DT.set(function (s) {
-      var flip = function (list) {
-        return (list || []).map(function (row) {
-          if (!row.consultDetails) return row;
-          var cd = row.consultDetails.map(function (c) { return c.id === consultId ? Object.assign({}, c, { status: status }) : c; });
-          return Object.assign({}, row, { consultDetails: cd });
-        });
-      };
-      s.board = flip(s.board);
-      s.__toast = { tone: status === "accepted" ? "accepted" : "rejected", title: status === "accepted" ? "Consult accepted" : "Consult declined", msg: "" };
-      return s;
+  };
+  // Remove one consult request (DELETE /api/consults/:id) — the board's
+  // editors only. The row leaves the screen when the server has removed it.
+  DT.actions.removeConsult = function (consultId) {
+    if (consultId == null) return Promise.resolve(false);
+    return api("DELETE", "/api/consults/" + consultId).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Consult removed", msg: "" }; return s; });
+      rehydrate();
+      return true;
+    }).catch(function (e) {
+      var m = String((e && e.message) || "");
+      var msg = isNetworkError(e) ? "No connection — nothing was changed."
+        : m === "not_found" ? "That consult was already removed."
+        : m === "forbidden" ? "Only a director can remove a consult."
+        : "The server refused it — nothing was changed.";
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove consult", msg: msg }; return s; });
+      rehydrate();
+      return false;
     });
   };
   // Self-service password change. Returns a promise so the UI can await + report.

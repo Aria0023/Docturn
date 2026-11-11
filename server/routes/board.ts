@@ -306,6 +306,14 @@ export function registerBoardRoutes(app: Express) {
       if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
     }
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
+    // A hospitalist DIRECTOR oversees the board — they add a consult and can
+    // remove one — but the ANSWER is the specialist's (or the requesting
+    // clinician's record of it). A director accepting or declining for a
+    // consultant would put an answer on the chart that nobody gave. The one
+    // exception is a consult addressed to the director personally.
+    if (responded && me.role === "director" && before.consultantUserId !== me.id) {
+      return res.status(403).json({ error: "director_cannot_answer_consult" });
+    }
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
       ...(responded ? { respondedAt: new Date() } : {}),
@@ -336,6 +344,34 @@ export function registerBoardRoutes(app: Express) {
       consult: updated,
     });
     res.json(updated);
+    },
+  );
+
+  // Remove one consult request from a patient (the wrong service was picked,
+  // or it is no longer needed). The board's editors only — the same two roles
+  // that may edit or remove a patient row. Audited with ids and states, never
+  // the specialty or any patient text.
+  app.delete(
+    "/api/consults/:id",
+    requireAuth,
+    requireRole("director", "er_director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(404).json({ error: "not_found" });
+      const removed = await storage().deleteConsult(me.organizationId, id);
+      if (!removed) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "consult.remove",
+        resourceType: "patient",
+        resourceId: removed.patientId,
+        details: { consultId: id, status: removed.status, hadAccount: removed.consultantUserId != null },
+        riskLevel: "medium",
+      });
+      notificationDeps().ws.broadcast(me.organizationId, { type: "CONSULT_UPDATED", patientId: removed.patientId });
+      res.json({ ok: true, id });
     },
   );
 }

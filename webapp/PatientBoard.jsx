@@ -181,11 +181,11 @@ function ResponsibleCell({ p, providers, canEdit, onReassign }) {
 
 // "Consultants" — who was consulted, their accept/decline state, and (for
 // editors) the add-consult control. Shared by the table and the mobile card.
-function ConsultantsCell({ p, onAddConsult, onRespondConsult, consultServices }) {
+function ConsultantsCell({ p, onAddConsult, onRespondConsult, canAnswerConsult, onRemoveConsult, consultServices }) {
   return (
     <React.Fragment>
       {(p.consultDetails && p.consultDetails.length)
-        ? <ConsultRoster details={p.consultDetails} onRespond={onRespondConsult} />
+        ? <ConsultRoster details={p.consultDetails} onRespond={onRespondConsult} canAnswer={canAnswerConsult} onRemove={onRemoveConsult} />
         : ((p.consultants || []).length === 0 && !onAddConsult
           ? <span style={{ fontSize: 13, color: "var(--muted-foreground)" }}>—</span>
           : <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>{(p.consultants || []).map((c) => {
@@ -201,7 +201,7 @@ function ConsultantsCell({ p, onAddConsult, onRespondConsult, consultServices })
 
 // A single stacked patient card for phones — the same data and controls as one
 // table row, laid out vertically so nothing needs a 1080px horizontal scroll.
-function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRemove, onAddConsult, onRespondConsult, consultServices }) {
+function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRemove, onAddConsult, onRespondConsult, canAnswerConsult, onRemoveConsult, consultServices }) {
   const bs = boardStatusOf(p.status);
   const canThread = p.patientId != null && patientThreadsOn();
   const Label = ({ children }) => (
@@ -250,7 +250,7 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
       <div style={{ marginTop: 12 }}>
         <Label>Consultants</Label>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-          <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
+          <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} canAnswerConsult={canAnswerConsult} onRemoveConsult={onRemoveConsult} consultServices={consultServices} />
         </div>
       </div>
 
@@ -275,8 +275,14 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
   );
 }
 
-function PatientBoard({ patients, role, providers = [], modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onPurge, onAddConsult, onRespondConsult, consultServices }) {
+function PatientBoard({ patients, role, providers = [], modules, canCustomize, onSetModule, onReassign, onUpdate, onAdd, onRemove, onPurge, onAddConsult, onRespondConsult, onRemoveConsult: removeConsultProp, consultServices }) {
   const isMobile = useIsMobile();
+  // The server's consult rules (server/routes/board.ts), mirrored so no control
+  // is offered that it refuses: a hospitalist director adds and removes
+  // consults but does not answer one for the specialist — unless it was
+  // addressed to them. Removing is the board editors' (director, ER director).
+  const canAnswerConsult = role === "director" ? ((m) => !!m.mine) : undefined;
+  const onRemoveConsult = (role === "director" || role === "er_director") ? removeConsultProp : undefined;
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");
   const [adding, setAdding] = React.useState(false);
@@ -403,7 +409,7 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
           {rows.map((p, i) => (
             <BoardPatientCard key={p.id || i} p={p} i={i} providers={providers} canEdit={canEdit}
               onReassign={onReassign} onUpdate={onUpdate} onRemove={onRemove}
-              onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
+              onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} canAnswerConsult={canAnswerConsult} onRemoveConsult={onRemoveConsult} consultServices={consultServices} />
           ))}
           {rows.length === 0 && (
             <div style={{ padding: 30, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No patients match your filter.</div>
@@ -451,7 +457,7 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
               </div>
               {/* Consultants — who was consulted + who accepted/declined */}
               <div style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
-                <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} consultServices={consultServices} />
+                <ConsultantsCell p={p} onAddConsult={onAddConsult} onRespondConsult={onRespondConsult} canAnswerConsult={canAnswerConsult} onRemoveConsult={onRemoveConsult} consultServices={consultServices} />
               </div>
               {/* Admitted by */}
               <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 8 }}>

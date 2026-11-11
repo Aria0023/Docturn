@@ -418,3 +418,62 @@ describe("a deactivated account never stands in for anyone", () => {
     expect(after.body.every((t: { userId: number; onCallUserId?: number }) => t.userId !== patel.id && t.onCallUserId !== patel.id)).toBe(true);
   });
 });
+
+describe("consults on the board — the director adds and removes, the answer is the consultant's", () => {
+  async function consultOnBoard(body: Record<string, unknown> = { specialty: "Cardiology" }) {
+    const { er, patient } = await routedPatient("CB");
+    const created = await er.post(`/api/patients/${patient.id}/consults`).send(body);
+    expect(created.status).toBe(201);
+    return { er, patient, consult: created.body[0] as { id: number; status: string } };
+  }
+
+  it("a hospitalist director cannot accept or decline for a consultant; nothing changes", async () => {
+    const { consult } = await consultOnBoard();
+    const director = await as("director");
+    for (const status of ["accepted", "declined"]) {
+      const res = await director.patch(`/api/consults/${consult.id}`).send({ status });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("director_cannot_answer_consult");
+    }
+    expect((await ctx.storage.getConsult(orgId(), consult.id))!.status).toBe("requested");
+    expect((await ctx.storage.getConsult(orgId(), consult.id))!.respondedAt).toBeNull();
+  });
+
+  it("the requesting clinician still records the answer, and a director answers a consult addressed to THEM", async () => {
+    const { er, consult } = await consultOnBoard();
+    expect((await er.patch(`/api/consults/${consult.id}`).send({ status: "accepted" })).status).toBe(200);
+
+    const directorUser = (await ctx.storage.getUserByUsername(orgId(), "director"))!;
+    const own = await consultOnBoard({ specialty: "Hospital Medicine", consultantUserId: directorUser.id });
+    const director = await as("director");
+    const mine = await director.patch(`/api/consults/${own.consult.id}`).send({ status: "declined" });
+    expect(mine.status).toBe(200);
+    expect(mine.body.status).toBe("declined");
+  });
+
+  it("a director removes a consult (audited, ids only) and can add another; other roles cannot remove", async () => {
+    const { er, patient, consult } = await consultOnBoard();
+    const hospitalist = await as("patel");
+    expect((await er.delete(`/api/consults/${consult.id}`)).status).toBe(403);
+    expect((await hospitalist.delete(`/api/consults/${consult.id}`)).status).toBe(403);
+
+    const director = await as("director");
+    const gone = await director.delete(`/api/consults/${consult.id}`);
+    expect(gone.status).toBe(200);
+    expect(await ctx.storage.getConsult(orgId(), consult.id)).toBeFalsy();
+    expect((await director.delete(`/api/consults/${consult.id}`)).status).toBe(404);
+    const row = (await ctx.storage.listAuditLogs(orgId(), 100)).find((a) => a.action === "consult.remove");
+    expect(row).toBeTruthy();
+    expect(JSON.stringify(row!.details)).not.toMatch(/Cardiology/);
+
+    const added = await director.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Nephrology" });
+    expect(added.status).toBe(201);
+    expect(added.body.length).toBeGreaterThan(0);
+  });
+
+  it("another organization's consult is not found", async () => {
+    const { consult } = await consultOnBoard();
+    const operator = await as("dev", "DOCTURN");
+    expect((await operator.delete(`/api/consults/${consult.id}`)).status).toBe(403);
+  });
+});

@@ -614,7 +614,7 @@ function App() {
 
   const message = (person) => { a.startConversation(person); a.setNav("messages"); };
 
-  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} />;
+  const boardEl = <PatientBoard patients={st.board} role={role} providers={st.providers} modules={DT.boardModules(role)} canCustomize={role === "director" || role === "er_director"} onSetModule={(k, v) => a.setBoardModule(role, k, v)} onReassign={a.reassignBoard} onUpdate={a.updateBoardRow} onAdd={a.addBoardPatient} onRemove={a.removeBoardPatient} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} onAddConsult={a.requestConsult} onRespondConsult={a.respondConsult} onRemoveConsult={a.removeConsult} />;
 
   // Roles that also manage org people — their Directory tab folds in People,
   // Consult services and Roles as sub-tabs. A director sees (and manages)

@@ -356,7 +356,11 @@ function consultStatusStyle(status) {
   if (status === "declined") return { label: "Declined", color: "var(--status-rejected-fg)", bg: "var(--status-rejected-bg)", icon: "x" };
   return { label: "Pending", color: "var(--status-pending-fg)", bg: "var(--status-pending-bg)", icon: "clock" };
 }
-function ConsultRoster({ details, onRespond, compact }) {
+// onRespond + canAnswer: who may record a consult's answer here. A hospitalist
+// director may not (the server refuses it) except for a consult addressed to
+// them, so their board shows the state and — via onRemove — a remove control,
+// never an Accept that would fail.
+function ConsultRoster({ details, onRespond, canAnswer, onRemove, compact }) {
   const list = details || [];
   if (!list.length) return null;
   const bySpec = {};
@@ -395,7 +399,7 @@ function ConsultRoster({ details, onRespond, compact }) {
                       {m.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 5 }}>{m.credential}</span> : null}
                     </div>
                   </div>
-                  {onRespond && m.status !== "accepted" && m.status !== "declined" ? (
+                  {onRespond && (!canAnswer || canAnswer(m)) && m.status !== "accepted" && m.status !== "declined" ? (
                     <span data-consult-answer style={{ display: "inline-flex", gap: 4, flex: "none", marginLeft: "auto" }}>
                       <button onClick={() => onRespond(m.id, "declined")} title="Decline consult"
                         style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}><Icon name="x" size={11} />Decline</button>
@@ -404,6 +408,14 @@ function ConsultRoster({ details, onRespond, compact }) {
                     </span>
                   ) : (
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none", marginLeft: "auto", whiteSpace: "nowrap" }} title={m.respondedAt ? ss.label + " at " + new Date(m.respondedAt).toLocaleString() : ss.label}><Icon name={ss.icon} size={10} />{ss.label}{m.respondedAt && window.dtFmt ? " · " + window.dtFmt.hhmm(m.respondedAt) : ""}</span>
+                  )}
+                  {onRemove && m.id != null && (
+                    <button type="button" data-consult-remove onClick={() => { if (window.confirm("Remove this " + (m.specialty || "consult") + " consult" + (m.name ? " (" + m.name + ")" : "") + "? It leaves the board for everyone.")) onRemove(m.id); }}
+                      title="Remove consult" aria-label={"Remove consult: " + (m.name || "On-call team")}
+                      onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
+                      style={{ flex: "none", width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", borderRadius: "var(--radius-md)", cursor: "pointer", color: "var(--muted-foreground)" }}>
+                      <Icon name="trash-2" size={13} />
+                    </button>
                   )}
                 </div>
               );

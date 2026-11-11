@@ -2764,6 +2764,13 @@ export class DatabaseStorage implements IStorage {
       );
     return row;
   }
+  async deleteConsult(orgId: number, id: number) {
+    const [row] = await this.db
+      .delete(patientConsults)
+      .where(and(eq(patientConsults.organizationId, orgId), eq(patientConsults.id, id)))
+      .returning();
+    return row;
+  }
   async updateConsult(orgId: number, id: number, patch: Partial<PatientConsult>) {
     const [row] = await this.db
       .update(patientConsults)
