@@ -304,8 +304,16 @@ function SpecialtyTag({ name, size }) {
 function ConsultAdd({ services, onPick, label }) {
   const [open, setOpen] = React.useState(false);
   const [pos, setPos] = React.useState(null);
+  // Two ways to consult: a SERVICE (its on-call and team are called) or a
+  // specific PHYSICIAN by name — anyone in the organization, not only whoever
+  // is on call. onPick receives the service name, or { person }.
+  const [tab, setTab] = React.useState("service");
+  const [q, setQ] = React.useState("");
   const btnRef = React.useRef(null);
   const list = (services && services.length) ? services : ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
+  const people = open && tab === "person" && window.DT && window.DT.consultPeople ? window.DT.consultPeople() : [];
+  const ql = q.trim().toLowerCase();
+  const matches = ql ? people.filter((p) => p.name.toLowerCase().includes(ql) || p.label.toLowerCase().includes(ql)) : people;
   // Anchor the menu with position:fixed off the button's screen rect so it
   // floats ABOVE the row (and any clipping ancestor) instead of being buried
   // inside it. Flip upward when there isn't enough room below.
@@ -313,34 +321,71 @@ function ConsultAdd({ services, onPick, label }) {
     const el = btnRef.current;
     const vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
     const r = el && el.getBoundingClientRect ? el.getBoundingClientRect() : { top: 0, bottom: 0, right: 0, left: 0 };
-    const width = Math.min(260, vw - 24);
+    const width = Math.min(300, vw - 24);
     let left = r.right - width;
     if (left < 12) left = 12;
     if (left + width > vw - 12) left = vw - 12 - width;
     const below = vh - r.bottom;
-    const up = below < 240 && r.top > below;
-    return { left, width, top: up ? null : Math.round(r.bottom + 6), bottom: up ? Math.round(vh - r.top + 6) : null };
+    const up = below < 340 && r.top > below;
+    // Never taller than the room on the side it opens toward, so the list
+    // scrolls inside the menu instead of running off the screen.
+    const room = Math.max(160, Math.round((up ? r.top : below) - 18));
+    return { left, width, room, top: up ? null : Math.round(r.bottom + 6), bottom: up ? Math.round(vh - r.top + 6) : null };
   }
-  function toggle() { setOpen((v) => { const nv = !v; if (nv) setPos(place()); return nv; }); }
+  function toggle() { setOpen((v) => { const nv = !v; if (nv) { setPos(place()); setQ(""); } return nv; }); }
+  const tabBtn = (id, text) => (
+    <button type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+      style={{ flex: 1, height: 32, border: "none", borderRadius: "var(--radius-sm, 6px)", cursor: "pointer", fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)",
+        background: tab === id ? "var(--card)" : "transparent", color: tab === id ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: tab === id ? "var(--shadow-sm)" : "none" }}>{text}</button>
+  );
   return (
     <span style={{ display: "inline-flex" }}>
-      <button ref={btnRef} onClick={toggle}
+      <button ref={btnRef} onClick={toggle} aria-expanded={open}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "var(--card)", color: "var(--primary-ink)" }}>
         <Icon name={open ? "x" : "plus"} size={11} />{label || "Consult"}
       </button>
       {open && pos && (
         <React.Fragment>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
-          <div style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: "60vh", overflowY: "auto", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {list.map((s) => {
-              const c = specialtyColor(s);
-              return (
-                <button key={s} onClick={() => { onPick(s); setOpen(false); }}
-                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: `1px solid ${c.color}`, background: c.bg, color: c.color }}>
-                  <span style={{ width: 6, height: 6, borderRadius: 99, background: c.color }} />{s}
-                </button>
-              );
-            })}
+          <div data-consult-menu style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: Math.min(pos.room, Math.round((window.innerHeight || 768) * 0.7)), display: "flex", flexDirection: "column", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 10, gap: 8 }}>
+            <div role="tablist" aria-label="Consult by" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+              {tabBtn("service", "Service (on call)")}
+              {tabBtn("person", "Specific physician")}
+            </div>
+            {tab === "service" ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, overflowY: "auto" }}>
+                {list.map((s) => {
+                  const c = specialtyColor(s);
+                  return (
+                    <button key={s} onClick={() => { onPick(s); setOpen(false); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: `1px solid ${c.color}`, background: c.bg, color: c.color }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 99, background: c.color }} />{s}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <React.Fragment>
+                <input data-consult-search autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or specialty…" aria-label="Search physicians"
+                  style={{ height: 36, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 14, fontFamily: "inherit", background: "var(--card)", color: "var(--foreground)", outline: "none" }} />
+                <div role="listbox" aria-label="Physicians" style={{ overflowY: "auto", display: "flex", flexDirection: "column", margin: "0 -4px" }}>
+                  {matches.length === 0 && (
+                    <div style={{ padding: "12px 6px", fontSize: 12.5, color: "var(--muted-foreground)" }}>{people.length ? "No one matches “" + q + "”." : "No one else is listed in your organization yet."}</div>
+                  )}
+                  {matches.map((p) => (
+                    <button key={p.key} type="button" role="option" data-consult-person={p.userId || p.name} onClick={() => { onPick({ person: p }); setOpen(false); }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                      style={{ display: "flex", alignItems: "center", gap: 9, padding: "7px 6px", border: "none", borderRadius: "var(--radius-md)", background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-sans)", color: "var(--foreground)" }}>
+                      <Avatar initials={p.avatar} size={26} tint="slate" />
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                        <span style={{ display: "block", fontSize: 11.5, color: "var(--muted-foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}{p.hasAccount ? "" : " · no DocTurn account — recorded, not alerted"}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </React.Fragment>
+            )}
           </div>
         </React.Fragment>
       )}

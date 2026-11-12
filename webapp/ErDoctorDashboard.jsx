@@ -196,6 +196,11 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   const [manual, setManual] = React.useState(""); // selected provider id (empty until chosen)
   const [consults, setConsults] = React.useState([]);
   const [consultMembers, setConsultMembers] = React.useState({});
+  // Specific physicians consulted BY NAME (anyone in the organization, not
+  // only a service's on-call). Each is filed under their own specialty.
+  const [personConsults, setPersonConsults] = React.useState([]);
+  const addPersonConsult = (p) => setPersonConsults((list) => list.some((x) => x.key === p.key) ? list : [...list, p]);
+  const removePersonConsult = (key) => setPersonConsults((list) => list.filter((x) => x.key !== key));
 
   // The SERVER's extractor (POST /api/patients/extract): the org's OpenAI
   // integration when it is on, else DocTurn's keyword rules — the label says
@@ -219,7 +224,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
       toast({ tone: "rejected", title: "Couldn't extract", msg: (e && /network|fetch|connection/i.test(String(e.message))) ? "No connection — fill in the fields by hand." : "The server didn't extract anything — fill in the fields by hand." });
     }).then(() => setExtracting(false));
   };
-  const reset = () => { setNote(""); setExtracted(null); setConsults([]); setConsultMembers({}); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
+  const reset = () => { setNote(""); setExtracted(null); setConsults([]); setConsultMembers({}); setPersonConsults([]); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
   const toggleConsult = (s) => setConsults((c) => {
     if (c.includes(s)) {
       setConsultMembers((cm) => { const n = Object.assign({}, cm); delete n[s]; return n; });
@@ -242,6 +247,16 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
       (consultMembers[s] || []).forEach((m) => { if (m && m.name) team.push({ name: m.name, userId: typeof m.userId === "number" ? m.userId : undefined }); });
       out[s] = team;
     });
+    // A named physician joins their specialty's consult if that service is
+    // also ticked, otherwise is that specialty's consult on their own.
+    personConsults.forEach((p) => {
+      out[p.label] = (out[p.label] || []).concat([{ name: p.name, userId: typeof p.userId === "number" ? p.userId : undefined }]);
+    });
+    return out;
+  };
+  const allConsults = () => {
+    const out = consults.slice();
+    personConsults.forEach((p) => { if (out.indexOf(p.label) < 0) out.push(p.label); });
     return out;
   };
 
@@ -289,7 +304,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   const doSend = () => {
     if (!canSend) return;
     // The tab decides the mode — round-robin lets the SERVER pick.
-    onSend(mode === "quick" ? nextUp : manualTarget, fields, consults, mode, consultTeams());
+    onSend(mode === "quick" ? nextUp : manualTarget, fields, allConsults(), mode, consultTeams());
     reset();
   };
   const sendHint = !hasPatient ? "Add patient initials & room to send."
@@ -466,6 +481,21 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
               })}
             </div>
 
+            {/* …or a specific physician, by name */}
+            <div data-intake-person-consults style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 10 }}>
+              <ConsultAdd label="Specific physician" services={serviceList}
+                onPick={(x) => { if (typeof x === "string") { if (!consults.includes(x)) toggleConsult(x); } else if (x && x.person) addPersonConsult(x.person); }} />
+              {personConsults.map((p) => (
+                <span key={p.key} data-person-consult={p.userId || p.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--secondary)", borderRadius: "var(--radius-full)", padding: "3px 4px 3px 4px", maxWidth: "100%" }}>
+                  <Avatar initials={p.avatar} size={20} tint="slate" />
+                  <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</span>
+                  <span style={{ fontSize: 11, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>{p.label}</span>
+                  <button type="button" onClick={() => removePersonConsult(p.key)} aria-label={"Remove " + p.name}
+                    style={{ width: 22, height: 22, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" }}><Icon name="x" size={12} /></button>
+                </span>
+              ))}
+            </div>
+
             {consults.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
                 {consults.map((s) => (
@@ -480,7 +510,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 
           <div style={{ marginTop: 16 }}>
             <Button full icon="send" onClick={doSend} style={{ opacity: canSend ? 1 : 0.5, pointerEvents: canSend ? "auto" : "none" }}>
-              Send assignment{consults.length ? ` + ${consults.length} consult${consults.length > 1 ? "s" : ""}` : ""}
+              {(() => { const n = allConsults().length; return "Send assignment" + (n ? ` + ${n} consult${n > 1 ? "s" : ""}` : ""); })()}
             </Button>
             {!canSend && sendHint && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, textAlign: "center" }}>{sendHint}</div>}
           </div>

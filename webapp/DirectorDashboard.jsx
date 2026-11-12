@@ -16,16 +16,33 @@
        and Remove is DELETE /api/physicians/:id — a refusal (e.g. a pending
        admission request) is said and the row stays (A.CON clinical #11/#12). */
 
-function Stepper({ label, value, onDec, onInc, mobile }) {
-  // Phones: 40×44 buttons so the −/+ are real tap targets.
+function Stepper({ label, value, onDec, onInc, onSet, min = 0, max = 50, who, mobile }) {
+  // Phones: 40×44 buttons so the −/+ are real tap targets. The number itself
+  // is typeable: tap it, type the new value, Enter (or tap away) to save —
+  // Escape puts it back. −/+ stay for one-at-a-time changes.
   const btn = { width: mobile ? 40 : 24, height: mobile ? 44 : 24, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)" };
+  const [draft, setDraft] = React.useState(null); // null = showing the server value
+  const shown = draft == null ? String(value) : draft;
+  const commit = () => {
+    if (draft == null) return;
+    const n = parseInt(draft, 10);
+    setDraft(null);
+    if (!Number.isFinite(n) || String(n) !== draft.trim() || n === value) return;
+    if (onSet) onSet(n);
+  };
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontWeight: 500 }}>{label}</span>
       <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--card)", overflow: "hidden" }}>
-        <button style={btn} onClick={onDec} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Decrease ${label}`}><Icon name="minus" size={13} /></button>
-        <span style={{ minWidth: 22, textAlign: "center", fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{value}</span>
-        <button style={btn} onClick={onInc} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Increase ${label}`}><Icon name="plus" size={13} /></button>
+        <button type="button" style={btn} onClick={onDec} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Decrease ${label}`} aria-label={`Decrease ${label}${who ? " for " + who : ""}`}><Icon name="minus" size={13} /></button>
+        <input data-stepper={label.toLowerCase()} type="text" inputMode="numeric" pattern="[0-9]*" value={shown}
+          aria-label={`${label}${who ? " for " + who : ""} (${min}–${max})`} title={`Type a ${label.toLowerCase()} from ${min} to ${max}`}
+          onFocus={(e) => { setDraft(String(value)); e.target.select(); }}
+          onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } else if (e.key === "Escape") { setDraft(null); e.currentTarget.blur(); } }}
+          style={{ width: mobile ? 44 : 34, height: mobile ? 44 : 24, padding: 0, border: "none", borderLeft: "1px solid var(--border)", borderRight: "1px solid var(--border)", textAlign: "center", fontSize: mobile ? 16 : 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", background: draft == null ? "transparent" : "var(--primary-tint)", color: "var(--foreground)", fontFamily: "inherit", outline: "none" }} />
+        <button type="button" style={btn} onClick={onInc} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Increase ${label}`} aria-label={`Increase ${label}${who ? " for " + who : ""}`}><Icon name="plus" size={13} /></button>
       </div>
     </div>
   );
@@ -115,7 +132,7 @@ function ShiftHours({ shift, onSave, mobile }) {
   );
 }
 
-function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, admissionsInfo, onResetAdmissions, onOpenAdmissions, myHospWork, admissionsLog }) {
+function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking, onAdjustCensus, onAdjustCap, onSetCensus, onSetCap, onBulkWorking, onReorder, onToggleRotation, onSetAllCap, onUpdateShift, onSetShift, onAddProvider, onResetRotation, onSetTimeout, onToggleAutoReassign, onUpdateProvider, onRemoveProvider, onRenameShift, onOpenSchedule, admissions, admissionsResetAt, admissionsInfo, onResetAdmissions, onOpenAdmissions, myHospWork, admissionsLog }) {
   // Live ops report (org-scoped, server-computed): assignment latency, consult
   // response and message volume. Hydrated on login for directors; the strip's
   // comms KPIs read from it so nothing is duplicated across two sources.
@@ -440,8 +457,8 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
                       ? { flexBasis: "100%", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }
                       : { marginLeft: "auto", display: "flex", alignItems: "center", gap: 18 }}>
                       {mobile && <ShiftSelect shifts={shifts} value={p.shift} onChange={(sid) => onSetShift(p.id, sid)} mobile />}
-                      <Stepper label="Census" value={p.census} onDec={() => onAdjustCensus(p.id, -1)} onInc={() => onAdjustCensus(p.id, 1)} mobile={mobile} />
-                      <Stepper label="Cap" value={p.cap} onDec={() => onAdjustCap(p.id, -1)} onInc={() => onAdjustCap(p.id, 1)} mobile={mobile} />
+                      <Stepper label="Census" who={p.name} value={p.census} min={0} max={p.cap} onDec={() => onAdjustCensus(p.id, -1)} onInc={() => onAdjustCensus(p.id, 1)} onSet={onSetCensus ? (n) => onSetCensus(p.id, n) : undefined} mobile={mobile} />
+                      <Stepper label="Cap" who={p.name} value={p.cap} min={1} max={50} onDec={() => onAdjustCap(p.id, -1)} onInc={() => onAdjustCap(p.id, 1)} onSet={onSetCap ? (n) => onSetCap(p.id, n) : undefined} mobile={mobile} />
                       {!mobile && <div style={{ width: 1, height: 24, background: "var(--border)" }} />}
                       <button onClick={() => onToggleRotation(p.id)} title={p.inRotation ? "In round-robin — click to remove" : "Off rotation — click to add"}
                         style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: mobile ? "0 14px" : "5px 10px", minHeight: mobile ? 44 : undefined, borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "var(--font-sans)",

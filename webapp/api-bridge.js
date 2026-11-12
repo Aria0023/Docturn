@@ -2265,13 +2265,55 @@
     return "the server refused it";
   }
   function consultToast(specialty, o) {
-    if (!o.created) return { tone: "sent", title: specialty + " consult already requested", msg: "It was requested before — nobody new was alerted." };
+    if (!o.created) return { tone: "sent", title: specialty + " consult already requested", msg: "That person was already consulted on this patient — nobody new was alerted." };
     if (o.alerted.length) return { tone: "sent", title: specialty + " consult requested", msg: "Alerted in DocTurn: " + o.alerted.join(", ") + "." };
     return { tone: "rejected", title: specialty + " consult recorded — nobody alerted", msg: "No one with a DocTurn account covers " + specialty + " here. Call the service directly." };
   }
-  DT.actions.requestConsult = function (patientId, specialty) {
+  // Everyone in the organization a consult can be addressed to BY NAME — not
+  // only a service's on-call. Accounts (they are alerted in DocTurn) plus any
+  // consult-service member listed by name without an account (recorded, not
+  // alerted). Each carries the specialty the consult is filed under: the
+  // consult service they are listed on, else their rotation specialty, else
+  // their role. Never me.
+  DT.consultPeople = function () {
+    var st = DT.getState();
+    var out = [], seen = {};
+    var svcOf = {};
+    (st.consultServices || []).forEach(function (svc) {
+      if (!svc || !svc.name) return;
+      var mark = function (m) { if (!m || !m.name) return; var k = numUserId(m.userId) ? "u" + m.userId : "n" + String(m.name).toLowerCase(); if (!svcOf[k]) svcOf[k] = svc.name; };
+      if (svc.onCall) mark(svc.onCall);
+      (svc.members || []).forEach(mark);
+    });
+    var provSpec = {};
+    (st.providers || []).forEach(function (p) { if (p && p.userId != null && p.specialty) provSpec[p.userId] = p.specialty; });
+    function add(name, userId, roleText) {
+      if (!name) return;
+      var uid = numUserId(userId);
+      if (uid && uid === meId) return;
+      var key = uid ? "u" + uid : "n" + String(name).toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      var label = svcOf[key] || (uid && provSpec[uid]) || roleText || "Consult";
+      out.push({ key: key, name: String(name), userId: uid, label: label, avatar: initials(String(name)), hasAccount: !!uid });
+    }
+    (st.candidates || []).forEach(function (c) { add(c.name, c.userId, c.roleLabel); });
+    (st.team || []).forEach(function (m) { if (m.active !== false) add(m.name, m.userId, m.roleLabel); });
+    (st.consultServices || []).forEach(function (svc) {
+      if (svc && svc.onCall) add(svc.onCall.name, svc.onCall.userId, svc.name);
+      ((svc && svc.members) || []).forEach(function (m) { add(m && m.name, m && m.userId, svc.name); });
+    });
+    return out.sort(function (a, b) { return a.name.localeCompare(b.name); });
+  };
+  // `what` is a consult SERVICE (a string: its on-call and members are
+  // called) or a specific PERSON ({ person }: only they are called, filed
+  // under their specialty).
+  DT.actions.requestConsult = function (patientId, what) {
+    var person = what && typeof what === "object" ? what.person : null;
+    var specialty = person ? person.label : what;
     if (patientId == null || !specialty) return Promise.resolve(null);
-    return postConsult(bid(patientId), specialty, catalogTeam(specialty)).then(function (created) {
+    var team = person ? [{ name: person.name, userId: person.userId }] : catalogTeam(specialty);
+    return postConsult(bid(patientId), specialty, team).then(function (created) {
       var o = consultOutcome(created);
       DT.set(function (s) { s.__toast = consultToast(specialty, o); return s; });
       rehydrate();
@@ -5010,6 +5052,42 @@
     rotationWrite("change " + p.name + "'s census",
       function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/census", { currentPatientCount: Math.max(0, p.census + d), reason: "manual adjustment" }); },
       function () { origProviderActions.adjustCensus(id, d); });
+  };
+  // Typed census / cap (the Director's provider row). The server's limits,
+  // said BEFORE anything is sent: a cap is 1–50, and a census cannot exceed
+  // that provider's cap (the server would otherwise clamp it silently).
+  function refuseNumber(title, msg) {
+    DT.set(function (s) { s.__toast = { tone: "rejected", title: title, msg: msg }; return s; });
+    return Promise.resolve(false);
+  }
+  DT.actions.setCap = function (id, n) {
+    var p = providerById(id);
+    if (!p) return Promise.resolve(false);
+    var cap = Number(n);
+    if (!(Number.isInteger(cap) && cap >= 1 && cap <= 50)) return refuseNumber("Cap not changed", "Enter a daily census limit from 1 to 50.");
+    if (cap === p.cap) return Promise.resolve(true);
+    var lowered = cap < p.census;
+    return rotationWrite("change " + p.name + "'s cap",
+      function () { return api("PATCH", "/api/physicians/" + bid(id) + "/capacity", { patientCap: cap }); },
+      function () { origProviderActions.adjustCap(id, cap - p.cap); },
+      function () {
+        DT.set(function (s) {
+          s.__toast = { tone: "accepted", title: p.name + "'s cap is " + cap,
+            msg: lowered ? "They already have " + p.census + " patients, so round-robin won't send them more until they're under it." : "" };
+          return s;
+        });
+      }).then(function () { return true; });
+  };
+  DT.actions.setCensus = function (id, n) {
+    var p = providerById(id);
+    if (!p) return Promise.resolve(false);
+    var c = Number(n);
+    if (!(Number.isInteger(c) && c >= 0)) return refuseNumber("Census not changed", "Enter a whole number of patients.");
+    if (c > p.cap) return refuseNumber("Census not changed", p.name + "'s cap is " + p.cap + ". Raise the cap first, then set the census to " + c + ".");
+    if (c === p.census) return Promise.resolve(true);
+    return rotationWrite("change " + p.name + "'s census",
+      function () { return api("PATCH", "/api/hospitalists/" + bid(id) + "/census", { currentPatientCount: c, reason: "manual adjustment (typed)" }); },
+      function () { origProviderActions.adjustCensus(id, c - p.census); }).then(function () { return true; });
   };
   DT.actions.bulkWorking = function (on) {
     rotationWrite(on ? "put everyone on shift" : "take everyone off shift",

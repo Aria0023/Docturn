@@ -500,3 +500,43 @@ describe("the inbox knows which threads still owe a STAT acknowledgement", () =>
     expect(after.statAwaiting).toBe(0);
   });
 });
+
+describe("a consult can name a specific physician, not only a service's on-call", () => {
+  it("consults exactly that person (alerted, by account), filed under their specialty", async () => {
+    const { er, patient } = await routedPatient("SP");
+    const patel = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    const res = await er.post(`/api/patients/${patient.id}/consults`).send({
+      specialty: "Hospital Medicine",
+      consultants: [{ name: patel.displayName, userId: patel.id }],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].consultantUserId).toBe(patel.id);
+    // Asking for the same person again creates nothing new.
+    const again = await er.post(`/api/patients/${patient.id}/consults`).send({
+      specialty: "Hospital Medicine",
+      consultants: [{ name: patel.displayName, userId: patel.id }],
+    });
+    expect(again.body).toHaveLength(0);
+    // Another tenant's account is never a consultant here.
+    const dev = (await ctx.storage.getUserByUsername(ctx.seedResult.platformOrgId, "dev"))!;
+    const foreign = await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "X", consultants: [{ name: "Dev", userId: dev.id }] });
+    expect(foreign.status).toBe(400);
+  });
+});
+
+describe("typed census and cap keep the server's limits", () => {
+  it("a cap is 1–50 and a census never exceeds that provider's cap", async () => {
+    const director = await as("director");
+    const h = (await ctx.storage.listHospitalists(orgId()))[0]!;
+    expect((await director.patch(`/api/physicians/${h.id}/capacity`).send({ patientCap: 18 })).status).toBe(200);
+    expect((await ctx.storage.getHospitalist(orgId(), h.id))!.patientCap).toBe(18);
+    expect((await director.patch(`/api/physicians/${h.id}/capacity`).send({ patientCap: 51 })).status).toBe(400);
+    expect((await director.patch(`/api/physicians/${h.id}/capacity`).send({ patientCap: 0 })).status).toBe(400);
+    const c = await director.patch(`/api/hospitalists/${h.id}/census`).send({ currentPatientCount: 7, reason: "manual adjustment (typed)" });
+    expect(c.status).toBe(200);
+    expect(c.body.currentPatientCount).toBe(7);
+    const over = await director.patch(`/api/hospitalists/${h.id}/census`).send({ currentPatientCount: 99, reason: "x" });
+    expect(over.body.currentPatientCount).toBe(18);
+  });
+});
