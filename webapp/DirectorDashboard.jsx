@@ -314,7 +314,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
     /* Admissions counter — rolling count since last reset; full history in the log */
     <Card style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <span style={{ width: 34, height: 34, borderRadius: "var(--radius-md)", background: "var(--status-accepted-bg)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="scroll-text" size={17} color="var(--status-accepted)" /></span>
-      <div style={{ minWidth: 0 }}>
+      {/* shares the icon's line and wraps inside itself (it used to take the
+          whole row on a phone, leaving the icon alone above it) */}
+      <div style={{ flex: "1 1 180px", minWidth: 0 }}>
         <div style={{ fontSize: 13.5, fontWeight: 700 }}>Admissions since last reset: <span data-admissions-since style={{ fontVariantNumeric: "tabular-nums" }}>{admSinceReset}</span></div>
         <div data-admissions-reset-line style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{admResetLine}</div>
       </div>
@@ -534,9 +536,9 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
         { id: "messages_7d", label: "Messages (7 days)", value: msgs7d, icon: "message-square", tint: "amber" },
         { id: "stat_ack", label: "STAT ack (avg)", value: statAck, icon: "siren", tint: "slate" },
       ]} />
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 18, fontSize: 12, color: "var(--muted-foreground)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: mobile ? 12 : 18, fontSize: 12, color: "var(--muted-foreground)" }}>
         <Icon name="info" size={13} />
-        <span><b style={{ fontWeight: 600, color: "var(--foreground)" }}>{totalCensus}</b> patients across {providers.length} providers · {totalCap - totalCensus} beds open. Census is entered manually for now — automatic <span style={{ fontWeight: 600 }}>EPIC (FHIR)</span> sync is planned.</span>
+        <span><b style={{ fontWeight: 600, color: "var(--foreground)" }}>{totalCensus}</b> patients across {providers.length} providers · {totalCap - totalCensus} beds open.{mobile ? null : <React.Fragment> Census is entered manually for now — automatic <span style={{ fontWeight: 600 }}>EPIC (FHIR)</span> sync is planned.</React.Fragment>}</span>
       </div>
       <CustomizableDashboard role="director" bare widgets={panelWidgets} />
       {adding && (

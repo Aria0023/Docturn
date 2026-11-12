@@ -126,6 +126,12 @@ function CustomizableStats({ statKey, stats, metrics }) {
             <Icon name="grip-vertical" size={13} />Drag to reorder · remove, add or build stats
           </span>
         )}
+        {collapsible && (
+          <button type="button" data-stats-more onClick={() => setShowAll(!showAll)} aria-expanded={showAll}
+            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "0 4px", border: "none", background: "transparent", color: "var(--primary-ink)", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+            <Icon name={showAll ? "chevron-up" : "chevron-down"} size={14} />{showAll ? "Show fewer" : "All " + visible.length + " stats"}
+          </button>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {editing && (
             <div>
@@ -213,7 +219,27 @@ function CustomizableStats({ statKey, stats, metrics }) {
         </Card>
       )}
 
-      {visible.length > 0 && (
+      {/* Phone: ONE compact card — each stat is a value over its label in a
+          two-column grid, about a quarter of the height the separate tiles
+          took, so what can be acted on is on the first screen. Customize
+          switches back to the full tiles (they carry the edit controls). */}
+      {visible.length > 0 && mobile && !editing && (
+        <Card data-stats-compact style={{ padding: 0, marginBottom: 14, overflow: "hidden" }}>
+          <div data-keep-cols="2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+            {shown.map((id, i) => {
+              const s = byId[id];
+              return (
+                <div key={id} data-stat-cell={id} title={typeof s.sub === "string" ? s.sub : undefined}
+                  style={{ padding: "10px 14px", minWidth: 0, borderTop: i >= 2 ? "1px solid var(--border)" : "none", borderLeft: i % 2 ? "1px solid var(--border)" : "none" }}>
+                  <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.value}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+      {visible.length > 0 && !(mobile && !editing) && (
         // Desktop: a grid, so six tiles sit in one row and a wrapped tile keeps
         // its own column width (the flex row stretched a lone sixth tile across
         // the whole page). Phones keep two per row.
@@ -257,12 +283,6 @@ function CustomizableStats({ statKey, stats, metrics }) {
             );
           })}
         </div>
-      )}
-      {collapsible && (
-        <button type="button" data-stats-more onClick={() => setShowAll(!showAll)} aria-expanded={showAll}
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", minHeight: 44, margin: "-4px 0 14px", border: "1px dashed var(--border)", borderRadius: "var(--radius-md)", background: "transparent", color: "var(--primary-ink)", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
-          <Icon name={showAll ? "chevron-up" : "chevron-down"} size={14} />{showAll ? "Show fewer" : "Show all " + visible.length + " stats"}
-        </button>
       )}
     </div>
   );

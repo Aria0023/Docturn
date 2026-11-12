@@ -195,8 +195,10 @@ async function checkHospitalistHome(page) {
   await noOverflow(page, "hospitalist home");
   const m = await page.evaluate(() => {
     const M = window.__m;
-    // KPI strip: tiles are the Cards holding a 28px value under a label.
-    const tiles = [...document.querySelectorAll("div")].filter((d) => getComputedStyle(d).fontSize === "28px" && getComputedStyle(d).fontWeight === "700").map((v) => v.parentElement);
+    // KPI strip: on a phone, the cells of the one compact stat card (a value
+    // over its label); otherwise the Cards holding a 28px value under a label.
+    const compact = [...document.querySelectorAll("[data-stat-cell]")];
+    const tiles = compact.length ? compact : [...document.querySelectorAll("div")].filter((d) => getComputedStyle(d).fontSize === "28px" && getComputedStyle(d).fontWeight === "700").map((v) => v.parentElement);
     const tops = [...new Set(tiles.map((t) => Math.round(M.rect(t).top)))];
     const perRow = tiles.length && tops.length ? tiles.length / tops.length : 0;
     const stripTop = tiles.length ? Math.min(...tiles.map((t) => M.rect(t).top)) : null;
