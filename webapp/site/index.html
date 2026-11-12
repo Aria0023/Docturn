@@ -20,12 +20,18 @@
 
   /* Layout: left-set editorial column on ECG-paper grid; one teal signal colour; STAT red only where it means STAT. */
   :root {
-    --paper: #EEF3F2; --surface: #FFFFFF; --ink: #0D1B26; --muted: #4F606B; --faint: #7A8A93;
-    --line: rgba(13, 27, 38, .12); --line-strong: rgba(13, 27, 38, .22);
-    --signal: #0A6F6A; --signal-hover: #075A56; --on-signal: #FFFFFF; --signal-soft: rgba(10, 111, 106, .09);
-    --stat: #C8261B; --grid: rgba(10, 111, 106, .07); --grid-major: rgba(10, 111, 106, .12);
-    --device: #0D1B26; --device-screen: #142630; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .11);
-    --shadow: 0 1px 2px rgba(13, 27, 38, .06), 0 12px 32px rgba(13, 27, 38, .08);
+    --paper: #F8FAF9; --surface: #FFFFFF; --ink: #10202B; --muted: #546570; --faint: #7D8C94;
+    --line: rgba(16, 32, 43, .09); --line-strong: rgba(16, 32, 43, .16);
+    --signal: #0B7A72; --signal-hover: #08665F; --on-signal: #FFFFFF; --signal-soft: rgba(11, 122, 114, .08);
+    --stat: #C8261B; --grid: rgba(11, 122, 114, .035); --grid-major: rgba(11, 122, 114, .06);
+    --device: #10202B; --device-screen: #142630; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .11);
+    --shadow: 0 1px 2px rgba(16, 32, 43, .04), 0 18px 48px -12px rgba(16, 32, 43, .14);
+    /* morning light: soft dawn washes, frosted cards (transparent in the night theme) */
+    --dawn-peach: rgba(255, 190, 150, .55); --dawn-mint: rgba(125, 220, 200, .5); --dawn-sky: rgba(150, 190, 255, .45); --dawn-lilac: rgba(205, 180, 255, .35);
+    --glass: rgba(255, 255, 255, .72); --glass-line: rgba(255, 255, 255, .9);
+    --wash: linear-gradient(180deg, #FFFFFF 0%, #F1F8F6 100%);
+    --close-bg: linear-gradient(120deg, #0B7A72 0%, #1F8FA8 55%, #5B7FD6 100%);
+    --radius: 22px;
     --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
     --body: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -38,6 +44,8 @@
     --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
     --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+    --dawn-peach: transparent; --dawn-mint: transparent; --dawn-sky: transparent; --dawn-lilac: transparent;
+    --glass: #111C1F; --glass-line: rgba(228, 236, 238, .11); --wash: #0B1315; --close-bg: #3BC2B6; --radius: 16px;
   } }
   :root[data-theme="dark"] {
     --paper: #0B1315; --surface: #111C1F; --ink: #E4ECEE; --muted: #9AABB2; --faint: #6F8189;
@@ -46,6 +54,8 @@
     --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
     --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+    --dawn-peach: transparent; --dawn-mint: transparent; --dawn-sky: transparent; --dawn-lilac: transparent;
+    --glass: #111C1F; --glass-line: rgba(228, 236, 238, .11); --wash: #0B1315; --close-bg: #3BC2B6; --radius: 16px;
   }
 
   * { box-sizing: border-box; }
@@ -166,6 +176,28 @@
   .suite span { color: var(--muted); font-size: 15.5px; }
   @media (prefers-reduced-motion: reduce) { .suite li { transition: none; } }
 
+  /* morning light (light theme only; the washes are transparent at night) */
+  .aurora { position: absolute; inset: -20% -10% -10%; z-index: 1; pointer-events: none; filter: blur(70px); }
+  .aurora i { position: absolute; border-radius: 50%; opacity: .9; }
+  .aurora i:nth-child(1) { width: 46vw; height: 46vw; left: 48%; top: 2%; background: var(--dawn-peach); }
+  .aurora i:nth-child(2) { width: 40vw; height: 40vw; left: 66%; top: 30%; background: var(--dawn-mint); }
+  .aurora i:nth-child(3) { width: 36vw; height: 36vw; left: 30%; top: 46%; background: var(--dawn-sky); }
+  .aurora i:nth-child(4) { width: 28vw; height: 28vw; left: 84%; top: -4%; background: var(--dawn-lilac); }
+  @media (prefers-reduced-motion: no-preference) {
+    .aurora i:nth-child(1) { animation: driftA 22s ease-in-out infinite alternate; }
+    .aurora i:nth-child(2) { animation: driftB 26s ease-in-out infinite alternate; }
+    .aurora i:nth-child(3) { animation: driftA 30s ease-in-out infinite alternate-reverse; }
+    .aurora i:nth-child(4) { animation: driftB 24s ease-in-out infinite alternate-reverse; }
+  }
+  @keyframes driftA { to { transform: translate(-6vw, 4vw) scale(1.08); } }
+  @keyframes driftB { to { transform: translate(5vw, -3vw) scale(.94); } }
+  @media (max-width: 700px) { .aurora i:nth-child(1) { left: 10%; width: 90vw; height: 90vw; } .aurora i:nth-child(2) { left: 40%; width: 80vw; height: 80vw; } .aurora i:nth-child(3) { left: -20%; width: 80vw; height: 80vw; } }
+  #all-in-one { background: var(--wash); }
+  #security { background: radial-gradient(720px 460px at -5% 10%, color-mix(in srgb, var(--dawn-mint) 55%, transparent), transparent 70%), radial-gradient(560px 380px at 105% 95%, color-mix(in srgb, var(--dawn-lilac) 60%, transparent), transparent 70%); }
+  #buy { background: radial-gradient(640px 440px at 92% 12%, color-mix(in srgb, var(--dawn-sky) 60%, transparent), transparent 70%), radial-gradient(560px 420px at 4% 92%, color-mix(in srgb, var(--dawn-peach) 55%, transparent), transparent 70%); }
+  .suite li { border-radius: 0; }
+  .plan.lead { background: var(--glass); }
+
   /* sections */
   section { padding-block: 112px; scroll-margin-top: 64px; }
   @media (max-width: 640px) { section { padding-block: 76px; } }
@@ -201,9 +233,9 @@
   .fine a { color: var(--muted); }
 
   /* pricing */
-  .pricing { background: var(--surface); border-block: 1px solid var(--line); }
+  .pricing { background: var(--wash); border-block: 1px solid var(--line); }
   .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
-  .plan { border: 1px solid var(--line-strong); border-radius: 16px; padding: 30px; display: flex; flex-direction: column; gap: 6px; background: var(--paper); }
+  .plan { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 30px; display: flex; flex-direction: column; gap: 6px; background: var(--paper); }
   .plan.lead { border: 2px solid var(--signal); background: var(--surface); box-shadow: var(--shadow); }
   .plan h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
   .price { font-family: var(--display); font-weight: 800; font-size: 46px; letter-spacing: -.04em; line-height: 1.05; margin-top: 12px; }
@@ -223,7 +255,7 @@
   .seq li::before { content: counter(s); width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--signal); color: var(--signal); display: grid; place-items: center; font-family: var(--mono); font-size: 14px; }
   .seq b { display: block; font-weight: 600; }
   .seq span { color: var(--muted); font-size: 15.5px; }
-  form { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 18px; padding: 32px; display: grid; gap: 18px; box-shadow: var(--shadow); }
+  form { background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--glass-line); border-radius: var(--radius); padding: 32px; display: grid; gap: 18px; box-shadow: var(--shadow); }
   @media (max-width: 560px) { form { padding: 20px; } }
   .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
@@ -254,7 +286,7 @@
   details[open] summary::after { transform: rotate(45deg); }
   details p { margin: -4px 0 24px; color: var(--muted); max-width: 42em; }
 
-  .close { background: var(--signal); color: var(--on-signal); }
+  .close { background: var(--close-bg); color: var(--on-signal); }
   .close .wrap { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 28px; }
   .close h2 { font-weight: 800; font-size: clamp(36px, 5.6vw, 68px); line-height: .98; letter-spacing: -.04em; max-width: 12em; }
   .close .btn { background: var(--on-signal); color: var(--signal); }
@@ -295,6 +327,7 @@
 
 <main>
   <section class="hero" style="padding-block:0">
+    <div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <div class="wrap">
       <h1>The night shift, handled.</h1>
       <p class="lede"><strong>The all-in-one, HIPAA-compliant messaging platform for acute care hospitals.</strong> DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
