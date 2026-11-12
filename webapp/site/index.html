@@ -56,7 +56,6 @@
   :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 6px; }
   .wrap { max-width: var(--max); margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
   h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
-  .label { font-family: var(--mono); font-size: 12.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--signal); }
 
   /* nav */
   .nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
@@ -74,8 +73,6 @@
   .btn.line { border-color: var(--line-strong); color: var(--ink); background: transparent; }
   .btn.line:hover { border-color: var(--ink); }
   .btn.sm { min-height: 40px; padding: 0 16px; font-size: 14.5px; }
-  .btn .arrow { transition: transform .2s; }
-  .btn:hover .arrow { transform: translateX(3px); }
   @media (max-width: 880px) { .links { display: none; } }
   @media (max-width: 460px) { .nav .signin { display: none; } }
 
@@ -88,7 +85,6 @@
   .hero .wrap { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr); gap: 48px; align-items: center; padding-block: 88px 150px; }
   @media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; padding-block: 56px 130px; } .hero::after { background: color-mix(in srgb, var(--paper) 72%, transparent); } }
   .hero h1 { font-weight: 800; font-size: clamp(48px, 8.4vw, 104px); line-height: .94; letter-spacing: -.045em; margin: 20px 0 26px; }
-  .hero h1 span { color: var(--signal); }
   .lede { font-size: clamp(18px, 2vw, 21px); color: var(--muted); max-width: 33em; margin: 0 0 34px; }
   .actions { display: flex; gap: 12px; flex-wrap: wrap; }
   .trace { position: absolute; left: 0; right: 0; bottom: 16px; height: 90px; z-index: 1; pointer-events: none; }
@@ -216,7 +212,7 @@
   footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
   footer a { text-decoration: none; }
   footer a:hover { color: var(--ink); }
-  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn, .btn .arrow { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
 </style>
 </head>
 <body>
@@ -251,11 +247,10 @@
     </svg>
     <div class="wrap">
       <div>
-        <div class="label">Messaging &amp; admissions for hospital medicine</div>
-        <h1>The night shift, <span>handled.</span></h1>
-        <p class="lede">DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
+        <h1>The night shift, handled.</h1>
+        <p class="lede">Messaging and admissions for hospital medicine. DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
         <div class="actions">
-          <a class="btn solid" href="#buy">Purchase or start a pilot <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="btn solid" href="#buy">Purchase or start a pilot</a>
           <a class="btn line" href="#product">See what changes</a>
         </div>
       </div>
@@ -272,7 +267,6 @@
             </div>
           </div>
         </div>
-        <p class="device-note">Lock-screen alerts never show patient details.</p>
       </div>
     </div>
   </section>
@@ -280,14 +274,13 @@
   <section id="product">
     <div class="wrap">
       <div class="head">
-        <div class="label">What changes</div>
         <h2>Less chasing. More medicine.</h2>
         <p>The calls, callbacks and whiteboards that eat a shift, replaced by one shared picture everyone trusts.</p>
       </div>
       <div class="pillars">
-        <div class="pillar"><div class="label">Messaging</div><h3>Urgent means urgent.</h3><p>Secure messages built for clinical teams. When something can't wait, DocTurn makes sure the right physician sees it.</p></div>
-        <div class="pillar"><div class="label">Admissions</div><h3>Admits land fairly.</h3><p>New admissions reach the right hospitalist quickly and evenly, so no one is buried and no patient waits.</p></div>
-        <div class="pillar"><div class="label">Oversight</div><h3>The whole service, at a glance.</h3><p>Directors see workload, coverage and open requests in real time, and can rebalance with a click.</p></div>
+        <div class="pillar"><h3>Urgent means urgent.</h3><p>Secure messages built for clinical teams. When something can't wait, DocTurn makes sure the right physician sees it.</p></div>
+        <div class="pillar"><h3>Admits land fairly.</h3><p>New admissions reach the right hospitalist quickly and evenly, so no one is buried and no patient waits.</p></div>
+        <div class="pillar"><h3>The whole service, at a glance.</h3><p>Directors see workload, coverage and open requests in real time, and can rebalance with a click.</p></div>
       </div>
     </div>
   </section>
@@ -295,7 +288,6 @@
   <section id="teams" class="roles">
     <div class="wrap">
       <div class="head">
-        <div class="label">Built for every seat</div>
         <h2>One tool, four kinds of shift.</h2>
       </div>
       <div class="role-list">
@@ -310,7 +302,6 @@
   <section id="security">
     <div class="wrap trust">
       <div class="head">
-        <div class="label">Security &amp; compliance</div>
         <h2>Built for protected health information.</h2>
         <p>Every control below is enforced on our servers, not just shown on screen.</p>
       </div>
@@ -330,7 +321,6 @@
   <section id="pricing" class="pricing">
     <div class="wrap">
       <div class="head">
-        <div class="label">Pricing</div>
         <h2>Pay for the clinicians who use it.</h2>
         <p>Every plan includes a signed BAA, onboarding and support.</p>
       </div>
@@ -342,7 +332,6 @@
     <div class="wrap buy">
       <div>
         <div class="head">
-          <div class="label">Purchase</div>
           <h2>Bring DocTurn to your hospital.</h2>
           <p>Hospital software needs a contract, so this form starts one. No payment details are taken here.</p>
         </div>
@@ -388,7 +377,6 @@
   <section id="faq" style="padding-top:0">
     <div class="wrap">
       <div class="head">
-        <div class="label">FAQ</div>
         <h2>Before you ask.</h2>
       </div>
       <div class="faq">
@@ -404,7 +392,7 @@
   <section class="close">
     <div class="wrap">
       <h2>Give your team its nights back.</h2>
-      <a class="btn" href="#buy">Purchase or start a pilot <span class="arrow" aria-hidden="true">→</span></a>
+      <a class="btn" href="#buy">Purchase or start a pilot</a>
     </div>
   </section>
 </main>
@@ -442,23 +430,23 @@
   function renderPlans() {
     var box = $("[data-plans]");
     var cards = [];
-    cards.push('<div class="plan" data-site-plan="pilot"><div class="label">Try it</div><h3>Pilot</h3><div class="price" style="font-size:34px">Evaluation</div><div class="per">One service, for a fixed term</div>' +
+    cards.push('<div class="plan" data-site-plan="pilot"><h3>Pilot</h3><div class="price" style="font-size:34px">Evaluation</div><div class="per">One service, for a fixed term</div>' +
       list(["Full product for one service", "Start on test data", "Onboarding and check-ins", "Signed BAA before real data"]) +
       '<a class="btn line" href="#buy" data-choose="pilot">Start a pilot</a></div>');
     if (plans.length) {
       plans.forEach(function (p, i) {
-        cards.push('<div class="plan' + (i === 0 ? " lead" : "") + '" data-site-plan="' + esc(p.code) + '"><div class="label">Buy</div><h3>' + esc(p.name) +
+        cards.push('<div class="plan' + (i === 0 ? " lead" : "") + '" data-site-plan="' + esc(p.code) + '"><h3>' + esc(p.name) +
           '</h3><div class="price">' + esc(money(p.perSeatPriceCents, p.currency)) + '<small> / clinician / month</small></div><div class="per">Billed monthly for active accounts</div>' +
           list(INCLUDED) + '<a class="btn ' + (i === 0 ? "solid" : "line") + '" href="#buy" data-choose="' + esc(p.code) + '">Purchase ' + esc(p.name) + "</a></div>");
       });
     } else {
-      cards.push('<div class="plan lead" data-site-plan="quote"><div class="label">Buy</div><h3>Hospital</h3><div class="price" style="font-size:34px">Custom quote</div><div class="per">Per clinician, sized to your group</div>' +
+      cards.push('<div class="plan lead" data-site-plan="quote"><h3>Hospital</h3><div class="price" style="font-size:34px">Custom quote</div><div class="per">Per clinician, sized to your group</div>' +
         list(INCLUDED) + '<a class="btn solid" href="#buy" data-choose="">Request pricing</a></div>');
     }
     box.innerHTML = cards.join("");
     var sel = $("[data-plan-select]");
     sel.innerHTML = '<option value="pilot">Pilot</option>' + (plans.length
-      ? plans.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.name) + " · " + esc(money(p.perSeatPriceCents, p.currency)) + "/mo</option>"; }).join("")
+      ? plans.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.name) + ", " + esc(money(p.perSeatPriceCents, p.currency)) + "/mo</option>"; }).join("")
       : '<option value="">Hospital (quote)</option>');
     sel.value = plans.length ? plans[0].code : "";
     $("select[name=term]").value = plans.length ? "annual" : "pilot";
