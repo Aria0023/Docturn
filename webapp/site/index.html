@@ -3,373 +3,415 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>DocTurn — Clinical messaging and admissions routing for hospital medicine</title>
-<meta name="description" content="Secure clinical messaging with STAT escalation, fair round-robin admissions, consults to any physician and one live patient board — on desktop and phone.">
-<meta name="theme-color" content="#0B1220">
+<title>DocTurn</title>
+<meta name="description" content="Secure messaging and admissions for hospital medicine teams. Fewer pages, faster admits, nothing missed.">
+<meta name="theme-color" content="#EEF3F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1315" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icons/icon-192.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preload" href="/site/fonts/schibsted-grotesk-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/site/fonts/instrument-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  @font-face { font-family: "Schibsted Grotesk"; src: url(/site/fonts/schibsted-grotesk-latin-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url(/site/fonts/schibsted-grotesk-latin-800-normal.woff2) format("woff2"); font-weight: 800; font-display: swap; }
+  @font-face { font-family: "Instrument Sans"; src: url(/site/fonts/instrument-sans-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Instrument Sans"; src: url(/site/fonts/instrument-sans-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(/site/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+
+  /* Layout: left-set editorial column on ECG-paper grid; one teal signal colour; STAT red only where it means STAT. */
   :root {
-    --bg: #070B14; --bg2: #0B1220; --panel: #0F1829; --line: rgba(148,163,184,.16); --line2: rgba(148,163,184,.28);
-    --text: #E6ECF5; --muted: #94A3B8; --dim: #64748B; --brand: #3B82F6; --brand2: #60A5FA; --ok: #34D399; --stat: #F87171;
-    --radius: 18px; --max: 1160px;
-    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --paper: #EEF3F2; --surface: #FFFFFF; --ink: #0D1B26; --muted: #4F606B; --faint: #7A8A93;
+    --line: rgba(13, 27, 38, .12); --line-strong: rgba(13, 27, 38, .22);
+    --signal: #0A6F6A; --signal-hover: #075A56; --on-signal: #FFFFFF; --signal-soft: rgba(10, 111, 106, .09);
+    --stat: #C8261B; --grid: rgba(10, 111, 106, .07); --grid-major: rgba(10, 111, 106, .12);
+    --device: #0D1B26; --device-screen: #142630; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .11);
+    --shadow: 0 1px 2px rgba(13, 27, 38, .06), 0 12px 32px rgba(13, 27, 38, .08);
+    --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+    --body: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --max: 1120px; color-scheme: light;
   }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper: #0B1315; --surface: #111C1F; --ink: #E4ECEE; --muted: #9AABB2; --faint: #6F8189;
+    --line: rgba(228, 236, 238, .11); --line-strong: rgba(228, 236, 238, .22);
+    --signal: #3BC2B6; --signal-hover: #5ED3C8; --on-signal: #062321; --signal-soft: rgba(59, 194, 182, .1);
+    --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
+    --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+  } }
+  :root[data-theme="dark"] {
+    --paper: #0B1315; --surface: #111C1F; --ink: #E4ECEE; --muted: #9AABB2; --faint: #6F8189;
+    --line: rgba(228, 236, 238, .11); --line-strong: rgba(228, 236, 238, .22);
+    --signal: #3BC2B6; --signal-hover: #5ED3C8; --on-signal: #062321; --signal-soft: rgba(59, 194, 182, .1);
+    --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
+    --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+  }
+
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
-  a { color: inherit; text-decoration: none; }
-  img { max-width: 100%; display: block; }
-  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
-  @media (max-width: 600px) { .wrap { padding: 0 16px; } }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--paper); }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 6px; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+  .label { font-family: var(--mono); font-size: 12.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--signal); }
 
   /* nav */
-  .nav { position: sticky; top: 0; z-index: 50; backdrop-filter: saturate(160%) blur(14px); -webkit-backdrop-filter: saturate(160%) blur(14px); background: rgba(7,11,20,.72); border-bottom: 1px solid var(--line); }
-  .nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
-  .logo { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 18px; letter-spacing: -.01em; }
-  .logo b { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: linear-gradient(135deg, #2563EB, #60A5FA); color: #fff; font-size: 15px; box-shadow: 0 6px 20px rgba(37,99,235,.45); }
-  .links { display: flex; gap: 24px; font-size: 14.5px; color: var(--muted); }
-  .links a:hover { color: var(--text); }
-  .nav .cta { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px; border-radius: 999px; font-weight: 650; font-size: 15px; border: 1px solid transparent; cursor: pointer; font-family: inherit; transition: transform .15s ease, background .15s ease, border-color .15s ease; white-space: nowrap; }
-  .btn:active { transform: scale(.98); }
-  .btn.primary { background: var(--brand); color: #fff; box-shadow: 0 8px 28px rgba(59,130,246,.35); }
-  .btn.primary:hover { background: #2563EB; }
-  .btn.ghost { border-color: var(--line2); color: var(--text); background: transparent; }
-  .btn.ghost:hover { border-color: var(--muted); }
-  .btn.sm { height: 38px; padding: 0 16px; font-size: 14px; }
-  @media (max-width: 860px) { .links { display: none; } .nav .signin { display: none; } }
+  .nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  .nav .wrap { display: flex; align-items: center; gap: 32px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 19px; letter-spacing: -.02em; text-decoration: none; }
+  .brand svg { width: 28px; height: 28px; }
+  .links { display: flex; gap: 26px; font-size: 15px; color: var(--muted); }
+  .links a { text-decoration: none; }
+  .links a:hover { color: var(--ink); }
+  .nav .end { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 0 22px; border-radius: 10px; font-family: var(--body); font-weight: 600; font-size: 15.5px; text-decoration: none; border: 1px solid transparent; cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s, transform .15s; }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--signal); color: var(--on-signal); }
+  .btn.solid:hover { background: var(--signal-hover); }
+  .btn.line { border-color: var(--line-strong); color: var(--ink); background: transparent; }
+  .btn.line:hover { border-color: var(--ink); }
+  .btn.sm { min-height: 40px; padding: 0 16px; font-size: 14.5px; }
+  .btn .arrow { transition: transform .2s; }
+  .btn:hover .arrow { transform: translateX(3px); }
+  @media (max-width: 880px) { .links { display: none; } }
+  @media (max-width: 460px) { .nav .signin { display: none; } }
 
-  /* hero */
-  .hero { position: relative; padding: 88px 0 40px; overflow: hidden; }
-  .hero::before { content: ""; position: absolute; inset: -30% -10% auto; height: 820px; background:
-      radial-gradient(600px 380px at 22% 30%, rgba(59,130,246,.30), transparent 70%),
-      radial-gradient(520px 360px at 80% 10%, rgba(16,185,129,.16), transparent 70%); pointer-events: none; }
-  .hero .wrap { position: relative; }
-  .eyebrow { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line2); border-radius: 999px; font-size: 13px; color: var(--muted); background: rgba(15,24,41,.6); }
-  .eyebrow i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(52,211,153,.18); }
-  h1 { font-size: clamp(38px, 6.2vw, 68px); line-height: 1.04; letter-spacing: -.035em; margin: 22px 0 18px; font-weight: 780; max-width: 15ch; }
-  h1 em { font-style: normal; background: linear-gradient(90deg, #93C5FD, #60A5FA 40%, #34D399); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .lede { font-size: clamp(17px, 2vw, 20px); color: var(--muted); max-width: 60ch; margin: 0 0 30px; }
-  .hero .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-  .hero .note { margin-top: 16px; font-size: 13.5px; color: var(--dim); }
+  /* hero: ECG paper, one trace */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); background-color: var(--paper);
+    background-image: linear-gradient(var(--grid-major) 1px, transparent 1px), linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; background-position: -1px -1px; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--paper) 0%, color-mix(in srgb, var(--paper) 70%, transparent) 45%, transparent 75%); pointer-events: none; }
+  .hero .wrap { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr); gap: 48px; align-items: center; padding-block: 88px 150px; }
+  @media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; padding-block: 56px 130px; } .hero::after { background: color-mix(in srgb, var(--paper) 72%, transparent); } }
+  .hero h1 { font-weight: 800; font-size: clamp(48px, 8.4vw, 104px); line-height: .94; letter-spacing: -.045em; margin: 20px 0 26px; }
+  .hero h1 span { color: var(--signal); }
+  .lede { font-size: clamp(18px, 2vw, 21px); color: var(--muted); max-width: 33em; margin: 0 0 34px; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .trace { position: absolute; left: 0; right: 0; bottom: 16px; height: 90px; z-index: 1; pointer-events: none; }
+  .trace path { fill: none; stroke: var(--signal); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; opacity: .55; stroke-dasharray: 2400; stroke-dashoffset: 0; }
+  @media (prefers-reduced-motion: no-preference) { .trace path { animation: draw 2.4s cubic-bezier(.6, 0, .2, 1) .2s both; } }
+  @keyframes draw { from { stroke-dashoffset: 2400; } }
 
-  .stage { position: relative; margin-top: 64px; display: grid; grid-template-columns: 1fr; }
-  .desk { border-radius: 16px; overflow: hidden; border: 1px solid var(--line2); box-shadow: 0 40px 120px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03) inset; background: #fff; }
-  .desk .bar { height: 30px; background: #E9EDF3; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
-  .desk .bar span { width: 10px; height: 10px; border-radius: 50%; background: #CBD5E1; }
-  .phone { position: absolute; right: -8px; bottom: -36px; width: 25%; min-width: 180px; border-radius: 34px; padding: 9px; background: #0A0F1A; border: 1px solid #263247; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
-  .phone img { border-radius: 26px; }
-  @media (max-width: 760px) { .phone { position: relative; right: auto; bottom: auto; width: 62%; margin: -90px auto 0; } }
+  /* the device: a night-shift lock screen, content-free alerts */
+  .device { justify-self: center; width: min(300px, 100%); aspect-ratio: 9 / 18.5; max-width: 100%; border-radius: 44px; padding: 11px; background: var(--device); box-shadow: var(--shadow), 0 40px 80px -20px rgba(13, 27, 38, .35); }
+  .screen { height: 100%; border-radius: 34px; overflow: hidden; position: relative; color: var(--device-ink);
+    background: radial-gradient(120% 70% at 50% 0%, #1E4A52 0%, var(--device-screen) 55%, #0A1418 100%); padding: 22px 14px; display: flex; flex-direction: column; }
+  .notch { width: 92px; height: 26px; border-radius: 20px; background: #000; margin: -8px auto 18px; }
+  .clock { text-align: center; font-family: var(--display); font-weight: 700; font-size: 66px; letter-spacing: -.03em; line-height: 1; }
+  .date { text-align: center; font-size: 13.5px; opacity: .78; margin: 6px 0 26px; }
+  .alerts { display: grid; gap: 8px; }
+  .alert { background: var(--device-card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 16px; padding: 10px 12px; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 12.5px; line-height: 1.35; }
+  .alert .app { width: 30px; height: 30px; border-radius: 8px; background: #0A6F6A; display: grid; place-items: center; }
+  .alert .app svg { width: 18px; height: 18px; }
+  .alert .top { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
+  .alert .top span:last-child { opacity: .6; font-weight: 400; }
+  .alert .stat { color: #FF8A80; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+  @media (prefers-reduced-motion: no-preference) {
+    .alert { animation: drop .6s cubic-bezier(.2, .8, .2, 1) both; }
+    .alert:nth-child(1) { animation-delay: 1.5s; } .alert:nth-child(2) { animation-delay: 1.0s; } .alert:nth-child(3) { animation-delay: .5s; }
+  }
+  @keyframes drop { from { opacity: 0; transform: translateY(-12px) scale(.97); } }
+  .device-note { margin: 16px auto 0; max-width: 300px; font-size: 13.5px; color: var(--muted); text-align: center; }
+  @media (max-width: 900px) { .device { width: min(240px, 100%); border-radius: 38px; } .clock { font-size: 54px; } }
 
   /* sections */
-  section { padding: 104px 0; scroll-margin-top: 64px; }
-  @media (max-width: 600px) { section { padding: 72px 0; } }
-  .kicker { color: var(--brand2); font-weight: 700; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; }
-  h2 { font-size: clamp(30px, 4.2vw, 46px); letter-spacing: -.03em; line-height: 1.1; margin: 12px 0 16px; font-weight: 760; }
-  .sub { color: var(--muted); font-size: 18px; max-width: 62ch; margin: 0; }
+  section { padding-block: 112px; scroll-margin-top: 64px; }
+  @media (max-width: 640px) { section { padding-block: 76px; } }
+  .head { display: grid; gap: 14px; max-width: 46rem; margin-bottom: 56px; }
+  .head h2 { font-weight: 800; font-size: clamp(34px, 4.8vw, 56px); line-height: 1.02; letter-spacing: -.035em; }
+  .head p { margin: 0; color: var(--muted); font-size: 19px; max-width: 36em; }
 
-  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 52px; }
-  @media (max-width: 960px) { .grid3 { grid-template-columns: repeat(2, 1fr); } }
-  @media (max-width: 620px) { .grid3 { grid-template-columns: 1fr; } }
-  .card { background: linear-gradient(180deg, rgba(20,31,52,.75), rgba(13,20,35,.75)); border: 1px solid var(--line); border-radius: var(--radius); padding: 26px; transition: border-color .2s ease, transform .2s ease; }
-  .card:hover { border-color: var(--line2); transform: translateY(-2px); }
-  .card h3 { margin: 16px 0 8px; font-size: 18.5px; letter-spacing: -.01em; }
-  .card p { margin: 0; color: var(--muted); font-size: 15px; }
-  .ico { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.28); color: var(--brand2); }
-  .ico svg { width: 21px; height: 21px; }
-  .ico.red { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.3); color: var(--stat); }
-  .ico.green { background: rgba(52,211,153,.12); border-color: rgba(52,211,153,.3); color: var(--ok); }
+  .pillars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 2px solid var(--ink); }
+  @media (max-width: 860px) { .pillars { grid-template-columns: 1fr; } }
+  .pillar { padding: 28px 28px 8px 0; display: grid; gap: 12px; align-content: start; }
+  .pillar + .pillar { padding-left: 28px; border-left: 1px solid var(--line); }
+  @media (max-width: 860px) { .pillar, .pillar + .pillar { padding: 28px 0; border-left: 0; border-bottom: 1px solid var(--line); } }
+  .pillar h3 { font-weight: 700; font-size: 26px; line-height: 1.12; letter-spacing: -.02em; }
+  .pillar p { margin: 0; color: var(--muted); }
 
-  .split { display: grid; grid-template-columns: 1.05fr .95fr; gap: 64px; align-items: center; }
-  @media (max-width: 900px) { .split { grid-template-columns: 1fr; gap: 40px; } }
-  .steps { list-style: none; padding: 0; margin: 34px 0 0; display: grid; gap: 22px; }
-  .steps li { display: grid; grid-template-columns: 40px 1fr; gap: 14px; }
-  .steps .n { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 750; border: 1px solid var(--line2); color: var(--brand2); }
-  .steps h4 { margin: 6px 0 4px; font-size: 17px; }
-  .steps p { margin: 0; color: var(--muted); font-size: 15px; }
-  .phones { display: flex; gap: 18px; justify-content: center; }
-  .phones .phone { position: relative; right: auto; bottom: auto; width: 48%; min-width: 0; }
-  .phones .phone:nth-child(2) { transform: translateY(42px); }
+  .roles { background: var(--surface); border-block: 1px solid var(--line); }
+  .role-list { display: grid; border-top: 1px solid var(--line); }
+  .role { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 24px; padding: 26px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  @media (max-width: 640px) { .role { grid-template-columns: 1fr; gap: 6px; } }
+  .role h3 { font-weight: 700; font-size: 22px; letter-spacing: -.015em; }
+  .role p { margin: 0; color: var(--muted); max-width: 40em; }
 
-  .band { background: linear-gradient(180deg, var(--bg2), var(--bg)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .sec-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 28px; margin-top: 44px; }
-  @media (max-width: 720px) { .sec-list { grid-template-columns: 1fr; } }
-  .sec-list div { display: grid; grid-template-columns: 24px 1fr; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
-  .sec-list svg { width: 20px; height: 20px; color: var(--ok); margin-top: 3px; }
-  .sec-list b { display: block; font-size: 16px; }
-  .sec-list span { color: var(--muted); font-size: 14.5px; }
-  .fine { color: var(--dim); font-size: 13.5px; margin-top: 26px; max-width: 80ch; }
+  .trust { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 64px; align-items: start; }
+  @media (max-width: 900px) { .trust { grid-template-columns: 1fr; gap: 8px; } }
+  .trust .head { margin-bottom: 0; }
+  .checks { list-style: none; margin: 0; padding: 0; display: grid; }
+  .checks li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .checks li:first-child { border-top: 1px solid var(--line); }
+  .checks svg { width: 20px; height: 20px; color: var(--signal); margin-top: 4px; }
+  .checks b { display: block; font-weight: 600; }
+  .checks span { color: var(--muted); font-size: 15.5px; }
+  .fine { color: var(--faint); font-size: 14px; margin: 22px 0 0; }
+  .fine a { color: var(--muted); }
 
   /* pricing */
-  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; margin-top: 52px; }
-  .plan { position: relative; border: 1px solid var(--line); border-radius: 22px; padding: 30px; background: var(--panel); display: flex; flex-direction: column; }
-  .plan.featured { border-color: rgba(59,130,246,.6); background: linear-gradient(180deg, rgba(37,99,235,.16), rgba(15,24,41,1) 60%); box-shadow: 0 20px 60px rgba(37,99,235,.18); }
-  .plan .tag { position: absolute; top: 18px; right: 18px; font-size: 12px; font-weight: 700; color: var(--brand2); border: 1px solid rgba(96,165,250,.4); border-radius: 999px; padding: 3px 10px; }
-  .plan h3 { margin: 0; font-size: 19px; }
-  .price { font-size: 42px; font-weight: 780; letter-spacing: -.03em; margin: 18px 0 2px; }
-  .price small { font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
-  .plan .per { color: var(--muted); font-size: 14px; min-height: 22px; }
-  .plan ul { list-style: none; padding: 0; margin: 22px 0 26px; display: grid; gap: 10px; font-size: 15px; color: #CBD5E1; }
-  .plan li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; }
-  .plan li svg { width: 18px; height: 18px; color: var(--ok); margin-top: 3px; }
+  .pricing { background: var(--surface); border-block: 1px solid var(--line); }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+  .plan { border: 1px solid var(--line-strong); border-radius: 16px; padding: 30px; display: flex; flex-direction: column; gap: 6px; background: var(--paper); }
+  .plan.lead { border: 2px solid var(--signal); background: var(--surface); box-shadow: var(--shadow); }
+  .plan h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .price { font-family: var(--display); font-weight: 800; font-size: 46px; letter-spacing: -.04em; line-height: 1.05; margin-top: 12px; }
+  .price small { font-family: var(--body); font-size: 15px; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+  .per { color: var(--muted); font-size: 15px; }
+  .plan ul { list-style: none; padding: 0; margin: 20px 0 28px; display: grid; gap: 10px; font-size: 15.5px; }
+  .plan li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; }
+  .plan li svg { width: 17px; height: 17px; color: var(--signal); margin-top: 4px; }
   .plan .btn { margin-top: auto; width: 100%; }
 
-  /* purchase form */
-  .buy { display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: start; }
+  /* purchase */
+  .buy { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 64px; align-items: start; }
   @media (max-width: 900px) { .buy { grid-template-columns: 1fr; gap: 36px; } }
-  form { background: var(--panel); border: 1px solid var(--line2); border-radius: 22px; padding: 30px; display: grid; gap: 16px; }
-  @media (max-width: 600px) { form { padding: 20px; } }
-  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .buy .head { margin-bottom: 32px; }
+  .seq { list-style: none; padding: 0; margin: 0; display: grid; gap: 22px; counter-reset: s; }
+  .seq li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; counter-increment: s; }
+  .seq li::before { content: counter(s); width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--signal); color: var(--signal); display: grid; place-items: center; font-family: var(--mono); font-size: 14px; }
+  .seq b { display: block; font-weight: 600; }
+  .seq span { color: var(--muted); font-size: 15.5px; }
+  form { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 18px; padding: 32px; display: grid; gap: 18px; box-shadow: var(--shadow); }
+  @media (max-width: 560px) { form { padding: 20px; } }
+  .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
   @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
-  label { display: grid; gap: 7px; font-size: 13.5px; font-weight: 600; color: #CBD5E1; min-width: 0; }
-  input, select, textarea { width: 100%; min-height: 48px; border-radius: 12px; border: 1px solid var(--line2); background: #0A1222; color: var(--text); font: inherit; font-size: 16px; padding: 11px 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  label { display: grid; gap: 7px; font-size: 14px; font-weight: 600; min-width: 0; }
+  input, select, textarea { width: 100%; min-height: 48px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); font: inherit; font-weight: 400; font-size: 16px; padding: 11px 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
   textarea { min-height: 96px; resize: vertical; }
-  input:focus, select:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 4px rgba(59,130,246,.18); }
-  input[aria-invalid="true"], select[aria-invalid="true"] { border-color: var(--stat); }
-  .check { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; font-weight: 500; color: var(--muted); font-size: 14px; }
-  .check input { width: 22px; height: 22px; min-height: 0; margin: 1px 0 0; accent-color: var(--brand); }
-  .check a { color: var(--brand2); text-decoration: underline; text-underline-offset: 2px; }
+  input:focus, select:focus, textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 4px var(--signal-soft); }
+  [aria-invalid="true"] { border-color: var(--stat) !important; }
+  .check { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; font-weight: 400; color: var(--muted); font-size: 14.5px; }
+  .check input { width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; accent-color: var(--signal); }
   .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
-  .estimate { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 14px 16px; border-radius: 12px; background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.25); font-size: 14.5px; color: #CBD5E1; }
-  .estimate b { font-size: 20px; color: var(--text); }
-  .msg { border-radius: 12px; padding: 14px 16px; font-size: 14.5px; }
-  .msg.err { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.35); color: #FECACA; }
-  .done { text-align: center; padding: 34px 10px; }
-  .done .ico { margin: 0 auto 14px; width: 54px; height: 54px; border-radius: 50%; }
-  .done h3 { font-size: 22px; margin: 0 0 8px; }
-  .done p { color: var(--muted); margin: 0 auto; max-width: 46ch; }
-  .done code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); background: rgba(148,163,184,.12); padding: 2px 8px; border-radius: 6px; }
-  .nophi { font-size: 13px; color: var(--dim); }
+  .estimate { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; padding: 14px 16px; border-radius: 10px; background: var(--signal-soft); font-size: 15px; }
+  .estimate b { font-family: var(--display); font-size: 22px; letter-spacing: -.01em; }
+  .msg { border-radius: 10px; padding: 12px 14px; font-size: 15px; color: var(--stat); border: 1px solid color-mix(in srgb, var(--stat) 40%, transparent); }
+  .small { font-size: 13.5px; color: var(--faint); margin: 0; }
+  .done { text-align: center; padding: 36px 8px; display: grid; gap: 10px; justify-items: center; }
+  .done .ok { width: 56px; height: 56px; border-radius: 50%; background: var(--signal-soft); color: var(--signal); display: grid; place-items: center; }
+  .done h3 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+  .done p { margin: 0; color: var(--muted); max-width: 30em; }
+  .done code { font-family: var(--mono); color: var(--ink); background: var(--signal-soft); padding: 2px 8px; border-radius: 6px; }
 
   /* faq */
-  .faq { margin-top: 44px; border-top: 1px solid var(--line); }
+  .faq { max-width: 52rem; border-top: 2px solid var(--ink); }
   details { border-bottom: 1px solid var(--line); }
-  summary { list-style: none; cursor: pointer; padding: 22px 0; font-size: 17.5px; font-weight: 650; display: flex; justify-content: space-between; gap: 16px; }
+  summary { list-style: none; cursor: pointer; padding: 22px 0; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -.01em; display: flex; justify-content: space-between; gap: 18px; }
   summary::-webkit-details-marker { display: none; }
-  summary::after { content: "+"; color: var(--muted); font-weight: 400; font-size: 24px; line-height: 1; transition: transform .2s; }
+  summary::after { content: "+"; font-family: var(--mono); color: var(--signal); font-weight: 500; transition: transform .2s; }
   details[open] summary::after { transform: rotate(45deg); }
-  details p { margin: -6px 0 22px; color: var(--muted); max-width: 75ch; }
+  details p { margin: -4px 0 24px; color: var(--muted); max-width: 42em; }
 
-  .final { text-align: center; }
-  .final .sub { margin: 0 auto 30px; }
-  footer { border-top: 1px solid var(--line); padding: 44px 0 56px; color: var(--dim); font-size: 14px; }
-  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: center; justify-content: space-between; }
-  footer nav { display: flex; flex-wrap: wrap; gap: 10px 22px; }
-  footer a:hover { color: var(--text); }
-
-  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
-  .reveal.in { opacity: 1; transform: none; }
-  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } .card, .btn { transition: none; } }
+  .close { background: var(--signal); color: var(--on-signal); }
+  .close .wrap { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 28px; }
+  .close h2 { font-weight: 800; font-size: clamp(36px, 5.6vw, 68px); line-height: .98; letter-spacing: -.04em; max-width: 12em; }
+  .close .btn { background: var(--on-signal); color: var(--signal); }
+  .close .btn:hover { opacity: .92; }
+  footer { padding-block: 40px 56px; color: var(--faint); font-size: 14.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; justify-content: space-between; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  footer a { text-decoration: none; }
+  footer a:hover { color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn, .btn .arrow { transition: none; } }
 </style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
-    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0A6F6A"/><path d="M6 17h5l2.5-6 4 11 2.5-5H26" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
 
 <header class="nav">
   <div class="wrap">
-    <a class="logo" href="/home" aria-label="DocTurn home"><b>D</b>DocTurn</a>
+    <a class="brand" href="/home" aria-label="DocTurn home"><svg aria-hidden="true"><use href="#i-mark"/></svg>DocTurn</a>
     <nav class="links" aria-label="Sections">
-      <a href="#features">Product</a>
-      <a href="#how">How it works</a>
+      <a href="#product">Product</a>
+      <a href="#teams">Teams</a>
       <a href="#security">Security</a>
       <a href="#pricing">Pricing</a>
       <a href="#faq">FAQ</a>
     </nav>
-    <div class="cta">
-      <a class="btn ghost sm signin" href="/">Sign in</a>
-      <a class="btn primary sm" href="#buy" data-cta-nav>Purchase</a>
+    <div class="end">
+      <a class="btn line sm signin" href="/">Sign in</a>
+      <a class="btn solid sm" href="#buy" data-cta-nav>Purchase</a>
     </div>
   </div>
 </header>
 
 <main>
-  <section class="hero" style="padding-top:88px">
+  <section class="hero" style="padding-block:0">
+    <svg class="trace" viewBox="0 0 1600 90" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 60 H520 l14 0 8 -10 8 10 h22 l10 -52 12 76 9 -24 h40 l18 -12 18 12 H1060 l14 0 8 -10 8 10 h22 l10 -52 12 76 9 -24 h40 l18 -12 18 12 H1600"/>
+    </svg>
     <div class="wrap">
-      <span class="eyebrow"><i></i>Built for hospitalist groups and emergency departments</span>
-      <h1>Every admission, consult and STAT page — <em>in one place.</em></h1>
-      <p class="lede">DocTurn is clinical messaging and admissions routing for hospital medicine. Secure messages with STAT escalation, fair round-robin admissions, consults to any physician, and one live patient board — on desktop and phone.</p>
-      <div class="actions">
-        <a class="btn primary" href="#buy">Purchase or start a pilot</a>
-        <a class="btn ghost" href="#features">See the product</a>
-      </div>
-      <p class="note">Screens below are the real app, showing synthetic test data.</p>
-
-      <div class="stage reveal">
-        <div class="desk"><div class="bar"><span></span><span></span><span></span></div>
-          <img src="/site/img/desktop-director.jpg" width="1440" height="900" alt="DocTurn director dashboard: providers on shift, census, rotation order and admissions">
+      <div>
+        <div class="label">Messaging &amp; admissions for hospital medicine</div>
+        <h1>The night shift, <span>handled.</span></h1>
+        <p class="lede">DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
+        <div class="actions">
+          <a class="btn solid" href="#buy">Purchase or start a pilot <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="btn line" href="#product">See what changes</a>
         </div>
-        <div class="phone"><img src="/site/img/phone-hospitalist.jpg" width="390" height="844" alt="DocTurn on a phone: an incoming admission request with Accept and Decline"></div>
+      </div>
+      <div>
+        <div class="device" role="img" aria-label="A phone lock screen at 3:12 AM showing three DocTurn alerts with no patient details">
+          <div class="screen">
+            <div class="notch"></div>
+            <div class="clock">3:12</div>
+            <div class="date">Thursday, overnight</div>
+            <div class="alerts">
+              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>now</span></div><div class="stat">STAT</div>New message. Open DocTurn to read.</div></div>
+              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>4m</span></div>Admission request waiting for you.</div></div>
+              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>11m</span></div>Your consult request was answered.</div></div>
+            </div>
+          </div>
+        </div>
+        <p class="device-note">Lock-screen alerts never show patient details.</p>
       </div>
     </div>
   </section>
 
-  <section id="features">
+  <section id="product">
     <div class="wrap">
-      <div class="reveal">
-        <div class="kicker">Product</div>
-        <h2>One tool for the whole admission.</h2>
-        <p class="sub">From the ER's request to the consultant's answer, everyone sees the same live record — and nothing waits on a phone tree.</p>
+      <div class="head">
+        <div class="label">What changes</div>
+        <h2>Less chasing. More medicine.</h2>
+        <p>The calls, callbacks and whiteboards that eat a shift, replaced by one shared picture everyone trusts.</p>
       </div>
-      <div class="grid3">
-        <div class="card reveal"><div class="ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div>
-          <h3>STAT that can't be missed</h3><p>STAT messages require acknowledgement and escalate to the covering physician when they go unanswered. Push alerts carry no patient content.</p></div>
-        <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></div>
-          <h3>Fair round-robin admissions</h3><p>The ER sends an admission; the next hospitalist in rotation gets it with a timer. Census caps, decline and auto-pass are enforced on the server.</p></div>
-        <div class="card reveal"><div class="ico green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6 6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6 6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg></div>
-          <h3>Consult anyone</h3><p>Request a service's on-call physician or a specific consultant by name. Only the consultant accepts or declines; the team sees status live.</p></div>
-        <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
-          <h3>One patient board</h3><p>Who is responsible for every patient, which consults are pending, and who admitted them — by initials and room only, with every view logged.</p></div>
-        <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg></div>
-          <h3>On-call, from your schedule</h3><p>See who is on call for every service. Sync from Amion or Epic (FHIR), or keep a manual list — switchable per hospital.</p></div>
-        <div class="card reveal"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
-          <h3>Desktop and phone</h3><p>The same app on a workstation and an iPhone or Android, installable to the Home Screen with lock-screen PIN and STAT alerts.</p></div>
+      <div class="pillars">
+        <div class="pillar"><div class="label">Messaging</div><h3>Urgent means urgent.</h3><p>Secure messages built for clinical teams. When something can't wait, DocTurn makes sure the right physician sees it.</p></div>
+        <div class="pillar"><div class="label">Admissions</div><h3>Admits land fairly.</h3><p>New admissions reach the right hospitalist quickly and evenly, so no one is buried and no patient waits.</p></div>
+        <div class="pillar"><div class="label">Oversight</div><h3>The whole service, at a glance.</h3><p>Directors see workload, coverage and open requests in real time, and can rebalance with a click.</p></div>
       </div>
     </div>
   </section>
 
-  <section id="how" class="band">
-    <div class="wrap split">
-      <div class="reveal">
-        <div class="kicker">How it works</div>
-        <h2>Request. Route. Respond.</h2>
-        <p class="sub">The steps your team already does — without the pages, the callbacks and the whiteboard.</p>
-        <ol class="steps">
-          <li><span class="n">1</span><div><h4>The ER requests an admission</h4><p>Initials, room, acuity and the reason — plus any consults, to a service or a named physician.</p></div></li>
-          <li><span class="n">2</span><div><h4>DocTurn routes it</h4><p>To the next hospitalist under their cap. A decline or a timeout passes it on automatically, and the director sees it all.</p></div></li>
-          <li><span class="n">3</span><div><h4>The team works it together</h4><p>Accept, message, escalate STAT, answer consults and hand off at shift change — every step recorded.</p></div></li>
-        </ol>
-      </div>
-      <div class="phones reveal">
-        <div class="phone"><img src="/site/img/phone-hospitalist.jpg" width="390" height="844" alt="Incoming assignment request on a phone" loading="lazy"></div>
-        <div class="phone"><img src="/site/img/phone-messages.jpg" width="390" height="844" alt="Secure messaging inbox with a STAT message" loading="lazy"></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="board">
+  <section id="teams" class="roles">
     <div class="wrap">
-      <div class="reveal">
-        <div class="kicker">For directors</div>
-        <h2>The whole service on one screen.</h2>
-        <p class="sub">Census against caps, the rotation order, admissions and consults — with controls to rebalance in a click.</p>
+      <div class="head">
+        <div class="label">Built for every seat</div>
+        <h2>One tool, four kinds of shift.</h2>
       </div>
-      <div class="desk reveal" style="margin-top:44px"><div class="bar"><span></span><span></span><span></span></div>
-        <img src="/site/img/desktop-board.jpg" width="1440" height="900" alt="DocTurn patient board with consult status and the admitting physician" loading="lazy">
+      <div class="role-list">
+        <div class="role"><h3>ER physicians</h3><p>Send an admission in a few taps and see who has it.</p></div>
+        <div class="role"><h3>Hospitalists</h3><p>A clear queue, a fair share, and messages you can act on from your phone.</p></div>
+        <div class="role"><h3>Consultants</h3><p>Requests that reach you directly, with the context to answer them.</p></div>
+        <div class="role"><h3>Directors &amp; IT</h3><p>Live oversight for the service, plus single sign-on, provisioning and an audit trail for IT.</p></div>
       </div>
     </div>
   </section>
 
-  <section id="security" class="band">
-    <div class="wrap">
-      <div class="reveal">
-        <div class="kicker">Security &amp; compliance</div>
-        <h2>Designed for protected health information.</h2>
-        <p class="sub">Controls your security team will ask about — enforced on the server, not just shown in the interface.</p>
+  <section id="security">
+    <div class="wrap trust">
+      <div class="head">
+        <div class="label">Security &amp; compliance</div>
+        <h2>Built for protected health information.</h2>
+        <p>Every control below is enforced on our servers, not just shown on screen.</p>
       </div>
-      <div class="sec-list reveal">
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>Business Associate Agreement</b><span>We sign a BAA with every customer before any real patient information is entered.</span></p></div>
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>Audit trail and PHI access log</b><span>Every action and every view of patient data is recorded and exportable.</span></p></div>
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>MFA, SSO and SCIM</b><span>Multi-factor sign-in, single sign-on with your identity provider, and automatic account provisioning.</span></p></div>
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>Role-based access, per hospital</b><span>Each organization is isolated; people see only what their role allows.</span></p></div>
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>Content-free notifications</b><span>Lock-screen alerts never carry patient details.</span></p></div>
-        <div><svg><use href="#i-shield"/></svg><p style="margin:0"><b>Session controls</b><span>Idle lock, PIN unlock, and sign-out-everywhere for a lost device.</span></p></div>
+      <div>
+        <ul class="checks">
+          <li><svg><use href="#i-check"/></svg><div><b>Business Associate Agreement</b><span>Signed with every customer before any real patient information is entered.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Complete audit trail</b><span>Every action and every view of patient information is recorded.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Enterprise sign-in</b><span>Multi-factor authentication, single sign-on and automatic provisioning.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Isolated by hospital</b><span>Each organization's data is separate, and people see only what their role allows.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Private on the lock screen</b><span>Notifications carry no patient details. Lost phones can be signed out remotely.</span></div></li>
+        </ul>
+        <p class="fine">There is no official HIPAA certification, so no vendor can be "HIPAA certified". Compliance is shared under the BAA. Read our <a href="/privacy">Privacy Policy</a>, <a href="/subprocessors">subprocessors</a> and <a href="/clinical-safety">Clinical Safety Notice</a>.</p>
       </div>
-      <p class="fine">HIPAA has no official certification; no vendor can be "HIPAA certified". Compliance is shared between DocTurn and each customer under the BAA. See our <a href="/privacy" style="text-decoration:underline">Privacy Policy</a>, <a href="/subprocessors" style="text-decoration:underline">subprocessors</a> and <a href="/clinical-safety" style="text-decoration:underline">Clinical Safety Notice</a>.</p>
     </div>
   </section>
 
-  <section id="pricing">
+  <section id="pricing" class="pricing">
     <div class="wrap">
-      <div class="reveal" style="text-align:center">
-        <div class="kicker">Pricing</div>
-        <h2>Simple, per-provider pricing.</h2>
-        <p class="sub" style="margin:0 auto">Pay for the clinician accounts you use. Every plan includes a signed BAA, onboarding and support.</p>
+      <div class="head">
+        <div class="label">Pricing</div>
+        <h2>Pay for the clinicians who use it.</h2>
+        <p>Every plan includes a signed BAA, onboarding and support.</p>
       </div>
       <div class="plans" data-plans></div>
     </div>
   </section>
 
-  <section id="buy" class="band">
+  <section id="buy">
     <div class="wrap buy">
-      <div class="reveal">
-        <div class="kicker">Purchase</div>
-        <h2>Get DocTurn for your hospital.</h2>
-        <p class="sub">Tell us about your group. We reply with an order form and the BAA to sign — your accounts go live once both are signed.</p>
-        <ol class="steps">
-          <li><span class="n">1</span><div><h4>Send your order request</h4><p>Takes a minute. No payment details here.</p></div></li>
-          <li><span class="n">2</span><div><h4>Sign the order form and BAA</h4><p>Reviewed by your team and ours. Invoiced monthly per account.</p></div></li>
-          <li><span class="n">3</span><div><h4>Go live</h4><p>We set up your hospital, your rotation and your schedule feed.</p></div></li>
+      <div>
+        <div class="head">
+          <div class="label">Purchase</div>
+          <h2>Bring DocTurn to your hospital.</h2>
+          <p>Hospital software needs a contract, so this form starts one. No payment details are taken here.</p>
+        </div>
+        <ol class="seq">
+          <li><div><b>Send your order request</b><span>About a minute. You get a reference number right away.</span></div></li>
+          <li><div><b>Sign the order form and BAA</b><span>We send both by email. Your team reviews them.</span></div></li>
+          <li><div><b>Go live</b><span>We set up your hospital and train your team. Billing is monthly per active clinician.</span></div></li>
         </ol>
       </div>
 
-      <form class="reveal" data-buy-form novalidate>
+      <form data-buy-form novalidate>
         <div class="row2">
-          <label>Hospital or group<input name="organizationName" autocomplete="organization" required maxlength="160"></label>
-          <label>Your name<input name="contactName" autocomplete="name" required maxlength="120"></label>
+          <label for="f-org">Hospital or group<input id="f-org" name="organizationName" autocomplete="organization" required maxlength="160"></label>
+          <label for="f-name">Your name<input id="f-name" name="contactName" autocomplete="name" required maxlength="120"></label>
         </div>
         <div class="row2">
-          <label>Title<input name="contactTitle" autocomplete="organization-title" maxlength="120" placeholder="e.g. Medical Director"></label>
-          <label>Work email<input name="email" type="email" autocomplete="email" required maxlength="200"></label>
+          <label for="f-title">Title<input id="f-title" name="contactTitle" autocomplete="organization-title" maxlength="120" placeholder="Medical Director"></label>
+          <label for="f-email">Work email<input id="f-email" name="email" type="email" autocomplete="email" required maxlength="200"></label>
         </div>
         <div class="row2">
-          <label>Phone (optional)<input name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
-          <label>Clinician accounts<input name="seats" type="number" inputmode="numeric" min="1" max="100000" value="25" required></label>
+          <label for="f-phone">Phone (optional)<input id="f-phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
+          <label for="f-seats">Clinician accounts<input id="f-seats" name="seats" type="number" inputmode="numeric" min="1" max="100000" value="25" required></label>
         </div>
         <div class="row2">
-          <label>Plan<select name="planCode" data-plan-select></select></label>
-          <label>Term<select name="term">
+          <label for="f-plan">Plan<select id="f-plan" name="planCode" data-plan-select></select></label>
+          <label for="f-term">Term<select id="f-term" name="term">
             <option value="pilot">Pilot</option>
             <option value="annual">Annual</option>
             <option value="multi_year">Multi-year</option>
           </select></label>
         </div>
         <div class="estimate" data-estimate hidden><span data-estimate-label>Estimated</span><b data-estimate-value></b></div>
-        <label>Anything we should know? (optional)<textarea name="message" maxlength="2000" placeholder="Number of sites, services, go-live date…"></textarea></label>
-        <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
-        <label class="check"><input type="checkbox" name="agreeTerms" required><span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>, and I understand a signed order form and BAA are required before go-live.</span></label>
-        <p class="nophi" style="margin:0">Business contact details only — please don't include patient information.</p>
-        <div class="msg err" data-buy-error role="alert" hidden></div>
-        <button class="btn primary" type="submit" data-buy-submit style="height:52px;font-size:16px">Send order request</button>
+        <label for="f-msg">Anything we should know? (optional)<textarea id="f-msg" name="message" maxlength="2000" placeholder="Sites, services, go-live date"></textarea></label>
+        <div class="hp" aria-hidden="true"><label for="f-web">Website<input id="f-web" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <label class="check" for="f-agree"><input id="f-agree" type="checkbox" name="agreeTerms" required><span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>. I understand a signed order form and BAA come before go-live.</span></label>
+        <p class="small">Business contact details only. Please don't include patient information.</p>
+        <div class="msg" data-buy-error role="alert" hidden></div>
+        <button class="btn solid" type="submit" data-buy-submit style="min-height:54px;font-size:16.5px">Send order request</button>
       </form>
     </div>
   </section>
 
-  <section id="faq">
-    <div class="wrap" style="max-width:860px">
-      <div class="kicker">FAQ</div>
-      <h2>Questions, answered.</h2>
+  <section id="faq" style="padding-top:0">
+    <div class="wrap">
+      <div class="head">
+        <div class="label">FAQ</div>
+        <h2>Before you ask.</h2>
+      </div>
       <div class="faq">
-        <details><summary>Can we try it before we buy?</summary><p>Yes. Choose "Pilot" in the form. A pilot runs under a short evaluation agreement, typically with one service, and can start on synthetic test data before any real patient information is used.</p></details>
-        <details><summary>Is DocTurn HIPAA compliant?</summary><p>DocTurn is designed for HIPAA-regulated use: access control, audit logging, encryption in transit, and content-free notifications. We sign a Business Associate Agreement before any real patient information is entered. Compliance is shared — your organization keeps its own policies and training.</p></details>
-        <details><summary>Does it replace pagers and phone calls?</summary><p>For routine and urgent team communication, yes. DocTurn is not an emergency system: for a life-threatening emergency, use your hospital's emergency procedures. See the <a href="/clinical-safety" style="text-decoration:underline">Clinical Safety Notice</a>.</p></details>
-        <details><summary>What does it connect to?</summary><p>On-call schedules from Amion or Epic (FHIR R4), single sign-on with your identity provider, and SCIM account provisioning. The census is entered in DocTurn today; automatic EHR census sync is planned.</p></details>
-        <details><summary>Which devices does it run on?</summary><p>Any modern browser on a workstation, plus iPhone and Android. On a phone, add DocTurn to the Home Screen to get STAT alerts and PIN unlock.</p></details>
-        <details><summary>How is billing handled?</summary><p>Per clinician account per month, at the price in your signed order form, invoiced monthly. Deactivated accounts stop counting.</p></details>
+        <details><summary>Can we try it first?</summary><p>Yes. Choose "Pilot" in the form. A pilot runs for a fixed term with one service under a short evaluation agreement, and can start on test data before any real patient information is used.</p></details>
+        <details><summary>Is DocTurn HIPAA compliant?</summary><p>DocTurn is designed for HIPAA-regulated use, and we sign a Business Associate Agreement before any real patient information is entered. Your organization keeps its own policies and training.</p></details>
+        <details><summary>Does it replace pagers?</summary><p>For team communication, yes. DocTurn is not an emergency system: for a life-threatening emergency, follow your hospital's emergency procedures. See the <a href="/clinical-safety">Clinical Safety Notice</a>.</p></details>
+        <details><summary>What does it work with?</summary><p>Your on-call schedule, your identity provider for single sign-on, and automatic account provisioning. We confirm the details for your hospital during onboarding.</p></details>
+        <details><summary>Which devices?</summary><p>Any modern browser on a workstation, plus iPhone and Android.</p></details>
       </div>
     </div>
   </section>
 
-  <section class="final band">
+  <section class="close">
     <div class="wrap">
-      <h2>Ready when your team is.</h2>
-      <p class="sub">Start with a pilot on one service, or bring your whole group.</p>
-      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-        <a class="btn primary" href="#buy">Purchase or start a pilot</a>
-        <a class="btn ghost" href="/">Sign in</a>
-      </div>
+      <h2>Give your team its nights back.</h2>
+      <a class="btn" href="#buy">Purchase or start a pilot <span class="arrow" aria-hidden="true">→</span></a>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <div class="logo" style="font-size:16px"><b style="width:26px;height:26px;font-size:13px">D</b>DocTurn <span style="font-weight:400;color:var(--dim);margin-left:8px" data-year></span></div>
+    <span><span class="brand" style="display:inline-flex;font-size:16px;color:var(--ink)"><svg aria-hidden="true" style="width:22px;height:22px"><use href="#i-mark"/></svg>DocTurn</span> <span data-year></span></span>
     <nav aria-label="Legal" data-site-legal>
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
@@ -387,15 +429,8 @@
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var yr = $("[data-year]"); if (yr) yr.textContent = "© " + new Date().getFullYear();
 
-  // Reveal on scroll (content is visible without JS or with reduced motion).
-  var els = document.querySelectorAll(".reveal");
-  if ("IntersectionObserver" in window && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }); }, { rootMargin: "0px 0px -8% 0px" });
-    els.forEach(function (e) { io.observe(e); });
-  } else { els.forEach(function (e) { e.classList.add("in"); }); }
-
   var CHECK = '<svg><use href="#i-check"/></svg>';
-  var INCLUDED = ["Secure messaging with STAT escalation", "Round-robin admissions and census caps", "Consults to services or named physicians", "Patient board, on-call board, shift hand-off", "Audit trail, MFA, SSO and SCIM", "Signed BAA, onboarding and support"];
+  var INCLUDED = ["Secure clinical messaging", "Admissions and consults", "Live service oversight", "Single sign-on and audit trail", "Signed BAA, onboarding and support"];
   var plans = [];
   var money = function (cents, cur) {
     try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, minimumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100); }
@@ -407,25 +442,26 @@
   function renderPlans() {
     var box = $("[data-plans]");
     var cards = [];
-    cards.push('<div class="plan" data-site-plan="pilot"><h3>Pilot</h3><div class="price" style="font-size:34px">Evaluation</div><div class="per">One service, for a fixed term under a pilot agreement</div>' +
-      list(["Full product for one service", "Start on synthetic test data", "Onboarding and weekly check-ins", "Signed BAA before any real data"]) +
-      '<a class="btn ghost" href="#buy" data-choose="pilot">Start a pilot</a></div>');
+    cards.push('<div class="plan" data-site-plan="pilot"><div class="label">Try it</div><h3>Pilot</h3><div class="price" style="font-size:34px">Evaluation</div><div class="per">One service, for a fixed term</div>' +
+      list(["Full product for one service", "Start on test data", "Onboarding and check-ins", "Signed BAA before real data"]) +
+      '<a class="btn line" href="#buy" data-choose="pilot">Start a pilot</a></div>');
     if (plans.length) {
       plans.forEach(function (p, i) {
-        cards.push('<div class="plan' + (i === 0 ? " featured" : "") + '" data-site-plan="' + esc(p.code) + '">' + 
-          "<h3>" + esc(p.name) + '</h3><div class="price">' + esc(money(p.perSeatPriceCents, p.currency)) + '<small> / account / month</small></div><div class="per">Billed monthly for active clinician accounts</div>' +
-          list(INCLUDED) + '<a class="btn ' + (i === 0 ? "primary" : "ghost") + '" href="#buy" data-choose="' + esc(p.code) + '">Purchase ' + esc(p.name) + "</a></div>");
+        cards.push('<div class="plan' + (i === 0 ? " lead" : "") + '" data-site-plan="' + esc(p.code) + '"><div class="label">Buy</div><h3>' + esc(p.name) +
+          '</h3><div class="price">' + esc(money(p.perSeatPriceCents, p.currency)) + '<small> / clinician / month</small></div><div class="per">Billed monthly for active accounts</div>' +
+          list(INCLUDED) + '<a class="btn ' + (i === 0 ? "solid" : "line") + '" href="#buy" data-choose="' + esc(p.code) + '">Purchase ' + esc(p.name) + "</a></div>");
       });
     } else {
-      cards.push('<div class="plan featured" data-site-plan="quote"><h3>Hospital</h3><div class="price" style="font-size:34px">Custom quote</div><div class="per">Per clinician account, sized to your group</div>' +
-        list(INCLUDED) + '<a class="btn primary" href="#buy" data-choose="">Request pricing</a></div>');
+      cards.push('<div class="plan lead" data-site-plan="quote"><div class="label">Buy</div><h3>Hospital</h3><div class="price" style="font-size:34px">Custom quote</div><div class="per">Per clinician, sized to your group</div>' +
+        list(INCLUDED) + '<a class="btn solid" href="#buy" data-choose="">Request pricing</a></div>');
     }
     box.innerHTML = cards.join("");
     var sel = $("[data-plan-select]");
     sel.innerHTML = '<option value="pilot">Pilot</option>' + (plans.length
-      ? plans.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.name) + " — " + esc(money(p.perSeatPriceCents, p.currency)) + "/mo</option>"; }).join("")
-      : '<option value="">Hospital — quote</option>');
+      ? plans.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.name) + " · " + esc(money(p.perSeatPriceCents, p.currency)) + "/mo</option>"; }).join("")
+      : '<option value="">Hospital (quote)</option>');
     sel.value = plans.length ? plans[0].code : "";
+    $("select[name=term]").value = plans.length ? "annual" : "pilot";
     box.querySelectorAll("[data-choose]").forEach(function (a) {
       a.addEventListener("click", function () {
         var c = a.getAttribute("data-choose");
@@ -442,7 +478,7 @@
     var p = plans.filter(function (x) { return x.code === sel.value; })[0];
     if (!p || seats < 1) { box.hidden = true; return; }
     box.hidden = false;
-    $("[data-estimate-label]").textContent = "Estimated, " + seats + " account" + (seats === 1 ? "" : "s");
+    $("[data-estimate-label]").textContent = "Estimated for " + seats + " clinician" + (seats === 1 ? "" : "s");
     $("[data-estimate-value]").textContent = money(p.perSeatPriceCents * seats, p.currency) + " / month";
   }
 
@@ -477,14 +513,14 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { s: r.status, j: j }; }); })
       .then(function (res) {
         if (res.s === 201) {
-          form.innerHTML = '<div class="done" data-buy-done><div class="ico green"><svg viewBox="0 0 24 24" width="26" height="26"><use href="#i-check"/></svg></div><h3>Request received</h3><p>' +
+          form.innerHTML = '<div class="done" data-buy-done><div class="ok"><svg viewBox="0 0 24 24" width="26" height="26"><use href="#i-check"/></svg></div><h3>Request received</h3><p>' +
             (res.j.reference ? "Your reference is <code>" + esc(res.j.reference) + "</code>. " : "") +
-            "We'll contact you at " + esc(body.email) + " with an order form and the BAA. Nothing is charged until both are signed.</p></div>";
+            "We'll email " + esc(body.email) + " with an order form and the BAA. Nothing is charged until both are signed.</p></div>";
           return;
         }
         btn.disabled = false; btn.textContent = "Send order request";
         if (res.s === 400 && res.j.fields) return showBad(res.j.fields);
-        err.textContent = res.s === 429 ? "Too many requests from this network. Please try again in an hour." : "We couldn't send your request. Please try again.";
+        err.textContent = res.s === 429 ? "Too many requests from this network. Try again in an hour." : "Your request didn't send. Try again.";
         err.hidden = false;
       }, function () {
         btn.disabled = false; btn.textContent = "Send order request";
@@ -494,7 +530,7 @@
   function showBad(fields) {
     var err = $("[data-buy-error]");
     fields.forEach(function (n) { var el = form.elements[n]; if (el && el.setAttribute) el.setAttribute("aria-invalid", "true"); });
-    err.textContent = "Please check: " + fields.map(function (n) { return LABELS[n] || n; }).join(", ") + ".";
+    err.textContent = "Check " + fields.map(function (n) { return LABELS[n] || n; }).join(", ") + ".";
     err.hidden = false;
     var first = form.elements[fields[0]]; if (first && first.focus) first.focus();
   }

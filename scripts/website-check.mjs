@@ -22,7 +22,7 @@ for (const [w, h, mob] of [[1440, 900, false], [390, 844, true]]) {
   rec(w + " no horizontal scroll", sw <= w, String(sw));
   const imgs = await page.evaluate(async () => { const ims = [...document.images]; for (const i of ims) { i.loading = "eager"; } await new Promise((r) => setTimeout(r, 1500)); return ims.map((i) => i.naturalWidth); });
   rec(w + " all images load", imgs.every((x) => x > 0), imgs.join(","));
-  rec(w + " price from server", /\$49 \/ account \/ month/.test(await page.textContent("[data-site-plan=hospital]")));
+  rec(w + " price from server", /\$49 \/ clinician \/ month/.test(await page.textContent("[data-site-plan=hospital]")));
   if (OUT) await page.screenshot({ path: OUT + "/site-" + w + "-top.png" });
   if (OUT) await page.screenshot({ path: OUT + "/site-" + w + "-full.png", fullPage: true });
   // purchase
