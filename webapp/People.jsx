@@ -62,12 +62,14 @@ function peopleInitials(name) {
   return String(name || "").replace(/\(root\)/i, "").replace(/^Dr\.?\s*/, "").trim().split(/[\s,]+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
-function PeopleIconButton({ title, icon, hoverColor, onClick }) {
+// A labelled account action inside a person's Manage panel. The title (also
+// the accessible name) says exactly who it acts on.
+function PeopleAction({ title, icon, label, tone, onClick }) {
+  const color = tone === "danger" ? "var(--destructive)" : tone === "good" ? "var(--status-accepted-fg)" : "var(--foreground)";
   return (
     <button type="button" onClick={onClick} title={title} aria-label={title}
-      onMouseEnter={(e) => e.currentTarget.style.color = hoverColor} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
-      style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}>
-      <Icon name={icon} size={16} />
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 40, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid " + (tone === "danger" ? "var(--destructive)" : "var(--border)"), background: "var(--card)", color: color, fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer", whiteSpace: "nowrap" }}>
+      <Icon name={icon} size={14} />{label}
     </button>
   );
 }
@@ -101,6 +103,7 @@ function PeopleManager({ domainRoles }) {
   // Change role (POST /api/accounts/:id/role): a hospitalist DIRECTOR's
   // decision only — the server refuses everyone else, so nobody else sees it.
   const [roleEdit, setRoleEdit] = React.useState(null); // { id, role, busy }
+  const [manageId, setManageId] = React.useState(null); // the one person whose actions are open
   const canChangeRoles = myRole === "director";
   const blank = { name: "", username: "", usernameTouched: false, role: addable[0] || "", specialty: "Hospital Medicine", credential: "NP" };
   const [form, setForm] = React.useState(blank);
@@ -253,22 +256,37 @@ function PeopleManager({ domainRoles }) {
                         audited). Offered only where the server allows it. */}
                     {manage && (
                       <div style={{ display: "flex", marginLeft: "auto", flex: "none" }}>
-                        <PeopleIconButton title={"Reset password for " + u.name + " (issues a one-time password)"} icon="key-round" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Reset " + u.name + "'s password? Their current sessions end and you'll be shown a one-time password to hand over.")) a.resetUserPassword(u.id, u.name); }} />
+                        {/* ONE labelled control per person. The four bare icons this
+                            replaced explained themselves only on hover — which a phone
+                            does not have — on the screen where access is removed. */}
+                        <button type="button" data-manage={u.username} aria-expanded={manageId === u.id} aria-label={"Manage " + u.name}
+                          onClick={() => { setManageId(manageId === u.id ? null : u.id); if (roleEdit && roleEdit.id !== u.id) setRoleEdit(null); }}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: manageId === u.id ? "var(--secondary)" : "var(--card)", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+                          <Icon name="settings-2" size={14} />Manage<Icon name={manageId === u.id ? "chevron-up" : "chevron-down"} size={13} color="var(--muted-foreground)" />
+                        </button>
+                      </div>
+                    )}
+                    {manage && manageId === u.id && (
+                      <div data-manage-panel={u.username} style={{ flex: "1 1 100%", display: "flex", flexWrap: "wrap", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--muted)" }}>
+                        <PeopleAction title={"Reset password for " + u.name + " (issues a one-time password)"} icon="key-round" label="Reset password"
+                          onClick={() => { if (window.confirm("Reset " + u.name + "'s password? Their current sessions end and you'll be shown a one-time password to hand over.")) a.resetUserPassword(u.id, u.name); }} />
                         {canChangeRoles && !u.disabled && (
-                          <PeopleIconButton title={"Change role for " + u.name} icon="user-cog" hoverColor="var(--primary)"
+                          <PeopleAction title={"Change role for " + u.name} icon="user-cog" label="Change role"
                             onClick={() => setRoleEdit(roleEdit && roleEdit.id === u.id ? null : { id: u.id, role: u.role, busy: false })} />
                         )}
-                        <PeopleIconButton title={"Reset two-factor for " + u.name} icon="shield-off" hoverColor="var(--primary)" onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
+                        <PeopleAction title={"Reset two-factor for " + u.name} icon="shield-off" label="Reset two-factor"
+                          onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
                         {/* Sign out everywhere (E2, module enterprise.sessionPolicy):
                             a forgotten tablet or a lost phone. Not a deactivation —
                             the account still works and the password is untouched. */}
                         {sessionPolicyOn && (
-                          <PeopleIconButton title={"Sign " + u.name + " out of every device"} icon="log-out" hoverColor="var(--primary)"
+                          <PeopleAction title={"Sign " + u.name + " out of every device"} icon="log-out" label="Sign out everywhere"
                             onClick={() => { if (window.confirm("Sign " + u.name + " out of every device? Their sessions end now. Their account still works — they can sign in again.")) a.signOutUserEverywhere(u.id, u.name); }} />
                         )}
                         {u.disabled
-                          ? <PeopleIconButton title={"Restore access for " + u.name} icon="user-check" hoverColor="var(--status-accepted)" onClick={() => a.reactivateUser(u.id)} />
-                          : <PeopleIconButton title={"Remove access for " + u.name} icon="user-x" hoverColor="var(--destructive)" onClick={() => { if (window.confirm("Remove " + u.name + "'s access? They are signed out now and cannot sign in until restored.")) a.deactivateUser(u.id); }} />}
+                          ? <PeopleAction title={"Restore access for " + u.name} icon="user-check" label="Restore access" tone="good" onClick={() => a.reactivateUser(u.id)} />
+                          : <PeopleAction title={"Remove access for " + u.name} icon="user-x" label="Remove access" tone="danger"
+                              onClick={() => { if (window.confirm("Remove " + u.name + "'s access? They are signed out now and cannot sign in until restored.")) a.deactivateUser(u.id); }} />}
                       </div>
                     )}
                     {/* Change role — inline, so the consequence is read before it is

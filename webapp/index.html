@@ -418,16 +418,17 @@ function Toast({ toast }) {
 }
 
 function RoleSwitcher({ role, onChange }) {
-  const roles = [["hospitalist", "Hospitalist"], ["er_doctor", "ER physician"], ["er_director", "ER director"], ["director", "Hosp. director"], ["developer", "Developer"]];
+  // Demo instances only. One compact control: the five-tab strip this replaced
+  // took a third of the top bar for something a tester touches occasionally.
+  const roles = [["hospitalist", "Hospitalist"], ["er_doctor", "ER physician"], ["er_director", "ER director"], ["director", "Hospitalist director"], ["developer", "Developer"]];
   return (
-    <div role="group" aria-label="Demo as role" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)", width: "max-content" }}>
-      {roles.map(([id, label]) => (
-        <button key={id} type="button" onClick={() => onChange(id)} aria-pressed={role === id}
-          style={{ padding: "6px 11px", borderRadius: 5, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
-            background: role === id ? "var(--card)" : "transparent", color: role === id ? "var(--primary)" : "var(--muted-foreground)",
-            boxShadow: role === id ? "var(--shadow-sm)" : "none" }}>{label}</button>
-      ))}
-    </div>
+    <label data-role-switcher style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "0 4px 0 10px", height: 36, background: "var(--secondary)", borderRadius: "var(--radius-md)", fontSize: 12.5, color: "var(--muted-foreground)", fontWeight: 500, whiteSpace: "nowrap" }}>
+      Demo as
+      <select aria-label="Demo as role" value={role} onChange={(e) => onChange(e.target.value)}
+        style={{ height: 30, padding: "0 8px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--card)", color: "var(--primary)", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+        {roles.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+      </select>
+    </label>
   );
 }
 

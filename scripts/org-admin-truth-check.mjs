@@ -140,7 +140,7 @@ for (const width of [375, 390, 430]) {
   const want = {};
   for (const u of accounts) if (!u.disabled && u.role !== "developer") want[cat(u)] = (want[cat(u)] || 0) + 1;
   rec(`A@${width}: role tiles equal the server's active counts`, Object.keys(tiles).every((k) => (want[k] || 0) === tiles[k]), JSON.stringify(tiles) + " vs " + JSON.stringify(want));
-  const selfRowCtl = await page.locator('[data-person="director"] button[aria-label^="Reset password"]').count();
+  const selfRowCtl = await page.locator('[data-person="director"] button[aria-label^="Manage"]').count();
   rec(`A@${width}: no account controls on the director's own row`, selfRowCtl === 0);
   if (width === 390) {
     // Add person → a real account.
@@ -166,6 +166,13 @@ for (const width of [375, 390, 430]) {
     rec("A: the new person appears in the roster", newRow === 1);
     // Reset password on the new account → server 200 + a fresh one-time password.
     const b2 = apiLog.length;
+    // One labelled Manage control per person; its panel holds the actions.
+    const bare = await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Reset password"]`).count();
+    await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Manage"]`).click();
+    await sleep(300);
+    const labels = await page.$$eval(`[data-manage-panel="${NEW_USER}"] button`, (els) => els.map((e) => e.textContent.trim()));
+    rec("A: account actions sit behind one Manage control, each with a WORDED label", bare === 0 && ["Reset password", "Change role", "Reset two-factor", "Remove access"].every((l) => labels.includes(l)), JSON.stringify(labels));
+    await checkLayout(page, "People manage panel @390");
     await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Reset password"]`).click();
     await sleep(1200);
     const r2 = apiLog.slice(b2).find((x) => /reset-password$/.test(x));
@@ -193,6 +200,7 @@ for (const width of [375, 390, 430]) {
     const rows = (trail && trail.audit) || [];
     rec("A: the role change is on the audit trail", rows.some((x) => x.action === "account.role_change"), "rows=" + rows.length);
     // Remove access → server says disabled.
+    if (!(await page.locator(`[data-manage-panel="${NEW_USER}"]`).count())) { await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Manage"]`).click(); await sleep(300); }
     await page.locator(`[data-person="${NEW_USER}"] button[aria-label^="Remove access"]`).click();
     await sleep(1200);
     const dis = (await api("GET", "/api/accounts")).json.find((u) => u.username === NEW_USER);
@@ -225,10 +233,15 @@ for (const width of [375, 390, 430]) {
   const rows = await page.$$eval("[data-person]", (els) => els.map((e) => e.getAttribute("data-person")));
   const want = accounts.filter((u) => u.role === "er_doctor" || u.role === "er_director").map((u) => u.username).sort();
   rec("A(ER): rows are the server's ER staff", JSON.stringify(rows.slice().sort()) === JSON.stringify(want), rows.join(","));
-  const ctl = await page.$$eval("[data-person]", (els) => els.map((e) => [e.getAttribute("data-person"), !!e.querySelector('button[aria-label^="Remove access"], button[aria-label^="Restore access"]')]));
+  const ctl = await page.$$eval("[data-person]", (els) => els.map((e) => [e.getAttribute("data-person"), !!e.querySelector('button[aria-label^="Manage"]')]));
   const ok = ctl.every(([u, has]) => { const a = accounts.find((x) => x.username === u); return a && has === (a.role === "er_doctor"); });
   rec("A(ER): account controls only on ER physicians (the server's rule)", ok, JSON.stringify(ctl));
-  rec("A(ER): no Change role control (a hospitalist director's decision; the server answers 403)", (await page.locator('button[aria-label^="Change role"]').count()) === 0);
+  await page.locator('[data-person] button[aria-label^="Manage"]').first().click();
+  await sleep(300);
+  const erPanel = await page.$$eval("[data-manage-panel] button", (els) => els.map((e) => e.textContent.trim()));
+  rec("A(ER): no Change role control (a hospitalist director's decision; the server answers 403)", erPanel.length > 0 && !erPanel.includes("Change role") && erPanel.includes("Remove access"), JSON.stringify(erPanel));
+  await page.locator('[data-person] button[aria-label^="Manage"]').first().click();
+  await sleep(200);
   await clickText(page, "button", /^Add person$/);
   await sleep(300);
   const chips = await page.$$eval("button[aria-pressed]", (els) => els.map((e) => e.textContent.trim()).filter((t) => /physician|director|Hospitalist|PA/.test(t)));

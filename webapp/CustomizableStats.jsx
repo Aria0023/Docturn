@@ -73,6 +73,10 @@ function CustomizableStats({ statKey, stats, metrics }) {
   allStats.forEach((s) => { byId[s.id] = s; });
 
   const [editing, setEditing] = React.useState(false);
+  // Phones: the first four tiles, the rest one tap away. Eight tiles filled a
+  // phone's whole first screen before anything a clinician could act on.
+  const [showAll, setShowAll] = React.useState(false);
+  const PHONE_TILE_LIMIT = 4;
   const [adding, setAdding] = React.useState(false);
   const [building, setBuilding] = React.useState(false);
   const [dragId, setDragId] = React.useState(null);
@@ -97,6 +101,8 @@ function CustomizableStats({ statKey, stats, metrics }) {
 
   const hidden = layout.hidden;
   const visible = layout.order.filter((id) => hidden.indexOf(id) < 0 && byId[id]);
+  const collapsible = mobile && !editing && visible.length > PHONE_TILE_LIMIT;
+  const shown = collapsible && !showAll ? visible.slice(0, PHONE_TILE_LIMIT) : visible;
   const hiddenStats = allIds.filter((id) => hidden.indexOf(id) >= 0 && byId[id]);
 
   function move(targetId) {
@@ -214,7 +220,7 @@ function CustomizableStats({ statKey, stats, metrics }) {
         <div style={mobile
           ? { display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }
           : { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 18 }}>
-          {visible.map((id) => {
+          {shown.map((id) => {
             const s = byId[id];
             const isOver = overId === id && dragId && dragId !== id;
             // Phones: two tiles per row (gap 14 → each takes half minus 7px), so a
@@ -251,6 +257,12 @@ function CustomizableStats({ statKey, stats, metrics }) {
             );
           })}
         </div>
+      )}
+      {collapsible && (
+        <button type="button" data-stats-more onClick={() => setShowAll(!showAll)} aria-expanded={showAll}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", minHeight: 44, margin: "-4px 0 14px", border: "1px dashed var(--border)", borderRadius: "var(--radius-md)", background: "transparent", color: "var(--primary-ink)", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+          <Icon name={showAll ? "chevron-up" : "chevron-down"} size={14} />{showAll ? "Show fewer" : "Show all " + visible.length + " stats"}
+        </button>
       )}
     </div>
   );

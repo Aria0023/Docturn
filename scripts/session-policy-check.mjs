@@ -141,11 +141,15 @@ try {
     const c = await card(h.page);
     rec("M: no Session policy card and no sign-out-everywhere row", !c.present && !c.signOutRow, JSON.stringify({ present: c.present, row: c.signOutRow }));
     await nav(h.page, "people", 2400);
+    // The actions live in each person's Manage panel — open one to look.
+    await h.page.locator('[data-person] button[aria-label^="Manage"]').first().click().catch(() => {});
+    await sleep(300);
     const people = await h.page.evaluate(() => ({
       rows: document.querySelectorAll("[data-person]").length,
+      panel: document.querySelectorAll("[data-manage-panel] button").length,
       signOut: [...document.querySelectorAll("[data-person] button")].filter((b) => /sign .* out of every device/i.test(b.getAttribute("title") || "")).length,
     }));
-    rec("M: People offers no sign-out-everywhere action", people.rows > 0 && people.signOut === 0, JSON.stringify(people));
+    rec("M: People offers no sign-out-everywhere action", people.rows > 0 && people.panel > 0 && people.signOut === 0, JSON.stringify(people));
     await h.ctx.close();
     rec("M: GET /api/org/session-policy is 404 module_disabled", (await director("GET", "/api/org/session-policy")).status === 404);
     const soe = await director("POST", "/api/account/sessions/revoke-all", {});
@@ -244,6 +248,8 @@ try {
     const chen = await open(BASE, 390, "ISPN", "chen");
     const dir = await open(BASE, 390, "ISPN", "director");
     await nav(dir.page, "people", 2600);
+    await dir.page.locator('[data-person="chen"] button[aria-label^="Manage"]').click();
+    await sleep(300);
     const clicked = await dir.page.evaluate(() => {
       const btn = [...document.querySelectorAll("[data-person] button")].find((b) => /^Sign Dr\..*out of every device$/i.test(b.getAttribute("title") || "") && /chen|Alyesh|Nathan/i.test(b.closest("[data-person]").getAttribute("data-person") + b.closest("[data-person]").innerText));
       if (!btn) return null;
