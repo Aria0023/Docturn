@@ -220,8 +220,14 @@ describe("developer org management", () => {
     });
     expect(created.status).toBe(201);
 
+    // A per-user display preset (user_theme_prefs) is a cheap dependent the
+    // user delete cascades, like the other per-user preference rows.
+    await ctx.storage.setThemePrefs(ctx.seedResult.orgId, created.body.id, { preset: "night", textSize: "large" });
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeTruthy();
+
     // The fresh user has no activity → deletable.
     expect((await agent.delete(`/api/dev/users/${created.body.id}`)).status).toBe(204);
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeUndefined();
 
     // A user with activity (chen has a seeded pending assignment as target) — and
     // the developer can't delete themselves.
@@ -327,17 +333,21 @@ describe("resources, sms & oversight endpoints", () => {
 });
 
 describe("mobile API", () => {
-  it("exposes safe org fields publicly and compact assignments to providers", async () => {
-    const pub = await supertest(ctx.app).get("/api/mobile/org/ISPN");
-    expect(pub.status).toBe(200);
-    expect(pub.body).toEqual({
+  it("exposes safe org fields to the org's own members and compact assignments to providers", async () => {
+    // Not public (A.CON-SHO-11): an anonymous lookup would be an org-code oracle.
+    const anon = await supertest(ctx.app).get("/api/mobile/org/ISPN");
+    expect(anon.status).toBe(401);
+
+    const { agent } = await login(ctx.app, { username: "chen" });
+    const own = await agent.get("/api/mobile/org/ISPN");
+    expect(own.status).toBe(200);
+    expect(own.body).toEqual({
       id: ctx.seedResult.orgId,
       name: "Cedars-Sinai (ISP North)",
       code: "ISPN",
       timezone: "America/New_York",
     });
 
-    const { agent } = await login(ctx.app, { username: "chen" });
     const reg = await agent
       .post("/api/mobile/device-tokens")
       .send({ token: "tok-123", platform: "ios" });

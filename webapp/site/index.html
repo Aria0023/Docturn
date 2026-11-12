@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DocTurn: HIPAA-compliant messaging for acute care hospitals</title>
+<meta name="description" content="The all-in-one, HIPAA-compliant messaging platform for acute care hospitals: secure messaging, STAT alerts, admissions, consults and on-call in one place.">
+<meta name="theme-color" content="#EEF3F2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1315" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="preload" href="/site/fonts/schibsted-grotesk-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/site/fonts/instrument-sans-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+  @font-face { font-family: "Schibsted Grotesk"; src: url(/site/fonts/schibsted-grotesk-latin-700-normal.woff2) format("woff2"); font-weight: 700; font-display: swap; }
+  @font-face { font-family: "Schibsted Grotesk"; src: url(/site/fonts/schibsted-grotesk-latin-800-normal.woff2) format("woff2"); font-weight: 800; font-display: swap; }
+  @font-face { font-family: "Instrument Sans"; src: url(/site/fonts/instrument-sans-latin-400-normal.woff2) format("woff2"); font-weight: 400; font-display: swap; }
+  @font-face { font-family: "Instrument Sans"; src: url(/site/fonts/instrument-sans-latin-600-normal.woff2) format("woff2"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url(/site/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2"); font-weight: 500; font-display: swap; }
+
+  /* Layout: left-set editorial column on ECG-paper grid; one teal signal colour; STAT red only where it means STAT. */
+  :root {
+    --paper: #F8FAF9; --surface: #FFFFFF; --ink: #10202B; --muted: #546570; --faint: #7D8C94;
+    --line: rgba(16, 32, 43, .09); --line-strong: rgba(16, 32, 43, .16);
+    --signal: #0B7A72; --signal-hover: #08665F; --on-signal: #FFFFFF; --signal-soft: rgba(11, 122, 114, .08);
+    --stat: #C8261B; --grid: rgba(11, 122, 114, .035); --grid-major: rgba(11, 122, 114, .06);
+    --device: #10202B; --device-screen: #142630; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .11);
+    --shadow: 0 1px 2px rgba(16, 32, 43, .04), 0 18px 48px -12px rgba(16, 32, 43, .14);
+    /* morning light: soft dawn washes, frosted cards (transparent in the night theme) */
+    --dawn-peach: rgba(255, 190, 150, .55); --dawn-mint: rgba(125, 220, 200, .5); --dawn-sky: rgba(150, 190, 255, .45); --dawn-lilac: rgba(205, 180, 255, .35);
+    --glass: rgba(255, 255, 255, .72); --glass-line: rgba(255, 255, 255, .9);
+    --wash: linear-gradient(180deg, #FFFFFF 0%, #F1F8F6 100%);
+    --close-bg: linear-gradient(120deg, #0B7A72 0%, #1F8FA8 55%, #5B7FD6 100%);
+    --radius: 22px;
+    --display: "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif;
+    --body: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --max: 1120px; color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --paper: #0B1315; --surface: #111C1F; --ink: #E4ECEE; --muted: #9AABB2; --faint: #6F8189;
+    --line: rgba(228, 236, 238, .11); --line-strong: rgba(228, 236, 238, .22);
+    --signal: #3BC2B6; --signal-hover: #5ED3C8; --on-signal: #062321; --signal-soft: rgba(59, 194, 182, .1);
+    --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
+    --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+    --dawn-peach: transparent; --dawn-mint: transparent; --dawn-sky: transparent; --dawn-lilac: transparent;
+    --glass: #111C1F; --glass-line: rgba(228, 236, 238, .11); --wash: #0B1315; --close-bg: #3BC2B6; --radius: 16px;
+  } }
+  :root[data-theme="dark"] {
+    --paper: #0B1315; --surface: #111C1F; --ink: #E4ECEE; --muted: #9AABB2; --faint: #6F8189;
+    --line: rgba(228, 236, 238, .11); --line-strong: rgba(228, 236, 238, .22);
+    --signal: #3BC2B6; --signal-hover: #5ED3C8; --on-signal: #062321; --signal-soft: rgba(59, 194, 182, .1);
+    --stat: #FF6B5E; --grid: rgba(59, 194, 182, .05); --grid-major: rgba(59, 194, 182, .09);
+    --device: #050A0C; --device-screen: #10242A; --device-ink: #EAF2F3; --device-card: rgba(255, 255, 255, .1);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .35); color-scheme: dark;
+    --dawn-peach: transparent; --dawn-mint: transparent; --dawn-sky: transparent; --dawn-lilac: transparent;
+    --glass: #111C1F; --glass-line: rgba(228, 236, 238, .11); --wash: #0B1315; --close-bg: #3BC2B6; --radius: 16px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--paper); }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 6px; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding-left: max(20px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+
+  /* nav */
+  .nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 50; background: color-mix(in srgb, var(--paper) 86%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  .nav .wrap { display: flex; align-items: center; gap: 32px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-weight: 800; font-size: 19px; letter-spacing: -.02em; text-decoration: none; }
+  .brand svg { width: 28px; height: 28px; }
+  .links { display: flex; gap: 26px; font-size: 15px; color: var(--muted); }
+  .links a { text-decoration: none; }
+  .links a:hover { color: var(--ink); }
+  .nav .end { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 0 22px; border-radius: 10px; font-family: var(--body); font-weight: 600; font-size: 15.5px; text-decoration: none; border: 1px solid transparent; cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s, transform .15s; }
+  .btn:active { transform: translateY(1px); }
+  .btn.solid { background: var(--signal); color: var(--on-signal); }
+  .btn.solid:hover { background: var(--signal-hover); }
+  .btn.line { border-color: var(--line-strong); color: var(--ink); background: transparent; }
+  .btn.line:hover { border-color: var(--ink); }
+  .btn.sm { min-height: 40px; padding: 0 16px; font-size: 14.5px; }
+  @media (max-width: 880px) { .links { display: none; } }
+  @media (max-width: 460px) { .nav .signin { display: none; } }
+
+  /* hero: ECG paper, one trace */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); background-color: var(--paper);
+    background-image: linear-gradient(var(--grid-major) 1px, transparent 1px), linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+      linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; background-position: -1px -1px; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: radial-gradient(70% 90% at 15% 30%, var(--paper) 0%, color-mix(in srgb, var(--paper) 60%, transparent) 55%, transparent 100%); pointer-events: none; }
+  .hero .wrap { position: relative; z-index: 2; }
+  @media (max-width: 900px) { .hero .wrap { padding-block: 64px 28px; } .monitor { height: 120px; } }
+  .hero h1 { font-weight: 800; font-size: clamp(52px, 10vw, 136px); max-width: 9.5em; line-height: .94; letter-spacing: -.045em; margin: 20px 0 26px; }
+  .lede { font-size: clamp(18px, 2vw, 21px); color: var(--muted); max-width: 33em; margin: 0 0 34px; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* the device: a night-shift lock screen, content-free alerts */
+  .device { justify-self: center; width: min(300px, 100%); aspect-ratio: 9 / 18.5; max-width: 100%; border-radius: 44px; padding: 11px; background: var(--device); box-shadow: var(--shadow), 0 40px 80px -20px rgba(13, 27, 38, .35); }
+  .screen { height: 100%; border-radius: 34px; overflow: hidden; position: relative; color: var(--device-ink);
+    background: radial-gradient(120% 70% at 50% 0%, #1E4A52 0%, var(--device-screen) 55%, #0A1418 100%); padding: 22px 14px; display: flex; flex-direction: column; }
+  .notch { width: 92px; height: 26px; border-radius: 20px; background: #000; margin: -8px auto 18px; }
+  .clock { text-align: center; font-family: var(--display); font-weight: 700; font-size: 66px; letter-spacing: -.03em; line-height: 1; }
+  .date { text-align: center; font-size: 13.5px; opacity: .78; margin: 6px 0 26px; }
+  .alerts { display: grid; gap: 8px; }
+  .alert { background: var(--device-card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 16px; padding: 10px 12px; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 12.5px; line-height: 1.35; }
+  .alert .app { width: 30px; height: 30px; border-radius: 8px; background: #0A6F6A; display: grid; place-items: center; }
+  .alert .app svg { width: 18px; height: 18px; }
+  .alert .top { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
+  .alert .top span:last-child { opacity: .6; font-weight: 400; }
+  .alert .stat { color: #FF8A80; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+  @media (prefers-reduced-motion: no-preference) { .alert.new { animation: drop .6s cubic-bezier(.2, .8, .2, 1) both; } }
+  @keyframes drop { from { opacity: 0; transform: translateY(-12px) scale(.97); } }
+  .device-note { margin: 16px auto 0; max-width: 300px; font-size: 13.5px; color: var(--muted); text-align: center; }
+  @media (max-width: 900px) { .device { width: min(260px, 100%); border-radius: 40px; } .clock { font-size: 56px; } }
+
+  /* hero monitor: a sweeping trace, like the bedside monitors this team lives with */
+  .hero .wrap { display: block; padding-block: 96px 40px; }
+  .hero .lede { max-width: 36em; }
+  .monitor { position: relative; z-index: 2; height: 150px; margin-top: 8px; }
+  .monitor canvas { display: block; width: 100%; height: 100%; }
+
+  /* one night: a deliberately dark band in both themes */
+  .night { --n-bg: #0A1A20; --n-ink: #E7F1F2; --n-muted: #9DB3B9; --n-line: rgba(231, 241, 242, .14); --n-signal: #45D0C3; --n-dawn: #F4B860;
+    background: radial-gradient(900px 500px at 85% 20%, rgba(69, 208, 195, .16), transparent 60%), var(--n-bg); color: var(--n-ink); overflow: hidden; }
+  .night-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 56px; align-items: center; }
+  @media (max-width: 900px) { .night-grid { grid-template-columns: 1fr; gap: 28px; } .night .stage { order: -1; } .night .device { width: min(230px, 72%); aspect-ratio: 9 / 11.5; } .night .clock { font-size: 46px; } .panel { margin-top: 22px; min-height: 0; } }
+  .night h2 { font-weight: 800; font-size: clamp(34px, 4.8vw, 56px); line-height: 1.02; letter-spacing: -.035em; }
+  .night-sub { color: var(--n-muted); font-size: 18px; margin: 14px 0 40px; max-width: 32em; }
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 560px) { .tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tab { position: relative; overflow: hidden; text-align: left; border: 1px solid var(--n-line); background: rgba(255, 255, 255, .03); color: var(--n-muted); border-radius: 12px; padding: 12px 14px 14px; cursor: pointer; font: inherit; display: grid; gap: 2px; transition: border-color .2s, background .2s, color .2s; }
+  .tab:hover { border-color: rgba(231, 241, 242, .3); color: var(--n-ink); }
+  .tab .t { font-family: var(--mono); font-size: 13px; }
+  .tab .n { font-weight: 600; font-size: 15px; }
+  .tab[aria-selected="true"] { border-color: var(--n-signal); background: rgba(69, 208, 195, .1); color: var(--n-ink); }
+  .tab[aria-selected="true"] .t { color: var(--n-signal); }
+  .tab .bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--n-signal); }
+  .tab[aria-selected="true"].playing .bar { animation: fill var(--dwell, 6s) linear forwards; }
+  @keyframes fill { to { width: 100%; } }
+  .panel { margin-top: 30px; min-height: 9.5em; }
+  .panel h3 { font-weight: 800; font-size: clamp(28px, 3.4vw, 40px); letter-spacing: -.03em; line-height: 1.05; }
+  .panel p { color: var(--n-muted); font-size: 18px; margin: 12px 0 0; max-width: 30em; }
+  @media (prefers-reduced-motion: no-preference) { .panel.swap h3, .panel.swap p { animation: rise .55s cubic-bezier(.2, .8, .2, 1) both; } .panel.swap p { animation-delay: .07s; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .stage { display: grid; place-items: center; }
+  .night .device { box-shadow: 0 30px 90px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06); }
+  .device .screen { transition: background 1s ease; }
+  .device[data-sky="dusk"] .screen { background: radial-gradient(120% 70% at 50% 0%, #7A4E8C 0%, #2B3560 45%, #0E1630 100%); }
+  .device[data-sky="late"] .screen { background: radial-gradient(120% 70% at 50% 0%, #1E4A52 0%, #142630 55%, #0A1418 100%); }
+  .device[data-sky="night"] .screen { background: radial-gradient(120% 70% at 50% 0%, #163C46 0%, #0D1E26 55%, #060D10 100%); }
+  .device[data-sky="dawn"] .screen { background: radial-gradient(120% 70% at 50% 0%, #F4B860 0%, #B5655A 32%, #2F3550 75%, #151B2E 100%); }
+  .device .clock { transition: opacity .3s; }
+
+  .role { transition: background .2s, padding .2s; border-radius: 0; }
+  .role:hover { background: var(--signal-soft); padding-inline: 14px; }
+  .role h3 { transition: color .2s; }
+  .role:hover h3 { color: var(--signal); }
+  .plan { transition: transform .2s, box-shadow .2s; }
+  .plan:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+  @media (prefers-reduced-motion: reduce) { .role, .plan, .tab, .device .screen { transition: none; } .plan:hover { transform: none; } }
+
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .assure { list-style: none; padding: 0; margin: 28px 0 0; display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 15px; font-weight: 600; }
+  .assure li { display: flex; align-items: center; gap: 8px; }
+  .assure svg { width: 18px; height: 18px; color: var(--signal); flex: none; }
+  .suite { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 2px solid var(--ink); }
+  @media (max-width: 960px) { .suite { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .suite { grid-template-columns: 1fr; } }
+  .suite li { padding: 24px 22px 26px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; align-content: start; transition: background .2s, padding .2s; }
+  .suite li:hover { background: var(--signal-soft); padding-left: 14px; }
+  .suite b { font-family: var(--display); font-size: 21px; font-weight: 700; letter-spacing: -.015em; }
+  .suite span { color: var(--muted); font-size: 15.5px; }
+  @media (prefers-reduced-motion: reduce) { .suite li { transition: none; } }
+
+  /* morning light (light theme only; the washes are transparent at night) */
+  .aurora { position: absolute; inset: -20% -10% -10%; z-index: 1; pointer-events: none; filter: blur(70px); }
+  .aurora i { position: absolute; border-radius: 50%; opacity: .9; }
+  .aurora i:nth-child(1) { width: 46vw; height: 46vw; left: 48%; top: 2%; background: var(--dawn-peach); }
+  .aurora i:nth-child(2) { width: 40vw; height: 40vw; left: 66%; top: 30%; background: var(--dawn-mint); }
+  .aurora i:nth-child(3) { width: 36vw; height: 36vw; left: 30%; top: 46%; background: var(--dawn-sky); }
+  .aurora i:nth-child(4) { width: 28vw; height: 28vw; left: 84%; top: -4%; background: var(--dawn-lilac); }
+  @media (prefers-reduced-motion: no-preference) {
+    .aurora i:nth-child(1) { animation: driftA 22s ease-in-out infinite alternate; }
+    .aurora i:nth-child(2) { animation: driftB 26s ease-in-out infinite alternate; }
+    .aurora i:nth-child(3) { animation: driftA 30s ease-in-out infinite alternate-reverse; }
+    .aurora i:nth-child(4) { animation: driftB 24s ease-in-out infinite alternate-reverse; }
+  }
+  @keyframes driftA { to { transform: translate(-6vw, 4vw) scale(1.08); } }
+  @keyframes driftB { to { transform: translate(5vw, -3vw) scale(.94); } }
+  @media (max-width: 700px) { .aurora i:nth-child(1) { left: 10%; width: 90vw; height: 90vw; } .aurora i:nth-child(2) { left: 40%; width: 80vw; height: 80vw; } .aurora i:nth-child(3) { left: -20%; width: 80vw; height: 80vw; } }
+  #all-in-one { background: var(--wash); }
+  #security { background: radial-gradient(720px 460px at -5% 10%, color-mix(in srgb, var(--dawn-mint) 55%, transparent), transparent 70%), radial-gradient(560px 380px at 105% 95%, color-mix(in srgb, var(--dawn-lilac) 60%, transparent), transparent 70%); }
+  #buy { background: radial-gradient(640px 440px at 92% 12%, color-mix(in srgb, var(--dawn-sky) 60%, transparent), transparent 70%), radial-gradient(560px 420px at 4% 92%, color-mix(in srgb, var(--dawn-peach) 55%, transparent), transparent 70%); }
+  .suite li { border-radius: 0; }
+  .plan.lead { background: var(--glass); }
+
+  /* sections */
+  section { padding-block: 112px; scroll-margin-top: 64px; }
+  @media (max-width: 640px) { section { padding-block: 76px; } }
+  .head { display: grid; gap: 14px; max-width: 46rem; margin-bottom: 56px; }
+  .head h2 { font-weight: 800; font-size: clamp(34px, 4.8vw, 56px); line-height: 1.02; letter-spacing: -.035em; }
+  .head p { margin: 0; color: var(--muted); font-size: 19px; max-width: 36em; }
+
+  .pillars { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 2px solid var(--ink); }
+  @media (max-width: 860px) { .pillars { grid-template-columns: 1fr; } }
+  .pillar { padding: 28px 28px 8px 0; display: grid; gap: 12px; align-content: start; }
+  .pillar + .pillar { padding-left: 28px; border-left: 1px solid var(--line); }
+  @media (max-width: 860px) { .pillar, .pillar + .pillar { padding: 28px 0; border-left: 0; border-bottom: 1px solid var(--line); } }
+  .pillar h3 { font-weight: 700; font-size: 26px; line-height: 1.12; letter-spacing: -.02em; }
+  .pillar p { margin: 0; color: var(--muted); }
+
+  .roles { background: var(--surface); border-block: 1px solid var(--line); }
+  .role-list { display: grid; border-top: 1px solid var(--line); }
+  .role { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 24px; padding: 26px 0; border-bottom: 1px solid var(--line); align-items: baseline; }
+  @media (max-width: 640px) { .role { grid-template-columns: 1fr; gap: 6px; } }
+  .role h3 { font-weight: 700; font-size: 22px; letter-spacing: -.015em; }
+  .role p { margin: 0; color: var(--muted); max-width: 40em; }
+
+  .trust { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 64px; align-items: start; }
+  @media (max-width: 900px) { .trust { grid-template-columns: 1fr; gap: 8px; } }
+  .trust .head { margin-bottom: 0; }
+  .checks { list-style: none; margin: 0; padding: 0; display: grid; }
+  .checks li { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 14px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .checks li:first-child { border-top: 1px solid var(--line); }
+  .checks svg { width: 20px; height: 20px; color: var(--signal); margin-top: 4px; }
+  .checks b { display: block; font-weight: 600; }
+  .checks span { color: var(--muted); font-size: 15.5px; }
+  .fine { color: var(--faint); font-size: 14px; margin: 22px 0 0; }
+  .fine a { color: var(--muted); }
+
+  /* pricing */
+  .pricing { background: var(--wash); border-block: 1px solid var(--line); }
+  .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+  .plan { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 30px; display: flex; flex-direction: column; gap: 6px; background: var(--paper); }
+  .plan.lead { border: 2px solid var(--signal); background: var(--surface); box-shadow: var(--shadow); }
+  .plan h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; }
+  .price { font-family: var(--display); font-weight: 800; font-size: 46px; letter-spacing: -.04em; line-height: 1.05; margin-top: 12px; }
+  .price small { font-family: var(--body); font-size: 15px; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+  .per { color: var(--muted); font-size: 15px; }
+  .plan ul { list-style: none; padding: 0; margin: 20px 0 28px; display: grid; gap: 10px; font-size: 15.5px; }
+  .plan li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 10px; }
+  .plan li svg { width: 17px; height: 17px; color: var(--signal); margin-top: 4px; }
+  .plan .btn { margin-top: auto; width: 100%; }
+
+  /* purchase */
+  .buy { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: 64px; align-items: start; }
+  @media (max-width: 900px) { .buy { grid-template-columns: 1fr; gap: 36px; } }
+  .buy .head { margin-bottom: 32px; }
+  .seq { list-style: none; padding: 0; margin: 0; display: grid; gap: 22px; counter-reset: s; }
+  .seq li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; counter-increment: s; }
+  .seq li::before { content: counter(s); width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid var(--signal); color: var(--signal); display: grid; place-items: center; font-family: var(--mono); font-size: 14px; }
+  .seq b { display: block; font-weight: 600; }
+  .seq span { color: var(--muted); font-size: 15.5px; }
+  form { background: var(--glass); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid var(--glass-line); border-radius: var(--radius); padding: 32px; display: grid; gap: 18px; box-shadow: var(--shadow); }
+  @media (max-width: 560px) { form { padding: 20px; } }
+  .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }
+  label { display: grid; gap: 7px; font-size: 14px; font-weight: 600; min-width: 0; }
+  input, select, textarea { width: 100%; min-height: 48px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink); font: inherit; font-weight: 400; font-size: 16px; padding: 11px 14px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  textarea { min-height: 96px; resize: vertical; }
+  input:focus, select:focus, textarea:focus { border-color: var(--signal); box-shadow: 0 0 0 4px var(--signal-soft); }
+  [aria-invalid="true"] { border-color: var(--stat) !important; }
+  .check { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; font-weight: 400; color: var(--muted); font-size: 14.5px; }
+  .check input { width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; accent-color: var(--signal); }
+  .hp { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+  .estimate { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; padding: 14px 16px; border-radius: 10px; background: var(--signal-soft); font-size: 15px; }
+  .estimate b { font-family: var(--display); font-size: 22px; letter-spacing: -.01em; }
+  .msg { border-radius: 10px; padding: 12px 14px; font-size: 15px; color: var(--stat); border: 1px solid color-mix(in srgb, var(--stat) 40%, transparent); }
+  .small { font-size: 13.5px; color: var(--faint); margin: 0; }
+  .done { text-align: center; padding: 36px 8px; display: grid; gap: 10px; justify-items: center; }
+  .done .ok { width: 56px; height: 56px; border-radius: 50%; background: var(--signal-soft); color: var(--signal); display: grid; place-items: center; }
+  .done h3 { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
+  .done p { margin: 0; color: var(--muted); max-width: 30em; }
+  .done code { font-family: var(--mono); color: var(--ink); background: var(--signal-soft); padding: 2px 8px; border-radius: 6px; }
+
+  /* faq */
+  .faq { max-width: 52rem; border-top: 2px solid var(--ink); }
+  details { border-bottom: 1px solid var(--line); }
+  summary { list-style: none; cursor: pointer; padding: 22px 0; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: -.01em; display: flex; justify-content: space-between; gap: 18px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; font-family: var(--mono); color: var(--signal); font-weight: 500; transition: transform .2s; }
+  details[open] summary::after { transform: rotate(45deg); }
+  details p { margin: -4px 0 24px; color: var(--muted); max-width: 42em; }
+
+  .close { background: var(--close-bg); color: var(--on-signal); }
+  .close .wrap { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 28px; }
+  .close h2 { font-weight: 800; font-size: clamp(36px, 5.6vw, 68px); line-height: .98; letter-spacing: -.04em; max-width: 12em; }
+  .close .btn { background: var(--on-signal); color: var(--signal); }
+  .close .btn:hover { opacity: .92; }
+  footer { padding-block: 40px 56px; color: var(--faint); font-size: 14.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: center; justify-content: space-between; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+  footer a { text-decoration: none; }
+  footer a:hover { color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-mark" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0A6F6A"/><path d="M6 17h5l2.5-6 4 11 2.5-5H26" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="/home" aria-label="DocTurn home"><svg aria-hidden="true"><use href="#i-mark"/></svg>DocTurn</a>
+    <nav class="links" aria-label="Sections">
+      <a href="#night">Product</a>
+      <a href="#all-in-one">All in one</a>
+      <a href="#teams">Teams</a>
+      <a href="#security">Security</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <div class="end">
+      <a class="btn line sm signin" href="/">Sign in</a>
+      <a class="btn solid sm" href="#buy" data-cta-nav>Purchase</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero" style="padding-block:0">
+    <div class="aurora" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="wrap">
+      <h1>The night shift, handled.</h1>
+      <p class="lede"><strong>The all-in-one, HIPAA-compliant messaging platform for acute care hospitals.</strong> DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
+      <div class="actions">
+        <a class="btn solid" href="#buy">Purchase or start a pilot</a>
+        <a class="btn line" href="#night">Watch a night unfold</a>
+      </div>
+      <ul class="assure" aria-label="Highlights">
+        <li><svg><use href="#i-check"/></svg>HIPAA-compliant messaging</li>
+        <li><svg><use href="#i-check"/></svg>BAA signed with every hospital</li>
+        <li><svg><use href="#i-check"/></svg>Built for acute care</li>
+      </ul>
+    </div>
+    <div class="monitor" aria-hidden="true">
+      <canvas data-monitor></canvas>
+    </div>
+  </section>
+
+  <section id="night" class="night">
+    <div class="wrap">
+      <h2>One night on DocTurn.</h2>
+      <p class="night-sub">Four moments from a real shift, and what your team sees on the lock screen. Nothing on it ever names a patient.</p>
+    </div>
+    <div class="wrap night-grid">
+      <div class="story">
+        <div class="tabs" role="tablist" aria-label="Moments in the night" data-tabs></div>
+        <div class="panel" role="tabpanel" data-panel aria-live="polite">
+          <h3 data-panel-title></h3>
+          <p data-panel-text></p>
+        </div>
+      </div>
+      <div class="stage">
+        <div class="device" data-device data-sky="night">
+          <div class="screen">
+            <div class="notch"></div>
+            <div class="clock" data-clock>3:12</div>
+            <div class="date" data-date>Thursday</div>
+            <div class="alerts" data-alerts></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="all-in-one">
+    <div class="wrap">
+      <div class="head">
+        <h2>Every conversation in your hospital, all in one.</h2>
+        <p>Paging, texting apps, spreadsheets and whiteboards, replaced by one HIPAA-compliant platform your whole hospital shares.</p>
+      </div>
+      <ul class="suite">
+        <li><b>Secure messaging</b><span>Direct, group and patient-linked conversations.</span></li>
+        <li><b>STAT alerts</b><span>Urgent messages that get seen.</span></li>
+        <li><b>Admissions</b><span>From the ER to the right hospitalist.</span></li>
+        <li><b>Consults</b><span>To a service or a named physician.</span></li>
+        <li><b>On-call</b><span>Who's covering, for every service.</span></li>
+        <li><b>Patient board</b><span>One shared picture of the service.</span></li>
+        <li><b>Shift hand-off</b><span>Nothing lost between teams.</span></li>
+        <li><b>Directory</b><span>Everyone in your hospital, one tap away.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="teams" class="roles">
+    <div class="wrap">
+      <div class="head">
+        <h2>One tool, four kinds of shift.</h2>
+      </div>
+      <div class="role-list">
+        <div class="role"><h3>ER physicians</h3><p>Send an admission in a few taps and see who has it.</p></div>
+        <div class="role"><h3>Hospitalists</h3><p>A clear queue, a fair share, and messages you can act on from your phone.</p></div>
+        <div class="role"><h3>Consultants</h3><p>Requests that reach you directly, with the context to answer them.</p></div>
+        <div class="role"><h3>Directors &amp; IT</h3><p>Live oversight for the service, plus single sign-on, provisioning and an audit trail for IT.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="security">
+    <div class="wrap trust">
+      <div class="head">
+        <h2>HIPAA-compliant by design.</h2>
+        <p>Every control below is enforced on our servers, not just shown on screen.</p>
+      </div>
+      <div>
+        <ul class="checks">
+          <li><svg><use href="#i-check"/></svg><div><b>Business Associate Agreement</b><span>Signed with every customer before any real patient information is entered.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Complete audit trail</b><span>Every action and every view of patient information is recorded.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Enterprise sign-in</b><span>Multi-factor authentication, single sign-on and automatic provisioning.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Isolated by hospital</b><span>Each organization's data is separate, and people see only what their role allows.</span></div></li>
+          <li><svg><use href="#i-check"/></svg><div><b>Private on the lock screen</b><span>Notifications carry no patient details. Lost phones can be signed out remotely.</span></div></li>
+        </ul>
+        <p class="fine">HIPAA compliance is shared: DocTurn provides the safeguards and signs a BAA, and your hospital keeps its own policies and training. There is no government certification for HIPAA. Read our <a href="/privacy">Privacy Policy</a>, <a href="/subprocessors">subprocessors</a> and <a href="/clinical-safety">Clinical Safety Notice</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing" class="pricing">
+    <div class="wrap">
+      <div class="head">
+        <h2>Pay for the clinicians who use it.</h2>
+        <p>Every plan includes a signed BAA, onboarding and support.</p>
+      </div>
+      <div class="plans" data-plans></div>
+    </div>
+  </section>
+
+  <section id="buy">
+    <div class="wrap buy">
+      <div>
+        <div class="head">
+          <h2>Bring DocTurn to your hospital.</h2>
+          <p>Hospital software needs a contract, so this form starts one. No payment details are taken here.</p>
+        </div>
+        <ol class="seq">
+          <li><div><b>Send your order request</b><span>About a minute. You get a reference number right away.</span></div></li>
+          <li><div><b>Sign the order form and BAA</b><span>We send both by email. Your team reviews them.</span></div></li>
+          <li><div><b>Go live</b><span>We set up your hospital and train your team. Billing is monthly per active clinician.</span></div></li>
+        </ol>
+      </div>
+
+      <form data-buy-form novalidate>
+        <div class="row2">
+          <label for="f-org">Hospital or group<input id="f-org" name="organizationName" autocomplete="organization" required maxlength="160"></label>
+          <label for="f-name">Your name<input id="f-name" name="contactName" autocomplete="name" required maxlength="120"></label>
+        </div>
+        <div class="row2">
+          <label for="f-title">Title<input id="f-title" name="contactTitle" autocomplete="organization-title" maxlength="120" placeholder="Medical Director"></label>
+          <label for="f-email">Work email<input id="f-email" name="email" type="email" autocomplete="email" required maxlength="200"></label>
+        </div>
+        <div class="row2">
+          <label for="f-phone">Phone (optional)<input id="f-phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
+          <label for="f-seats">Clinician accounts<input id="f-seats" name="seats" type="number" inputmode="numeric" min="1" max="100000" value="25" required></label>
+        </div>
+        <div class="row2">
+          <label for="f-plan">Plan<select id="f-plan" name="planCode" data-plan-select></select></label>
+          <label for="f-term">Term<select id="f-term" name="term">
+            <option value="pilot">Pilot</option>
+            <option value="annual">Annual</option>
+            <option value="multi_year">Multi-year</option>
+          </select></label>
+        </div>
+        <div class="estimate" data-estimate hidden><span data-estimate-label>Estimated</span><b data-estimate-value></b></div>
+        <label for="f-msg">Anything we should know? (optional)<textarea id="f-msg" name="message" maxlength="2000" placeholder="Sites, services, go-live date"></textarea></label>
+        <div class="hp" aria-hidden="true"><label for="f-web">Website<input id="f-web" name="website" tabindex="-1" autocomplete="off"></label></div>
+        <label class="check" for="f-agree"><input id="f-agree" type="checkbox" name="agreeTerms" required><span>I agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Use</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>. I understand a signed order form and BAA come before go-live.</span></label>
+        <p class="small">Business contact details only. Please don't include patient information.</p>
+        <div class="msg" data-buy-error role="alert" hidden></div>
+        <button class="btn solid" type="submit" data-buy-submit style="min-height:54px;font-size:16.5px">Send order request</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="faq" style="padding-top:0">
+    <div class="wrap">
+      <div class="head">
+        <h2>Before you ask.</h2>
+      </div>
+      <div class="faq">
+        <details><summary>Can we try it first?</summary><p>Yes. Choose "Pilot" in the form. A pilot runs for a fixed term with one service under a short evaluation agreement, and can start on test data before any real patient information is used.</p></details>
+        <details open><summary>Is DocTurn HIPAA compliant?</summary><p>Yes. DocTurn is built for HIPAA-regulated messaging in acute care: access controls, a complete audit trail, encryption in transit, and lock-screen alerts with no patient details. We sign a Business Associate Agreement with every hospital before any real patient information is entered, and your hospital keeps its own policies and training.</p></details>
+        <details><summary>Does it replace pagers?</summary><p>For team communication, yes. DocTurn is not an emergency system: for a life-threatening emergency, follow your hospital's emergency procedures. See the <a href="/clinical-safety">Clinical Safety Notice</a>.</p></details>
+        <details><summary>What does it work with?</summary><p>Your on-call schedule, your identity provider for single sign-on, and automatic account provisioning. We confirm the details for your hospital during onboarding.</p></details>
+        <details><summary>Which devices?</summary><p>Any modern browser on a workstation, plus iPhone and Android.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="close">
+    <div class="wrap">
+      <h2>Give your team its nights back.</h2>
+      <a class="btn" href="#buy">Purchase or start a pilot</a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span><span class="brand" style="display:inline-flex;font-size:16px;color:var(--ink)"><svg aria-hidden="true" style="width:22px;height:22px"><use href="#i-mark"/></svg>DocTurn</span> <span data-year></span></span>
+    <nav aria-label="Legal" data-site-legal>
+      <a href="/terms">Terms</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/clinical-safety">Clinical safety</a>
+      <a href="/acceptable-use">Acceptable use</a>
+      <a href="/subprocessors">Subprocessors</a>
+      <a href="/">Sign in</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var yr = $("[data-year]"); if (yr) yr.textContent = "© " + new Date().getFullYear();
+
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* Bedside-monitor sweep: the trace is written left to right with an erase gap ahead of the pen. */
+  (function monitor() {
+    var cv = $("[data-monitor]"); if (!cv || !cv.getContext) return;
+    var ctx = cv.getContext("2d"), dpr = Math.min(window.devicePixelRatio || 1, 2), W = 0, H = 0, x = 0, prevY = null, color = "#0A6F6A", visible = true;
+    function readColor() { color = getComputedStyle(document.documentElement).getPropertyValue("--signal").trim() || color; }
+    function size() { var r = cv.getBoundingClientRect(); W = Math.max(1, Math.round(r.width)); H = Math.max(1, Math.round(r.height)); cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); x = 0; prevY = null; if (reduce) still(); }
+    var PERIOD = 230; // px per beat
+    function wave(px) {
+      var t = (px % PERIOD) / PERIOD, y = 0;
+      var g = function (c, w, a) { return a * Math.exp(-Math.pow((t - c) / w, 2)); };
+      y += g(.18, .035, .10);              // P
+      y -= g(.30, .008, .16);              // Q
+      y += g(.32, .010, 1.0);              // R
+      y -= g(.345, .010, .32);             // S
+      y += g(.55, .06, .22);               // T
+      return H * .62 - y * H * .5;
+    }
+    function still() { ctx.clearRect(0, 0, W, H); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); for (var i = 0; i <= W; i += 2) { var y = wave(i); i ? ctx.lineTo(i, y) : ctx.moveTo(i, y); } ctx.stroke(); }
+    function step() {
+      if (!visible) return requestAnimationFrame(step);
+      var speed = Math.max(2.2, W / 520);
+      for (var k = 0; k < speed; k += 1) {
+        ctx.clearRect(x + 1, 0, 26, H);
+        var y = wave(x);
+        if (prevY !== null) { ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x - 1, prevY); ctx.lineTo(x, y); ctx.stroke(); }
+        prevY = y; x += 1;
+        if (x > W) { x = 0; prevY = null; }
+      }
+      requestAnimationFrame(step);
+    }
+    readColor(); size();
+    window.addEventListener("resize", size);
+    try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { readColor(); if (reduce) still(); }); } catch (e) {}
+    if ("IntersectionObserver" in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; }).observe(cv);
+    if (!reduce) requestAnimationFrame(step);
+  })();
+
+  /* One night on DocTurn: four moments, auto-advancing until the visitor picks one. */
+  (function night() {
+    var tabs = $("[data-tabs]"); if (!tabs) return;
+    var M = [
+      { t: "7:02 PM", clock: "7:02", day: "Wednesday evening", n: "Sign-out", sky: "dusk", h: "Hand-off without the phone tag.",
+        p: "The day team's open items reach the night team in one place, so nothing lives only in someone's head.",
+        a: [{ w: "now", b: "Hand-off notes from the day team are ready." }] },
+      { t: "11:40 PM", clock: "11:40", day: "Wednesday night", n: "Admission", sky: "late", h: "Admits land fairly.",
+        p: "New admissions reach the right hospitalist quickly and evenly. No one is buried, and no patient waits.",
+        a: [{ w: "now", b: "Admission request waiting for you." }, { w: "4h", b: "Hand-off notes from the day team are ready." }] },
+      { t: "3:12 AM", clock: "3:12", day: "Thursday", n: "STAT", sky: "night", h: "Urgent means urgent.",
+        p: "When something can't wait, DocTurn makes sure the right physician sees it, and doesn't stop until someone does.",
+        a: [{ w: "now", b: "New message. Open DocTurn to read.", stat: true }, { w: "3h", b: "Admission request waiting for you." }] },
+      { t: "6:55 AM", clock: "6:55", day: "Thursday morning", n: "Morning", sky: "dawn", h: "The whole service, at a glance.",
+        p: "Directors start the day knowing workload, coverage and what's still open, and can rebalance with a click.",
+        a: [{ w: "now", b: "Your consult request was answered." }, { w: "3h", b: "STAT message acknowledged." }] },
+    ];
+    var DWELL = 6000, cur = -1, timer = null, auto = !reduce;
+    var dev = $("[data-device]"), panel = $("[data-panel]");
+    tabs.innerHTML = M.map(function (m, i) {
+      return '<button class="tab" role="tab" type="button" id="night-tab-' + i + '" data-i="' + i + '" aria-selected="false"><span class="t">' + m.t + '</span><span class="n">' + m.n + '</span><span class="bar"></span></button>';
+    }).join("");
+    var btns = tabs.querySelectorAll(".tab");
+    tabs.style.setProperty("--dwell", DWELL / 1000 + "s");
+    function show(i, fromUser) {
+      if (i === cur) return;
+      cur = i; var m = M[i];
+      btns.forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); b.tabIndex = j === i ? 0 : -1; b.classList.remove("playing"); });
+      if (auto) { void btns[i].offsetWidth; btns[i].classList.add("playing"); }
+      panel.setAttribute("aria-labelledby", "night-tab-" + i);
+      panel.classList.remove("swap"); void panel.offsetWidth; panel.classList.add("swap");
+      $("[data-panel-title]").textContent = m.h; $("[data-panel-text]").textContent = m.p;
+      dev.setAttribute("data-sky", m.sky);
+      $("[data-clock]").textContent = m.clock; $("[data-date]").textContent = m.day;
+      $("[data-alerts]").innerHTML = m.a.map(function (a, k) {
+        return '<div class="alert' + (k === 0 ? " new" : "") + '"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>' + a.w + '</span></div>' +
+          (a.stat ? '<div class="stat">STAT</div>' : "") + a.b + "</div></div>";
+      }).join("");
+      clearTimeout(timer);
+      if (auto) timer = setTimeout(function () { show((cur + 1) % M.length); }, DWELL);
+    }
+    tabs.addEventListener("click", function (e) {
+      var b = e.target.closest(".tab"); if (!b) return;
+      auto = false; clearTimeout(timer); btns.forEach(function (x) { x.classList.remove("playing"); });
+      cur = -1; show(Number(b.getAttribute("data-i")), true);
+    });
+    tabs.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!d) return;
+      e.preventDefault(); auto = false; clearTimeout(timer); var n = (cur + d + M.length) % M.length; cur = -1; show(n, true); btns[n].focus();
+    });
+    // Start on the STAT moment so the still page tells the strongest story; play only while on screen.
+    show(2);
+    if (auto && "IntersectionObserver" in window) {
+      clearTimeout(timer); btns[2].classList.remove("playing");
+      var started = false;
+      new IntersectionObserver(function (es) {
+        if (es[0].isIntersecting && auto && !started) { started = true; cur = -1; show(0); }
+      }, { threshold: .35 }).observe($("#night"));
+    }
+  })();
+
+  var CHECK = '<svg><use href="#i-check"/></svg>';
+  var INCLUDED = ["HIPAA-compliant messaging and STAT alerts", "Admissions and consults", "Live service oversight", "Single sign-on and audit trail", "Signed BAA, onboarding and support"];
+  var plans = [];
+  var money = function (cents, cur) {
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, minimumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100); }
+    catch (e) { return (cents / 100).toFixed(2) + " " + cur; }
+  };
+  var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); };
+  var list = function (items) { return "<ul>" + items.map(function (t) { return "<li>" + CHECK + "<span>" + esc(t) + "</span></li>"; }).join("") + "</ul>"; };
+
+  function renderPlans() {
+    var box = $("[data-plans]");
+    var cards = [];
+    cards.push('<div class="plan" data-site-plan="pilot"><h3>Pilot</h3><div class="price" style="font-size:34px">Evaluation</div><div class="per">One service, for a fixed term</div>' +
+      list(["Full product for one service", "Start on test data", "Onboarding and check-ins", "Signed BAA before real data"]) +
+      '<a class="btn line" href="#buy" data-choose="pilot">Start a pilot</a></div>');
+    if (plans.length) {
+      plans.forEach(function (p, i) {
+        cards.push('<div class="plan' + (i === 0 ? " lead" : "") + '" data-site-plan="' + esc(p.code) + '"><h3>' + esc(p.name) +
+          '</h3><div class="price">' + esc(money(p.perSeatPriceCents, p.currency)) + '<small> / clinician / month</small></div><div class="per">Billed monthly for active accounts</div>' +
+          list(INCLUDED) + '<a class="btn ' + (i === 0 ? "solid" : "line") + '" href="#buy" data-choose="' + esc(p.code) + '">Purchase ' + esc(p.name) + "</a></div>");
+      });
+    } else {
+      cards.push('<div class="plan lead" data-site-plan="quote"><h3>Hospital</h3><div class="price" style="font-size:34px">Custom quote</div><div class="per">Per clinician, sized to your group</div>' +
+        list(INCLUDED) + '<a class="btn solid" href="#buy" data-choose="">Request pricing</a></div>');
+    }
+    box.innerHTML = cards.join("");
+    var sel = $("[data-plan-select]");
+    sel.innerHTML = '<option value="pilot">Pilot</option>' + (plans.length
+      ? plans.map(function (p) { return '<option value="' + esc(p.code) + '">' + esc(p.name) + ", " + esc(money(p.perSeatPriceCents, p.currency)) + "/mo</option>"; }).join("")
+      : '<option value="">Hospital (quote)</option>');
+    sel.value = plans.length ? plans[0].code : "";
+    $("select[name=term]").value = plans.length ? "annual" : "pilot";
+    box.querySelectorAll("[data-choose]").forEach(function (a) {
+      a.addEventListener("click", function () {
+        var c = a.getAttribute("data-choose");
+        sel.value = c;
+        var term = $("select[name=term]"); term.value = c === "pilot" ? "pilot" : (term.value === "pilot" ? "annual" : term.value);
+        estimate();
+      });
+    });
+    estimate();
+  }
+
+  function estimate() {
+    var sel = $("[data-plan-select]"), seats = Number($("input[name=seats]").value) || 0, box = $("[data-estimate]");
+    var p = plans.filter(function (x) { return x.code === sel.value; })[0];
+    if (!p || seats < 1) { box.hidden = true; return; }
+    box.hidden = false;
+    $("[data-estimate-label]").textContent = "Estimated for " + seats + " clinician" + (seats === 1 ? "" : "s");
+    $("[data-estimate-value]").textContent = money(p.perSeatPriceCents * seats, p.currency) + " / month";
+  }
+
+  fetch("/api/public/plans", { credentials: "omit" }).then(function (r) { return r.ok ? r.json() : { plans: [] }; })
+    .then(function (j) { plans = (j && j.plans) || []; }, function () { plans = []; })
+    .then(renderPlans);
+
+  var form = $("[data-buy-form]");
+  form.addEventListener("input", function (e) { if (e.target.name === "seats") estimate(); e.target.removeAttribute("aria-invalid"); });
+  form.addEventListener("change", function (e) { if (e.target.name === "planCode") estimate(); });
+
+  var LABELS = { organizationName: "hospital or group", contactName: "your name", email: "work email", phone: "phone", seats: "clinician accounts", agreeTerms: "the terms box", term: "term", contactTitle: "title", message: "message" };
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = $("[data-buy-error]"), btn = $("[data-buy-submit]");
+    err.hidden = true;
+    var f = form.elements;
+    var body = {
+      organizationName: f.organizationName.value.trim(), contactName: f.contactName.value.trim(), contactTitle: f.contactTitle.value.trim(),
+      email: f.email.value.trim(), phone: f.phone.value.trim(), seats: Math.floor(Number(f.seats.value)), planCode: f.planCode.value,
+      term: f.term.value, message: f.message.value.trim(), agreeTerms: f.agreeTerms.checked, website: f.website.value,
+    };
+    var bad = [];
+    if (body.organizationName.length < 2) bad.push("organizationName");
+    if (body.contactName.length < 2) bad.push("contactName");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email)) bad.push("email");
+    if (!(body.seats >= 1 && body.seats <= 100000)) bad.push("seats");
+    if (!body.agreeTerms) bad.push("agreeTerms");
+    if (bad.length) return showBad(bad);
+    btn.disabled = true; btn.textContent = "Sending…";
+    fetch("/api/public/purchase-request", { method: "POST", credentials: "omit", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res.s === 201) {
+          form.innerHTML = '<div class="done" data-buy-done><div class="ok"><svg viewBox="0 0 24 24" width="26" height="26"><use href="#i-check"/></svg></div><h3>Request received</h3><p>' +
+            (res.j.reference ? "Your reference is <code>" + esc(res.j.reference) + "</code>. " : "") +
+            "We'll email " + esc(body.email) + " with an order form and the BAA. Nothing is charged until both are signed.</p></div>";
+          return;
+        }
+        btn.disabled = false; btn.textContent = "Send order request";
+        if (res.s === 400 && res.j.fields) return showBad(res.j.fields);
+        err.textContent = res.s === 429 ? "Too many requests from this network. Try again in an hour." : "Your request didn't send. Try again.";
+        err.hidden = false;
+      }, function () {
+        btn.disabled = false; btn.textContent = "Send order request";
+        err.textContent = "No connection. Check your network and try again."; err.hidden = false;
+      });
+  });
+  function showBad(fields) {
+    var err = $("[data-buy-error]");
+    fields.forEach(function (n) { var el = form.elements[n]; if (el && el.setAttribute) el.setAttribute("aria-invalid", "true"); });
+    err.textContent = "Check " + fields.map(function (n) { return LABELS[n] || n; }).join(", ") + ".";
+    err.hidden = false;
+    var first = form.elements[fields[0]]; if (first && first.focus) first.focus();
+  }
+})();
+</script>
+</body>
+</html>

@@ -40,6 +40,13 @@ export function registerResourceRoutes(app: Express) {
       const me = currentUser(req);
       const { label, departmentId } = req.body ?? {};
       if (!label) return res.status(400).json({ error: "validation_error" });
+      // A bed belongs to one of THIS org's departments, never another tenant's.
+      if (departmentId) {
+        const depts = await storage().listDepartments(me.organizationId);
+        if (!depts.some((d) => d.id === Number(departmentId))) {
+          return res.status(400).json({ error: "unknown_department" });
+        }
+      }
       const bed = await storage().createBed({
         organizationId: me.organizationId,
         departmentId: departmentId ? Number(departmentId) : null,

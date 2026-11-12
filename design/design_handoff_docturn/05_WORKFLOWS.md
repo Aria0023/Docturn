@@ -25,8 +25,12 @@ eligible = hospitalists in org WHERE
              AND (specialty matches if required)
              AND current_patient_count < patient_cap
 
-if eligible is empty:                       # cap relief — let the queue drain
+if eligible is empty AND a provider was excluded (reroute):
+    recompute eligible WITHOUT the exclusion  # re-offer the lone provider — no relief
+
+if eligible is empty:                       # cap relief — let the queue drain (audited)
     increment patient_cap by 1 for every working provider in org
+        WHOSE shift_type ∈ org.round_robin_shift_types   # never an off-shift provider
     recompute eligible
 
 sort eligible by (current_patient_count ASC, rotation_order ASC)   # lowest census wins
@@ -118,5 +122,6 @@ past the timeout (broadcasts may force escalation immediately by policy).
 - An expired/rejected assignment **always** produces exactly one new pending assignment when an
   eligible provider exists, and zero when none do.
 - `rotation.selectNext` never returns a provider from another org, never one at/over cap (unless cap
-  relief raised every working provider's cap), and prefers the lowest census.
+  relief raised the cap of every working provider in the round-robin shift set), and prefers the
+  lowest census. Cap relief never fires merely because the just-declined provider was excluded.
 - Messaging never delivers a message to a non-participant.

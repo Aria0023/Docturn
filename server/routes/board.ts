@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createConsultSchema, updateConsultSchema, type PatientConsult } from "@shared/schema";
-import { logPhiAccess } from "../audit.js";
+import { appendAudit, logPhiAccess } from "../audit.js";
+import { parseId } from "../params.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -120,12 +121,34 @@ export function registerBoardRoutes(app: Express) {
     },
   );
 
-  // Consults feed the board's Consultants column.
-  app.get("/api/patients/:id/consults", requireAuth, async (req, res) => {
-    const me = currentUser(req);
-    const patientId = Number(req.params.id);
-    res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
-  });
+  // Consults feed the board's Consultants column. Same audience as the board
+  // itself: clinical roles only — platform operators don't read tenant PHI.
+  app.get(
+    "/api/patients/:id/consults",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      // Validate, then prove ownership, and only THEN account the read: a
+      // malformed, foreign or unknown id discloses nothing, so it must not
+      // leave a §164.528 row behind (and NaN must never reach the database,
+      // where it used to throw and hang the request). The app-wide :id guard
+      // (server/params.ts) answers a malformed id with 404 before this runs;
+      // re-checked here so the handler is safe on its own.
+      const patientId = parseId(req.params.id);
+      if (patientId === null) return res.status(404).json({ error: "not_found" });
+      const patient = await storage().getPatient(me.organizationId, patientId);
+      // Cross-tenant and nonexistent look identical — no existence oracle.
+      if (!patient) return res.status(404).json({ error: "not_found" });
+      // Consults are clinical content about a named patient — audited per read,
+      // with the patient identified so §164.528 accounting can be answered.
+      await logPhiAccess(req, "patient-consults", {
+        resourceId: patientId,
+        patientId,
+      });
+      res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
+    },
+  );
 
   app.post(
     "/api/patients/:id/consults",
@@ -138,6 +161,17 @@ export function registerBoardRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const patient = await storage().getPatient(me.organizationId, patientId);
       if (!patient) return res.status(404).json({ error: "not_found" });
+
+      // A named consultant must be an ACTIVE account of THIS org: a userId
+      // from another tenant (or a deactivated one) is refused, never stored
+      // or alerted (A.CON clinical #19/#20).
+      const namedIds = new Set<number>();
+      if (parsed.data.consultantUserId != null) namedIds.add(parsed.data.consultantUserId);
+      for (const t of parsed.data.consultants ?? []) if (t.userId != null) namedIds.add(t.userId);
+      for (const id of namedIds) {
+        const u = await storage().getUser(me.organizationId, id);
+        if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
+      }
 
       // Record WHO is being consulted, each as its own row, so we can track who
       // accepts and who doesn't. Priority: an explicit team (the consult service's
@@ -205,20 +239,94 @@ export function registerBoardRoutes(app: Express) {
           created = [];
         }
       }
+      // A NAMED consultant replaces that specialty's unassigned on-call
+      // placeholder ("<Specialty> on-call", no account, not yet answered) —
+      // the specific provider is the consult, not a second line beside it.
+      const namedNow = created.some((c) => c.consultantUserId != null || (c.consultantName && !/ on-call$/i.test(c.consultantName)));
+      if (namedNow) {
+        for (const c of existing) {
+          if (sameSpec(c) && c.consultantUserId == null && c.status === "requested" && (!c.consultantName || /on-call$/i.test(c.consultantName))) {
+            await storage().deleteConsult(me.organizationId, c.id);
+          }
+        }
+      }
       notificationDeps().ws.broadcast(me.organizationId, {
         type: "CONSULT_UPDATED",
         patientId,
       });
+      // Alert every consultant who HAS an account (A.CON clinical #23): a
+      // live in-app frame plus a content-free push wake-up (the push
+      // transport honours the org's integration.push switch). Ids only — no
+      // specialty, initials or room leave in either. A placeholder ("<Spec>
+      // on-call", or a name with no account) alerts nobody; the requester's
+      // screen says so from these rows (consultantUserId null).
+      const alerted = [...new Set(created.map((c) => c.consultantUserId).filter((id): id is number => id != null && id !== me.id))];
+      if (alerted.length) {
+        try {
+          notificationDeps().ws.sendToUsers(alerted, {
+            type: "CONSULT_REQUESTED",
+            patientId,
+            consultIds: created.map((c) => c.id),
+          });
+        } catch (err) {
+          console.error("[consult] ws alert failed", err);
+        }
+        for (const userId of alerted) {
+          try {
+            await notificationDeps().push.send(userId, { title: "New consult request" });
+          } catch (err) {
+            console.error("[consult] push failed", err);
+          }
+        }
+      }
+      if (created.length) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "consult.request",
+          resourceType: "patient",
+          resourceId: patientId,
+          details: { created: created.length, alerted: alerted.length },
+          riskLevel: "low",
+        });
+      }
       res.status(201).json(created);
     },
   );
 
-  app.patch("/api/consults/:id", requireAuth, async (req, res) => {
+  // Recording a consult's answer. Same audience as reading and requesting
+  // one — the clinical roles; a consultant without an account can't answer in
+  // the app, so the requester's side records it for them, and the audit row
+  // says whether the person recording it was the named consultant. A
+  // re-pointed consultant must be an ACTIVE account of this org, exactly as
+  // at request time (never another tenant's id, never a deactivated one).
+  app.patch(
+    "/api/consults/:id",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
     const me = currentUser(req);
-    const id = Number(req.params.id);
+    const id = parseId(req.params.id);
+    if (id === null) return res.status(404).json({ error: "not_found" });
     const parsed = updateConsultSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const before = await storage().getConsult(me.organizationId, id);
+    if (!before) return res.status(404).json({ error: "not_found" });
+    if (parsed.data.consultantUserId !== undefined) {
+      const u = await storage().getUser(me.organizationId, parsed.data.consultantUserId);
+      if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
+    }
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
+    // The ANSWER is the consultant's alone. Whoever requested a consult — an
+    // ER physician, a director, anyone — can add, re-point or remove one,
+    // but accepting or declining for the consultant would put an answer on
+    // the chart that nobody gave. Only the account the consult is addressed
+    // to may accept or decline it (they answer from "Consult requests for
+    // you"); a consult with no account behind it stays requested until it is
+    // removed or re-pointed at someone who can answer.
+    if (responded && before.consultantUserId !== me.id) {
+      return res.status(403).json({ error: "only_consultant_can_answer" });
+    }
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
       ...(responded ? { respondedAt: new Date() } : {}),
@@ -227,10 +335,74 @@ export function registerBoardRoutes(app: Express) {
         : {}),
     });
     if (!updated) return res.status(404).json({ error: "not_found" });
+    if (parsed.data.status !== undefined || parsed.data.consultantUserId !== undefined) {
+      // Ids and states only — no specialty, no patient text.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "consult.update",
+        resourceType: "patient",
+        resourceId: before.patientId,
+        details: {
+          consultId: id,
+          ...(parsed.data.status !== undefined ? { from: before.status, to: parsed.data.status } : {}),
+          ...(parsed.data.consultantUserId !== undefined ? { consultantUserId: parsed.data.consultantUserId } : {}),
+          byNamedConsultant: before.consultantUserId != null && before.consultantUserId === me.id,
+        },
+        riskLevel: "low",
+      });
+    }
     notificationDeps().ws.broadcast(me.organizationId, {
       type: "CONSULT_UPDATED",
       consult: updated,
     });
     res.json(updated);
-  });
+    },
+  );
+
+  // The caller's own open consult requests — what they are being asked to
+  // answer, on any patient (they need not be on that patient's care team, so
+  // the board alone would not show it to them). PHI read: logged.
+  app.get(
+    "/api/consults/mine",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const rows = await storage().listConsultRequestsFor(me.organizationId, me.id);
+      if (rows.length) await logPhiAccess(req, "consult-requests");
+      const users = rows.length ? await storage().listUsers(me.organizationId) : [];
+      const nameOf = new Map(users.map((u) => [u.id, u.displayName]));
+      res.json(rows.map((r) => ({ ...r, admittedBy: r.erDoctorId != null ? nameOf.get(r.erDoctorId) ?? null : null })));
+    },
+  );
+
+  // Cancel one consult request (the wrong service or person was picked, or it
+  // is no longer needed). Every clinical role may cancel — the ER physician
+  // and the hospitalist who asked for it included — but nobody accepts or
+  // declines for the consultant (PATCH above). Audited with ids and states,
+  // never the specialty or any patient text.
+  app.delete(
+    "/api/consults/:id",
+    requireAuth,
+    requireRole("director", "er_director", "er_doctor", "hospitalist"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(404).json({ error: "not_found" });
+      const removed = await storage().deleteConsult(me.organizationId, id);
+      if (!removed) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "consult.remove",
+        resourceType: "patient",
+        resourceId: removed.patientId,
+        details: { consultId: id, status: removed.status, hadAccount: removed.consultantUserId != null },
+        riskLevel: "medium",
+      });
+      notificationDeps().ws.broadcast(me.organizationId, { type: "CONSULT_UPDATED", patientId: removed.patientId });
+      res.json({ ok: true, id });
+    },
+  );
 }
