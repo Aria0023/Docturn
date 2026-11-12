@@ -458,11 +458,9 @@ describe("consults on the board — the director adds and removes, the answer is
     expect(mine.body.status).toBe("declined");
   });
 
-  it("a director removes a consult (audited, ids only) and can add another; other roles cannot remove", async () => {
+  it("a director removes a consult (audited, ids only) and can add another", async () => {
     const { er, patient, consult } = await consultOnBoard();
-    const hospitalist = await as("patel");
-    expect((await er.delete(`/api/consults/${consult.id}`)).status).toBe(403);
-    expect((await hospitalist.delete(`/api/consults/${consult.id}`)).status).toBe(403);
+    // The ER physician and a hospitalist may cancel (tested below); here the director does.
 
     const director = await as("director");
     const gone = await director.delete(`/api/consults/${consult.id}`);
@@ -578,5 +576,26 @@ describe("only the consulted physician answers, from 'Consult requests for you'"
     const rows = (await ctx.storage.listConsultsForPatient(orgId(), patient.id)).filter((c) => c.specialty === "Cardiology");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.consultantUserId).toBe(patelUser.id);
+  });
+});
+
+describe("ER physicians and hospitalists cancel consults but never answer them", () => {
+  it("each may cancel; neither may accept or decline for the consultant", async () => {
+    const { er, patient } = await routedPatient("CX");
+    const lopez = (await ctx.storage.getUserByUsername(orgId(), "lopez"))!;
+    const mk = async () => (await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Neurology " + Math.random(), consultants: [{ name: lopez.displayName, userId: lopez.id }] })).body[0];
+    const c1 = await mk();
+    const c2 = await mk();
+    const patel = await as("patel");
+    for (const who of [er, patel]) {
+      expect((await who.patch(`/api/consults/${c1.id}`).send({ status: "accepted" })).status).toBe(403);
+      expect((await who.patch(`/api/consults/${c1.id}`).send({ status: "declined" })).status).toBe(403);
+    }
+    expect((await er.delete(`/api/consults/${c1.id}`)).status).toBe(200);
+    expect((await patel.delete(`/api/consults/${c2.id}`)).status).toBe(200);
+    expect(await ctx.storage.getConsult(orgId(), c1.id)).toBeFalsy();
+    expect(await ctx.storage.getConsult(orgId(), c2.id)).toBeFalsy();
+    const trail = (await ctx.storage.listAuditLogs(orgId(), 100)).filter((a) => a.action === "consult.remove");
+    expect(trail).toHaveLength(2);
   });
 });

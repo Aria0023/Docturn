@@ -584,7 +584,7 @@ function RoutedBoardPanel({ sent, providers, onReassign, onAddConsult, onRespond
                     {reassign}
                   </div>
                 )}
-                {s.consultDetails && s.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 440 }}><ConsultRoster details={s.consultDetails} onRespond={onRespondConsult} /></div> : null}
+                {s.consultDetails && s.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 440 }}><ConsultRoster details={s.consultDetails} onRespond={onRespondConsult} onRemove={window.DT && window.DT.actions.removeConsult} /></div> : null}
               </div>
               );
             })}

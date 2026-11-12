@@ -229,7 +229,7 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
                 {message}
               </div>
             )}
-            {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 48, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
+            {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 48, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} onRemove={window.DT && window.DT.actions.removeConsult} /></div> : null}
           </div>
           );
         })}

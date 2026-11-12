@@ -377,14 +377,15 @@ export function registerBoardRoutes(app: Express) {
     },
   );
 
-  // Remove one consult request from a patient (the wrong service was picked,
-  // or it is no longer needed). The board's editors only — the same two roles
-  // that may edit or remove a patient row. Audited with ids and states, never
-  // the specialty or any patient text.
+  // Cancel one consult request (the wrong service or person was picked, or it
+  // is no longer needed). Every clinical role may cancel — the ER physician
+  // and the hospitalist who asked for it included — but nobody accepts or
+  // declines for the consultant (PATCH above). Audited with ids and states,
+  // never the specialty or any patient text.
   app.delete(
     "/api/consults/:id",
     requireAuth,
-    requireRole("director", "er_director"),
+    requireRole("director", "er_director", "er_doctor", "hospitalist"),
     async (req, res) => {
       const me = currentUser(req);
       const id = parseId(req.params.id);

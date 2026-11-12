@@ -2357,7 +2357,7 @@
     }).catch(function (e) {
       var m = String((e && e.message) || "");
       setStatus("requested");
-      var msg = m === "only_consultant_can_answer" ? "Only the consulted physician can accept or decline. You can remove this consult or add another."
+      var msg = m === "only_consultant_can_answer" ? "Only the consulted physician can accept or decline. You can cancel this consult or add another."
         : isNetworkError(e) ? "No connection — nothing was changed."
         : m === "not_found" ? "That consult is no longer on the board."
         : "The server refused it — nothing was changed.";
@@ -2370,16 +2370,16 @@
   DT.actions.removeConsult = function (consultId) {
     if (consultId == null) return Promise.resolve(false);
     return api("DELETE", "/api/consults/" + consultId).then(function () {
-      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Consult removed", msg: "" }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Consult cancelled", msg: "" }; return s; });
       rehydrate();
       return true;
     }).catch(function (e) {
       var m = String((e && e.message) || "");
       var msg = isNetworkError(e) ? "No connection — nothing was changed."
-        : m === "not_found" ? "That consult was already removed."
-        : m === "forbidden" ? "Only a director can remove a consult."
+        : m === "not_found" ? "That consult was already cancelled."
+        : m === "forbidden" ? "Your role can't cancel consults."
         : "The server refused it — nothing was changed.";
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't remove consult", msg: msg }; return s; });
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't cancel consult", msg: msg }; return s; });
       rehydrate();
       return false;
     });

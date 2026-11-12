@@ -75,7 +75,7 @@ function HospitalistWork({ pending = [], myAdmissions = [], hasProfile, onBecome
                 {/* The patient's care-team thread on the server (A.CON clinical #5). */}
                 {onMessagePatient && p.patientId != null && window.patientThreadsEnabled && window.patientThreadsEnabled() && <Button variant="ghost" size="sm" icon="message-square" onClick={() => onMessagePatient(p.patientId)}>Message team</Button>}
               </div>
-              {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} /></div> : null}
+              {p.consultDetails && p.consultDetails.length ? <div style={{ marginTop: 8, marginLeft: 46, maxWidth: 420 }}><ConsultRoster details={p.consultDetails} onRespond={onConsultRespond} onRemove={window.DT && window.DT.actions.removeConsult} /></div> : null}
             </div>
           ))}
         </Card>

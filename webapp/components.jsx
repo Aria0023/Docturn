@@ -460,8 +460,8 @@ function ConsultRoster({ details, onRespond, canAnswer, onRemove, compact }) {
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: "var(--radius-full)", fontSize: 11, fontWeight: 700, color: ss.color, background: ss.bg, flex: "none", marginLeft: "auto", whiteSpace: "nowrap" }} title={m.respondedAt ? ss.label + " at " + new Date(m.respondedAt).toLocaleString() : ss.label}><Icon name={ss.icon} size={10} />{ss.label}{m.respondedAt && window.dtFmt ? " · " + window.dtFmt.hhmm(m.respondedAt) : ""}</span>
                   )}
                   {onRemove && m.id != null && (
-                    <button type="button" data-consult-remove onClick={() => { if (window.confirm("Remove this " + (m.specialty || "consult") + " consult" + (m.name ? " (" + m.name + ")" : "") + "? It leaves the board for everyone.")) onRemove(m.id); }}
-                      title="Remove consult" aria-label={"Remove consult: " + (m.name || "On-call team")}
+                    <button type="button" data-consult-remove onClick={() => { if (window.confirm("Cancel this " + (m.specialty || "consult") + " consult" + (m.name ? " (" + m.name + ")" : "") + "? It is withdrawn for everyone.")) onRemove(m.id); }}
+                      title="Cancel consult" aria-label={"Cancel consult: " + (m.name || "On-call team")}
                       onMouseEnter={(e) => e.currentTarget.style.color = "var(--destructive)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--muted-foreground)"}
                       style={{ flex: "none", width: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", borderRadius: "var(--radius-md)", cursor: "pointer", color: "var(--muted-foreground)" }}>
                       <Icon name="trash-2" size={13} />
