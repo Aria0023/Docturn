@@ -208,14 +208,19 @@ function CustomizableStats({ statKey, stats, metrics }) {
       )}
 
       {visible.length > 0 && (
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: mobile ? 14 : 18 }}>
+        // Desktop: a grid, so six tiles sit in one row and a wrapped tile keeps
+        // its own column width (the flex row stretched a lone sixth tile across
+        // the whole page). Phones keep two per row.
+        <div style={mobile
+          ? { display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 14 }
+          : { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14, marginBottom: 18 }}>
           {visible.map((id) => {
             const s = byId[id];
             const isOver = overId === id && dragId && dragId !== id;
             // Phones: two tiles per row (gap 14 → each takes half minus 7px), so a
             // six-tile strip is 3 rows instead of 6 and the content below it
             // (e.g. an expiring Accept/Decline request) stays near the fold.
-            const tileFlex = mobile ? { flex: "1 1 calc(50% - 7px)", minWidth: 0 } : { flex: 1, minWidth: 180 };
+            const tileFlex = mobile ? { flex: "1 1 calc(50% - 7px)", minWidth: 0 } : { minWidth: 0 };
             return (
               <div key={id}
                 draggable={editing}

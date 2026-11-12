@@ -46,9 +46,9 @@ describe("production dependencies resolve to patched versions", () => {
     ["express", versionOf("express"), "4.22.3"],
     // The copies express actually loads, not whatever sits at the top level.
     ["proxy-addr (GHSA-jqcg-44mw-7w3h)", versionOf("proxy-addr", fromExpress), "2.0.8"],
-    ["body-parser (GHSA-v422-hmwv-36x6)", versionOf("body-parser", fromExpress), "1.20.7"],
-    ["qs via express (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g)", versionOf("qs", fromExpress), "6.16.0"],
-    ["qs via body-parser", versionOf("qs", fromBodyParser), "6.16.0"],
+    ["body-parser (GHSA-v422-hmwv-36x6, GHSA-27r3-jxmh-p828)", versionOf("body-parser", fromExpress), "1.20.9"],
+    ["qs via express (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g)", versionOf("qs", fromExpress), "6.16.1"],
+    ["qs via body-parser", versionOf("qs", fromBodyParser), "6.16.1"],
     ["drizzle-orm (GHSA-gpj5-g38j-94v9)", drizzleVersion, "0.45.2"],
   ];
   for (const [name, actual, floor] of cases) {

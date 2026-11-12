@@ -1,3 +1,4 @@
+import { enforceRealPhiPreflight } from "./phi-preflight.js";
 import { createServer } from "node:http";
 import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
@@ -62,6 +63,9 @@ process.on("uncaughtException", (err) => {
 });
 
 async function main() {
+  // Real-PHI mode fails closed: no database is opened and no port is bound
+  // until the minimum safeguards are present (server/phi-preflight.ts).
+  enforceRealPhiPreflight();
   // PGlite (no DATABASE_URL) bootstraps its schema in-process so the app boots
   // with zero secrets. Real Postgres is provisioned via `npm run db:push`.
   // initDbWithRecovery self-heals a corrupted on-disk PGlite store (e.g. after a

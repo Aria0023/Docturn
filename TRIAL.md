@@ -37,6 +37,13 @@ password changes.
 > fully compliant real-PHI deployment). Leave it on for the pilot; it's your
 > visible proof to clinicians that no real patient data should be entered.
 
+> **Real-PHI mode fails closed.** With `SYNTHETIC_DATA=false` the server
+> refuses to start unless `DATABASE_URL`, `NODE_ENV=production`, a 32+
+> character `SESSION_SECRET` and `INTEGRATION_KEY` are set and `RATE_LIMIT` is
+> not `off` — it prints each missing item (`server/phi-preflight.ts`). In that
+> mode directors and operators must also set up two-factor at first sign-in.
+> The full audit is `docs/HIPAA_AUDIT_2026-11.md`.
+
 ## 1. Database — real Postgres (durable, never auto-wiped)
 
 The app uses an in-process PGlite database by default (the `./.pglite` folder).

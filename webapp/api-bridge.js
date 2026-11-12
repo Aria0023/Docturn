@@ -986,6 +986,10 @@
       tint: c.type === "emergency" ? "slate" : (c.type === "group" ? "blue" : "emerald"),
       unread: unreadEarlier + unreadOf(list),
       unreadEarlier: unreadEarlier,
+      // The server's count of STATs from others I have not acknowledged
+      // (GET /api/messaging/conversations). Used for a thread that has not
+      // been opened; an opened thread is judged from its own messages.
+      statAwaiting: typeof c.statAwaiting === "number" ? c.statAwaiting : ((prev && prev.statAwaiting) || 0),
       // The thread itself is read only when it is opened (A.CON-SHO-65):
       // until then `messages` holds the list's newest message (the preview).
       loaded: f.loaded != null ? !!f.loaded : !!(prev && prev.loaded),

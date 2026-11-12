@@ -603,8 +603,34 @@ function Messaging() {
   const startable = (st.providers || []).filter((p) =>
     p.name.toLowerCase().includes(q.toLowerCase()) || (p.specialty || "").toLowerCase().includes(q.toLowerCase()));
 
+  // Desktop: the pane fills what is left of the window BELOW everything above
+  // it. It used to assume only the 64px top bar was above — with the
+  // synthetic-data strip or the alerts card showing, the composer was pushed
+  // off the bottom of the screen. Measured, and re-measured when the window
+  // resizes or a banner above is added or dismissed.
+  const paneRef = React.useRef(null);
+  const [paneTop, setPaneTop] = React.useState(64);
+  React.useLayoutEffect(() => {
+    if (isMobile) return undefined;
+    const measure = () => {
+      const el = paneRef.current;
+      if (!el) return;
+      const top = Math.max(0, Math.round(el.getBoundingClientRect().top + (window.scrollY || 0)));
+      setPaneTop((cur) => (cur === top ? cur : top));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    let mo = null;
+    const root = document.getElementById("root");
+    if (root && typeof MutationObserver === "function") {
+      mo = new MutationObserver(measure);
+      mo.observe(root, { childList: true, subtree: true });
+    }
+    return () => { window.removeEventListener("resize", measure); if (mo) mo.disconnect(); };
+  }, [isMobile]);
+
   return (
-    <div style={{ display: "flex", height: isMobile ? "100%" : "calc(100vh - 64px)", width: "100%", minWidth: 0 }}>
+    <div ref={paneRef} data-messaging-pane style={{ display: "flex", height: isMobile ? "100%" : "calc(100vh - " + paneTop + "px)", minHeight: isMobile ? undefined : 360, width: "100%", minWidth: 0 }}>
       {/* List */}
       {showList && (
       <div style={{ width: isMobile ? "100%" : 312, minWidth: 0, flex: isMobile ? "1 1 auto" : "none", borderRight: isMobile ? "none" : "1px solid var(--border)", background: "var(--card)", display: "flex", flexDirection: "column" }}>
@@ -647,6 +673,11 @@ function Messaging() {
                   <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 1 }}>{c.role}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3, gap: 8 }}>
                     <span style={{ fontSize: isMobile ? 14 : 12.5, color: "var(--foreground)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: .8, display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                      {/* A STAT from someone else that I have not acknowledged marks
+                          the row even when a later routine message is the last one —
+                          otherwise the thread that most needs opening looks like any other. */}
+                      {((c.messages || []).some((m) => !m.me && m.priority === "stat" && !m.ackedByMe && m.id != null && !m.deleted) || (!c.loaded && (c.statAwaiting || 0) > 0)) && !(last && last.priority === "stat")
+                        && <span data-row-stat style={{ flex: "none", fontSize: 9.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4, color: "var(--on-status)", background: "var(--status-rejected)" }}>STAT</span>}
                       {last && (last.priority === "stat" || last.priority === "urgent") && <span style={{ flex: "none", fontSize: 9.5, fontWeight: 800, padding: "1px 5px", borderRadius: 4, color: "var(--on-status)", background: last.priority === "stat" ? "var(--status-rejected)" : "var(--status-pending)" }}>{last.priority === "stat" ? "STAT" : "URGENT"}</span>}
                       <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.typing ? "typing…" : (last ? (last.me ? "You: " : "") + last.text : "No messages yet")}</span>
                     </span>

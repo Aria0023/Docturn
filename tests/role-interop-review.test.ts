@@ -477,3 +477,26 @@ describe("consults on the board — the director adds and removes, the answer is
     expect((await operator.delete(`/api/consults/${consult.id}`)).status).toBe(403);
   });
 });
+
+describe("the inbox knows which threads still owe a STAT acknowledgement", () => {
+  it("counts unacknowledged STATs from others per thread — not the sender's own, not after acknowledging", async () => {
+    const er = await as("er.doc");
+    const patelUser = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    const convo = await er.post("/api/messaging/conversations").send({ type: "direct", participantIds: [patelUser.id] });
+    const stat = await er.post("/api/messaging/send").send({ conversationId: convo.body.id, content: "STAT: come now", priority: "stat" });
+    // A later routine message is now the thread's newest.
+    await er.post("/api/messaging/send").send({ conversationId: convo.body.id, content: "update", priority: "routine" });
+
+    const patel = await as("patel");
+    const theirs = (await patel.get("/api/messaging/conversations")).body.find((c: { id: number }) => c.id === convo.body.id);
+    expect(theirs.lastMessage.priority).toBe("routine");
+    expect(theirs.statAwaiting).toBe(1);
+    // The sender owes no acknowledgement on their own STAT.
+    const mine = (await er.get("/api/messaging/conversations")).body.find((c: { id: number }) => c.id === convo.body.id);
+    expect(mine.statAwaiting).toBe(0);
+
+    expect((await patel.post("/api/messaging/messages/ack").send({ messageIds: [stat.body.id] })).status).toBe(204);
+    const after = (await patel.get("/api/messaging/conversations")).body.find((c: { id: number }) => c.id === convo.body.id);
+    expect(after.statAwaiting).toBe(0);
+  });
+});

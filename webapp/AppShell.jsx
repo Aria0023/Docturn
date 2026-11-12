@@ -206,6 +206,9 @@ function ChangePasswordButton() {
 // Unmistakable test-only marker shown on every screen (incl. login) whenever the
 // instance is in synthetic-data mode, so no one mistakes a pilot for real PHI.
 function SyntheticBanner({ on }) {
+  // A phone gets the same warning in one line: the two-line version cost a
+  // tenth of the screen above every page.
+  const mobile = useIsMobile();
   if (!on) return null;
   return (
     <div role="status" className="dt-synthetic-banner" style={{
@@ -215,7 +218,9 @@ function SyntheticBanner({ on }) {
       borderBottom: "1px solid #F59E0B", letterSpacing: ".01em",
     }}>
       <Icon name="flask-conical" size={14} color="var(--status-pending)" />
-      SYNTHETIC DATA — testing only. Do not enter real patient information (PHI).
+      {mobile
+        ? <span title="Testing only. Do not enter real patient information (PHI).">SYNTHETIC DATA — no real patient info</span>
+        : "SYNTHETIC DATA — testing only. Do not enter real patient information (PHI)."}
     </div>
   );
 }
@@ -267,9 +272,10 @@ function PageWrap({ children }) {
 
 function SectionTitle({ children, action }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "4px 0 14px" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>{children}</h2>
-      {action}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "4px 0 14px" }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, minWidth: 0 }}>{children}</h2>
+      {/* the count / control keeps its shape; the heading is what wraps */}
+      {action ? <span style={{ flex: "none", whiteSpace: "nowrap", display: "inline-flex" }}>{action}</span> : null}
     </div>
   );
 }

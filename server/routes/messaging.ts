@@ -1017,9 +1017,10 @@ export function registerMessagingRoutes(app: Express) {
     // full thread row (receipts, my delivery row, attachment metadata), so a
     // client can show it as the thread's newest message without opening it.
     const ids = convos.map((c) => c.id);
-    const [last, unread] = await Promise.all([
+    const [last, unread, statAwaiting] = await Promise.all([
       storage().lastMessagesFor(me.organizationId, ids),
       storage().unreadCountsFor(me.organizationId, me.id, ids),
+      storage().statAwaitingFor(me.organizationId, me.id, ids),
     ]);
     const lastRows = await threadRows(me.organizationId, me.id, Array.from(last.values()));
     const lastById = new Map(lastRows.map((m) => [m.conversationId, m]));
@@ -1032,6 +1033,9 @@ export function registerMessagingRoutes(app: Express) {
           lastMessage: lastById.get(c.id) ?? null,
           // A done thread does not count as unread (for me — receipts are untouched).
           unreadCount: d ? 0 : (unread.get(c.id) ?? 0),
+          // STATs from others I have not acknowledged — a count, no content.
+          // NOT zeroed by Done: an unacknowledged STAT is still owed an answer.
+          statAwaiting: statAwaiting.get(c.id) ?? 0,
           ...doneFields(d),
         };
       }),

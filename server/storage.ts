@@ -1213,6 +1213,34 @@ export class DatabaseStorage implements IStorage {
     for (const r of rows) out.set(r.conversationId, Number(r.n));
     return out;
   }
+  /**
+   * Per conversation: STAT messages from someone else that THIS user has not
+   * acknowledged. Lets the inbox mark a thread that still needs an
+   * acknowledgement even when a later routine message is its newest — one
+   * indexed read for the whole list, never a thread's content.
+   */
+  async statAwaitingFor(orgId: number, userId: number, conversationIds: number[]) {
+    const out = new Map<number, number>();
+    if (conversationIds.length === 0) return out;
+    const rows = await this.db
+      .select({ conversationId: messages.conversationId, n: sql<number>`count(*)` })
+      .from(messageDeliveryStatus)
+      .innerJoin(messages, eq(messages.id, messageDeliveryStatus.messageId))
+      .where(
+        and(
+          eq(messages.organizationId, orgId),
+          inArray(messages.conversationId, conversationIds),
+          isNull(messages.deletedAt),
+          eq(messages.priority, "stat"),
+          ne(messages.senderId, userId),
+          eq(messageDeliveryStatus.userId, userId),
+          isNull(messageDeliveryStatus.acknowledgedAt),
+        ),
+      )
+      .groupBy(messages.conversationId);
+    for (const r of rows) out.set(r.conversationId, Number(r.n));
+    return out;
+  }
   async listMessagesAfter(orgId: number, conversationIds: number[], afterId: number, limit: number) {
     if (conversationIds.length === 0) return { messages: [] as Message[], hasMore: false };
     const n = clampPage(limit);

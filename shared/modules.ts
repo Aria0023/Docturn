@@ -126,6 +126,17 @@ export const MODULE_IDS: readonly string[] = MODULES.map((m) => m.id);
 export function moduleDefaults(): Record<string, boolean> {
   const out: Record<string, boolean> = {};
   for (const m of MODULES) out[m.id] = m.default;
+  // An instance that has declared REAL patient data (SYNTHETIC_DATA=false)
+  // requires MFA for privileged roles unless an organization's own setting
+  // says otherwise: a director or operator reaches every record in a tenant,
+  // and a password alone is the weakest thing guarding it (§164.312(d)).
+  // Synthetic / demo instances keep the registry default (off). The lab
+  // hatch that lets a non-compliant real-PHI-mode server start for the
+  // verification scripts also keeps it off (server/phi-preflight.ts).
+  if (typeof process !== "undefined" && process.env) {
+    const lab = process.env.PHI_PREFLIGHT_OVERRIDE === "not-compliant" && process.env.NODE_ENV !== "production";
+    if (process.env.SYNTHETIC_DATA === "false" && !lab) out["security.mfaRequired"] = true;
+  }
   return out;
 }
 
