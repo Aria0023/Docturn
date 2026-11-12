@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>DocTurn</title>
-<meta name="description" content="Secure messaging and admissions for hospital medicine teams. Fewer pages, faster admits, nothing missed.">
+<title>DocTurn: HIPAA-compliant messaging for acute care hospitals</title>
+<meta name="description" content="The all-in-one, HIPAA-compliant messaging platform for acute care hospitals: secure messaging, STAT alerts, admissions, consults and on-call in one place.">
 <meta name="theme-color" content="#EEF3F2" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B1315" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icons/icon-192.png">
@@ -81,16 +81,12 @@
     background-image: linear-gradient(var(--grid-major) 1px, transparent 1px), linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
       linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
     background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px; background-position: -1px -1px; }
-  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--paper) 0%, color-mix(in srgb, var(--paper) 70%, transparent) 45%, transparent 75%); pointer-events: none; }
-  .hero .wrap { position: relative; z-index: 2; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr); gap: 48px; align-items: center; padding-block: 88px 150px; }
-  @media (max-width: 900px) { .hero .wrap { grid-template-columns: 1fr; padding-block: 56px 130px; } .hero::after { background: color-mix(in srgb, var(--paper) 72%, transparent); } }
-  .hero h1 { font-weight: 800; font-size: clamp(48px, 8.4vw, 104px); line-height: .94; letter-spacing: -.045em; margin: 20px 0 26px; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: radial-gradient(70% 90% at 15% 30%, var(--paper) 0%, color-mix(in srgb, var(--paper) 60%, transparent) 55%, transparent 100%); pointer-events: none; }
+  .hero .wrap { position: relative; z-index: 2; }
+  @media (max-width: 900px) { .hero .wrap { padding-block: 64px 28px; } .monitor { height: 120px; } }
+  .hero h1 { font-weight: 800; font-size: clamp(52px, 10vw, 136px); max-width: 9.5em; line-height: .94; letter-spacing: -.045em; margin: 20px 0 26px; }
   .lede { font-size: clamp(18px, 2vw, 21px); color: var(--muted); max-width: 33em; margin: 0 0 34px; }
   .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-  .trace { position: absolute; left: 0; right: 0; bottom: 16px; height: 90px; z-index: 1; pointer-events: none; }
-  .trace path { fill: none; stroke: var(--signal); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; opacity: .55; stroke-dasharray: 2400; stroke-dashoffset: 0; }
-  @media (prefers-reduced-motion: no-preference) { .trace path { animation: draw 2.4s cubic-bezier(.6, 0, .2, 1) .2s both; } }
-  @keyframes draw { from { stroke-dashoffset: 2400; } }
 
   /* the device: a night-shift lock screen, content-free alerts */
   .device { justify-self: center; width: min(300px, 100%); aspect-ratio: 9 / 18.5; max-width: 100%; border-radius: 44px; padding: 11px; background: var(--device); box-shadow: var(--shadow), 0 40px 80px -20px rgba(13, 27, 38, .35); }
@@ -106,13 +102,69 @@
   .alert .top { display: flex; justify-content: space-between; gap: 6px; font-weight: 600; }
   .alert .top span:last-child { opacity: .6; font-weight: 400; }
   .alert .stat { color: #FF8A80; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
-  @media (prefers-reduced-motion: no-preference) {
-    .alert { animation: drop .6s cubic-bezier(.2, .8, .2, 1) both; }
-    .alert:nth-child(1) { animation-delay: 1.5s; } .alert:nth-child(2) { animation-delay: 1.0s; } .alert:nth-child(3) { animation-delay: .5s; }
-  }
+  @media (prefers-reduced-motion: no-preference) { .alert.new { animation: drop .6s cubic-bezier(.2, .8, .2, 1) both; } }
   @keyframes drop { from { opacity: 0; transform: translateY(-12px) scale(.97); } }
   .device-note { margin: 16px auto 0; max-width: 300px; font-size: 13.5px; color: var(--muted); text-align: center; }
-  @media (max-width: 900px) { .device { width: min(240px, 100%); border-radius: 38px; } .clock { font-size: 54px; } }
+  @media (max-width: 900px) { .device { width: min(260px, 100%); border-radius: 40px; } .clock { font-size: 56px; } }
+
+  /* hero monitor: a sweeping trace, like the bedside monitors this team lives with */
+  .hero .wrap { display: block; padding-block: 96px 40px; }
+  .hero .lede { max-width: 36em; }
+  .monitor { position: relative; z-index: 2; height: 150px; margin-top: 8px; }
+  .monitor canvas { display: block; width: 100%; height: 100%; }
+
+  /* one night: a deliberately dark band in both themes */
+  .night { --n-bg: #0A1A20; --n-ink: #E7F1F2; --n-muted: #9DB3B9; --n-line: rgba(231, 241, 242, .14); --n-signal: #45D0C3; --n-dawn: #F4B860;
+    background: radial-gradient(900px 500px at 85% 20%, rgba(69, 208, 195, .16), transparent 60%), var(--n-bg); color: var(--n-ink); overflow: hidden; }
+  .night-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 56px; align-items: center; }
+  @media (max-width: 900px) { .night-grid { grid-template-columns: 1fr; gap: 28px; } .night .stage { order: -1; } .night .device { width: min(230px, 72%); aspect-ratio: 9 / 11.5; } .night .clock { font-size: 46px; } .panel { margin-top: 22px; min-height: 0; } }
+  .night h2 { font-weight: 800; font-size: clamp(34px, 4.8vw, 56px); line-height: 1.02; letter-spacing: -.035em; }
+  .night-sub { color: var(--n-muted); font-size: 18px; margin: 14px 0 40px; max-width: 32em; }
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @media (max-width: 560px) { .tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tab { position: relative; overflow: hidden; text-align: left; border: 1px solid var(--n-line); background: rgba(255, 255, 255, .03); color: var(--n-muted); border-radius: 12px; padding: 12px 14px 14px; cursor: pointer; font: inherit; display: grid; gap: 2px; transition: border-color .2s, background .2s, color .2s; }
+  .tab:hover { border-color: rgba(231, 241, 242, .3); color: var(--n-ink); }
+  .tab .t { font-family: var(--mono); font-size: 13px; }
+  .tab .n { font-weight: 600; font-size: 15px; }
+  .tab[aria-selected="true"] { border-color: var(--n-signal); background: rgba(69, 208, 195, .1); color: var(--n-ink); }
+  .tab[aria-selected="true"] .t { color: var(--n-signal); }
+  .tab .bar { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--n-signal); }
+  .tab[aria-selected="true"].playing .bar { animation: fill var(--dwell, 6s) linear forwards; }
+  @keyframes fill { to { width: 100%; } }
+  .panel { margin-top: 30px; min-height: 9.5em; }
+  .panel h3 { font-weight: 800; font-size: clamp(28px, 3.4vw, 40px); letter-spacing: -.03em; line-height: 1.05; }
+  .panel p { color: var(--n-muted); font-size: 18px; margin: 12px 0 0; max-width: 30em; }
+  @media (prefers-reduced-motion: no-preference) { .panel.swap h3, .panel.swap p { animation: rise .55s cubic-bezier(.2, .8, .2, 1) both; } .panel.swap p { animation-delay: .07s; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  .stage { display: grid; place-items: center; }
+  .night .device { box-shadow: 0 30px 90px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06); }
+  .device .screen { transition: background 1s ease; }
+  .device[data-sky="dusk"] .screen { background: radial-gradient(120% 70% at 50% 0%, #7A4E8C 0%, #2B3560 45%, #0E1630 100%); }
+  .device[data-sky="late"] .screen { background: radial-gradient(120% 70% at 50% 0%, #1E4A52 0%, #142630 55%, #0A1418 100%); }
+  .device[data-sky="night"] .screen { background: radial-gradient(120% 70% at 50% 0%, #163C46 0%, #0D1E26 55%, #060D10 100%); }
+  .device[data-sky="dawn"] .screen { background: radial-gradient(120% 70% at 50% 0%, #F4B860 0%, #B5655A 32%, #2F3550 75%, #151B2E 100%); }
+  .device .clock { transition: opacity .3s; }
+
+  .role { transition: background .2s, padding .2s; border-radius: 0; }
+  .role:hover { background: var(--signal-soft); padding-inline: 14px; }
+  .role h3 { transition: color .2s; }
+  .role:hover h3 { color: var(--signal); }
+  .plan { transition: transform .2s, box-shadow .2s; }
+  .plan:hover { transform: translateY(-3px); box-shadow: var(--shadow); }
+  @media (prefers-reduced-motion: reduce) { .role, .plan, .tab, .device .screen { transition: none; } .plan:hover { transform: none; } }
+
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .assure { list-style: none; padding: 0; margin: 28px 0 0; display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 15px; font-weight: 600; }
+  .assure li { display: flex; align-items: center; gap: 8px; }
+  .assure svg { width: 18px; height: 18px; color: var(--signal); flex: none; }
+  .suite { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 2px solid var(--ink); }
+  @media (max-width: 960px) { .suite { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 480px) { .suite { grid-template-columns: 1fr; } }
+  .suite li { padding: 24px 22px 26px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; align-content: start; transition: background .2s, padding .2s; }
+  .suite li:hover { background: var(--signal-soft); padding-left: 14px; }
+  .suite b { font-family: var(--display); font-size: 21px; font-weight: 700; letter-spacing: -.015em; }
+  .suite span { color: var(--muted); font-size: 15.5px; }
+  @media (prefers-reduced-motion: reduce) { .suite li { transition: none; } }
 
   /* sections */
   section { padding-block: 112px; scroll-margin-top: 64px; }
@@ -227,7 +279,8 @@
   <div class="wrap">
     <a class="brand" href="/home" aria-label="DocTurn home"><svg aria-hidden="true"><use href="#i-mark"/></svg>DocTurn</a>
     <nav class="links" aria-label="Sections">
-      <a href="#product">Product</a>
+      <a href="#night">Product</a>
+      <a href="#all-in-one">All in one</a>
       <a href="#teams">Teams</a>
       <a href="#security">Security</a>
       <a href="#pricing">Pricing</a>
@@ -242,46 +295,66 @@
 
 <main>
   <section class="hero" style="padding-block:0">
-    <svg class="trace" viewBox="0 0 1600 90" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M0 60 H520 l14 0 8 -10 8 10 h22 l10 -52 12 76 9 -24 h40 l18 -12 18 12 H1060 l14 0 8 -10 8 10 h22 l10 -52 12 76 9 -24 h40 l18 -12 18 12 H1600"/>
-    </svg>
     <div class="wrap">
-      <div>
-        <h1>The night shift, handled.</h1>
-        <p class="lede">Messaging and admissions for hospital medicine. DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
-        <div class="actions">
-          <a class="btn solid" href="#buy">Purchase or start a pilot</a>
-          <a class="btn line" href="#product">See what changes</a>
+      <h1>The night shift, handled.</h1>
+      <p class="lede"><strong>The all-in-one, HIPAA-compliant messaging platform for acute care hospitals.</strong> DocTurn connects the ER, hospitalists, consultants and directors in one secure place. Fewer pages, faster admissions, and nothing urgent missed.</p>
+      <div class="actions">
+        <a class="btn solid" href="#buy">Purchase or start a pilot</a>
+        <a class="btn line" href="#night">Watch a night unfold</a>
+      </div>
+      <ul class="assure" aria-label="Highlights">
+        <li><svg><use href="#i-check"/></svg>HIPAA-compliant messaging</li>
+        <li><svg><use href="#i-check"/></svg>BAA signed with every hospital</li>
+        <li><svg><use href="#i-check"/></svg>Built for acute care</li>
+      </ul>
+    </div>
+    <div class="monitor" aria-hidden="true">
+      <canvas data-monitor></canvas>
+    </div>
+  </section>
+
+  <section id="night" class="night">
+    <div class="wrap">
+      <h2>One night on DocTurn.</h2>
+      <p class="night-sub">Four moments from a real shift, and what your team sees on the lock screen. Nothing on it ever names a patient.</p>
+    </div>
+    <div class="wrap night-grid">
+      <div class="story">
+        <div class="tabs" role="tablist" aria-label="Moments in the night" data-tabs></div>
+        <div class="panel" role="tabpanel" data-panel aria-live="polite">
+          <h3 data-panel-title></h3>
+          <p data-panel-text></p>
         </div>
       </div>
-      <div>
-        <div class="device" role="img" aria-label="A phone lock screen at 3:12 AM showing three DocTurn alerts with no patient details">
+      <div class="stage">
+        <div class="device" data-device data-sky="night">
           <div class="screen">
             <div class="notch"></div>
-            <div class="clock">3:12</div>
-            <div class="date">Thursday, overnight</div>
-            <div class="alerts">
-              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>now</span></div><div class="stat">STAT</div>New message. Open DocTurn to read.</div></div>
-              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>4m</span></div>Admission request waiting for you.</div></div>
-              <div class="alert"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>11m</span></div>Your consult request was answered.</div></div>
-            </div>
+            <div class="clock" data-clock>3:12</div>
+            <div class="date" data-date>Thursday</div>
+            <div class="alerts" data-alerts></div>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <section id="product">
+  <section id="all-in-one">
     <div class="wrap">
       <div class="head">
-        <h2>Less chasing. More medicine.</h2>
-        <p>The calls, callbacks and whiteboards that eat a shift, replaced by one shared picture everyone trusts.</p>
+        <h2>Every conversation in your hospital, all in one.</h2>
+        <p>Paging, texting apps, spreadsheets and whiteboards, replaced by one HIPAA-compliant platform your whole hospital shares.</p>
       </div>
-      <div class="pillars">
-        <div class="pillar"><h3>Urgent means urgent.</h3><p>Secure messages built for clinical teams. When something can't wait, DocTurn makes sure the right physician sees it.</p></div>
-        <div class="pillar"><h3>Admits land fairly.</h3><p>New admissions reach the right hospitalist quickly and evenly, so no one is buried and no patient waits.</p></div>
-        <div class="pillar"><h3>The whole service, at a glance.</h3><p>Directors see workload, coverage and open requests in real time, and can rebalance with a click.</p></div>
-      </div>
+      <ul class="suite">
+        <li><b>Secure messaging</b><span>Direct, group and patient-linked conversations.</span></li>
+        <li><b>STAT alerts</b><span>Urgent messages that get seen.</span></li>
+        <li><b>Admissions</b><span>From the ER to the right hospitalist.</span></li>
+        <li><b>Consults</b><span>To a service or a named physician.</span></li>
+        <li><b>On-call</b><span>Who's covering, for every service.</span></li>
+        <li><b>Patient board</b><span>One shared picture of the service.</span></li>
+        <li><b>Shift hand-off</b><span>Nothing lost between teams.</span></li>
+        <li><b>Directory</b><span>Everyone in your hospital, one tap away.</span></li>
+      </ul>
     </div>
   </section>
 
@@ -302,7 +375,7 @@
   <section id="security">
     <div class="wrap trust">
       <div class="head">
-        <h2>Built for protected health information.</h2>
+        <h2>HIPAA-compliant by design.</h2>
         <p>Every control below is enforced on our servers, not just shown on screen.</p>
       </div>
       <div>
@@ -313,7 +386,7 @@
           <li><svg><use href="#i-check"/></svg><div><b>Isolated by hospital</b><span>Each organization's data is separate, and people see only what their role allows.</span></div></li>
           <li><svg><use href="#i-check"/></svg><div><b>Private on the lock screen</b><span>Notifications carry no patient details. Lost phones can be signed out remotely.</span></div></li>
         </ul>
-        <p class="fine">There is no official HIPAA certification, so no vendor can be "HIPAA certified". Compliance is shared under the BAA. Read our <a href="/privacy">Privacy Policy</a>, <a href="/subprocessors">subprocessors</a> and <a href="/clinical-safety">Clinical Safety Notice</a>.</p>
+        <p class="fine">HIPAA compliance is shared: DocTurn provides the safeguards and signs a BAA, and your hospital keeps its own policies and training. There is no government certification for HIPAA. Read our <a href="/privacy">Privacy Policy</a>, <a href="/subprocessors">subprocessors</a> and <a href="/clinical-safety">Clinical Safety Notice</a>.</p>
       </div>
     </div>
   </section>
@@ -381,7 +454,7 @@
       </div>
       <div class="faq">
         <details><summary>Can we try it first?</summary><p>Yes. Choose "Pilot" in the form. A pilot runs for a fixed term with one service under a short evaluation agreement, and can start on test data before any real patient information is used.</p></details>
-        <details><summary>Is DocTurn HIPAA compliant?</summary><p>DocTurn is designed for HIPAA-regulated use, and we sign a Business Associate Agreement before any real patient information is entered. Your organization keeps its own policies and training.</p></details>
+        <details open><summary>Is DocTurn HIPAA compliant?</summary><p>Yes. DocTurn is built for HIPAA-regulated messaging in acute care: access controls, a complete audit trail, encryption in transit, and lock-screen alerts with no patient details. We sign a Business Associate Agreement with every hospital before any real patient information is entered, and your hospital keeps its own policies and training.</p></details>
         <details><summary>Does it replace pagers?</summary><p>For team communication, yes. DocTurn is not an emergency system: for a life-threatening emergency, follow your hospital's emergency procedures. See the <a href="/clinical-safety">Clinical Safety Notice</a>.</p></details>
         <details><summary>What does it work with?</summary><p>Your on-call schedule, your identity provider for single sign-on, and automatic account provisioning. We confirm the details for your hospital during onboarding.</p></details>
         <details><summary>Which devices?</summary><p>Any modern browser on a workstation, plus iPhone and Android.</p></details>
@@ -417,8 +490,108 @@
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var yr = $("[data-year]"); if (yr) yr.textContent = "© " + new Date().getFullYear();
 
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* Bedside-monitor sweep: the trace is written left to right with an erase gap ahead of the pen. */
+  (function monitor() {
+    var cv = $("[data-monitor]"); if (!cv || !cv.getContext) return;
+    var ctx = cv.getContext("2d"), dpr = Math.min(window.devicePixelRatio || 1, 2), W = 0, H = 0, x = 0, prevY = null, color = "#0A6F6A", visible = true;
+    function readColor() { color = getComputedStyle(document.documentElement).getPropertyValue("--signal").trim() || color; }
+    function size() { var r = cv.getBoundingClientRect(); W = Math.max(1, Math.round(r.width)); H = Math.max(1, Math.round(r.height)); cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); x = 0; prevY = null; if (reduce) still(); }
+    var PERIOD = 230; // px per beat
+    function wave(px) {
+      var t = (px % PERIOD) / PERIOD, y = 0;
+      var g = function (c, w, a) { return a * Math.exp(-Math.pow((t - c) / w, 2)); };
+      y += g(.18, .035, .10);              // P
+      y -= g(.30, .008, .16);              // Q
+      y += g(.32, .010, 1.0);              // R
+      y -= g(.345, .010, .32);             // S
+      y += g(.55, .06, .22);               // T
+      return H * .62 - y * H * .5;
+    }
+    function still() { ctx.clearRect(0, 0, W, H); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); for (var i = 0; i <= W; i += 2) { var y = wave(i); i ? ctx.lineTo(i, y) : ctx.moveTo(i, y); } ctx.stroke(); }
+    function step() {
+      if (!visible) return requestAnimationFrame(step);
+      var speed = Math.max(2.2, W / 520);
+      for (var k = 0; k < speed; k += 1) {
+        ctx.clearRect(x + 1, 0, 26, H);
+        var y = wave(x);
+        if (prevY !== null) { ctx.strokeStyle = color; ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x - 1, prevY); ctx.lineTo(x, y); ctx.stroke(); }
+        prevY = y; x += 1;
+        if (x > W) { x = 0; prevY = null; }
+      }
+      requestAnimationFrame(step);
+    }
+    readColor(); size();
+    window.addEventListener("resize", size);
+    try { window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { readColor(); if (reduce) still(); }); } catch (e) {}
+    if ("IntersectionObserver" in window) new IntersectionObserver(function (es) { visible = es[0].isIntersecting; }).observe(cv);
+    if (!reduce) requestAnimationFrame(step);
+  })();
+
+  /* One night on DocTurn: four moments, auto-advancing until the visitor picks one. */
+  (function night() {
+    var tabs = $("[data-tabs]"); if (!tabs) return;
+    var M = [
+      { t: "7:02 PM", clock: "7:02", day: "Wednesday evening", n: "Sign-out", sky: "dusk", h: "Hand-off without the phone tag.",
+        p: "The day team's open items reach the night team in one place, so nothing lives only in someone's head.",
+        a: [{ w: "now", b: "Hand-off notes from the day team are ready." }] },
+      { t: "11:40 PM", clock: "11:40", day: "Wednesday night", n: "Admission", sky: "late", h: "Admits land fairly.",
+        p: "New admissions reach the right hospitalist quickly and evenly. No one is buried, and no patient waits.",
+        a: [{ w: "now", b: "Admission request waiting for you." }, { w: "4h", b: "Hand-off notes from the day team are ready." }] },
+      { t: "3:12 AM", clock: "3:12", day: "Thursday", n: "STAT", sky: "night", h: "Urgent means urgent.",
+        p: "When something can't wait, DocTurn makes sure the right physician sees it, and doesn't stop until someone does.",
+        a: [{ w: "now", b: "New message. Open DocTurn to read.", stat: true }, { w: "3h", b: "Admission request waiting for you." }] },
+      { t: "6:55 AM", clock: "6:55", day: "Thursday morning", n: "Morning", sky: "dawn", h: "The whole service, at a glance.",
+        p: "Directors start the day knowing workload, coverage and what's still open, and can rebalance with a click.",
+        a: [{ w: "now", b: "Your consult request was answered." }, { w: "3h", b: "STAT message acknowledged." }] },
+    ];
+    var DWELL = 6000, cur = -1, timer = null, auto = !reduce;
+    var dev = $("[data-device]"), panel = $("[data-panel]");
+    tabs.innerHTML = M.map(function (m, i) {
+      return '<button class="tab" role="tab" type="button" id="night-tab-' + i + '" data-i="' + i + '" aria-selected="false"><span class="t">' + m.t + '</span><span class="n">' + m.n + '</span><span class="bar"></span></button>';
+    }).join("");
+    var btns = tabs.querySelectorAll(".tab");
+    tabs.style.setProperty("--dwell", DWELL / 1000 + "s");
+    function show(i, fromUser) {
+      if (i === cur) return;
+      cur = i; var m = M[i];
+      btns.forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); b.tabIndex = j === i ? 0 : -1; b.classList.remove("playing"); });
+      if (auto) { void btns[i].offsetWidth; btns[i].classList.add("playing"); }
+      panel.setAttribute("aria-labelledby", "night-tab-" + i);
+      panel.classList.remove("swap"); void panel.offsetWidth; panel.classList.add("swap");
+      $("[data-panel-title]").textContent = m.h; $("[data-panel-text]").textContent = m.p;
+      dev.setAttribute("data-sky", m.sky);
+      $("[data-clock]").textContent = m.clock; $("[data-date]").textContent = m.day;
+      $("[data-alerts]").innerHTML = m.a.map(function (a, k) {
+        return '<div class="alert' + (k === 0 ? " new" : "") + '"><div class="app"><svg><use href="#i-mark"/></svg></div><div><div class="top"><span>DocTurn</span><span>' + a.w + '</span></div>' +
+          (a.stat ? '<div class="stat">STAT</div>' : "") + a.b + "</div></div>";
+      }).join("");
+      clearTimeout(timer);
+      if (auto) timer = setTimeout(function () { show((cur + 1) % M.length); }, DWELL);
+    }
+    tabs.addEventListener("click", function (e) {
+      var b = e.target.closest(".tab"); if (!b) return;
+      auto = false; clearTimeout(timer); btns.forEach(function (x) { x.classList.remove("playing"); });
+      cur = -1; show(Number(b.getAttribute("data-i")), true);
+    });
+    tabs.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0; if (!d) return;
+      e.preventDefault(); auto = false; clearTimeout(timer); var n = (cur + d + M.length) % M.length; cur = -1; show(n, true); btns[n].focus();
+    });
+    // Start on the STAT moment so the still page tells the strongest story; play only while on screen.
+    show(2);
+    if (auto && "IntersectionObserver" in window) {
+      clearTimeout(timer); btns[2].classList.remove("playing");
+      var started = false;
+      new IntersectionObserver(function (es) {
+        if (es[0].isIntersecting && auto && !started) { started = true; cur = -1; show(0); }
+      }, { threshold: .35 }).observe($("#night"));
+    }
+  })();
+
   var CHECK = '<svg><use href="#i-check"/></svg>';
-  var INCLUDED = ["Secure clinical messaging", "Admissions and consults", "Live service oversight", "Single sign-on and audit trail", "Signed BAA, onboarding and support"];
+  var INCLUDED = ["HIPAA-compliant messaging and STAT alerts", "Admissions and consults", "Live service oversight", "Single sign-on and audit trail", "Signed BAA, onboarding and support"];
   var plans = [];
   var money = function (cents, cur) {
     try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur, minimumFractionDigits: cents % 100 ? 2 : 0 }).format(cents / 100); }
