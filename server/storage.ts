@@ -2757,6 +2757,35 @@ export class DatabaseStorage implements IStorage {
         ),
       );
   }
+  /**
+   * Consults addressed to ONE person that still await their answer, with the
+   * minimum of the patient needed to recognise them (initials, room, the
+   * admission's issue) and who admitted the patient.
+   */
+  async listConsultRequestsFor(orgId: number, userId: number) {
+    return this.db
+      .select({
+        id: patientConsults.id,
+        patientId: patientConsults.patientId,
+        specialty: patientConsults.specialty,
+        createdAt: patientConsults.createdAt,
+        initials: patients.initials,
+        roomNumber: patients.roomNumber,
+        issueSummary: patients.issueSummary,
+        acuity: patients.acuity,
+        erDoctorId: patients.erDoctorId,
+      })
+      .from(patientConsults)
+      .innerJoin(patients, and(eq(patients.id, patientConsults.patientId), eq(patients.organizationId, patientConsults.organizationId)))
+      .where(
+        and(
+          eq(patientConsults.organizationId, orgId),
+          eq(patientConsults.consultantUserId, userId),
+          eq(patientConsults.status, "requested"),
+        ),
+      )
+      .orderBy(desc(patientConsults.createdAt));
+  }
   async listActiveConsults(orgId: number) {
     // Include accepted/declined so the board can show who responded (and who
     // hasn't) — only fully closed consults drop off.

@@ -764,10 +764,19 @@ await demoLogin("er_doctor", "ISPN"); await flush(); await flush();
       "details=" + JSON.stringify(det.map((d) => ({ n: d.name, s: d.status }))).slice(0, 200));
     const named = det.filter((d) => d.userId && d.status === "requested");
     if (named.length) {
-      DT.actions.respondConsult(named[0].id, "accepted");
+      // Only the consulted physician answers — sign in as them (a seeded
+      // hospitalist) and answer from "Consult requests for you".
+      const cid = named[0].id;
+      let answered = false;
+      for (const u of ["chen", "patel", "lopez", "liu", "wu"]) {
+        await DT.actions.login("hospitalist", "ISPN", u, "docturn"); for (let i = 0; i < 8; i++) await flush();
+        if ((DT.getState().myConsults || []).some((c) => c.id === cid)) { DT.actions.respondConsult(cid, "accepted"); answered = true; break; }
+      }
       for (let i = 0; i < 12; i++) await flush();
+      await demoLogin("er_doctor", "ISPN"); for (let i = 0; i < 12; i++) await flush();
       const row2 = (DT.getState().board || []).find((b) => b.patientId === target.patientId) || {};
-      const acc = (row2.consultDetails || []).find((d) => d.id === named[0].id) || {};
+      const acc = (row2.consultDetails || []).find((d) => d.id === cid) || {};
+      rec("the consulted physician answers from 'Consult requests for you'", answered, "consult " + cid);
       rec("consultant acceptance is tracked (accepted vs not)", acc.status === "accepted", "status=" + acc.status);
       rec("consult records WHEN it was accepted (timestamp)", !!acc.respondedAt, "respondedAt=" + acc.respondedAt);
     } else {

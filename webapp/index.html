@@ -707,6 +707,12 @@ function App() {
     myHospWork={<HospitalistWork pending={st.pending} myAdmissions={st.myAdmissions} hasProfile={st.isProvider} onBecome={a.becomeHospitalist} onAccept={a.accept} onDecline={a.decline} onConsult={a.requestConsult} onConsultRespond={a.respondConsult} consultServices={consultServiceNames} onMessagePatient={a.openPatientThread} />}
     admissionsLog={<AdmissionsLog bare admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={a.purgeData} />} />;
 
+  // Consults addressed to me, on any patient, above my dashboard — the place a
+  // consultant answers. Nothing renders when there are none.
+  if (nav === "dashboard" && role !== "developer" && window.MyConsultRequests) {
+    screen = <React.Fragment><MyConsultRequests />{screen}</React.Fragment>;
+  }
+
   // A clinician's Compliance screen is their OWN trail (GET /api/audit/mine).
   const ownTrail = nav === "compliance" && (role === "hospitalist" || role === "er_doctor");
   const topTitle = ownTrail ? "My audit trail" : TOP[nav] ? TOP[nav][0] : meta.title;

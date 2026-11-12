@@ -247,10 +247,15 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
       (consultMembers[s] || []).forEach((m) => { if (m && m.name) team.push({ name: m.name, userId: typeof m.userId === "number" ? m.userId : undefined }); });
       out[s] = team;
     });
-    // A named physician joins their specialty's consult if that service is
-    // also ticked, otherwise is that specialty's consult on their own.
-    personConsults.forEach((p) => {
-      out[p.label] = (out[p.label] || []).concat([{ name: p.name, userId: typeof p.userId === "number" ? p.userId : undefined }]);
+    // A named physician IS their specialty's consult: if that service was
+    // also ticked, they replace its on-call (no second line for the same
+    // service); its added PA/NPs stay.
+    const named = {};
+    personConsults.forEach((p) => { (named[p.label] = named[p.label] || []).push({ name: p.name, userId: typeof p.userId === "number" ? p.userId : undefined }); });
+    Object.keys(named).forEach((spec) => {
+      const r = rosterFor(spec);
+      const kept = (out[spec] || []).filter((t) => !(r && r.name && t.name === r.name && (t.userId || null) === (typeof r.userId === "number" ? r.userId : null)));
+      out[spec] = named[spec].concat(kept);
     });
     return out;
   };
@@ -483,8 +488,8 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
 
             {/* …or a specific physician, by name */}
             <div data-intake-person-consults style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginTop: 10 }}>
-              <ConsultAdd label="Specific physician" services={serviceList}
-                onPick={(x) => { if (typeof x === "string") { if (!consults.includes(x)) toggleConsult(x); } else if (x && x.person) addPersonConsult(x.person); }} />
+              <ConsultAdd label="Specific physician" only="person"
+                onPick={(x) => { if (x && x.person) addPersonConsult(x.person); }} />
               {personConsults.map((p) => (
                 <span key={p.key} data-person-consult={p.userId || p.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--secondary)", borderRadius: "var(--radius-full)", padding: "3px 4px 3px 4px", maxWidth: "100%" }}>
                   <Avatar initials={p.avatar} size={20} tint="slate" />

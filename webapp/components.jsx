@@ -301,13 +301,15 @@ function SpecialtyTag({ name, size }) {
 
 // "+ Consult" picker — drop-in for any patient row so hospitalists / directors
 // (anyone, really) can request a consult service. Calls onPick(specialtyName).
-function ConsultAdd({ services, onPick, label }) {
+// only="person": the people list alone, for a place that already offers the
+// services separately (the ER intake form).
+function ConsultAdd({ services, onPick, label, only }) {
   const [open, setOpen] = React.useState(false);
   const [pos, setPos] = React.useState(null);
   // Two ways to consult: a SERVICE (its on-call and team are called) or a
   // specific PHYSICIAN by name — anyone in the organization, not only whoever
   // is on call. onPick receives the service name, or { person }.
-  const [tab, setTab] = React.useState("service");
+  const [tab, setTab] = React.useState(only === "person" ? "person" : "service");
   const [q, setQ] = React.useState("");
   const btnRef = React.useRef(null);
   const list = (services && services.length) ? services : ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
@@ -348,10 +350,12 @@ function ConsultAdd({ services, onPick, label }) {
         <React.Fragment>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
           <div data-consult-menu style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: Math.min(pos.room, Math.round((window.innerHeight || 768) * 0.7)), display: "flex", flexDirection: "column", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 10, gap: 8 }}>
-            <div role="tablist" aria-label="Consult by" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
-              {tabBtn("service", "Service (on call)")}
-              {tabBtn("person", "Specific physician")}
-            </div>
+            {only !== "person" && (
+              <div role="tablist" aria-label="Consult by" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
+                {tabBtn("service", "Service (on call)")}
+                {tabBtn("person", "Specific physician")}
+              </div>
+            )}
             {tab === "service" ? (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, overflowY: "auto" }}>
                 {list.map((s) => {
@@ -401,11 +405,12 @@ function consultStatusStyle(status) {
   if (status === "declined") return { label: "Declined", color: "var(--status-rejected-fg)", bg: "var(--status-rejected-bg)", icon: "x" };
   return { label: "Pending", color: "var(--status-pending-fg)", bg: "var(--status-pending-bg)", icon: "clock" };
 }
-// onRespond + canAnswer: who may record a consult's answer here. A hospitalist
-// director may not (the server refuses it) except for a consult addressed to
-// them, so their board shows the state and — via onRemove — a remove control,
-// never an Accept that would fail.
+// Who may answer: ONLY the consultant a row is addressed to (`mine`). Anyone
+// else sees its state — Pending / Accepted / Declined — never an Accept that
+// would answer for a colleague (the server refuses that too). onRemove (the
+// board's editors) adds a remove control.
 function ConsultRoster({ details, onRespond, canAnswer, onRemove, compact }) {
+  const mayAnswer = canAnswer || ((m) => !!m.mine);
   const list = details || [];
   if (!list.length) return null;
   const bySpec = {};
@@ -444,7 +449,7 @@ function ConsultRoster({ details, onRespond, canAnswer, onRemove, compact }) {
                       {m.credential ? <span style={{ fontSize: 11, color: "var(--muted-foreground)", marginLeft: 5 }}>{m.credential}</span> : null}
                     </div>
                   </div>
-                  {onRespond && (!canAnswer || canAnswer(m)) && m.status !== "accepted" && m.status !== "declined" ? (
+                  {onRespond && mayAnswer(m) && m.status !== "accepted" && m.status !== "declined" ? (
                     <span data-consult-answer style={{ display: "inline-flex", gap: 4, flex: "none", marginLeft: "auto" }}>
                       <button onClick={() => onRespond(m.id, "declined")} title="Decline consult"
                         style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: "var(--radius-full)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", fontSize: 11, fontWeight: 600, color: "var(--muted-foreground)", fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}><Icon name="x" size={11} />Decline</button>
@@ -509,3 +514,56 @@ function commsStatTiles(cm) {
 Object.assign(window, { fmtCommsDur, commsStatTiles });
 
 Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS });
+
+// "Consult requests for you": consults addressed to the signed-in clinician on
+// ANY patient (GET /api/consults/mine). The one place a consultant answers —
+// they are often not on that patient's care team, so the board alone would
+// not show it to them. Renders nothing when there are none.
+function MyConsultRequests() {
+  const st = useStore();
+  const a = useActions();
+  const list = st.myConsults || [];
+  const [busy, setBusy] = React.useState({});
+  if (!list.length) return null;
+  const answer = (c, status) => {
+    if (busy[c.id]) return;
+    setBusy((b) => Object.assign({}, b, { [c.id]: true }));
+    Promise.resolve(a.respondConsult(c.id, status)).then(() => setBusy((b) => { const n = Object.assign({}, b); delete n[c.id]; return n; }));
+  };
+  return (
+    <div data-my-consults style={{ marginBottom: 16 }}>
+    <Card style={{ padding: 0, overflow: "hidden", border: "1px solid var(--status-pending)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "var(--status-pending-bg)", color: "var(--status-pending-fg)", fontSize: 13.5, fontWeight: 700 }}>
+        <Icon name="stethoscope" size={15} />Consult requests for you
+        <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 600 }}>{list.length} waiting</span>
+      </div>
+      {list.map((c, i) => {
+        const sc = specialtyColor(c.specialty);
+        return (
+          <div key={c.id} data-my-consult={c.id} style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "10px 14px", borderTop: i ? "1px solid var(--border)" : "none" }}>
+            <Avatar initials={c.initials} size={34} tint="amber" />
+            <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 13.5, fontWeight: 700 }}>
+                Patient {c.initials}
+                {c.acuity ? <AcuityChip level={c.acuity} size="sm" /> : null}
+                {c.roomNumber ? <span style={{ fontSize: 12, fontWeight: 500, color: "var(--muted-foreground)" }}>· Room {c.roomNumber}</span> : null}
+              </div>
+              {c.issueSummary ? <div style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>{c.issueSummary}</div> : null}
+              <div style={{ fontSize: 11.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: sc.color, fontWeight: 600 }}><span style={{ width: 6, height: 6, borderRadius: 99, background: sc.color }} />{c.specialty}</span>
+                {c.admittedBy ? <span>· admitted by {c.admittedBy}</span> : null}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6, marginLeft: "auto", opacity: busy[c.id] ? 0.55 : 1 }}>
+              <Button size="sm" variant="outline" icon="x" onClick={() => answer(c, "declined")}>Decline</Button>
+              <Button size="sm" icon="check" onClick={() => answer(c, "accepted")}>Accept</Button>
+            </div>
+          </div>
+        );
+      })}
+    </Card>
+    </div>
+  );
+}
+
+Object.assign(window, { MyConsultRequests });

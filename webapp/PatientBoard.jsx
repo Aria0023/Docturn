@@ -281,7 +281,7 @@ function PatientBoard({ patients, role, providers = [], modules, canCustomize, o
   // is offered that it refuses: a hospitalist director adds and removes
   // consults but does not answer one for the specialist — unless it was
   // addressed to them. Removing is the board editors' (director, ER director).
-  const canAnswerConsult = role === "director" ? ((m) => !!m.mine) : undefined;
+  const canAnswerConsult = undefined; // ConsultRoster: only the consultant answers
   const onRemoveConsult = (role === "director" || role === "er_director") ? removeConsultProp : undefined;
   const [query, setQuery] = React.useState("");
   const [dept, setDept] = React.useState("ALL");

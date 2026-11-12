@@ -239,6 +239,17 @@ export function registerBoardRoutes(app: Express) {
           created = [];
         }
       }
+      // A NAMED consultant replaces that specialty's unassigned on-call
+      // placeholder ("<Specialty> on-call", no account, not yet answered) —
+      // the specific provider is the consult, not a second line beside it.
+      const namedNow = created.some((c) => c.consultantUserId != null || (c.consultantName && !/ on-call$/i.test(c.consultantName)));
+      if (namedNow) {
+        for (const c of existing) {
+          if (sameSpec(c) && c.consultantUserId == null && c.status === "requested" && (!c.consultantName || /on-call$/i.test(c.consultantName))) {
+            await storage().deleteConsult(me.organizationId, c.id);
+          }
+        }
+      }
       notificationDeps().ws.broadcast(me.organizationId, {
         type: "CONSULT_UPDATED",
         patientId,
@@ -306,13 +317,15 @@ export function registerBoardRoutes(app: Express) {
       if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
     }
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
-    // A hospitalist DIRECTOR oversees the board — they add a consult and can
-    // remove one — but the ANSWER is the specialist's (or the requesting
-    // clinician's record of it). A director accepting or declining for a
-    // consultant would put an answer on the chart that nobody gave. The one
-    // exception is a consult addressed to the director personally.
-    if (responded && me.role === "director" && before.consultantUserId !== me.id) {
-      return res.status(403).json({ error: "director_cannot_answer_consult" });
+    // The ANSWER is the consultant's alone. Whoever requested a consult — an
+    // ER physician, a director, anyone — can add, re-point or remove one,
+    // but accepting or declining for the consultant would put an answer on
+    // the chart that nobody gave. Only the account the consult is addressed
+    // to may accept or decline it (they answer from "Consult requests for
+    // you"); a consult with no account behind it stays requested until it is
+    // removed or re-pointed at someone who can answer.
+    if (responded && before.consultantUserId !== me.id) {
+      return res.status(403).json({ error: "only_consultant_can_answer" });
     }
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),
@@ -344,6 +357,23 @@ export function registerBoardRoutes(app: Express) {
       consult: updated,
     });
     res.json(updated);
+    },
+  );
+
+  // The caller's own open consult requests — what they are being asked to
+  // answer, on any patient (they need not be on that patient's care team, so
+  // the board alone would not show it to them). PHI read: logged.
+  app.get(
+    "/api/consults/mine",
+    requireAuth,
+    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const rows = await storage().listConsultRequestsFor(me.organizationId, me.id);
+      if (rows.length) await logPhiAccess(req, "consult-requests");
+      const users = rows.length ? await storage().listUsers(me.organizationId) : [];
+      const nameOf = new Map(users.map((u) => [u.id, u.displayName]));
+      res.json(rows.map((r) => ({ ...r, admittedBy: r.erDoctorId != null ? nameOf.get(r.erDoctorId) ?? null : null })));
     },
   );
 

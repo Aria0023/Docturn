@@ -555,8 +555,11 @@
       // EVERY org user (all roles) for name resolution — so a DM with an ER
       // physician or director shows their real name, not "Conversation".
       get("/api/care-team/candidates").catch(function () { return null; }),
+      // Consults addressed to me on any patient ("Consult requests for you").
+      role === "developer" ? Promise.resolve(null) : get("/api/consults/mine").catch(function () { return null; }),
     ]).then(function (res) {
-      var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3];
+      var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3], myConsults = res[4];
+      if (Array.isArray(myConsults)) DT.set(function (s) { s.myConsults = myConsults; return s; });
       var usersById = {};
       (directory || []).forEach(function (d) {
         usersById[d.userId] = { displayName: d.displayName, credential: d.credential, active: d.active !== false };
@@ -2341,6 +2344,9 @@
           });
         };
         s.board = flip(s.board); s.sent = flip(s.sent);
+        // An answered request leaves "Consult requests for you" at once; a
+        // refusal brings it back with the re-read.
+        if (to !== "requested") s.myConsults = (s.myConsults || []).filter(function (c) { return c.id !== consultId; });
         return s;
       });
     };
@@ -2351,7 +2357,7 @@
     }).catch(function (e) {
       var m = String((e && e.message) || "");
       setStatus("requested");
-      var msg = m === "director_cannot_answer_consult" ? "The answer is the consultant's to give. You can remove this consult or add another."
+      var msg = m === "only_consultant_can_answer" ? "Only the consulted physician can accept or decline. You can remove this consult or add another."
         : isNetworkError(e) ? "No connection — nothing was changed."
         : m === "not_found" ? "That consult is no longer on the board."
         : "The server refused it — nothing was changed.";

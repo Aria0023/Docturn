@@ -272,7 +272,8 @@ describe("STAT acknowledgement — only the recipient's counts", () => {
 describe("consult updates — clinical roles, a real consultant, an audit row", () => {
   it("validates the re-pointed consultant, audits the answer, and refuses the operator", async () => {
     const { er, patient } = await routedPatient("CS");
-    const created = await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Cardiology" });
+    const patelUser = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    const created = await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Cardiology", consultants: [{ name: patelUser.displayName, userId: patelUser.id }] });
     expect(created.status).toBe(201);
     const consult = created.body[0];
 
@@ -280,7 +281,12 @@ describe("consult updates — clinical roles, a real consultant, an audit row", 
     const dev = (await ctx.storage.getUserByUsername(ctx.seedResult.platformOrgId, "dev"))!;
     expect((await er.patch(`/api/consults/${consult.id}`).send({ consultantUserId: dev.id })).status).toBe(400);
 
-    const ok = await er.patch(`/api/consults/${consult.id}`).send({ status: "accepted" });
+    // The requester cannot answer for the consultant; the consultant can.
+    const byEr = await er.patch(`/api/consults/${consult.id}`).send({ status: "accepted" });
+    expect(byEr.status).toBe(403);
+    expect(byEr.body.error).toBe("only_consultant_can_answer");
+    const patel = await as("patel");
+    const ok = await patel.patch(`/api/consults/${consult.id}`).send({ status: "accepted" });
     expect(ok.status).toBe(200);
     expect(ok.body.status).toBe("accepted");
     const trail = await ctx.storage.listAuditLogs(orgId(), 100);
@@ -433,15 +439,16 @@ describe("consults on the board — the director adds and removes, the answer is
     for (const status of ["accepted", "declined"]) {
       const res = await director.patch(`/api/consults/${consult.id}`).send({ status });
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe("director_cannot_answer_consult");
+      expect(res.body.error).toBe("only_consultant_can_answer");
     }
     expect((await ctx.storage.getConsult(orgId(), consult.id))!.status).toBe("requested");
     expect((await ctx.storage.getConsult(orgId(), consult.id))!.respondedAt).toBeNull();
   });
 
-  it("the requesting clinician still records the answer, and a director answers a consult addressed to THEM", async () => {
+  it("the requesting ER physician cannot answer either; a director answers a consult addressed to THEM", async () => {
     const { er, consult } = await consultOnBoard();
-    expect((await er.patch(`/api/consults/${consult.id}`).send({ status: "accepted" })).status).toBe(200);
+    expect((await er.patch(`/api/consults/${consult.id}`).send({ status: "accepted" })).status).toBe(403);
+    expect((await ctx.storage.getConsult(orgId(), consult.id))!.status).toBe("requested");
 
     const directorUser = (await ctx.storage.getUserByUsername(orgId(), "director"))!;
     const own = await consultOnBoard({ specialty: "Hospital Medicine", consultantUserId: directorUser.id });
@@ -538,5 +545,38 @@ describe("typed census and cap keep the server's limits", () => {
     expect(c.body.currentPatientCount).toBe(7);
     const over = await director.patch(`/api/hospitalists/${h.id}/census`).send({ currentPatientCount: 99, reason: "x" });
     expect(over.body.currentPatientCount).toBe(18);
+  });
+});
+
+describe("only the consulted physician answers, from 'Consult requests for you'", () => {
+  it("lists a person's open consult requests on any patient, and drops one once answered", async () => {
+    const { er, patient } = await routedPatient("MY");
+    const patelUser = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Nephrology", consultants: [{ name: patelUser.displayName, userId: patelUser.id }] });
+    const patel = await as("patel");
+    const mine = await patel.get("/api/consults/mine");
+    expect(mine.status).toBe(200);
+    expect(mine.body).toHaveLength(1);
+    expect(mine.body[0]).toMatchObject({ patientId: patient.id, specialty: "Nephrology", initials: "MY", admittedBy: "Dr. Erin Reyes" });
+    // Nobody else sees it as theirs.
+    expect((await er.get("/api/consults/mine")).body).toHaveLength(0);
+    expect((await (await as("lopez")).get("/api/consults/mine")).body).toHaveLength(0);
+    // The read is on the PHI trail.
+    expect((await patel.patch(`/api/consults/${mine.body[0].id}`).send({ status: "accepted" })).status).toBe(200);
+    expect((await patel.get("/api/consults/mine")).body).toHaveLength(0);
+  });
+
+  it("a named physician replaces that specialty's unassigned on-call placeholder — no second line", async () => {
+    const { er, patient } = await routedPatient("PL");
+    // Nobody with an account covers Cardiology here, so the service request is a placeholder.
+    const svc = await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Cardiology" });
+    expect(svc.body).toHaveLength(1);
+    expect(svc.body[0].consultantUserId).toBeNull();
+    const patelUser = (await ctx.storage.getUserByUsername(orgId(), "patel"))!;
+    const named = await er.post(`/api/patients/${patient.id}/consults`).send({ specialty: "Cardiology", consultants: [{ name: patelUser.displayName, userId: patelUser.id }] });
+    expect(named.status).toBe(201);
+    const rows = (await ctx.storage.listConsultsForPatient(orgId(), patient.id)).filter((c) => c.specialty === "Cardiology");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.consultantUserId).toBe(patelUser.id);
   });
 });

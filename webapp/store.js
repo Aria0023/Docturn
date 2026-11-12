@@ -842,6 +842,8 @@
     "providers", "directory", "orgPeople",
     "sent", "admissions", "broadcasts", "notifications",
     "audit", "phiLog",
+    // consults addressed to me (patient initials, room, issue)
+    "myConsults",
   ];
   // The signed-in person's identity and per-user settings — reset on sign-out
   // so nothing of the previous user survives in memory either.
