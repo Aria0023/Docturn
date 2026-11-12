@@ -1254,6 +1254,8 @@ export const billingPlans = pgTable(
     moduleIds: jsonb("module_ids").$type<string[]>().notNull(),
     perSeatPriceCents: integer("per_seat_price_cents").notNull(),
     currency: text("currency").notNull().default("USD"),
+    /** Listed on the public website's pricing section (/home). Off by default. */
+    showOnWebsite: boolean("show_on_website").notNull().default(false),
     createdBy: integer("created_by"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -1579,6 +1581,48 @@ export type UserThemePrefs = typeof userThemePrefs.$inferSelect;
 export type RateLimitHit = typeof rateLimitHits.$inferSelect;
 export type SeatSnapshot = typeof seatSnapshots.$inferSelect;
 export type InsertSeatSnapshot = typeof seatSnapshots.$inferInsert;
+/**
+ * An order request from the public website (/home). Hospitals cannot
+ * click-buy: a purchase needs an order form and a signed BAA, so the website
+ * files a request here and the operator converts it into a contract from the
+ * developer console. Business contact details only — never patient data.
+ */
+export const purchaseRequests = pgTable("purchase_requests", {
+  id: serial("id").primaryKey(),
+  organizationName: text("organization_name").notNull(),
+  contactName: text("contact_name").notNull(),
+  contactTitle: text("contact_title"),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  planCode: text("plan_code"),
+  seats: integer("seats").notNull(),
+  term: text("term").notNull(),
+  message: text("message"),
+  status: text("status").notNull().default("new"),
+  sourceIp: text("source_ip"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type PurchaseRequest = typeof purchaseRequests.$inferSelect;
+export type InsertPurchaseRequest = typeof purchaseRequests.$inferInsert;
+export const PURCHASE_TERMS = ["pilot", "annual", "multi_year"] as const;
+export const PURCHASE_STATUSES = ["new", "contacted", "converted", "declined"] as const;
+export const purchaseRequestCreateSchema = z.object({
+  organizationName: z.string().trim().min(2).max(160),
+  contactName: z.string().trim().min(2).max(120),
+  contactTitle: z.string().trim().max(120).optional().or(z.literal("")),
+  email: z.string().trim().max(200).email(),
+  phone: z.string().trim().max(40).regex(/^[0-9+().\s-]*$/).optional().or(z.literal("")),
+  planCode: z.string().trim().max(60).optional().or(z.literal("")),
+  seats: z.number().int().min(1).max(100_000),
+  term: z.enum(PURCHASE_TERMS),
+  message: z.string().trim().max(2000).optional().or(z.literal("")),
+  agreeTerms: z.literal(true),
+  /** Honeypot: a hidden field people never fill. */
+  website: z.string().max(200).optional(),
+});
+export const purchaseRequestPatchSchema = z.object({ status: z.enum(PURCHASE_STATUSES) });
+
 export type BillingPlan = typeof billingPlans.$inferSelect;
 export type InsertBillingPlan = typeof billingPlans.$inferInsert;
 export type OrgContract = typeof orgContracts.$inferSelect;
@@ -1605,6 +1649,7 @@ export const billingPlanCreateSchema = z.object({
   moduleIds: z.array(moduleIdSchema).max(MODULE_IDS.length),
   perSeatPriceCents: z.number().int().min(0).max(100_000_000),
   currency: z.enum(BILLING_CURRENCIES),
+  showOnWebsite: z.boolean().optional(),
 });
 export const billingPlanPatchSchema = billingPlanCreateSchema.partial().extend({
   archived: z.boolean().optional(),

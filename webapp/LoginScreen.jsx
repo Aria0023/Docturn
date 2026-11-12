@@ -222,7 +222,7 @@ function LoginScreen({ onLogin, appName }) {
             {/* The public legal pages (server/routes/legal.ts). Signing in is
                 agreeing to the Terms; the Clinical Safety Notice is part of them. */}
             <div data-legal-links style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.6 }}>
-              By signing in you agree to the <a href="/terms" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Terms of Use</a> and <a href="/clinical-safety" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Clinical Safety Notice</a>. <a href="/privacy" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Privacy Policy</a>
+              By signing in you agree to the <a href="/terms" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Terms of Use</a> and <a href="/clinical-safety" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Clinical Safety Notice</a>. <a href="/privacy" target="_blank" rel="noopener" style={{ color: "var(--primary-ink)" }}>Privacy Policy</a> · <a href="/home" data-site-link style={{ color: "var(--primary-ink)" }}>About DocTurn &amp; pricing</a>
             </div>
             <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
               {demoMode && <React.Fragment>Demo — pick a role (the form pre-fills that seeded account; password <b style={{ color: "var(--foreground)", fontWeight: 600 }}>docturn</b>) and sign in. </React.Fragment>}

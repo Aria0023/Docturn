@@ -43,12 +43,14 @@ import { registerSmsRoutes } from "./sms.js";
 import { registerSsoRoutes } from "./sso.js";
 import { registerWellKnownRoutes } from "./well-known.js";
 import { registerLegalRoutes } from "./legal.js";
+import { registerWebsiteRoutes } from "./website.js";
 
 /** Mount every REST route onto the app. */
 export function registerRoutes(app: Express) {
   registerHealthRoutes(app);
   registerWellKnownRoutes(app);
   registerLegalRoutes(app);
+  registerWebsiteRoutes(app);
   registerAuthRoutes(app);
   registerMfaRoutes(app);
   registerProviderRoutes(app);

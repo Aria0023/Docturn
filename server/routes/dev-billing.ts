@@ -115,6 +115,7 @@ export function registerDevBillingRoutes(app: Express) {
     res.json({
       plans: plans.map((p) => ({
         ...publicPlan(p),
+        showOnWebsite: !!p.showOnWebsite,
         archived: !!p.archivedAt,
         contracts: inUse.get(p.id) ?? 0,
       })),
@@ -135,6 +136,7 @@ export function registerDevBillingRoutes(app: Express) {
       moduleIds: d.moduleIds,
       perSeatPriceCents: d.perSeatPriceCents,
       currency: d.currency,
+      showOnWebsite: d.showOnWebsite ?? false,
       createdBy: me.id,
     });
     // A plan is the operator's own record, so it is filed in the operator's org.
@@ -147,7 +149,7 @@ export function registerDevBillingRoutes(app: Express) {
       details: { code: plan.code, perSeatPriceCents: plan.perSeatPriceCents, currency: plan.currency },
       riskLevel: "medium",
     });
-    res.status(201).json({ plan: { ...publicPlan(plan), archived: false, contracts: 0 } });
+    res.status(201).json({ plan: { ...publicPlan(plan), showOnWebsite: !!plan.showOnWebsite, archived: false, contracts: 0 } });
   });
 
   app.patch("/api/dev/billing/plans/:id", requireAuth, requireRole("developer"), async (req, res) => {
@@ -168,6 +170,7 @@ export function registerDevBillingRoutes(app: Express) {
       ...(d.moduleIds != null ? { moduleIds: d.moduleIds } : {}),
       ...(d.perSeatPriceCents != null ? { perSeatPriceCents: d.perSeatPriceCents } : {}),
       ...(d.currency != null ? { currency: d.currency } : {}),
+      ...(d.showOnWebsite != null ? { showOnWebsite: d.showOnWebsite } : {}),
       ...(d.archived != null ? { archivedAt: d.archived ? new Date() : null } : {}),
     });
     await appendAudit({
@@ -180,7 +183,7 @@ export function registerDevBillingRoutes(app: Express) {
       riskLevel: "medium",
     });
     res.json({
-      plan: { ...publicPlan(plan!), archived: !!plan!.archivedAt, contracts: await storage().countContractsOnPlan(id) },
+      plan: { ...publicPlan(plan!), showOnWebsite: !!plan!.showOnWebsite, archived: !!plan!.archivedAt, contracts: await storage().countContractsOnPlan(id) },
     });
   });
 

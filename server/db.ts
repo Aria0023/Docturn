@@ -952,6 +952,25 @@ CREATE TABLE IF NOT EXISTS billing_plans (
   archived_at TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code);
+ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Order requests from the public website (/home). Business contacts only.
+CREATE TABLE IF NOT EXISTS purchase_requests (
+  id SERIAL PRIMARY KEY,
+  organization_name TEXT NOT NULL,
+  contact_name TEXT NOT NULL,
+  contact_title TEXT,
+  email TEXT NOT NULL,
+  phone TEXT,
+  plan_code TEXT,
+  seats INTEGER NOT NULL,
+  term TEXT NOT NULL,
+  message TEXT,
+  status TEXT NOT NULL DEFAULT 'new',
+  source_ip TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
 
 -- ONE contract per hospital — the operator's own record of what was agreed.
 -- Stripe is only the collection rail; this row is the source of truth.

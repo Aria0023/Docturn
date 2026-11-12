@@ -537,7 +537,7 @@ function TenantRow({ row, plans, invoices, actions, busy, stripeOn }) {
   );
 }
 
-function PlansCard({ plans, onCreate, busy }) {
+function PlansCard({ plans, onCreate, onToggleWebsite, busy }) {
   const [f, setF] = React.useState({ code: "", name: "", perSeatPriceCents: "", currency: "USD", moduleIds: [] });
   const up = (k) => (e) => setF(Object.assign({}, f, { [k]: e.target.value }));
   const registry = (window.DT && window.DT.getState && window.DT.getState().modules) || {};
@@ -556,6 +556,12 @@ function PlansCard({ plans, onCreate, busy }) {
                   <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{p.code} · {p.moduleIds.length} feature{p.moduleIds.length === 1 ? "" : "s"} · {p.contracts} contract{p.contracts === 1 ? "" : "s"}</div>
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>{billMoney(p.perSeatPriceCents, p.currency)}<span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--muted-foreground)" }}>/account</span></div>
+                {onToggleWebsite && (
+                  <BillButton icon={p.showOnWebsite ? "globe" : "eye-off"} dataAttr="data-plan-website" disabled={busy}
+                    onClick={() => onToggleWebsite(p.id, !p.showOnWebsite)}>
+                    {p.showOnWebsite ? "On website" : "Not on website"}
+                  </BillButton>
+                )}
               </div>
             ))}
           </div>
@@ -593,6 +599,60 @@ function PlansCard({ plans, onCreate, busy }) {
             {busy ? "Saving…" : "Create plan"}
           </BillButton>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// Order requests from the public website (/home). The site cannot take
+// payment: each request becomes a contract here once the order form and BAA
+// are signed. Business contacts only.
+const PURCHASE_STATUS = {
+  new: { label: "New", tone: "var(--status-pending)" },
+  contacted: { label: "Contacted", tone: "var(--primary)" },
+  converted: { label: "Converted", tone: "var(--status-accepted)" },
+  declined: { label: "Declined", tone: "var(--muted-foreground)" },
+};
+function PurchaseRequestsCard({ rows, busy, onStatus }) {
+  const fresh = rows.filter((r) => r.status === "new").length;
+  return (
+    <Card>
+      <div data-purchase-requests>
+        <SectionTitle icon="shopping-cart" title="Website order requests"
+          sub={rows.length ? (fresh + " new · " + rows.length + " total — from the Purchase form at /home") : "Requests from the Purchase form on /home appear here."} />
+        {rows.length === 0
+          ? <BillNote tone="plain" icon="inbox" attr="data-no-purchase-requests">No order requests yet. DocTurn sends no email for them — check this list.</BillNote>
+          : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {rows.map((r) => {
+                const st = PURCHASE_STATUS[r.status] || PURCHASE_STATUS.new;
+                return (
+                  <div key={r.id} data-purchase-request={r.id} style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 11, display: "grid", gap: 8, minWidth: 0 }}>
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline", minWidth: 0 }}>
+                      <div style={{ fontSize: 13.5, fontWeight: 700, overflowWrap: "anywhere", flex: "1 1 200px", minWidth: 0 }}>
+                        {r.organizationName} <span style={{ fontWeight: 500, color: "var(--muted-foreground)" }}>· DT-{String(r.id).padStart(5, "0")}</span>
+                      </div>
+                      <span data-purchase-status={r.status} style={{ fontSize: 12, fontWeight: 700, color: st.tone }}>{st.label}</span>
+                    </div>
+                    <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>
+                      {r.contactName}{r.contactTitle ? ", " + r.contactTitle : ""} · <a href={"mailto:" + r.email} style={{ color: "var(--primary-ink)" }}>{r.email}</a>{r.phone ? " · " + r.phone : ""}
+                    </div>
+                    <div style={{ fontSize: 12.5 }}>
+                      {r.seats} account{r.seats === 1 ? "" : "s"} · {r.planCode || "quote"} · {r.term === "multi_year" ? "multi-year" : r.term} · {new Date(r.createdAt).toLocaleString()}
+                    </div>
+                    {r.message && <div style={{ fontSize: 12.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: "var(--foreground)" }}>{r.message}</div>}
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {["contacted", "converted", "declined"].filter((s) => s !== r.status).map((s) => (
+                        <BillButton key={s} dataAttr={"data-purchase-set-" + s} disabled={busy} onClick={() => onStatus && onStatus(r.id, s)}>
+                          Mark {PURCHASE_STATUS[s].label.toLowerCase()}
+                        </BillButton>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
       </div>
     </Card>
   );
@@ -672,7 +732,10 @@ function DevBilling() {
         </div>
       </Card>
 
-      <PlansCard plans={plans} busy={!!d.busy} onCreate={(body) => Promise.resolve(a.createBillingPlan && a.createBillingPlan(body))} />
+      <PurchaseRequestsCard rows={d.purchaseRequests || []} busy={!!d.busy} onStatus={a.setPurchaseRequestStatus} />
+
+      <PlansCard plans={plans} busy={!!d.busy} onCreate={(body) => Promise.resolve(a.createBillingPlan && a.createBillingPlan(body))}
+        onToggleWebsite={a.setPlanOnWebsite} />
     </div>
   );
 }

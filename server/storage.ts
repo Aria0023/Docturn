@@ -70,6 +70,9 @@ import {
   type InsertSeatSnapshot,
   type BillingPlan,
   type InsertBillingPlan,
+  purchaseRequests,
+  type PurchaseRequest,
+  type InsertPurchaseRequest,
   type OrgContract,
   type InsertOrgContract,
   type BillingInvoice,
@@ -3745,6 +3748,23 @@ export class DatabaseStorage implements IStorage {
   async latestSeatSnapshot(orgId: number): Promise<SeatSnapshot | undefined> {
     const [row] = await this.listSeatSnapshots(orgId, 1);
     return row;
+  }
+
+  /* ── website order requests (platform-wide, operator-managed) ────────── */
+  async createPurchaseRequest(row: InsertPurchaseRequest): Promise<PurchaseRequest> {
+    const [saved] = await this.db.insert(purchaseRequests).values(row).returning();
+    return saved!;
+  }
+  async listPurchaseRequests(): Promise<PurchaseRequest[]> {
+    return this.db.select().from(purchaseRequests).orderBy(desc(purchaseRequests.createdAt), desc(purchaseRequests.id));
+  }
+  async setPurchaseRequestStatus(id: number, status: string): Promise<PurchaseRequest | undefined> {
+    const [saved] = await this.db
+      .update(purchaseRequests)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(purchaseRequests.id, id))
+      .returning();
+    return saved;
   }
 
   /* ── billing: plans (platform-wide, operator-managed) ──────────────────── */

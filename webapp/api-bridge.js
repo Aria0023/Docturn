@@ -4774,6 +4774,7 @@
       get("/api/dev/billing/contracts"),
       get("/api/dev/billing/plans"),
       get("/api/dev/billing/invoices"),
+      get("/api/dev/purchase-requests"),
     ]).then(function (r) {
       if (epoch !== authEpoch) return null;
       var contracts = r[0], plans = r[1], invoices = r[2];
@@ -4785,6 +4786,7 @@
           stripe: contracts.stripe || null,
           plans: (plans && plans.plans) || [],
           invoices: (invoices && invoices.invoices) || [],
+          purchaseRequests: (r[3] && r[3].requests) || [],
           busy: false,
         };
         return s;
@@ -4810,6 +4812,15 @@
 
   DT.actions.createBillingPlan = function (body) {
     return devBillingWrite(api("POST", "/api/dev/billing/plans", body), "Plan created", "It is now offerable on a contract.");
+  };
+  DT.actions.setPlanOnWebsite = function (id, on) {
+    return devBillingWrite(api("PATCH", "/api/dev/billing/plans/" + Number(id), { showOnWebsite: !!on }),
+      on ? "Plan on the website" : "Plan hidden from the website",
+      on ? "Its price now shows on /home#pricing." : "/home no longer lists it.");
+  };
+  DT.actions.setPurchaseRequestStatus = function (id, status) {
+    return devBillingWrite(api("PATCH", "/api/dev/purchase-requests/" + Number(id), { status: status }),
+      "Order request updated", "Marked " + status + ".");
   };
   DT.actions.saveDevContract = function (orgId, body) {
     return devBillingWrite(api("PUT", "/api/dev/billing/contracts/" + Number(orgId), body),

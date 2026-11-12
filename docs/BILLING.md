@@ -143,6 +143,23 @@ which is already how every module works.
 
 ---
 
+### The public website and order requests
+
+`/home` is the public website (`webapp/site/index.html`, served by
+`server/routes/website.ts`; `/pricing` redirects to its pricing section).
+It shows a price **only** for a plan the operator ticked "On website" in
+Developer console → Billing → Plans (`showOnWebsite`); with none ticked it
+shows "Custom quote". The site never invents a price.
+
+"Purchase" files an **order request**, not a payment: a hospital needs a
+signed order form and BAA before go-live. `POST /api/public/purchase-request`
+(no session; zod-validated; terms box required; honeypot; rate-limited like
+self-registration) stores business contact details in `purchase_requests`
+and audits `website.purchase_request` in the platform org. The operator works
+the queue in Developer console → Billing → Website order requests (new →
+contacted → converted / declined) and then creates the contract as usual.
+DocTurn sends **no email** for a new request — check that list.
+
 ## 4. Judgment calls
 
 ### A tenant with no contract is unlimited and unbilled
