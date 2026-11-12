@@ -65,7 +65,7 @@ function InstallPrompt() {
     <React.Fragment>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: narrow ? "4px 12px" : "10px 16px", background: "var(--primary)", color: "var(--primary-foreground)" }}>
         <Icon name="smartphone" size={18} color="var(--primary-foreground)" />
-        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600 }}>{narrow ? "Install the DocTurn app" : "Install DocTurn on your device — one tap for a full-screen app."}</div>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600 }}>{narrow ? "Install DocTurn as an app" : "Install DocTurn on your device — one tap for a full-screen app."}</div>
         <button onClick={install}
           style={{ flex: "none", padding: "7px 14px", borderRadius: "var(--radius-md)", border: "none", background: "var(--card)", color: "var(--primary-ink)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Install</button>
         <button onClick={dismiss} title="Dismiss"
