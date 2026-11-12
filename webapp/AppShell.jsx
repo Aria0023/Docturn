@@ -272,10 +272,12 @@ function PageWrap({ children }) {
 
 function SectionTitle({ children, action }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "4px 0 14px" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, minWidth: 0 }}>{children}</h2>
-      {/* the count / control keeps its shape; the heading is what wraps */}
-      {action ? <span style={{ flex: "none", whiteSpace: "nowrap", display: "inline-flex" }}>{action}</span> : null}
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, margin: "4px 0 14px" }}>
+      <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, minWidth: 0, flex: "1 1 120px" }}>{children}</h2>
+      {/* The count / control keeps its shape (a pill never breaks in two); when
+          it does not fit beside the heading on a narrow phone it moves to its
+          own line instead of pushing past the edge. */}
+      {action ? <span style={{ flex: "none", maxWidth: "100%", display: "inline-flex" }}>{action}</span> : null}
     </div>
   );
 }
