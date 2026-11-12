@@ -68,7 +68,9 @@ function PeopleAction({ title, icon, label, tone, onClick }) {
   const color = tone === "danger" ? "var(--destructive)" : tone === "good" ? "var(--status-accepted-fg)" : "var(--foreground)";
   return (
     <button type="button" onClick={onClick} title={title} aria-label={title}
-      style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 40, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid " + (tone === "danger" ? "var(--destructive)" : "var(--border)"), background: "var(--card)", color: color, fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer", whiteSpace: "nowrap" }}>
+      // 34px on a desktop row; a touch screen's 44px minimum comes from the
+      // stylesheet (index.html), which is why this is height, not min-height.
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, height: 34, minWidth: 0, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid " + (tone === "danger" ? "var(--destructive)" : "var(--border)"), background: "var(--card)", color: color, fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer", whiteSpace: "nowrap" }}>
       <Icon name={icon} size={14} />{label}
     </button>
   );
@@ -241,7 +243,9 @@ function PeopleManager({ domainRoles }) {
                 return (
                   <div key={u.id} data-person={u.username} style={{ display: "flex", alignItems: "center", gap: 13, padding: "11px 16px", borderTop: "1px solid var(--border)", flexWrap: "wrap" }}>
                     <Avatar initials={peopleInitials(u.name)} size={34} tint="slate" />
-                    <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                    {/* 110px basis: on a phone the name and Manage share one line
+                        (at 160 the button dropped to a row of its own). */}
+                    <div style={{ flex: "1 1 110px", minWidth: 0 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                         <span style={{ opacity: u.disabled ? 0.55 : 1, overflowWrap: "anywhere" }}>{u.name}</span>
                         {u.self && <Badge variant="secondary">You</Badge>}
@@ -261,13 +265,16 @@ function PeopleManager({ domainRoles }) {
                             does not have — on the screen where access is removed. */}
                         <button type="button" data-manage={u.username} aria-expanded={manageId === u.id} aria-label={"Manage " + u.name}
                           onClick={() => { setManageId(manageId === u.id ? null : u.id); if (roleEdit && roleEdit.id !== u.id) setRoleEdit(null); }}
-                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 12px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: manageId === u.id ? "var(--secondary)" : "var(--card)", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: manageId === u.id ? "var(--secondary)" : "var(--card)", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>
                           <Icon name="settings-2" size={14} />Manage<Icon name={manageId === u.id ? "chevron-up" : "chevron-down"} size={13} color="var(--muted-foreground)" />
                         </button>
                       </div>
                     )}
                     {manage && manageId === u.id && (
-                      <div data-manage-panel={u.username} style={{ flex: "1 1 100%", display: "flex", flexWrap: "wrap", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--muted)" }}>
+                      <div data-manage-panel={u.username} data-keep-cols="2" style={mobile
+                        // Phone: an even two-column grid of full-width, thumb-sized buttons.
+                        ? { flex: "1 1 100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: 10, borderRadius: "var(--radius-md)", background: "var(--muted)" }
+                        : { flex: "1 1 100%", display: "flex", flexWrap: "wrap", gap: 8, padding: "8px 10px", borderRadius: "var(--radius-md)", background: "var(--muted)" }}>
                         <PeopleAction title={"Reset password for " + u.name + " (issues a one-time password)"} icon="key-round" label="Reset password"
                           onClick={() => { if (window.confirm("Reset " + u.name + "'s password? Their current sessions end and you'll be shown a one-time password to hand over.")) a.resetUserPassword(u.id, u.name); }} />
                         {canChangeRoles && !u.disabled && (
