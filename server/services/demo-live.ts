@@ -295,7 +295,7 @@ async function message(run: Run, users: DemoUser[]): Promise<boolean> {
   if (!sender) return false;
   const watching = viewerIds(run.orgId).map((id) => users.find((u) => u.id === id)).filter(Boolean) as DemoUser[];
   const others = users.filter((u) => u.id !== sender.id);
-  const recipient = (watching.length && Math.random() < 0.55 ? pick(watching.filter((u) => u.id !== sender.id)) : undefined) ?? pick(others);
+  const recipient = (watching.length && Math.random() < 0.75 ? pick(watching.filter((u) => u.id !== sender.id)) : undefined) ?? pick(others);
   if (!recipient) return false;
   const r = Math.random();
   const priority: "routine" | "urgent" | "stat" = r < 0.16 ? "stat" : r < 0.42 ? "urgent" : "routine";
