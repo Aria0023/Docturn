@@ -166,6 +166,14 @@
     button, [role="button"] { min-width: 44px; }
     input[type="checkbox"], input[type="radio"] { width: 24px; height: 24px; }
   }
+  /* Live demo: a pulsing dot and a fresh event line that slides in. */
+  .dt-live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--status-rejected, #DC2626); flex: none; }
+  @media (prefers-reduced-motion: no-preference) {
+    .dt-live-dot { animation: dtLivePulse 1.4s ease-out infinite; }
+    .dt-live-line { animation: dtLiveIn .45s cubic-bezier(.2,.8,.2,1) both; }
+  }
+  @keyframes dtLivePulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--status-rejected, #DC2626) 55%, transparent); } 100% { box-shadow: 0 0 0 9px transparent; } }
+  @keyframes dtLiveIn { from { opacity: 0; transform: translateY(6px); } }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
      behind hospital/corporate firewalls that block unpkg).
@@ -429,6 +437,64 @@ function RoleSwitcher({ role, onChange }) {
         {roles.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
       </select>
     </label>
+  );
+}
+
+/* Live demo (synthetic instances only). One control: "Go live" starts the
+   server-side demo driver; while it runs, a pulsing Live chip shows the time
+   left, a Steady/Busy switch and Stop. */
+function useLiveDemoClock(ld) {
+  const [, setT] = React.useState(0);
+  React.useEffect(() => {
+    if (!ld || !ld.running) return undefined;
+    const id = setInterval(() => setT((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, [ld && ld.running]);
+  if (!ld || !ld.running || !ld.endsAt) return "";
+  const left = Math.max(0, Math.round((new Date(ld.endsAt).getTime() - Date.now()) / 1000));
+  return Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+}
+function LiveDemoControl({ ld, onSet }) {
+  const left = useLiveDemoClock(ld);
+  const [busy, setBusy] = React.useState(false);
+  if (!ld || ld.available === false) return null;
+  const go = (on, pace) => { setBusy(true); Promise.resolve(onSet(on, pace)).finally(() => setBusy(false)); };
+  const btn = { height: 30, padding: "0 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontSize: 12.5, fontWeight: 600, fontFamily: "inherit", cursor: busy ? "wait" : "pointer", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" };
+  if (!ld.running) {
+    return (
+      <button type="button" data-live-demo-start disabled={busy} onClick={() => go(true, "steady")}
+        title="Make this demo hospital come alive: admissions, messages and consults start arriving from the other demo accounts"
+        style={{ ...btn, height: 36, padding: "0 12px", border: "1px solid var(--primary)", color: "var(--primary)" }}>
+        <Icon name="radio" size={15} color="var(--primary)" />Go live
+      </button>
+    );
+  }
+  return (
+    <div data-live-demo-on style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 4px 0 10px", borderRadius: "var(--radius-md)", background: "color-mix(in srgb, var(--status-rejected, #DC2626) 10%, var(--card))", border: "1px solid color-mix(in srgb, var(--status-rejected, #DC2626) 35%, transparent)", whiteSpace: "nowrap" }}>
+      <span className="dt-live-dot" aria-hidden="true" />
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--status-rejected, #DC2626)" }}>Live</span>
+      <span style={{ fontSize: 12, color: "var(--muted-foreground)", fontVariantNumeric: "tabular-nums", minWidth: 34 }} title="Stops by itself when this reaches zero">{left}</span>
+      <button type="button" data-live-demo-pace disabled={busy} onClick={() => go(true, ld.pace === "busy" ? "steady" : "busy")} style={btn}
+        title={ld.pace === "busy" ? "Busy: something happens every few seconds. Switch to steady." : "Steady: a calm shift. Switch to busy."}>
+        <Icon name={ld.pace === "busy" ? "zap" : "activity"} size={14} />{ld.pace === "busy" ? "Busy" : "Steady"}
+      </button>
+      <button type="button" data-live-demo-stop disabled={busy} onClick={() => go(false)} style={btn} aria-label="Stop live demo" title="Stop live demo">
+        <Icon name="square" size={13} />Stop
+      </button>
+    </div>
+  );
+}
+function LiveDemoTicker({ ld }) {
+  if (!ld || !ld.running) return null;
+  const e = (ld.events || [])[0];
+  return (
+    <div data-live-demo-ticker role="status" aria-live="polite" style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", fontSize: 12.5, borderBottom: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", minWidth: 0 }}>
+      <span className="dt-live-dot" aria-hidden="true" />
+      <b style={{ color: "var(--status-rejected, #DC2626)", fontWeight: 700, flex: "none" }}>Live demo</b>
+      <span key={e ? e.at : "wait"} className="dt-live-line" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+        {e ? e.text : "Starting. The first events arrive in a few seconds."}
+      </span>
+    </div>
   );
 }
 
@@ -751,6 +817,7 @@ function App() {
           <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
+        <LiveDemoTicker ld={st.liveDemo} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "var(--card)" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
 
         {/* Bottom tab bar: full-bleed background, content inset by the side
@@ -788,6 +855,7 @@ function App() {
               <div style={{ flex: "none", borderTop: "1px solid var(--border)", padding: 12 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--muted-foreground)", marginBottom: 8 }}>Demo as role</div>
                 <div style={{ overflowX: "auto" }}><RoleSwitcher role={role} onChange={(r) => { a.setRole(r); setDrawer(false); }} /></div>
+                <div style={{ marginTop: 10 }}><LiveDemoControl ld={st.liveDemo} onSet={a.setLiveDemo} /></div>
                 <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12, color: "var(--muted-foreground)" }}>
                   <Icon name="smartphone" size={14} color="var(--primary)" />Install this app: your browser's "Add to Home Screen".
                 </div>
@@ -822,9 +890,11 @@ function App() {
               <Icon name="smartphone" size={15} color="var(--primary)" />Mobile view
             </button>
             {/* The demo role switcher scrolls inside its slot instead of pushing the page wider (A.CON-MIN-10). */}
+            <LiveDemoControl ld={st.liveDemo} onSet={a.setLiveDemo} />
             <div style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}><RoleSwitcher role={role} onChange={a.setRole} /></div>
           </React.Fragment> : null} />
         {impersonationBanner}
+        <LiveDemoTicker ld={st.liveDemo} />
         <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "var(--card)" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
       </div>
       </div>

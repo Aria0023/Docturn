@@ -662,6 +662,12 @@
               // but is never offered as someone to alert or link.
               people[c.userId] = Object.assign({}, people[c.userId], { active: c.active !== false });
             });
+            // My care-team members are left OUT of the candidate list (it is the
+            // "add someone" picker), so name them from the care team itself —
+            // otherwise a message from a team member showed as "Conversation".
+            ((careTeam && careTeam.ok && careTeam.body && careTeam.body.members) || []).forEach(function (m) {
+              if (!people[m.userId]) people[m.userId] = { id: m.userId, name: m.displayName, credential: m.credential || "", specialty: roleLabel(m.role), working: false, role: m.role, active: m.active !== false };
+            });
             s.orgPeople = people;
           }
           // Consultants per patient come off the live board so census/sent rows
@@ -4767,6 +4773,42 @@
   function devBillingBusy(on) {
     DT.set(function (s) { s.devBilling = Object.assign({}, s.devBilling || {}, { busy: !!on }); return s; });
   }
+
+  /* ── Live demo (synthetic instances only) ─────────────────────────────────
+     The server drives the demo accounts through the real endpoints. This poll
+     shows its status and tells the server which accounts have the app open,
+     so it never acts as them. Nothing is polled on a real-PHI instance. */
+  var liveDemoTimer = null;
+  function pollLiveDemo() {
+    var st = DT.getState();
+    if (!st.session || st.syntheticData === false || lockActive() || localDemoSession) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    get("/api/demo/live").then(function (r) {
+      if (!r || DT.getState().session !== st.session) return;
+      DT.set(function (s) { s.liveDemo = r; return s; });
+    }, function () {});
+  }
+  function scheduleLiveDemoPoll() {
+    clearInterval(liveDemoTimer);
+    liveDemoTimer = setInterval(pollLiveDemo, 5000);
+    setTimeout(pollLiveDemo, 600);
+  }
+  if (typeof window !== "undefined") scheduleLiveDemoPoll();
+  DT.actions.setLiveDemo = function (on, pace) {
+    return api("POST", "/api/demo/live", { on: !!on, pace: pace || "steady" }).then(function (r) {
+      DT.set(function (s) {
+        s.liveDemo = r;
+        s.__toast = on
+          ? { tone: "accepted", title: "Live demo on", msg: "Admissions, messages and consults will start arriving. It stops by itself after 30 minutes." }
+          : { tone: "accepted", title: "Live demo stopped", msg: "Everything it created stays on the board until you clear it." };
+        return s;
+      });
+      return r;
+    }, function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Live demo unavailable", msg: "It runs only on a test-data instance, inside a hospital (not the developer console)." }; return s; });
+      return null;
+    });
+  };
 
   DT.actions.loadDevBilling = function () {
     var epoch = authEpoch;

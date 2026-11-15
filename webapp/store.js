@@ -842,6 +842,8 @@
     "providers", "directory", "orgPeople",
     "sent", "admissions", "broadcasts", "notifications",
     "audit", "phiLog",
+    // live-demo status (event lines name synthetic patients by initials)
+    "liveDemo",
     // consults addressed to me (patient initials, room, issue)
     "myConsults",
   ];

@@ -44,6 +44,7 @@ import { registerSsoRoutes } from "./sso.js";
 import { registerWellKnownRoutes } from "./well-known.js";
 import { registerLegalRoutes } from "./legal.js";
 import { registerWebsiteRoutes } from "./website.js";
+import { registerDemoLiveRoutes } from "./demo-live.js";
 
 /** Mount every REST route onto the app. */
 export function registerRoutes(app: Express) {
@@ -51,6 +52,7 @@ export function registerRoutes(app: Express) {
   registerWellKnownRoutes(app);
   registerLegalRoutes(app);
   registerWebsiteRoutes(app);
+  registerDemoLiveRoutes(app);
   registerAuthRoutes(app);
   registerMfaRoutes(app);
   registerProviderRoutes(app);

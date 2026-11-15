@@ -1,4 +1,5 @@
 import { enforceRealPhiPreflight } from "./phi-preflight.js";
+import { stopAllLiveDemos } from "./services/demo-live.js";
 import { createServer } from "node:http";
 import type { RequestHandler } from "express";
 import { createApp } from "./app.js";
@@ -155,7 +156,7 @@ async function main() {
   // requests, give the job leases back, close the bus and the pool, exit.
   installGracefulShutdown({
     server,
-    stopTimers: stopAllLeasedTimers,
+    stopTimers: () => { stopAllLiveDemos(); stopAllLeasedTimers(); },
     closeSockets: () => hub.closeForRestart(),
     releaseLeases: releaseInstanceLeases,
     closeBus: () => bus.close(),
