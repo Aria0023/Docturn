@@ -4783,10 +4783,14 @@
     var st = DT.getState();
     if (!st.session || st.syntheticData === false || lockActive() || localDemoSession) return;
     if (typeof document !== "undefined" && document.hidden) return;
-    get("/api/demo/live").then(function (r) {
-      if (!r || DT.getState().session !== st.session) return;
-      DT.set(function (s) { s.liveDemo = r; return s; });
-    }, function () {});
+    // A quiet read: a 401 here is NOT how a session ends (the identity probe
+    // owns that), so this never goes through api()'s sign-out handling.
+    fetch("/api/demo/live", { credentials: "same-origin", headers: { Accept: "application/json" } })
+      .then(function (x) { return x.ok ? x.json() : null; })
+      .then(function (r) {
+        if (!r || DT.getState().session !== st.session) return;
+        DT.set(function (s) { s.liveDemo = r; return s; });
+      }, function () {});
   }
   function scheduleLiveDemoPoll() {
     clearInterval(liveDemoTimer);
