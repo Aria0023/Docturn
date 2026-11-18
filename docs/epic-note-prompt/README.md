@@ -21,7 +21,24 @@ remains the reliable fix.
 
 # Discharge Summary Prompt (ISP Tarzana)
 
-## v1.0 — CURRENT
+## v1.7 — CURRENT (simplified code, same note)
+
+`tarzana-discharge-summary-v1.7.json` — v1.6 rewritten for maintainability and Epic
+SmartText paste (45 KB → 19 KB) with the same note layout, labels, verbatim statements,
+fallbacks, exam baselines, worked example, and disclaimer. The 24 top-level locks and
+18 hidden-logic entries are consolidated into `output_rules`, `epic_format_rules`,
+`data_rules`, one `section_rules` entry per section, and `special_cases` (AMA/Expired,
+heart failure GDMT, stroke STK measures). The template and worked example are line
+arrays (one item per output line) instead of one long escaped string. Duplicates
+removed: the second copy of the example, the template's instruction wrappers, the
+repeated no-prologue/no-epilogue/full-rewrite rules, and the no-op Word-style
+`structured_rules`. The spacing rule is now one consistent statement: one blank line
+above every bold label, except the demographics/dates blocks, `**Most recent vitals:**`,
+`**Disposition:**`, and `**Code Status upon Discharge:**`. There is no Past Medical
+History section in this note, so none was added. The ACP date placeholder is renamed
+`{{acp_date_time}}` so it is never taken from the model's clock.
+
+## v1.0
 
 `tarzana-discharge-summary-v1.0.json` — rebuild of the provider's v3.9 discharge
 summary onto the shared conventions, following the ISP Tarzana wrapper layout:
