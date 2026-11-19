@@ -2,6 +2,7 @@ import type { Assignment } from "@shared/schema";
 import { getNotificationProfile } from "../config.js";
 import { storage } from "../storage.js";
 import { smsFor, type SmsService } from "./sms.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 
 /**
  * Out-of-app delivery. Push and SMS payloads carry NO PHI — only a generic
@@ -31,10 +32,14 @@ export class NoopPush implements PushTransport {
 
 export class NoopWs implements WsFanout {
   delivered: Array<{ userIds: number[]; message: unknown }> = [];
+  /** Org-wide fan-outs, recorded so tests can assert who was told what. */
+  broadcasts: Array<{ orgId: number; message: unknown }> = [];
   sendToUsers(userIds: number[], message: unknown) {
     this.delivered.push({ userIds, message });
   }
-  broadcast(_orgId: number, _message: unknown) {}
+  broadcast(orgId: number, message: unknown) {
+    this.broadcasts.push({ orgId, message });
+  }
 }
 
 export interface NotificationDeps {
@@ -67,6 +72,47 @@ export function broadcastAssignmentChange(orgId: number) {
     deps.ws.broadcast(orgId, { type: "ASSIGNMENT_UPDATED" });
   } catch (err) {
     console.error("[notify] assignment broadcast failed", err);
+  }
+}
+
+/**
+ * Tell every signed-in session of ONE org that something round-robin depends
+ * on changed — the sequential cursor (reset), on/off shift, caps, census,
+ * rotation order, rotation membership, shift type, the roster or the org's
+ * rotation config — so each client re-reads GET /api/rotation/next (and the
+ * roster) instead of naming the pre-change provider as "Next up" in the
+ * Director card, the ER Quick hint and the hospitalist chip (A.CON-SHO-29).
+ * Content-free (no PHI, no ids): the client re-fetches what it may read.
+ */
+export function broadcastRotationChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "ROTATION_UPDATED" });
+  } catch (err) {
+    console.error("[notify] rotation broadcast failed", err);
+  }
+}
+
+/**
+ * The org's admissions counter was reset (POST /api/admissions/reset): every
+ * signed-in director re-reads GET /api/admissions. Content-free.
+ */
+export function broadcastAdmissionsChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "ADMISSIONS_UPDATED" });
+  } catch (err) {
+    console.error("[notify] admissions broadcast failed", err);
+  }
+}
+
+/**
+ * The org's shift names / hours changed (PATCH /api/org/shifts/:id): every
+ * session re-reads GET /api/org/shifts. Content-free.
+ */
+export function broadcastShiftsChange(orgId: number) {
+  try {
+    deps.ws.broadcast(orgId, { type: "SHIFTS_UPDATED" });
+  } catch (err) {
+    console.error("[notify] shifts broadcast failed", err);
   }
 }
 
@@ -126,8 +172,19 @@ function scheduleEscalation(
   },
 ) {
   // Re-push after ackTimeout if still unacknowledged.
-  const t1 = setTimeout(() => {
-    if (isAcknowledged(assignment.id)) return;
+  // "Still waiting" is read from the database when the timer fires: an
+  // accepted, declined, cancelled, reassigned or expired request alerts nobody.
+  const stillPending = async () => {
+    if (isAcknowledged(assignment.id)) return false;
+    try {
+      const cur = await storage().getAssignment(assignment.organizationId, assignment.id);
+      return !!cur && cur.status === "pending";
+    } catch {
+      return false;
+    }
+  };
+  const t1 = setTimeout(async () => {
+    if (!(await stillPending())) return;
     for (const userId of targetUserIds) {
       deps.push
         .send(userId, { title: "New assignment" })
@@ -138,8 +195,8 @@ function scheduleEscalation(
 
   // SMS after escalationTimeout, only if mode includes SMS and still unacked.
   if (profile.mode === "push") return;
-  const t2 = setTimeout(() => {
-    if (isAcknowledged(assignment.id)) return;
+  const t2 = setTimeout(async () => {
+    if (!(await stillPending())) return;
     void escalateSms(assignment, targetUserIds, profile.smsCarrier);
   }, profile.escalationTimeoutSec * 1000);
   t2.unref?.();
@@ -150,6 +207,8 @@ async function escalateSms(
   targetUserIds: number[],
   carrier: string,
 ) {
+  // SMS switched off for the org (Settings → Integrations → Twilio): no text.
+  if (!(await smsAllowedForOrg(assignment.organizationId))) return;
   const sms = deps.smsFor(carrier);
   for (const userId of targetUserIds) {
     try {

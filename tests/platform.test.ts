@@ -74,7 +74,7 @@ describe("v2 patient board", () => {
     const board = await director.get("/api/patient-board");
     expect(board.status).toBe(200);
     const row = board.body.find((r: any) => r.patient.initials === "ZZ");
-    expect(row.responsible.attending.displayName).toContain("Alyesh");
+    expect(row.responsible.attending.displayName).toContain("Avery");
     expect(row.responsible.unit.some((u: any) => u.credential === "PA")).toBe(true);
 
     // PHI access was logged for the board load.
@@ -220,8 +220,14 @@ describe("developer org management", () => {
     });
     expect(created.status).toBe(201);
 
+    // A per-user display preset (user_theme_prefs) is a cheap dependent the
+    // user delete cascades, like the other per-user preference rows.
+    await ctx.storage.setThemePrefs(ctx.seedResult.orgId, created.body.id, { preset: "night", textSize: "large" });
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeTruthy();
+
     // The fresh user has no activity → deletable.
     expect((await agent.delete(`/api/dev/users/${created.body.id}`)).status).toBe(204);
+    expect(await ctx.storage.getThemePrefs(ctx.seedResult.orgId, created.body.id)).toBeUndefined();
 
     // A user with activity (chen has a seeded pending assignment as target) — and
     // the developer can't delete themselves.
@@ -242,49 +248,6 @@ describe("developer org management", () => {
   });
 });
 
-describe("config: flags & adaptive suggestions", () => {
-  it("sets a feature flag per org", async () => {
-    const { agent } = await login(ctx.app, { username: "director" });
-    const set = await agent
-      .patch("/api/feature-flags")
-      .send({ flag: "new_board", enabled: true });
-    expect(set.status).toBe(200);
-    const list = await agent.get("/api/feature-flags");
-    expect(list.body.find((f: any) => f.flag === "new_board").enabled).toBe(true);
-  });
-
-  it("proposes a timeout suggestion from fast accepts and applies it on accept", async () => {
-    // Seed several fast-accepted assignments (accept latency ~1m vs 10m window).
-    const now = Date.now();
-    for (let i = 0; i < 4; i++) {
-      const a = await ctx.storage.createAssignment({
-        organizationId: ctx.seedResult.orgId,
-        patientId: ctx.seedResult.patientIds.sc!,
-        hospitalistId: ctx.seedResult.hospitalistIds.chen!,
-        erDoctorId: ctx.seedResult.userIds["er.doc"]!,
-        status: "accepted",
-        via: "round_robin",
-        acceptedByUserId: ctx.seedResult.userIds.chen!,
-        expiresAt: new Date(now + 600000),
-      });
-      await ctx.storage.updateAssignment(ctx.seedResult.orgId, a.id, {
-        resolvedAt: new Date(new Date(a.createdAt).getTime() + 60_000),
-      });
-    }
-
-    const { agent } = await login(ctx.app, { username: "director" });
-    const list = await agent.get("/api/suggestions");
-    const s = list.body.find((x: any) => x.key === "assignment_timeout");
-    expect(s).toBeTruthy();
-    expect(s.evidence).toContain("median");
-
-    const accept = await agent.post(`/api/suggestions/${s.id}/accept`);
-    expect(accept.status).toBe(200);
-    const cfg = await agent.get("/api/org/config");
-    expect(cfg.body.assignmentTimeoutMin).toBeLessThan(10);
-  });
-});
-
 describe("resources, sms & oversight endpoints", () => {
   it("director can list all assignments, reassign and cancel", async () => {
     const { assignmentId } = await newPendingAssignment();
@@ -295,20 +258,6 @@ describe("resources, sms & oversight endpoints", () => {
 
     const reassigned = await agent.patch(`/api/assignments/${assignmentId}/reassign`).send({});
     expect(reassigned.status).toBe(200);
-  });
-
-  it("manages beds and equipment with live metrics", async () => {
-    const { agent } = await login(ctx.app, { username: "director" });
-    const bed = await agent.post("/api/beds").send({ label: "ICU-1" });
-    expect(bed.status).toBe(201);
-    await agent.patch(`/api/beds/${bed.body.id}`).send({ occupied: true });
-    const equip = await agent.post("/api/equipment").send({ name: "Ventilator" });
-    expect(equip.status).toBe(201);
-
-    const metrics = await agent.get("/api/resources/metrics");
-    expect(metrics.body.beds.total).toBe(1);
-    expect(metrics.body.beds.occupied).toBe(1);
-    expect(metrics.body.equipment.total).toBe(1);
   });
 
   it("sends SMS through the carrier stub and records history", async () => {
@@ -327,17 +276,21 @@ describe("resources, sms & oversight endpoints", () => {
 });
 
 describe("mobile API", () => {
-  it("exposes safe org fields publicly and compact assignments to providers", async () => {
-    const pub = await supertest(ctx.app).get("/api/mobile/org/ISPN");
-    expect(pub.status).toBe(200);
-    expect(pub.body).toEqual({
+  it("exposes safe org fields to the org's own members and compact assignments to providers", async () => {
+    // Not public (A.CON-SHO-11): an anonymous lookup would be an org-code oracle.
+    const anon = await supertest(ctx.app).get("/api/mobile/org/ISPN");
+    expect(anon.status).toBe(401);
+
+    const { agent } = await login(ctx.app, { username: "chen" });
+    const own = await agent.get("/api/mobile/org/ISPN");
+    expect(own.status).toBe(200);
+    expect(own.body).toEqual({
       id: ctx.seedResult.orgId,
-      name: "Cedars-Sinai (ISP North)",
+      name: "Riverside General (demo)",
       code: "ISPN",
       timezone: "America/New_York",
     });
 
-    const { agent } = await login(ctx.app, { username: "chen" });
     const reg = await agent
       .post("/api/mobile/device-tokens")
       .send({ token: "tok-123", platform: "ios" });

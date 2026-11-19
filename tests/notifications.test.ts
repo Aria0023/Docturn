@@ -69,13 +69,46 @@ describe("notification delivery & escalation", () => {
     // Give Chen a phone so SMS escalation has a destination.
     await ctx.storage.updateUser(chenUserId, { phone: "+15551234567" });
 
+    // A REAL pending request: escalation re-reads it and only fires while it
+    // is still waiting.
+    const p = await ctx.storage.createPatient({
+      organizationId: ctx.seedResult.orgId, initials: "NT", roomNumber: null, issueSummary: "", specialty: null,
+      department: null, acuity: null, status: "waiting", erDoctorId: ctx.seedResult.userIds["er.doc"]!, assignedHospitalistId: null, ehrId: null,
+    });
+    const real = await ctx.storage.createAssignment({
+      organizationId: ctx.seedResult.orgId, patientId: p.id, hospitalistId: ctx.seedResult.hospitalistIds.chen!,
+      erDoctorId: ctx.seedResult.userIds["er.doc"]!, status: "pending", via: "round_robin", acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
     vi.useFakeTimers();
-    await notifyAssignment(fakeAssignment(), [chenUserId]);
+    await notifyAssignment(real, [chenUserId]);
     await vi.advanceTimersByTimeAsync(200_000);
 
     expect(ctx.sms.sent.length).toBe(1);
     // No PHI in the SMS body.
     expect(ctx.sms.sent[0]!.body).not.toMatch(/SC|204|chest/i);
+  });
+
+  it("an accepted request sends no re-push and no SMS", async () => {
+    await setProfile("push_sms");
+    const chenUserId = ctx.seedResult.userIds.chen!;
+    await ctx.storage.updateUser(chenUserId, { phone: "+15551234567" });
+    const p = await ctx.storage.createPatient({
+      organizationId: ctx.seedResult.orgId, initials: "NA", roomNumber: null, issueSummary: "", specialty: null,
+      department: null, acuity: null, status: "waiting", erDoctorId: ctx.seedResult.userIds["er.doc"]!, assignedHospitalistId: null, ehrId: null,
+    });
+    const real = await ctx.storage.createAssignment({
+      organizationId: ctx.seedResult.orgId, patientId: p.id, hospitalistId: ctx.seedResult.hospitalistIds.chen!,
+      erDoctorId: ctx.seedResult.userIds["er.doc"]!, status: "pending", via: "round_robin", acceptedByUserId: null,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    vi.useFakeTimers();
+    await notifyAssignment(real, [chenUserId]);
+    const pushesBefore = ctx.push.sent.length;
+    await ctx.storage.updateAssignment(ctx.seedResult.orgId, real.id, { status: "accepted", resolvedAt: new Date() });
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(ctx.push.sent.length).toBe(pushesBefore);
+    expect(ctx.sms.sent.length).toBe(0);
   });
 
   it("acknowledging before the timeout sends zero SMS", async () => {

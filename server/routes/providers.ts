@@ -1,19 +1,26 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { censusOverrideSchema } from "@shared/schema";
-import { hashPassword } from "../auth.js";
+import { censusOverrideSchema, providerProfilePatchSchema, SHIFT_TYPE, MAX_DISPLAY_NAME_LENGTH, MAX_USERNAME_LENGTH, USERNAME_PATTERN } from "@shared/schema";
+import { hashPassword, issueTemporaryPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
+import { checkSeatAvailability, seatRefusalBody } from "../billing/entitlements.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { broadcastRotationChange } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
 const createProviderSchema = z.object({
-  username: z.string().min(3),
-  password: z.string().min(6),
-  displayName: z.string().min(1),
-  specialty: z.string().default("General"),
+  username: z.string().trim().min(3).max(MAX_USERNAME_LENGTH).regex(USERNAME_PATTERN),
+  // Accepted for backwards compatibility but IGNORED: the server mints a
+  // one-time credential and returns it once (see the handler). A director can
+  // never choose — let alone reuse the demo — password for someone else.
+  password: z.string().optional(),
+  displayName: z.string().trim().min(1).max(MAX_DISPLAY_NAME_LENGTH),
+  specialty: z.string().trim().max(80).default("General"),
   patientCap: z.number().int().min(1).max(50).default(12),
   shiftType: z.enum(["day", "night", "swing"]).default("day"),
-  role: z.enum(["hospitalist", "er_doctor"]).default("hospitalist"),
+  role: z
+    .enum(["hospitalist", "er_doctor", "er_director", "director"])
+    .default("hospitalist"),
   credential: z.enum(["MD", "DO", "NP", "PA"]).optional(),
   // Imported-from-schedule providers come in on-shift (drives on-call roster).
   working: z.boolean().optional(),
@@ -25,11 +32,21 @@ const workingStatusSchema = z.object({
 });
 
 const capacitySchema = z.object({ patientCap: z.number().int().min(1).max(50) });
+const bulkWorkingSchema = z.object({ all: z.boolean() });
+const rotationMembershipSchema = z.object({ inRotation: z.boolean() });
+const shiftSchema = z.object({ shiftType: z.enum(SHIFT_TYPE) });
 
 const rotationOrderSchema = z.object({
   order: z.array(z.number().int().positive()).min(1),
 });
 
+/**
+ * Every write below changes who the next round-robin patient goes to, so each
+ * successful one ends with broadcastRotationChange(org): every open session of
+ * that org (and no other) re-reads GET /api/rotation/next, so a Director card
+ * or an ER Quick hint never keeps naming the pre-change provider
+ * (A.CON-SHO-29). Refused / cross-tenant writes announce nothing.
+ */
 export function registerProviderRoutes(app: Express) {
   app.get("/api/hospitalists", requireAuth, async (req, res) => {
     const me = currentUser(req);
@@ -66,6 +83,7 @@ export function registerProviderRoutes(app: Express) {
           details: {},
           riskLevel: "low",
         });
+        broadcastRotationChange(me.organizationId);
       }
       res.status(201).json({ hospitalistId: h.id });
     },
@@ -89,8 +107,11 @@ export function registerProviderRoutes(app: Express) {
         displayName: byId.get(h.userId)?.displayName ?? "Unknown",
         credential: byId.get(h.userId)?.credential ?? null,
         specialty: h.specialty,
-        working: h.working,
+        // A deactivated account is never on shift and is flagged, so pickers
+        // can leave it out while names on past records still resolve.
+        working: h.working && !byId.get(h.userId)?.disabledAt,
         shiftType: h.shiftType,
+        active: !byId.get(h.userId)?.disabledAt,
       })),
     );
   });
@@ -101,6 +122,13 @@ export function registerProviderRoutes(app: Express) {
     requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
+
+      // Security boundary: only the dedicated developer route may mint developer
+      // (super-admin) accounts. Enforced server-side regardless of the UI.
+      if (req.body?.role === "developer" && me.role !== "developer") {
+        return res.status(403).json({ error: "forbidden" });
+      }
+
       const parsed = createProviderSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const data = parsed.data;
@@ -116,15 +144,52 @@ export function registerProviderRoutes(app: Express) {
       );
       if (existing) return res.status(409).json({ error: "username_taken" });
 
+      // ── BILLING, one of the only two places it can refuse anything ───────
+      // Creating a SEAT. A hospital with no contract on file — every hospital
+      // until the operator puts it on one — is unlimited and unbilled, so this
+      // is a no-op for them. A director past the contract's committed seats
+      // (or on a contract whose past-due grace has run out, or an expired one)
+      // is refused with a plain reason; the operator can still add the account
+      // from the developer console, audited. Nothing else about this
+      // organization changes: messaging, STAT, escalation and routing are
+      // untouched. See docs/BILLING.md and
+      // tests/billing-safety-invariant.test.ts.
+      const seat = await checkSeatAvailability(
+        storage(),
+        me.organizationId,
+        me.role === "developer" ? "operator" : "director",
+      );
+      if (!seat.allowed) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "billing.seat_refused",
+          resourceType: "organization",
+          resourceId: me.organizationId,
+          details: {
+            reason: seat.reason,
+            seatsInUse: seat.seatsInUse,
+            committedSeats: seat.committedSeats,
+            role: data.role,
+          },
+          riskLevel: "medium",
+        });
+        return res.status(402).json(seatRefusalBody(seat));
+      }
+
+      // One-time credential: crypto-random, returned ONCE below for the director
+      // to hand over out-of-band, and forced to change at first sign-in.
+      const temporaryPassword = issueTemporaryPassword();
       const user = await storage().createUser({
         organizationId: me.organizationId,
         username: data.username,
-        passwordHash: await hashPassword(data.password),
+        passwordHash: await hashPassword(temporaryPassword),
         role: data.role,
         displayName: data.displayName,
         credential: data.credential ?? null,
         phone: null,
         twoFactorEnabled: false,
+        mustChangePassword: true,
       });
 
       let hospitalist = null;
@@ -153,7 +218,38 @@ export function registerProviderRoutes(app: Express) {
         details: { role: data.role },
         riskLevel: "low",
       });
-      res.status(201).json({ user: { id: user.id }, hospitalist });
+      if (hospitalist) broadcastRotationChange(me.organizationId);
+      res.status(201).json({ user: { id: user.id, username: user.username }, hospitalist, temporaryPassword });
+    },
+  );
+
+  // Bulk on/off shift for the whole org ("All on shift" / "All off shift").
+  // Its own id-less path: the numeric `:id` guard (server/params.ts) answers
+  // `/api/hospitalists/0/...` with 404, so the old "id 0 + all" form below was
+  // unreachable from the Director dashboard.
+  async function bulkWorking(me: { id: number; organizationId: number }, working: boolean) {
+    await storage().bulkSetWorking(me.organizationId, working);
+    await appendAudit({
+      organizationId: me.organizationId,
+      userId: me.id,
+      action: "hospitalist.working_bulk",
+      resourceType: "organization",
+      resourceId: me.organizationId,
+      details: { working },
+      riskLevel: "medium",
+    });
+    broadcastRotationChange(me.organizationId);
+  }
+  app.patch(
+    "/api/hospitalists/working-status",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = bulkWorkingSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      await bulkWorking(me, parsed.data.all);
+      res.json({ ok: true, bulk: true, working: parsed.data.all });
     },
   );
 
@@ -165,12 +261,12 @@ export function registerProviderRoutes(app: Express) {
       const parsed = workingStatusSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
 
-      // Bulk form (director/developer only).
+      // Bulk form (director/developer only; kept for older callers).
       if (parsed.data.all !== undefined) {
         if (me.role !== "director" && me.role !== "developer") {
           return res.status(403).json({ error: "forbidden" });
         }
-        await storage().bulkSetWorking(me.organizationId, parsed.data.all);
+        await bulkWorking(me, parsed.data.all);
         return res.json({ ok: true, bulk: true, working: parsed.data.all });
       }
 
@@ -186,10 +282,173 @@ export function registerProviderRoutes(app: Express) {
       if (parsed.data.working === undefined) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // Already so: nothing changes, nothing to announce or audit.
+      if (h.working === parsed.data.working) return res.json(h);
+      // A deactivated account cannot go on shift: it cannot sign in to answer.
+      if (parsed.data.working) {
+        const owner = await storage().getUser(me.organizationId, h.userId);
+        if (!owner || owner.disabledAt) return res.status(409).json({ error: "user_deactivated" });
+      }
       const updated = await storage().updateHospitalist(me.organizationId, id, {
         working: parsed.data.working,
       });
+      // On/off shift decides who round-robin can draw (A.CON comms-account
+      // #1: the hospitalist's own Settings switch is this route), so every
+      // change is on the trail — the provider's own or a director's.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.working_status",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { working: parsed.data.working, self: isSelf, providerUserId: h.userId },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
       res.json(updated);
+    },
+  );
+
+  // The Director's inline name / specialty edit on a provider row (A.CON
+  // clinical #11). The name is the account's display name (users.display_name,
+  // what every screen and thread shows); the specialty is the rotation
+  // profile's, which the routing planner reads as the patient-specialty
+  // preference — so a change re-announces the rotation. Director decision;
+  // audited (names and specialties are staff data, not PHI); org-scoped.
+  app.patch(
+    "/api/hospitalists/:id/profile",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = providerProfilePatchSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const u = await storage().getUser(me.organizationId, h.userId);
+      if (!u) return res.status(404).json({ error: "not_found" });
+      const changed: string[] = [];
+      const from: Record<string, string> = {};
+      const to: Record<string, string> = {};
+      let user = u;
+      let hospitalist = h;
+      if (parsed.data.displayName !== undefined && parsed.data.displayName !== u.displayName) {
+        user = (await storage().updateUser(u.id, { displayName: parsed.data.displayName })) ?? u;
+        changed.push("displayName");
+        from.displayName = u.displayName;
+        to.displayName = parsed.data.displayName;
+      }
+      if (parsed.data.specialty !== undefined && parsed.data.specialty !== h.specialty) {
+        hospitalist = (await storage().updateHospitalist(me.organizationId, id, { specialty: parsed.data.specialty })) ?? h;
+        changed.push("specialty");
+        from.specialty = h.specialty;
+        to.specialty = parsed.data.specialty;
+      }
+      if (changed.length) {
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "hospitalist.profile_update",
+          resourceType: "hospitalist",
+          resourceId: id,
+          details: { changed, from, to },
+          riskLevel: "low",
+        });
+        broadcastRotationChange(me.organizationId);
+      }
+      res.json({ hospitalist, user: { id: user.id, displayName: user.displayName } });
+    },
+  );
+
+  // The Director's "Rotation / Off" switch: take an on-shift provider out of
+  // round-robin (or put them back) without touching their shift. Director
+  // decision, so not self-service; audited; org-scoped.
+  app.patch(
+    "/api/hospitalists/:id/rotation",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = rotationMembershipSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const updated = await storage().updateHospitalist(me.organizationId, id, {
+        inRotation: parsed.data.inRotation,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.rotation_membership",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { inRotation: parsed.data.inRotation, from: h.inRotation },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json(updated);
+    },
+  );
+
+  // The Director's shift selector (Day / Swing / Night). Only shifts in
+  // org.roundRobinShiftTypes are routable, so this moves a provider into or
+  // out of round-robin. A schedule sync (Amion) may set it again later.
+  app.patch(
+    "/api/hospitalists/:id/shift",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = shiftSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const id = Number(req.params.id);
+      const h = await storage().getHospitalist(me.organizationId, id);
+      if (!h) return res.status(404).json({ error: "not_found" });
+      const updated = await storage().updateHospitalist(me.organizationId, id, {
+        shiftType: parsed.data.shiftType,
+      });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.shift_change",
+        resourceType: "hospitalist",
+        resourceId: id,
+        details: { from: h.shiftType, to: parsed.data.shiftType },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json(updated);
+    },
+  );
+
+  // "Mass set daily census limit → Apply to all": every provider in the org.
+  app.patch(
+    "/api/physicians/capacity",
+    requireAuth,
+    requireRole("director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const parsed = capacitySchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const all = await storage().listHospitalists(me.organizationId);
+      for (const h of all) {
+        if (h.patientCap !== parsed.data.patientCap) {
+          await storage().updateHospitalist(me.organizationId, h.id, { patientCap: parsed.data.patientCap });
+        }
+      }
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "hospitalist.cap_bulk",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { patientCap: parsed.data.patientCap, providers: all.length },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
+      res.json({ ok: true, bulk: true, patientCap: parsed.data.patientCap });
     },
   );
 
@@ -207,6 +466,7 @@ export function registerProviderRoutes(app: Express) {
     const updated = await storage().updateHospitalist(me.organizationId, id, {
       patientCap: parsed.data.patientCap,
     });
+    broadcastRotationChange(me.organizationId);
     res.json(updated);
   });
 
@@ -218,12 +478,24 @@ export function registerProviderRoutes(app: Express) {
       const me = currentUser(req);
       const parsed = rotationOrderSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // Only this org's providers are reordered (updateHospitalist is
+      // org-scoped, so a foreign id is a no-op).
       let i = 0;
       for (const hid of parsed.data.order) {
         await storage().updateHospitalist(me.organizationId, hid, {
           rotationOrder: i++,
         });
       }
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "rotation.reorder",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { order: parsed.data.order },
+        riskLevel: "low",
+      });
+      broadcastRotationChange(me.organizationId);
       res.json(await storage().listHospitalists(me.organizationId));
     },
   );
@@ -250,6 +522,7 @@ export function registerProviderRoutes(app: Express) {
         details: {},
         riskLevel: "medium",
       });
+      broadcastRotationChange(me.organizationId);
       res.status(204).end();
     },
   );
@@ -287,6 +560,7 @@ export function registerProviderRoutes(app: Express) {
         },
         riskLevel: "medium",
       });
+      broadcastRotationChange(me.organizationId);
       res.json(updated);
     },
   );
@@ -297,9 +571,21 @@ export function registerProviderRoutes(app: Express) {
     requireRole("director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
+      const org = await storage().getOrganization(me.organizationId);
       await storage().updateOrganization(me.organizationId, {
         rotationIndex: 0,
       });
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "rotation.reset",
+        resourceType: "organization",
+        resourceId: me.organizationId,
+        details: { fromIndex: org?.rotationIndex ?? null },
+        riskLevel: "low",
+      });
+      // The sequential "Next up" just changed for everyone in the org.
+      broadcastRotationChange(me.organizationId);
       res.json({ ok: true });
     },
   );

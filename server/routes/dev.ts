@@ -1,17 +1,121 @@
 import type { Express } from "express";
-import { devCreateUserSchema, toSafeUser } from "@shared/schema";
-import { hashPassword } from "../auth.js";
+import { devCreateUserSchema, toSafeUser, type User } from "@shared/schema";
+import {
+  auditRevokedImpersonation,
+  bearerCredentialOf,
+  beginImpersonation,
+  clearImpersonation,
+  hashPassword,
+  isPlatformOrg,
+  issueTemporaryPassword,
+  mfaEnrollmentRequired,
+  resolveImpersonator,
+  restampSession,
+  revokeAllSessions,
+} from "../auth.js";
 import { appendAudit } from "../audit.js";
+import { checkOrgCreationAllowed, checkSeatAvailability } from "../billing/entitlements.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { getExtractor } from "../services/ai-intake.js";
+import { externalExtractorActive, getExtractor } from "../services/ai-intake.js";
 import { codeFromName, lookupHospitals } from "../services/hospital-lookup.js";
+import { parseId } from "../params.js";
+import { broadcastRotationChange } from "../services/notifications.js";
+import {
+  apiLatencySummary,
+  assessHealth,
+  PROCESS_STARTED_AT,
+  type PoolStats,
+} from "../services/request-metrics.js";
+import { getDb, getHandle } from "../db.js";
+import { liveHubBus, liveSocketStats } from "../ws/index.js";
+import { ssoRequiredForOrg } from "./sso.js";
 import { storage } from "../storage.js";
+import { sql } from "drizzle-orm";
+import { INSTANCE_ID } from "../instance.js";
+import { getRateLimitState, getSessionStoreState } from "../config.js";
+import { getBus } from "../services/bus.js";
+import { JOB_NAMES, leasedTimers } from "../services/job-leases.js";
+import { isShuttingDown } from "../shutdown.js";
+
+/**
+ * The answer to a session swap (impersonate / manage-org / stop): the new
+ * identity's safe user body plus the gate flag GET /api/user would report, so
+ * the client routes the swapped session correctly at once — a privileged
+ * account in an org that requires MFA and has not enrolled is held at
+ * enrolment (`mustChangePassword` is already in the safe body). Live state,
+ * never the session.
+ */
+async function swappedUserBody(u: User) {
+  return (await mfaEnrollmentRequired(u)) ? { ...toSafeUser(u), mfaEnrollmentRequired: true } : toSafeUser(u);
+}
 
 /**
  * Developer console: cross-tenant administration. The developer role bypasses
- * org-scoping deliberately; EVERY cross-tenant action is audited before/with it.
+ * org-scoping deliberately; EVERY cross-tenant action is audited before/with it
+ * — READS included. A read of ONE tenant is filed in that tenant's trail (so
+ * its director can see the platform looked); a cross-tenant list is filed in
+ * the developer's own (platform) org, never with organization_id NULL, where no
+ * view, archive or compliance count could ever show it. Audit details carry
+ * ids and counts only. Developer reads served OUTSIDE this file follow the same
+ * rule: GET /api/dev/modules/:orgId (routes/modules.ts), a developer's
+ * GET /api/accounts (routes/accounts.ts, every tenant's workforce) and a
+ * developer's GET /api/amion/status served from another org's feed — with no
+ * feed of their own, the env AMION_ORG_CODE org's (routes/amion.ts, that
+ * tenant's provider schedule → dev.amion_status_read in that org).
+ * POST /api/amion/sync-now answers with the same snapshot; its amion.sync row
+ * is filed in that org naming the developer.
  */
+/**
+ * E2.1 break-glass: the operator entered a tenant whose own staff cannot use
+ * a password ("SSO required"). Nothing changes about the portal — this only
+ * files the fact, at HIGH risk, in that tenant's trail.
+ */
+async function auditSsoBreakGlass(orgId: number, developerId: number, details: Record<string, unknown>) {
+  if (!(await ssoRequiredForOrg(orgId))) return;
+  await appendAudit({
+    organizationId: orgId,
+    userId: developerId,
+    action: "auth.sso_break_glass",
+    resourceType: "organization",
+    resourceId: orgId,
+    details,
+    riskLevel: "high",
+  });
+}
+
 export function registerDevRoutes(app: Express) {
+  // Platform → Security → "Sign out all": the operator's incident-response
+  // switch. Every session on every tenant issued before now stops resolving
+  // (server/auth.ts revokeAllSessions — HTTP on its next request, live sockets
+  // and demo tokens at once); the operator's own session is re-issued and
+  // stays. Audited high in the platform org.
+  app.post(
+    "/api/dev/sessions/revoke-all",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const bearer = bearerCredentialOf(res);
+      const at = await revokeAllSessions({
+        byUserId: me.id,
+        keepSessionId: bearer ? bearer.connectionId : req.sessionID,
+      });
+      const fresh = (await storage().getUserById(me.id)) ?? me;
+      if (bearer) bearer.restamp(fresh);
+      else await restampSession(req, fresh);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.sessions_revoke_all",
+        resourceType: "session",
+        resourceId: null,
+        details: { at },
+        riskLevel: "high",
+      });
+      res.json({ ok: true, at });
+    },
+  );
+
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
   // state + timezone + a suggested code (NPI registry, curated fallback).
   app.get(
@@ -24,16 +128,60 @@ export function registerDevRoutes(app: Express) {
     },
   );
 
+  // The six-year compliance archive (§164.316(b)(2)(i)): audit / PHI-access /
+  // security rows preserved from tenants that have since been deleted. Read-only
+  // and developer-only; carries ids, actions and actor identity — never PHI.
+  app.get(
+    "/api/dev/compliance-archive",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const raw = req.query.orgId;
+      const orgId = raw != null && raw !== "" ? parseId(raw) : undefined;
+      if (orgId === null) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      // Audited BEFORE the read. The archived org usually no longer exists, so
+      // the row cannot be filed under it (FK); it goes in the operator's org
+      // with the target id in details.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.archive_read",
+        resourceType: "organization",
+        resourceId: orgId ?? null,
+        details: { orgId: orgId ?? null },
+        riskLevel: "low",
+      });
+      res.json(await storage().listRetainedComplianceRecords(orgId));
+    },
+  );
+
   app.get(
     "/api/dev/organizations",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.orgs_list",
+        resourceType: "organization",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const orgs = await storage().listOrganizations();
+      // Assignments CREATED in the last 24 h (the dashboard's
+      // "Assignments / 24h" tile sums these) — counted, never assumed.
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const withCounts = await Promise.all(
         orgs.map(async (o) => ({
           ...o,
           userCount: await storage().countOrgUsers(o.id),
+          assignments24h: await storage().countAssignmentsSince(o.id, since),
         })),
       );
       res.json(withCounts);
@@ -48,6 +196,17 @@ export function registerDevRoutes(app: Express) {
       const me = currentUser(req);
       const b = req.body ?? {};
       if (!b.name) return res.status(400).json({ error: "validation_error" });
+      // ── BILLING: the SECOND and last place billing can refuse anything ───
+      // Creating an ORGANIZATION (docs/BILLING.md). Only the platform operator
+      // can, and the operator is not billed, so nothing is refused here today;
+      // the check is defence in depth behind requireRole("developer") and the
+      // one designated seam if a contract ever caps how many hospitals a
+      // customer may create. A new organization starts with NO CONTRACT —
+      // unlimited and unbilled — until the operator puts it on a plan.
+      const orgDecision = checkOrgCreationAllowed(me, await storage().getOrganization(me.organizationId) ?? null);
+      if (!orgDecision.allowed) {
+        return res.status(403).json({ error: orgDecision.reason, message: orgDecision.message });
+      }
       const code = String(b.code || codeFromName(b.name)).toUpperCase();
       const existing = await storage().getOrganizationByCode(code);
       if (existing) return res.status(409).json({ error: "code_taken" });
@@ -83,7 +242,10 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res) => {
       const me = currentUser(req);
-      const id = Number(req.params.id);
+      // The app-wide :id guard (server/params.ts) already answered 404 for a
+      // malformed id; re-checked here so the handler is safe on its own.
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(404).json({ error: "not_found" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
       // Never let a developer delete the org their own account lives in — it
@@ -101,20 +263,60 @@ export function registerDevRoutes(app: Express) {
           .json({ error: "org_not_empty", users: userCount });
       }
       try {
+        // One transaction (storage.deleteOrganization): a failure here means
+        // NOTHING was deleted and the tenant is exactly as it was.
         await storage().deleteOrganization(id);
       } catch (err) {
         console.error("[dev] org delete failed", err);
+        await appendAudit({
+          organizationId: me.organizationId,
+          userId: me.id,
+          action: "dev.org_delete_failed",
+          resourceType: "organization",
+          resourceId: id,
+          details: { code: org.code, users: userCount },
+          riskLevel: "high",
+        });
         return res.status(409).json({ error: "org_has_linked_records" });
       }
-      await appendAudit({
-        organizationId: null,
+      // The tenant is gone, so the deletion is recorded where it CAN be read:
+      // (1) in the operator's own (platform) org trail — never organization_id
+      // NULL, which no view, count or archive would ever surface — and (2) as a
+      // retained record under the deleted tenant's id, alongside the six-year
+      // archive of everything else that happened in it.
+      const stored = await appendAudit({
+        organizationId: me.organizationId,
         userId: me.id,
         action: "dev.org_delete",
         resourceType: "organization",
         resourceId: id,
-        details: { code: org.code },
+        details: { code: org.code, deletedOrganizationId: id, users: userCount, force },
         riskLevel: "high",
       });
+      try {
+        await storage().appendRetainedComplianceRecord({
+          sourceTable: "audit_logs",
+          sourceId: stored?.id ?? 0,
+          organizationId: id,
+          organizationCode: org.code,
+          organizationName: org.name,
+          userId: me.id,
+          userUsername: me.username,
+          userDisplayName: me.displayName,
+          action: "dev.org_delete",
+          resourceType: "organization",
+          resourceId: id,
+          patientId: null,
+          method: null,
+          ip: null,
+          details: { code: org.code, users: userCount, force, operatorOrganizationId: me.organizationId },
+          riskLevel: "high",
+          occurredAt: stored?.createdAt ?? new Date(),
+          archivedReason: "organization_deleted",
+        });
+      } catch (err) {
+        console.error("[dev] failed to retain org delete record", err);
+      }
       res.status(204).end();
     },
   );
@@ -134,8 +336,14 @@ export function registerDevRoutes(app: Express) {
       if (typeof b.city === "string") patch.city = b.city;
       if (typeof b.state === "string") patch.state = b.state;
       if (typeof b.timezone === "string") patch.timezone = b.timezone;
-      if (b.assignmentTimeoutMin != null)
-        patch.assignmentTimeoutMin = Number(b.assignmentTimeoutMin);
+      // The same 1–120 whole minutes a director's PATCH /api/org/config accepts.
+      if (b.assignmentTimeoutMin !== undefined) {
+        const t = b.assignmentTimeoutMin;
+        if (!(typeof t === "number" && Number.isInteger(t) && t >= 1 && t <= 120)) {
+          return res.status(400).json({ error: "validation_error" });
+        }
+        patch.assignmentTimeoutMin = t;
+      }
       if (Array.isArray(b.roundRobinShiftTypes))
         patch.roundRobinShiftTypes = b.roundRobinShiftTypes;
       if (b.rotationMode === "sequential" || b.rotationMode === "lowest_census")
@@ -151,6 +359,10 @@ export function registerDevRoutes(app: Express) {
         details: patch,
         riskLevel: "medium",
       });
+      // That tenant's sessions re-read "Next up" (its rotation config moved).
+      if (patch.rotationMode !== undefined || patch.roundRobinShiftTypes !== undefined) {
+        broadcastRotationChange(id);
+      }
       res.json(updated);
     },
   );
@@ -165,16 +377,30 @@ export function registerDevRoutes(app: Express) {
     requireAuth,
     requireRole("developer"),
     async (req, res) => {
-      const id = Number(req.params.id);
+      const me = currentUser(req);
+      // The app-wide :id guard (server/params.ts) already answered 404 for a
+      // malformed id; re-checked here so the handler is safe on its own.
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(404).json({ error: "not_found" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.org_read",
+        resourceType: "organization",
+        resourceId: id,
+        details: { orgId: id },
+        riskLevel: "low",
+      });
       const settings: Record<string, unknown> = {};
       for (const k of ORG_SETTING_KEYS) {
         const v = await storage().getOrgSetting(id, k);
         settings[k] = v === undefined ? null : v;
       }
-      const [audit, phi] = await Promise.all([
-        storage().listAuditLogs(id, 100),
+      // The TRUE trail size (a 100-row page length is not a count).
+      const [auditCount, phi] = await Promise.all([
+        storage().countAuditLogs(id),
         storage().countPhiAccess(id),
       ]);
       res.json({
@@ -187,7 +413,7 @@ export function registerDevRoutes(app: Express) {
           roundRobinShiftTypes: org.roundRobinShiftTypes,
         },
         settings,
-        compliance: { auditCount: audit.length, phiCount: phi },
+        compliance: { auditCount, phiCount: phi },
       });
     },
   );
@@ -199,7 +425,17 @@ export function registerDevRoutes(app: Express) {
     "/api/dev/compliance-overview",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.compliance_overview",
+        resourceType: "organization",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const orgs = await storage().listOrganizations();
       const rows = await Promise.all(
         orgs.map(async (o) => {
@@ -235,14 +471,34 @@ export function registerDevRoutes(app: Express) {
     requireAuth,
     requireRole("developer"),
     async (req, res) => {
-      const id = Number(req.params.id);
+      const me = currentUser(req);
+      // The app-wide :id guard (server/params.ts) already answered 404 for a
+      // malformed id; re-checked here so the handler is safe on its own.
+      const id = parseId(req.params.id);
+      if (id === null) return res.status(404).json({ error: "not_found" });
       const org = await storage().getOrganization(id);
       if (!org) return res.status(404).json({ error: "not_found" });
-      const [audit, phi] = await Promise.all([
+      // Medium risk, written BEFORE the read: this exposes the tenant's
+      // PHI-ACCESS accounting (who read which patient), itself sensitive
+      // metadata. The row is therefore part of the trail it returns.
+      await appendAudit({
+        organizationId: id,
+        userId: me.id,
+        action: "dev.audit_read",
+        resourceType: "organization",
+        resourceId: id,
+        details: { orgId: id },
+        riskLevel: "medium",
+      });
+      // The latest page of each trail, plus each trail's TRUE size (counted
+      // after this read's own row was written, so it includes it).
+      const [audit, phi, auditCount, phiAccessCount] = await Promise.all([
         storage().listAuditLogs(id, 100),
         storage().listPhiAccess(id, 50),
+        storage().countAuditLogs(id),
+        storage().countPhiAccess(id),
       ]);
-      res.json({ org: { code: org.code }, audit, phiAccess: phi });
+      res.json({ org: { code: org.code }, audit, phiAccess: phi, auditCount, phiAccessCount });
     },
   );
 
@@ -260,6 +516,15 @@ export function registerDevRoutes(app: Express) {
       if (typeof b.key !== "string" || !ORG_SETTING_KEYS.includes(b.key)) {
         return res.status(400).json({ error: "validation_error" });
       }
+      // null clears the org's value (the platform default applies again).
+      // autoCleanHours: whole hours 0–8760 (0 = keep patients indefinitely —
+      // the auto-clean sweep skips the org); autoReassignOnDecline: boolean.
+      const v = b.value;
+      const valid =
+        v === null ||
+        (b.key === "autoCleanHours" && typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 8760) ||
+        (b.key === "autoReassignOnDecline" && typeof v === "boolean");
+      if (!valid) return res.status(400).json({ error: "validation_error" });
       await storage().setOrgSetting(id, b.key, b.value, me.id);
       await appendAudit({
         organizationId: id,
@@ -279,7 +544,17 @@ export function registerDevRoutes(app: Express) {
     "/api/dev/users",
     requireAuth,
     requireRole("developer"),
-    async (_req, res) => {
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.users_list",
+        resourceType: "user",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
       const [allUsers, orgs, hosps] = await Promise.all([
         storage().listAllUsers(),
         storage().listOrganizations(),
@@ -291,10 +566,13 @@ export function registerDevRoutes(app: Express) {
         allUsers.map((u) => ({
           id: u.id,
           name: u.displayName,
+          username: u.username,
           role: u.role,
           org: orgCode.get(u.organizationId) ?? "—",
           specialty: specByUser.get(u.id) ?? "",
           credential: u.credential,
+          disabled: !!u.disabledAt,
+          mustChangePassword: !!u.mustChangePassword,
         })),
       );
     },
@@ -336,11 +614,27 @@ export function registerDevRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       const parsed = devCreateUserSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // The schema only says "positive integer"; an id past Postgres `integer`
+      // range would fail in the database as a 500, so it is refused here.
+      if (!parsed.success || parseId(parsed.data.organizationId) === null) {
+        return res.status(400).json({ error: "validation_error" });
+      }
       const d = parsed.data;
       try {
         const org = await storage().getOrganization(d.organizationId);
         if (!org) return res.status(404).json({ error: "organization_not_found" });
+        // There is no single-tenant ("local") developer: every developer
+        // passes requireRole("developer") on every /api/dev route, with no org
+        // check — cross-tenant root. So a developer account lives in the
+        // platform org, never inside a tenant where it would look scoped to
+        // it; and the platform org holds operators only (A.CON developer #1).
+        const platform = isPlatformOrg(org);
+        if (d.role === "developer" && !platform) {
+          return res.status(400).json({ error: "developer_platform_org_only" });
+        }
+        if (d.role !== "developer" && platform) {
+          return res.status(400).json({ error: "platform_org_operators_only" });
+        }
 
         // Username must be unique within the org — return a clean 409 instead of
         // letting the DB unique constraint throw (which would otherwise hang the
@@ -348,7 +642,35 @@ export function registerDevRoutes(app: Express) {
         const dup = await storage().getUserByUsername(d.organizationId, d.username);
         if (dup) return res.status(409).json({ error: "username_taken" });
 
-        // Audit the cross-tenant write before performing it.
+        // ── BILLING: creating a SEAT (docs/BILLING.md) ───────────────────────
+        // The OPERATOR is never refused — they are the party doing the billing
+        // — but an add that takes a tenant past its committed seats is recorded
+        // in THAT TENANT's trail, so the overage line on the next invoice is
+        // not a surprise to anybody. A developer account in the platform org is
+        // not a seat at all and never reaches this.
+        if (!platform) {
+          const seat = await checkSeatAvailability(storage(), d.organizationId, "operator");
+          if (seat.override) {
+            await appendAudit({
+              organizationId: d.organizationId,
+              userId: me.id,
+              action: "billing.seat_override",
+              resourceType: "organization",
+              resourceId: d.organizationId,
+              details: {
+                reason: seat.reason,
+                seatsInUse: seat.seatsInUse,
+                committedSeats: seat.committedSeats,
+                role: d.role,
+                via: "developer_console",
+              },
+              riskLevel: "medium",
+            });
+          }
+        }
+
+        // Audit the cross-tenant write before performing it. A new developer
+        // is a new cross-tenant root account: high risk.
         await appendAudit({
           organizationId: d.organizationId,
           userId: me.id,
@@ -356,20 +678,22 @@ export function registerDevRoutes(app: Express) {
           resourceType: "user",
           resourceId: null,
           details: { role: d.role, displayName: d.displayName },
-          riskLevel: "medium",
+          riskLevel: d.role === "developer" ? "high" : "medium",
         });
 
-        // Temporary credential issued out-of-band; here we set a random hash.
-        const tempHash = await hashPassword(Math.random().toString(36).slice(2));
+        // One-time credential: crypto-random, returned ONCE in this response for
+        // the developer to relay out-of-band, and forced to change on first use.
+        const temporaryPassword = issueTemporaryPassword();
         const user = await storage().createUser({
           organizationId: d.organizationId,
           username: d.username,
-          passwordHash: tempHash,
+          passwordHash: await hashPassword(temporaryPassword),
           role: d.role,
           displayName: d.displayName,
           credential: d.credential ?? null,
           phone: d.phone ?? null,
           twoFactorEnabled: false,
+          mustChangePassword: true,
         });
 
         if (d.role === "hospitalist") {
@@ -384,8 +708,9 @@ export function registerDevRoutes(app: Express) {
             working: d.working ?? false,
             shiftType: d.shiftType ?? "day",
           });
+          if (d.working) broadcastRotationChange(d.organizationId);
         }
-        res.status(201).json(toSafeUser(user));
+        res.status(201).json({ ...toSafeUser(user), temporaryPassword });
       } catch (err) {
         console.error("[dev] create user failed", err);
         if (!res.headersSent) res.status(500).json({ error: "create_failed" });
@@ -400,9 +725,15 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res, next) => {
       const me = currentUser(req);
-      const targetId = Number(req.body?.userId);
+      // A body id never reaches the database unvalidated: NaN / 1.5 / an
+      // out-of-range integer is the caller's 400, not a DrizzleQueryError 500.
+      const targetId = parseId(req.body?.userId);
+      if (targetId === null) return res.status(400).json({ error: "validation_error" });
       const target = await storage().getUserById(targetId);
       if (!target) return res.status(404).json({ error: "not_found" });
+      // A deactivated account cannot be entered either: its sessions never
+      // deserialise, so impersonating it would only yield a dead session.
+      if (target.disabledAt) return res.status(409).json({ error: "account_disabled" });
       await appendAudit({
         organizationId: target.organizationId,
         userId: me.id,
@@ -412,12 +743,71 @@ export function registerDevRoutes(app: Express) {
         details: { from: me.id, to: target.id },
         riskLevel: "high",
       });
+      // E2.1: this tenant's own staff cannot sign in with a password, so this
+      // portal IS the operator's break-glass. Filed as such, on top of the
+      // dev.impersonate row, so the hospital can see it in their trail.
+      await auditSsoBreakGlass(target.organizationId, me.id, { via: "impersonate", as: target.id });
+      const body = await swappedUserBody(target);
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
-        res.json(toSafeUser(target));
+        // Remember who is really here so /api/dev/impersonate/stop can restore
+        // the developer WITHOUT a password (the client never holds one) — bound
+        // to the developer's password generation, so the developer's password
+        // change, reset or deactivation ends this borrowed session too
+        // (server/auth.ts resolveImpersonator).
+        beginImpersonation(req.session, me);
+        res.json(body);
       });
     },
   );
+
+  // Leave an impersonated / managed-org portal: swap the session back to the
+  // developer recorded at entry. Reachable while the session is the impersonated
+  // user (no developer role check — the session isn't a developer right now);
+  // the recorded developer must still exist, still be a developer and be active.
+  // Exempt from the borrowed account's forced-password-change and MFA-enrolment
+  // gates (server/auth.ts IMPERSONATION_EXIT): a freshly provisioned or
+  // unenrolled account must never trap the developer inside its portal.
+  //
+  // The way back is only as good as the developer's credential at entry: if
+  // the developer's password has changed (or been reset) since, or they were
+  // deactivated or are no longer a developer, the session is ended (401) —
+  // a portal entered with an OLD password must never turn into a developer
+  // session stamped with the NEW one. (deserializeUser already ends such a
+  // session on its first request; this is the same rule at the swap itself.)
+  app.post("/api/dev/impersonate/stop", requireAuth, async (req, res, next) => {
+    const imp = await resolveImpersonator(req.session);
+    if (imp.state === "none") return res.status(400).json({ error: "not_impersonating" });
+    const current = currentUser(req);
+    if (imp.state === "revoked") {
+      await auditRevokedImpersonation(current, imp);
+      return req.logout((err) => {
+        if (err) return next(err);
+        req.session.destroy(() => res.status(401).json({ error: "session_revoked" }));
+      });
+    }
+    const orig = imp.developer;
+    await appendAudit({
+      organizationId: current.organizationId,
+      userId: orig.id,
+      action: "dev.impersonate_stop",
+      resourceType: "user",
+      resourceId: current.id,
+      details: { from: current.id, to: orig.id },
+      riskLevel: "high",
+    });
+    // The developer's OWN gates apply again from the next request; the answer
+    // already says whether one holds them (e.g. the platform org began
+    // requiring MFA while they were inside the portal).
+    const body = await swappedUserBody(orig);
+    req.login(orig as unknown as Express.User, (err) => {
+      if (err) return next(err);
+      // req.login regenerated the session; clear explicitly all the same so no
+      // impersonator binding can ever ride into the developer's own session.
+      clearImpersonation(req.session);
+      res.json(body);
+    });
+  });
 
   // Enter an organization's context as its senior admin (audited session swap)
   // so the developer gets that tenant's FULL portal — board, compliance,
@@ -428,10 +818,13 @@ export function registerDevRoutes(app: Express) {
     requireRole("developer"),
     async (req, res, next) => {
       const me = currentUser(req);
-      const orgId = Number(req.body?.orgId);
+      const orgId = parseId(req.body?.orgId);
+      if (orgId === null) return res.status(400).json({ error: "validation_error" });
       const org = await storage().getOrganization(orgId);
       if (!org) return res.status(404).json({ error: "not_found" });
-      const users = await storage().listUsers(orgId);
+      // Only ACTIVE accounts can be entered — a deactivated one never
+      // deserialises, so the portal would be a dead session.
+      const users = (await storage().listUsers(orgId)).filter((u) => !u.disabledAt);
       // Prefer the broadest admin surface available in the tenant.
       const order = ["director", "er_director", "er_doctor", "hospitalist"];
       let admin = null;
@@ -450,9 +843,116 @@ export function registerDevRoutes(app: Express) {
         details: { as: admin.id, role: admin.role },
         riskLevel: "high",
       });
+      await auditSsoBreakGlass(orgId, me.id, { via: "manage-org", as: admin.id });
+      const body = await swappedUserBody(admin);
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);
-        res.json({ ...toSafeUser(admin), orgCode: org.code, orgName: org.name });
+        beginImpersonation(req.session, me); // /api/dev/impersonate/stop returns here (bound to me's password generation)
+        res.json({ ...body, orgCode: org.code, orgName: org.name });
+      });
+    },
+  );
+
+  // Developer console → System health and the instance-uptime tile (A.CON
+  // developer #15/#16): MEASURED numbers for THIS server instance — the
+  // database round trip (and pool use on real Postgres), percentiles of the
+  // real /api requests of the last 5 minutes, live authenticated WebSocket
+  // connections, process uptime. Nothing here is a constant; what cannot be
+  // measured (a socket count with no hub, a pool on embedded PGlite) is null.
+  // Carries no tenant data; filed in the operator's trail like every
+  // developer read (ids only — no details).
+  app.get(
+    "/api/dev/platform-health",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.platform_health",
+        resourceType: "platform",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
+      const h = getHandle();
+      let dbOk = true;
+      const t0 = process.hrtime.bigint();
+      try {
+        await getDb().execute(sql`SELECT 1`);
+      } catch {
+        dbOk = false;
+      }
+      const roundTripMs = Math.round((Number(process.hrtime.bigint() - t0) / 1e6) * 10) / 10;
+      const pool: PoolStats | null = h.pool
+        ? {
+            total: h.pool.totalCount,
+            idle: h.pool.idleCount,
+            waiting: h.pool.waitingCount,
+            max: Number(h.pool.options.max ?? 10),
+          }
+        : null;
+      const api = apiLatencySummary();
+      const { status, issues } = assessHealth({ dbOk, api, pool });
+      res.json({
+        status,
+        issues,
+        checkedAt: new Date().toISOString(),
+        instance: {
+          startedAt: PROCESS_STARTED_AT.toISOString(),
+          uptimeSec: Math.floor(process.uptime()),
+        },
+        database: { ok: dbOk, roundTripMs: dbOk ? roundTripMs : null, storage: h.storage, pool },
+        api,
+        websocket: liveSocketStats(),
+      });
+    },
+  );
+
+  /**
+   * Cluster view (module enterprise.multiInstance, E1 — docs/ENTERPRISE_READINESS.md):
+   * what THIS instance is, how it reaches the others and which job leases the
+   * cluster holds. Every value is read from live state — the bus's own
+   * counters, the job_leases table, the recorded limiter / session store —
+   * never from an env var's promise. Ids and counts only.
+   */
+  app.get(
+    "/api/dev/cluster",
+    requireAuth,
+    requireRole("developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "dev.cluster_read",
+        resourceType: "platform",
+        resourceId: null,
+        details: {},
+        riskLevel: "low",
+      });
+      const bus = liveHubBus() ?? getBus();
+      const now = Date.now();
+      const leases = (await storage().listJobLeases()).map((l) => ({
+        name: l.name,
+        holder: l.holder,
+        leaseUntil: l.leaseUntil,
+        held: new Date(l.leaseUntil).getTime() > now,
+        heldByThisInstance: l.holder === INSTANCE_ID && new Date(l.leaseUntil).getTime() > now,
+      }));
+      const limiter = getRateLimitState();
+      const sessions = getSessionStoreState();
+      const h = getHandle();
+      res.json({
+        instance: { id: INSTANCE_ID, draining: isShuttingDown(), timers: leasedTimers(), jobs: [...JOB_NAMES] },
+        bus: bus.status(),
+        leases,
+        rateLimit: { enabled: limiter.enabled, store: limiter.store, reason: limiter.reason },
+        sessions: { store: sessions.kind },
+        database: { storage: h.storage },
+        // The one honest summary: can a second instance be added safely?
+        multiInstanceSafe: h.storage === "postgres" && bus.kind === "postgres" && sessions.kind === "postgres",
       });
     },
   );
@@ -467,7 +967,9 @@ export function registerDevRoutes(app: Express) {
       );
       res.json({
         extractor: getExtractor().constructor.name,
-        liveAi: !!process.env.OPENAI_API_KEY,
+        // True only when notes really go to the external LLM (key AND the
+        // BAA attestation AI_EXTERNAL_PHI_OK) — a key alone sends nothing.
+        liveAi: externalExtractorActive(),
         sample,
       });
     },
