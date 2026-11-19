@@ -41,8 +41,10 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 The full build plan is implemented. The design system and high-fidelity UI kits live in
 [`design/`](design/).
 
-`npm test` is green (37 tests: auth, assignment state machine, messaging, realtime WebSocket, MFA,
-notification escalation, and the v2/platform features).
+`npm test` is green (auth, assignment state machine, messaging, realtime WebSocket, MFA,
+notification escalation, the v2/platform features, and the security/compliance control checks).
+`npm run compliance` runs the HIPAA / SOC 2 technical-control checks plus a dependency audit —
+see [`docs/compliance/`](docs/compliance/README.md) for the control matrix and open gaps.
 
 ## Web client
 
