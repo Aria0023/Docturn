@@ -108,6 +108,11 @@ export function stopLiveDemo(orgId: number): boolean {
   if (!r) return false;
   if (r.timer) clearInterval(r.timer);
   runs.delete(orgId);
+  // Sign the driver's sessions out so a run leaves nothing behind.
+  for (const cookie of r.sessions.values()) {
+    void fetch(r.base + "/api/logout", { method: "POST", headers: { Cookie: cookie, "X-Forwarded-Proto": "https" } }).catch(() => {});
+  }
+  r.sessions.clear();
   return true;
 }
 
@@ -176,7 +181,9 @@ async function signIn(run: Run, u: DemoUser): Promise<string | null> {
     headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
     body: JSON.stringify({ orgCode: run.orgCode, username: u.username, password: demoPassword() }),
   }).catch(() => null);
-  if (!r || !r.ok) { run.refused.add(u.id); return null; }
+  // Only a refused sign-in (wrong password, deactivated) rules the account
+  // out for the run; a busy or failing server is retried on the next tick.
+  if (!r || !r.ok) { if (r && (r.status === 401 || r.status === 403)) run.refused.add(u.id); return null; }
   const cookies = (r.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
   const cookie = cookies.map((c) => c.split(";")[0]).join("; ");
   if (!cookie) { run.refused.add(u.id); return null; }
@@ -247,7 +254,7 @@ async function demoUsers(orgId: number): Promise<DemoUser[]> {
 }
 
 async function tick(run: Run) {
-  if (run.ticking) return;
+  if (run.ticking || runs.get(run.orgId) !== run) return; // stopped
   if (Date.now() > run.endsAt) { stopLiveDemo(run.orgId); return; }
   run.ticking = true;
   try {
@@ -579,7 +586,6 @@ const BEATS: Beat[] = [
     },
   },
 ];
-export const STORY_LENGTH = BEATS.length;
 
 function storyView(st: StoryState) {
   const beat = BEATS[Math.min(st.index, BEATS.length - 1)]!;
@@ -599,7 +605,7 @@ function storyView(st: StoryState) {
 }
 
 async function storyTick(run: Run) {
-  if (run.ticking || !run.story) return;
+  if (run.ticking || !run.story || runs.get(run.orgId) !== run) return; // stopped
   if (Date.now() > run.endsAt) { stopLiveDemo(run.orgId); return; }
   const st = run.story;
   run.ticking = true;
@@ -610,7 +616,13 @@ async function storyTick(run: Run) {
     if (!st.started) {
       st.started = true;
       st.happened = null;
-      st.happened = await beat.act(run, users, st.ctx);
+      try {
+        st.happened = await beat.act(run, users, st.ctx);
+      } catch (e) {
+        // A failed step never freezes the story: say so and move on in turn.
+        console.warn("[demo-live] story step failed:", (e as Error).message);
+        st.happened = "This step could not run. Press Next to continue.";
+      }
       st.beatDoneAt = Date.now();
       st.waitUntil = beat.wait ? Date.now() + STORY_WAIT_MS : null;
     }

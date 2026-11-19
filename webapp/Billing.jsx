@@ -670,6 +670,16 @@ function DevBilling() {
       </Card>
     );
   }
+  if (d.error) {
+    return (
+      <Card>
+        <div data-dev-billing-error>
+          <SectionTitle icon="receipt" title="Billing" sub="The billing data could not be read from the server." />
+          <BillButton icon="refresh-cw" onClick={() => a.loadDevBilling && a.loadDevBilling()}>Try again</BillButton>
+        </div>
+      </Card>
+    );
+  }
   const plans = d.plans || [];
   const byOrg = {};
   (d.invoices || []).forEach((i) => { (byOrg[i.orgId] = byOrg[i.orgId] || []).push(i); });

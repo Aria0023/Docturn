@@ -51,9 +51,11 @@ export function registerRoutes(app: Express) {
   registerHealthRoutes(app);
   registerWellKnownRoutes(app);
   registerLegalRoutes(app);
+  // registerAuthRoutes mounts the app-lock, MFA-enrolment and password-change
+  // gates: every /api route that needs a session is registered AFTER it.
+  registerAuthRoutes(app);
   registerWebsiteRoutes(app);
   registerDemoLiveRoutes(app);
-  registerAuthRoutes(app);
   registerMfaRoutes(app);
   registerProviderRoutes(app);
   registerPatientRoutes(app);

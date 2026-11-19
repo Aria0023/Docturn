@@ -114,7 +114,7 @@ function OrgConfig({ scope, org }) {
     setOpenedAt(opened);
     a.loadOrgRules(scope, { fresh: true });
     const reread = () => { a.loadOrgRules(scope); };
-    const t = setInterval(reread, 60000);
+    const t = setInterval(() => { if (!document.hidden) reread(); }, 60000);
     const onVisible = () => { if (!document.hidden) reread(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", reread);

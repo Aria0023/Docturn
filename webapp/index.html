@@ -181,8 +181,8 @@
   }
   @keyframes dtStoryTurn { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 30%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
   @keyframes dtStoryIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
-  @media (min-width: 761px) { .dt-story-on main { padding-right: 432px !important; } }
-  @media (max-width: 760px) { .dt-story-on .dt-mobile-shell > main { padding-bottom: calc(var(--story-h, 300px) + 96px + var(--sai-bottom, 0px)) !important; } }
+  .dt-story-on:not(.dt-story-mobile) main { padding-right: 432px !important; }
+  .dt-story-on.dt-story-mobile .dt-mobile-shell > main { padding-bottom: calc(var(--story-h, 300px) + 96px + var(--sai-bottom, 0px)) !important; }
 </style>
 <!-- Vendored locally so the app loads with no external CDN (works offline and
      behind hospital/corporate firewalls that block unpkg).
@@ -491,6 +491,7 @@ function LiveDemoControl({ ld, onSet }) {
    with captions) or free play (a busy hospital for questions). */
 function LiveDemoStart({ busy, onPick, btn }) {
   const [open, setOpen] = React.useState(false);
+  const mobile = useIsMobile();
   const ref = React.useRef(null);
   React.useEffect(() => {
     if (!open) return undefined;
@@ -515,7 +516,7 @@ function LiveDemoStart({ busy, onPick, btn }) {
         <Icon name="radio" size={15} color="var(--primary)" />Go live
       </button>
       {open && (
-        <div role="menu" data-live-demo-menu style={{ position: "absolute", right: 0, top: 42, zIndex: 80, width: 300, maxWidth: "calc(100vw - 32px)", padding: 6, borderRadius: 14, background: "var(--card)", border: "1px solid var(--border)", boxShadow: "0 18px 50px rgba(15, 23, 42, .18)" }}>
+        <div role="menu" data-live-demo-menu style={{ position: "absolute", zIndex: 80, ...(mobile ? { left: 0, bottom: 42, width: "min(300px, calc(100vw - 48px))" } : { right: 0, top: 42, width: 300 }), maxWidth: "calc(100vw - 32px)", padding: 6, borderRadius: 14, background: "var(--card)", border: "1px solid var(--border)", boxShadow: "0 18px 50px rgba(15, 23, 42, .18)" }}>
           {opt("story", "route", "Guided story", "One patient from the ER to admitted, in 7 steps with captions. Best for a first look.")}
           {opt("free", "zap", "Busy hospital", "Admissions, messages and consults keep arriving. Best for questions and free play.")}
         </div>
@@ -546,13 +547,14 @@ function StoryCard({ ld, role, onControl, onSet, onNav }) {
     if (!st) return undefined;
     const root = document.documentElement;
     root.classList.add("dt-story-on");
+    root.classList.toggle("dt-story-mobile", !!mobile);
     const el = cardRef.current;
     const measure = () => { if (el) root.style.setProperty("--story-h", Math.ceil(el.getBoundingClientRect().height) + "px"); };
     measure();
     const ro = typeof ResizeObserver !== "undefined" && el ? new ResizeObserver(measure) : null;
     if (ro) ro.observe(el);
-    return () => { if (ro) ro.disconnect(); root.classList.remove("dt-story-on"); root.style.removeProperty("--story-h"); };
-  }, [!!st]);
+    return () => { if (ro) ro.disconnect(); root.classList.remove("dt-story-on", "dt-story-mobile"); root.style.removeProperty("--story-h"); };
+  }, [!!st, mobile]);
   React.useEffect(() => {
     if (!st || st.index === lastIdx.current) return;
     lastIdx.current = st.index;

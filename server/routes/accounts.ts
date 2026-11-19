@@ -117,6 +117,9 @@ export function registerAccountRoutes(app: Express) {
     if (!target) return;
     if (!target.disabledAt) {
       await storage().updateUser(target.id, { disabledAt: new Date() });
+      // Sessions that exist now must not come back to life on reactivation
+      // (a lost device's cookie): revoke them, not just refuse them meanwhile.
+      await storage().setUserSessionsRevokedAt(target.id, new Date());
       // Off the rotation immediately: a deactivated provider must never be
       // offered an admission or resolve as the on-call.
       const profile = await storage().getHospitalistByUser(target.organizationId, target.id);

@@ -134,10 +134,51 @@ export function registerSettingsRoutes(app: Express) {
     },
   );
 
+  // Personal preferences. Only the keys the app reads are accepted, each with
+  // its own shape: these values route messages (do-not-disturb forwards to the
+  // covering provider), so they are validated and audited like any other write.
   app.patch("/api/settings/me", requireAuth, async (req, res) => {
     const me = currentUser(req);
     const parsed = userPrefSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    const { key } = parsed.data;
+    let value: unknown = parsed.data.value;
+    if (key === "dashboardLayout") {
+      if (value === null || typeof value !== "object" || JSON.stringify(value).length > 64_000) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+    } else if (key === "dnd") {
+      if (typeof value !== "boolean") return res.status(400).json({ error: "validation_error" });
+      if (value && !(await isModuleEnabled(me.organizationId, "messaging.dnd"))) {
+        return res.status(404).json({ error: "module_disabled", module: "messaging.dnd" });
+      }
+    } else if (key === "coveringUserId") {
+      if (value !== null) {
+        if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) return res.status(400).json({ error: "validation_error" });
+        if (value === me.id) return res.status(400).json({ error: "covering_is_self" });
+        const cu = await storage().getUser(me.organizationId, value);
+        if (!cu) return res.status(404).json({ error: "covering_not_found" });
+        if (cu.disabledAt) return res.status(409).json({ error: "covering_inactive" });
+      }
+    } else if (key === "awayMessage") {
+      if (value !== null && typeof value !== "string") return res.status(400).json({ error: "validation_error" });
+      if (typeof value === "string") value = value.trim().slice(0, 280);
+    } else {
+      return res.status(400).json({ error: "unknown_preference" });
+    }
+    if (key === "dnd" || key === "coveringUserId") {
+      // Flags and ids only.
+      await appendAudit({
+        organizationId: me.organizationId,
+        userId: me.id,
+        action: "prefs.availability",
+        resourceType: "user",
+        resourceId: me.id,
+        details: key === "dnd" ? { dnd: value } : { coveringUserId: value },
+        riskLevel: "low",
+      });
+    }
+    parsed.data.value = value;
     await storage().setUserPreference(
       me.organizationId,
       me.id,

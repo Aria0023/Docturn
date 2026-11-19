@@ -7,7 +7,6 @@ dist/
 .pglite/
 coverage/
 .vite/
-client/dist/
 *.tsbuildinfo
 
 # Workflow/agent worktrees (never commit)

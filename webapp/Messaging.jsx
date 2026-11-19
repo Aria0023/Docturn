@@ -444,13 +444,19 @@ function Messaging() {
     if (!window.confirm("Recall this message? It will be removed for everyone in this conversation.")) return;
     a.recallMessage(cid, m.id);
   };
+  // An upload or recording belongs to the thread it STARTED in: if the user
+  // has switched threads by the time it lands, it is dropped — never added to
+  // another conversation's composer (it could be sent to the wrong person).
+  const cidRef = React.useRef(cid);
+  cidRef.current = cid;
   // Upload each chosen file, appending it to the pending chips as it lands.
   const onPickFiles = (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = ""; // allow re-picking the same file later
+    const startCid = cidRef.current;
     files.forEach((f) => {
       Promise.resolve(a.uploadAttachment && a.uploadAttachment(f))
-        .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
+        .then((res) => { if (res && res.id && cidRef.current === startCid) setPending((prev) => prev.concat([res])); })
         .catch((err) => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: (err && err.reason && err.reason.text) || f.name }); });
     });
   };
@@ -492,19 +498,20 @@ function Messaging() {
     }
     if (!mr) { stream.getTracks().forEach((t) => t.stop()); if (a.toast) a.toast({ tone: "rejected", title: "Recording unsupported", msg: "This browser can't record audio." }); return; }
     streamRef.current = stream; recRef.current = mr; chunksRef.current = []; recCancelRef.current = false;
+    const startCid = cidRef.current;
     mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
     mr.onstop = () => {
       clearRecTimer(); stopTracks();
       const durationMs = Math.max(0, Date.now() - recStartRef.current);
       const wasCancel = recCancelRef.current; setRecording(false); setRecSecs(0);
-      if (wasCancel || !chunksRef.current.length) { chunksRef.current = []; return; }
+      if (wasCancel || !chunksRef.current.length || cidRef.current !== startCid) { chunksRef.current = []; return; }
       const baseType = (mr.mimeType || type || (chunksRef.current[0] && chunksRef.current[0].type) || "audio/webm").split(";")[0].trim().toLowerCase();
       const ext = baseType.indexOf("mp4") >= 0 ? "m4a" : baseType.indexOf("ogg") >= 0 ? "ogg" : "webm";
       const blob = new Blob(chunksRef.current, { type: baseType });
       chunksRef.current = [];
       const file = new File([blob], "voice-" + Date.now() + "." + ext, { type: baseType });
       Promise.resolve(a.uploadAttachment && a.uploadAttachment(file, { durationMs }))
-        .then((res) => { if (res && res.id) setPending((prev) => prev.concat([res])); })
+        .then((res) => { if (res && res.id && cidRef.current === startCid) setPending((prev) => prev.concat([res])); })
         .catch((err) => { if (a.toast) a.toast({ tone: "rejected", title: "Upload failed", msg: (err && err.reason && err.reason.text) || "Voice message" }); });
     };
     mr.start(); recStartRef.current = Date.now(); setRecording(true); setRecSecs(0);
@@ -516,7 +523,7 @@ function Messaging() {
   };
   const stopRec = () => { const mr = recRef.current; if (mr && mr.state !== "inactive") mr.stop(); };
   const cancelRec = () => { recCancelRef.current = true; stopRec(); };
-  React.useEffect(() => () => { clearRecTimer(); stopTracks(); }, []); // cleanup on unmount
+  React.useEffect(() => () => { recCancelRef.current = true; clearRecTimer(); stopTracks(); }, []); // cleanup on unmount: a recording in progress is discarded
   const fmtDur = (ms) => { const s = Math.round((ms || 0) / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   const PRIO = { urgent: { label: "Urgent", color: "var(--status-pending)", bg: "var(--status-pending-bg)", icon: "alert-triangle" }, stat: { label: "STAT", color: "var(--status-rejected)", bg: "var(--status-rejected-bg)", icon: "siren" } };
   // Forwarding is SERVER-backed: POST /api/messaging/messages/:id/forward

@@ -154,6 +154,9 @@ export async function runStatEscalationSweep(
   // but the lookup is still a settings read per row without this).
   const enabledByOrg = new Map<number, boolean>();
   for (const row of rows) {
+   // One bad row (a database blip, a failing push) must not stop the sweep
+   // for every other hospital's unacknowledged STAT.
+   try {
     let on = enabledByOrg.get(row.organizationId);
     if (on === undefined) {
       on = await isModuleEnabled(row.organizationId, ESCALATION_MODULE);
@@ -174,9 +177,10 @@ export async function runStatEscalationSweep(
     const age = now - new Date(row.createdAt).getTime();
 
     // Step 1 — re-alert the original recipient.
-    if (age >= realertMs && !row.realertedAt) {
-      const realertedAt = new Date();
-      await s.markDeliveryRealerted(row.deliveryId, realertedAt);
+    // Each step is CLAIMED in the database first (a conditional update), so
+    // two instances sweeping the same row never both re-alert or escalate.
+    const realertedAt = new Date();
+    if (age >= realertMs && !row.realertedAt && (await s.markDeliveryRealerted(row.deliveryId, realertedAt))) {
       // To the recipient (the nudge) and the sender (their countdown moves on,
       // A.CON-MIN-18). Ids only; `userId` = who was re-alerted, `at` = the
       // stored realertedAt.
@@ -194,8 +198,12 @@ export async function runStatEscalationSweep(
     }
 
     // Step 2 — escalate to the covering provider.
-    if (age >= escalateMs && !row.escalatedAt) {
-      const escalatedAt = new Date();
+    const escalatedAt = new Date();
+    if (age >= escalateMs && !row.escalatedAt && (await s.markDeliveryEscalated(row.deliveryId, escalatedAt))) {
+     // Until the covering provider has the message, a failure gives the claim
+     // back so the next sweep retries; after that it is never repeated.
+     let handedOver = false;
+     try {
       const coveringId = await resolveCovering(
         s,
         row.organizationId,
@@ -280,6 +288,7 @@ export async function runStatEscalationSweep(
           escalated++;
         }
       }
+      handedOver = true;
       // Last-resort PHI-free SMS nudge to the unresponsive recipient (default
       // on; developer/operator can disable per org). No-op stub without creds.
       const smsSent = await sendStatSmsFallback(
@@ -287,9 +296,8 @@ export async function runStatEscalationSweep(
         row.organizationId,
         row.userId,
       );
-      // Mark even when no covering exists so the sweep doesn't retry forever;
-      // the audit row records whether it went anywhere.
-      await s.markDeliveryEscalated(row.deliveryId, escalatedAt);
+      // Claimed above even when no covering exists, so the sweep doesn't
+      // retry forever; the audit row records whether it went anywhere.
       // The step ran — with or without a covering provider: the sender's and
       // the recipient's countdowns move to "Escalated" live (A.CON-MIN-18).
       // Ids only; `userId` = whose row escalated, `escalatedAt` = the stored
@@ -322,7 +330,14 @@ export async function runStatEscalationSweep(
         },
         riskLevel: "high",
       });
+     } catch (err) {
+      if (!handedOver) await s.releaseDeliveryEscalation(row.deliveryId).catch(() => {});
+      throw err;
+     }
     }
+   } catch (err) {
+    console.error(`[escalation] delivery ${row.deliveryId} failed; continuing`, (err as Error).message);
+   }
   }
   return { realerted, escalated, skippedModuleOff };
 }

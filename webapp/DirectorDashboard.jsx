@@ -220,7 +220,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
   React.useEffect(() => {
     if (!oncallOn || !act.loadOnCallSources) return undefined;
     act.loadOnCallSources();
-    const t = setInterval(() => act.loadOnCallSources(), 60000);
+    const t = setInterval(() => { if (!document.hidden) act.loadOnCallSources(); }, 60000);
     return () => clearInterval(t);
   }, [oncallOn]);
   const srcInfo = st.onCallSources || null;

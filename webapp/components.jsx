@@ -12,7 +12,7 @@ function Icon({ name, size = 16, color, strokeWidth = 2, style, className }) {
   return <span ref={ref} className={className} style={{ display: "inline-flex", alignItems: "center", color, flex: "none", ...style }} />;
 }
 
-function Button({ variant = "default", size = "default", icon, children, onClick, type, full, style, title, "aria-label": ariaLabel }) {
+function Button({ variant = "default", size = "default", icon, children, onClick, type, full, style, title, disabled, "aria-label": ariaLabel }) {
   const base = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
     fontFamily: "var(--font-sans)", fontWeight: 500, borderRadius: "var(--radius-md)",
@@ -44,10 +44,10 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     link: { background: "transparent", color: "var(--primary-ink)", textDecoration: "underline", height: "auto", padding: 0 },
   };
   return (
-    <button type={type || "button"} onClick={onClick} title={title} aria-label={ariaLabel || title}
+    <button type={type || "button"} onClick={disabled ? undefined : onClick} disabled={!!disabled} title={title} aria-label={ariaLabel || title}
       onMouseEnter={(e) => { if (variant === "ghost" || variant === "secondary") e.currentTarget.style.background = "var(--secondary)"; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-md)"; if (variant === "outline") e.currentTarget.style.background = "var(--secondary)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = variants[variant].background; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
-      style={{ ...base, ...sizes[size], ...variants[variant], ...style }}>
+      style={{ ...base, ...sizes[size], ...variants[variant], ...style, ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}) }}>
       {icon && <Icon name={icon} size={size === "lg" ? 18 : 16} />}
       {children}
     </button>
@@ -309,10 +309,15 @@ function ConsultAdd({ services, onPick, label, only }) {
   // Two ways to consult: a SERVICE (its on-call and team are called) or a
   // specific PHYSICIAN by name — anyone in the organization, not only whoever
   // is on call. onPick receives the service name, or { person }.
-  const [tab, setTab] = React.useState(only === "person" ? "person" : "service");
+  // An organization with no consult-service catalog has no services to offer
+  // (never a made-up list): the picker is then "Specific physician" only.
+  const hasCatalog = !!(services && services.length);
+  const personOnly = only === "person" || !hasCatalog;
+  const [tab, setTab] = React.useState(personOnly ? "person" : "service");
   const [q, setQ] = React.useState("");
   const btnRef = React.useRef(null);
-  const list = (services && services.length) ? services : ["Hospital Medicine", "Cardiology", "GI", "Pulmonology", "Nephrology", "Endocrine", "Infectious Disease", "Neurology"];
+  const list = hasCatalog ? services : [];
+  React.useEffect(() => { if (personOnly && tab !== "person") setTab("person"); }, [personOnly]);
   const people = open && tab === "person" && window.DT && window.DT.consultPeople ? window.DT.consultPeople() : [];
   const ql = q.trim().toLowerCase();
   const matches = ql ? people.filter((p) => p.name.toLowerCase().includes(ql) || p.label.toLowerCase().includes(ql)) : people;
@@ -342,7 +347,7 @@ function ConsultAdd({ services, onPick, label, only }) {
   );
   return (
     <span style={{ display: "inline-flex" }}>
-      <button ref={btnRef} onClick={toggle} aria-expanded={open}
+      <button ref={btnRef} type="button" onClick={toggle} aria-expanded={open}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 9px", borderRadius: "var(--radius-full)", cursor: "pointer", fontSize: 11.5, fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", border: "1px dashed var(--border)", background: "var(--card)", color: "var(--primary-ink)" }}>
         <Icon name={open ? "x" : "plus"} size={11} />{label || "Consult"}
       </button>
@@ -350,7 +355,7 @@ function ConsultAdd({ services, onPick, label, only }) {
         <React.Fragment>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
           <div data-consult-menu style={{ position: "fixed", left: pos.left, top: pos.top == null ? undefined : pos.top, bottom: pos.bottom == null ? undefined : pos.bottom, zIndex: 9999, width: pos.width, maxWidth: "92vw", maxHeight: Math.min(pos.room, Math.round((window.innerHeight || 768) * 0.7)), display: "flex", flexDirection: "column", background: "var(--card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xl)", padding: 10, gap: 8 }}>
-            {only !== "person" && (
+            {!personOnly && (
               <div role="tablist" aria-label="Consult by" style={{ display: "flex", gap: 2, padding: 3, background: "var(--secondary)", borderRadius: "var(--radius-md)" }}>
                 {tabBtn("service", "Service (on call)")}
                 {tabBtn("person", "Specific physician")}
@@ -513,7 +518,6 @@ function commsStatTiles(cm) {
 }
 Object.assign(window, { fmtCommsDur, commsStatTiles });
 
-Object.assign(window, { Icon, Button, Badge, StatusDot, Avatar, Card, Field, Logo, StatTile, STATUS });
 
 // "Consult requests for you": consults addressed to the signed-in clinician on
 // ANY patient (GET /api/consults/mine). The one place a consultant answers —

@@ -168,6 +168,10 @@ export function registerBoardRoutes(app: Express) {
       const namedIds = new Set<number>();
       if (parsed.data.consultantUserId != null) namedIds.add(parsed.data.consultantUserId);
       for (const t of parsed.data.consultants ?? []) if (t.userId != null) namedIds.add(t.userId);
+      // Nobody consults themselves: an accepted consultant joins the patient's
+      // care-team thread, so a self-addressed consult would be a way to read
+      // a thread the caller was never added to.
+      if (namedIds.has(me.id)) return res.status(400).json({ error: "cannot_consult_self" });
       for (const id of namedIds) {
         const u = await storage().getUser(me.organizationId, id);
         if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
@@ -312,11 +316,20 @@ export function registerBoardRoutes(app: Express) {
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
     const before = await storage().getConsult(me.organizationId, id);
     if (!before) return res.status(404).json({ error: "not_found" });
+    const repoint = parsed.data.consultantUserId !== undefined && parsed.data.consultantUserId !== before.consultantUserId;
     if (parsed.data.consultantUserId !== undefined) {
+      if (repoint && parsed.data.consultantUserId === me.id) return res.status(400).json({ error: "cannot_consult_self" });
       const u = await storage().getUser(me.organizationId, parsed.data.consultantUserId);
       if (!u || u.disabledAt) return res.status(400).json({ error: "unknown_consultant" });
+      // Re-pointing and answering are different acts by different people.
+      if (repoint && parsed.data.status !== undefined) return res.status(400).json({ error: "validation_error" });
     }
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
+    // Every status change is the consultant's (or, to close out a consult,
+    // a director's): nobody else may mark a consult active or closed.
+    if (parsed.data.status !== undefined && !responded && before.consultantUserId !== me.id && me.role !== "director") {
+      return res.status(403).json({ error: "only_consultant_can_answer" });
+    }
     // The ANSWER is the consultant's alone. Whoever requested a consult — an
     // ER physician, a director, anyone — can add, re-point or remove one,
     // but accepting or declining for the consultant would put an answer on
@@ -333,6 +346,9 @@ export function registerBoardRoutes(app: Express) {
       ...(parsed.data.consultantUserId !== undefined
         ? { consultantUserId: parsed.data.consultantUserId }
         : {}),
+      // A re-pointed consult is a NEW request to a different person: the
+      // previous consultant's answer does not carry over to them.
+      ...(repoint ? { status: "requested" as const, respondedAt: null } : {}),
     });
     if (!updated) return res.status(404).json({ error: "not_found" });
     if (parsed.data.status !== undefined || parsed.data.consultantUserId !== undefined) {

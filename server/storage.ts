@@ -469,8 +469,11 @@ export interface IStorage {
   >;
   /** `at` (default now) is the time stored — the sweep sends the same value
    * in its STAT_REALERT / STAT_ESCALATED frames. */
-  markDeliveryRealerted(deliveryId: number, at?: Date): Promise<void>;
-  markDeliveryEscalated(deliveryId: number, at?: Date): Promise<void>;
+  markDeliveryRealerted(deliveryId: number, at?: Date): Promise<boolean>;
+  markDeliveryEscalated(deliveryId: number, at?: Date): Promise<boolean>;
+  releaseDeliveryEscalation(deliveryId: number): Promise<void>;
+  advanceRotationIndex(orgId: number): Promise<void>;
+  raisePatientCap(orgId: number, hospitalistId: number): Promise<void>;
 
   // message attachments
   createAttachment(a: {
@@ -539,7 +542,6 @@ export interface IStorage {
     key: string,
     value: unknown,
   ): Promise<void>;
-  getFeatureFlag(orgId: number, flag: string): Promise<boolean>;
 
   // audit & phi
   /** Insert one audit row and return it (callers cross-reference its id). */
@@ -560,7 +562,6 @@ export interface IStorage {
   }): Promise<void>;
   countPhiAccess(orgId: number, userId?: number): Promise<number>;
   /** Copy an org's audit/PHI/security rows into the six-year retained archive. */
-  archiveComplianceRecords(orgId: number, reason: string): Promise<number>;
   /** Write one record straight into the retained archive (e.g. the deletion of the tenant itself). */
   appendRetainedComplianceRecord(
     row: NewRetainedComplianceRecord,
@@ -616,7 +617,6 @@ export interface IStorage {
     userId: number,
     patch: Partial<Pick<UserThemePrefs, "preset" | "textSize" | "followDevice">>,
   ): Promise<UserThemePrefs>;
-  deleteThemePrefs(orgId: number, userId: number): Promise<boolean>;
   // Shared rate-limit counters (not tenant data).
   incrementRateLimitHit(key: string, windowMs: number): Promise<{ count: number; windowStart: Date }>;
   decrementRateLimitHit(key: string): Promise<void>;
@@ -832,18 +832,19 @@ export class DatabaseStorage implements IStorage {
     const empty: PurgeResult = { patients: 0, assignments: 0, consults: 0, conversations: 0, messages: 0, attachments: 0 };
     if (!ids.length) return empty;
 
-    const { result } = await this.purgePatientRows(orgId, ids);
-    // Keep census honest: it now equals each provider's remaining accepted load.
-    const hosps = await this.listHospitalists(orgId);
-    for (const h of hosps) {
-      const accepted = await this.db
-        .select({ id: assignments.id })
-        .from(assignments)
-        .where(and(eq(assignments.organizationId, orgId), eq(assignments.hospitalistId, h.id), eq(assignments.status, "accepted")));
-      if (h.currentPatientCount !== accepted.length) {
-        await this.updateHospitalist(orgId, h.id, { currentPatientCount: accepted.length });
-      }
+    const { result, acceptedHospitalistIds } = await this.purgePatientRows(orgId, ids);
+    // Census moves exactly as it does for one removed patient: each provider
+    // loses the accepted patients that just left, atomically. Nobody's census
+    // is recomputed, so a director-entered census (patients not in DocTurn)
+    // survives the hourly auto-clean.
+    if (!cutoff) {
+      // "Clear all": every patient is gone, so every census starts again at 0.
+      await this.db.update(hospitalists).set({ currentPatientCount: 0 }).where(eq(hospitalists.organizationId, orgId));
+      return result;
     }
+    const drop = new Map<number, number>();
+    for (const hid of acceptedHospitalistIds) drop.set(hid, (drop.get(hid) ?? 0) + 1);
+    for (const [hid, n] of drop) await this.adjustCensus(orgId, hid, -n);
     return result;
   }
 
@@ -862,10 +863,7 @@ export class DatabaseStorage implements IStorage {
     const { result, acceptedHospitalistIds } = await this.purgePatientRows(orgId, [id]);
     const drop = new Map<number, number>();
     for (const hid of acceptedHospitalistIds) drop.set(hid, (drop.get(hid) ?? 0) + 1);
-    for (const [hid, n] of drop) {
-      const h = await this.getHospitalist(orgId, hid);
-      if (h) await this.updateHospitalist(orgId, hid, { currentPatientCount: Math.max(0, h.currentPatientCount - n) });
-    }
+    for (const [hid, n] of drop) await this.adjustCensus(orgId, hid, -n);
     return result;
   }
 
@@ -995,7 +993,7 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(assignments.status, "pending"),
-          sql`${assignments.expiresAt} <= ${now}`,
+          lte(assignments.expiresAt, now),
         ),
       )
       .orderBy(asc(assignments.expiresAt))
@@ -1033,7 +1031,7 @@ export class DatabaseStorage implements IStorage {
       .select({
         since: sql<number>`count(*) FILTER (WHERE ${sinceCond})::int`,
         sinceRemoved: sql<number>`count(*) FILTER (WHERE ${sinceCond} AND NOT EXISTS (SELECT 1 FROM ${patients} WHERE ${patients.id} = ${admissionEvents.patientId}))::int`,
-        last24h: sql<number>`count(*) FILTER (WHERE ${admissionEvents.firstRoutedAt} >= ${opts.dayAgo})::int`,
+        last24h: sql<number>`count(*) FILTER (WHERE ${gte(admissionEvents.firstRoutedAt, opts.dayAgo)})::int`,
       })
       .from(admissionEvents)
       .where(eq(admissionEvents.organizationId, orgId));
@@ -1117,6 +1115,15 @@ export class DatabaseStorage implements IStorage {
    * Census ±1 as ONE statement (never read-then-write): two accepts for the
    * same provider landing together must both count. Floors at zero.
    */
+  /** Advance the round-robin cursor atomically (two picks never share a slot). */
+  async advanceRotationIndex(orgId: number) {
+    await this.db.update(organizations).set({ rotationIndex: sql`${organizations.rotationIndex} + 1` }).where(eq(organizations.id, orgId));
+  }
+  /** Raise one provider's cap by one, atomically (cap relief). */
+  async raisePatientCap(orgId: number, hospitalistId: number) {
+    await this.db.update(hospitalists).set({ patientCap: sql`${hospitalists.patientCap} + 1` })
+      .where(and(eq(hospitalists.organizationId, orgId), eq(hospitalists.id, hospitalistId)));
+  }
   async adjustCensus(orgId: number, hospitalistId: number, delta: number) {
     const [row] = await this.db
       .update(hospitalists)
@@ -1128,12 +1135,13 @@ export class DatabaseStorage implements IStorage {
 
   // ── messaging ────────────────────────────────────────────────────────────────
   async listConversationsForUser(orgId: number, userId: number) {
-    const rows = await this.db
+    // Membership is decided by the database (GIN index on participant_ids),
+    // not by loading every conversation in the hospital.
+    return this.db
       .select()
       .from(conversations)
-      .where(eq(conversations.organizationId, orgId))
+      .where(and(eq(conversations.organizationId, orgId), sql`${conversations.participantIds} @> ${JSON.stringify([userId])}::jsonb`))
       .orderBy(desc(conversations.createdAt));
-    return rows.filter((c) => c.participantIds.includes(userId));
   }
   async getConversation(orgId: number, id: number) {
     const [row] = await this.db
@@ -1403,20 +1411,32 @@ export class DatabaseStorage implements IStorage {
           eq(messages.priority, "stat"),
           isNull(messages.deletedAt),
           isNull(messageDeliveryStatus.acknowledgedAt),
+          // Rows that already went through both steps have nothing left to do.
+          or(isNull(messageDeliveryStatus.realertedAt), isNull(messageDeliveryStatus.escalatedAt)),
         ),
       );
   }
-  async markDeliveryRealerted(deliveryId: number, at: Date = new Date()) {
-    await this.db
+  /** Claim the re-alert step. False when another sweep (instance) already did. */
+  async markDeliveryRealerted(deliveryId: number, at: Date = new Date()): Promise<boolean> {
+    const rows = await this.db
       .update(messageDeliveryStatus)
       .set({ realertedAt: at })
-      .where(eq(messageDeliveryStatus.id, deliveryId));
+      .where(and(eq(messageDeliveryStatus.id, deliveryId), isNull(messageDeliveryStatus.realertedAt)))
+      .returning({ id: messageDeliveryStatus.id });
+    return rows.length > 0;
   }
-  async markDeliveryEscalated(deliveryId: number, at: Date = new Date()) {
-    await this.db
+  /** Claim the escalation step. False when another sweep (instance) already did. */
+  async markDeliveryEscalated(deliveryId: number, at: Date = new Date()): Promise<boolean> {
+    const rows = await this.db
       .update(messageDeliveryStatus)
       .set({ escalatedAt: at })
-      .where(eq(messageDeliveryStatus.id, deliveryId));
+      .where(and(eq(messageDeliveryStatus.id, deliveryId), isNull(messageDeliveryStatus.escalatedAt)))
+      .returning({ id: messageDeliveryStatus.id });
+    return rows.length > 0;
+  }
+  /** Give an escalation claim back so the next sweep retries it. */
+  async releaseDeliveryEscalation(deliveryId: number) {
+    await this.db.update(messageDeliveryStatus).set({ escalatedAt: null }).where(eq(messageDeliveryStatus.id, deliveryId));
   }
 
   // ── Message attachments ──────────────────────────────────────────────────
@@ -1518,7 +1538,7 @@ export class DatabaseStorage implements IStorage {
     // Collect store refs first so encrypted attachment FILES are removed too,
     // not just the rows (otherwise ciphertext lingers on disk past retention).
     const atts = await this.db
-      .select({ ref: messageAttachments.dataBase64 })
+      .select({ ref: sql<string>`CASE WHEN ${messageAttachments.dataBase64} LIKE ${FS_REF_PREFIX + "%"} THEN ${messageAttachments.dataBase64} ELSE '' END` })
       .from(messageAttachments)
       .where(inArray(messageAttachments.messageId, ids));
     await this.db.transaction(async (tx) => {
@@ -1828,18 +1848,6 @@ export class DatabaseStorage implements IStorage {
         set: { value },
       });
   }
-  async getFeatureFlag(orgId: number, flag: string) {
-    const [row] = await this.db
-      .select()
-      .from(featureFlags)
-      .where(
-        and(
-          eq(featureFlags.organizationId, orgId),
-          eq(featureFlags.flag, flag),
-        ),
-      );
-    return row?.enabled ?? false;
-  }
 
   // ── audit & phi ──────────────────────────────────────────────────────────────
   async appendAudit(row: AuditInput): Promise<AuditLog> {
@@ -1949,18 +1957,6 @@ export class DatabaseStorage implements IStorage {
       .limit(opts.limit);
   }
 
-  // ── six-year compliance archive (§164.316(b)(2)(i)) ──────────────────────────
-  /**
-   * Copy an org's audit / PHI-access / security rows into the retained archive
-   * before anything deletes them. Denormalizes the org and actor to TEXT so the
-   * record still says WHO did WHAT after the org and its users are gone, and
-   * carries no foreign keys so nothing can cascade it away. Idempotent-ish by
-   * design: re-archiving would duplicate rows, so it is called only from the
-   * tenant-delete path.
-   */
-  async archiveComplianceRecords(orgId: number, reason: string) {
-    return this.db.transaction((tx) => this.archiveComplianceRecordsIn(tx, orgId, reason));
-  }
   /**
    * The archive step proper, on a caller-supplied transaction so the tenant
    * cascade can commit "archived AND deleted" atomically. Rows are selected by
@@ -2008,6 +2004,14 @@ export class DatabaseStorage implements IStorage {
     return rows.length;
   }
 
+  // ── six-year compliance archive (§164.316(b)(2)(i)) ──────────────────────────
+  /**
+   * Copy an org's audit / PHI-access / security rows into the retained archive
+   * before anything deletes them. Denormalizes the org and actor to TEXT so the
+   * record still says WHO did WHAT after the org and its users are gone, and
+   * carries no foreign keys so nothing can cascade it away. Re-archiving would
+   * duplicate rows, so it is called only from the tenant-delete path.
+   */
   private async archiveComplianceRecordsIn(tx: Tx, orgId: number, reason: string) {
     const [org] = await tx
       .select()
@@ -2982,13 +2986,6 @@ export class DatabaseStorage implements IStorage {
       );
     return row;
   }
-  async listBroadcasts(orgId: number) {
-    return this.db
-      .select()
-      .from(emergencyBroadcasts)
-      .where(eq(emergencyBroadcasts.organizationId, orgId))
-      .orderBy(desc(emergencyBroadcasts.createdAt));
-  }
   async ackBroadcast(
     row: Omit<BroadcastAck, "id" | "acknowledgedAt">,
   ): Promise<void> {
@@ -3410,7 +3407,7 @@ export class DatabaseStorage implements IStorage {
           AND ${messageDeliveryStatus.readAt} IS NULL
           AND ${messages.deletedAt} IS NULL
           AND ${messages.senderId} <> ${userId}
-          AND ${messages.createdAt} <= ${notAfter}
+          AND ${lte(messages.createdAt, notAfter)}
           ${doneClause}`,
       );
     const v = row?.oldest;
@@ -3466,7 +3463,11 @@ export class DatabaseStorage implements IStorage {
         const now = new Date();
         const handedOff: Assignment[] = [];
         for (const a of pending) {
-          await tx.update(assignments).set({ status: "expired", resolvedAt: now }).where(and(eq(assignments.organizationId, orgId), eq(assignments.id, a.id)));
+          // Still pending? A unit member may have accepted it a moment ago.
+          const moved = await tx.update(assignments).set({ status: "expired", resolvedAt: now })
+            .where(and(eq(assignments.organizationId, orgId), eq(assignments.id, a.id), eq(assignments.status, "pending")))
+            .returning({ id: assignments.id });
+          if (!moved.length) continue;
           const [created] = await tx
             .insert(assignments)
             .values({
@@ -3920,6 +3921,10 @@ export class DatabaseStorage implements IStorage {
    * no row for an event we have already seen, so the caller answers 200
    * without applying it a second time.
    */
+  /** Undo recordStripeEvent when the work behind it failed, so Stripe's retry is processed. */
+  async releaseStripeEvent(stripeEventId: string) {
+    await this.db.delete(billingEvents).where(eq(billingEvents.stripeEventId, stripeEventId));
+  }
   async recordStripeEvent(row: {
     organizationId: number | null;
     invoiceId: number | null;
@@ -4173,13 +4178,6 @@ export class DatabaseStorage implements IStorage {
       .onConflictDoUpdate({ target: [userThemePrefs.userId], set })
       .returning();
     return saved!;
-  }
-  async deleteThemePrefs(orgId: number, userId: number) {
-    const gone = await this.db
-      .delete(userThemePrefs)
-      .where(and(eq(userThemePrefs.organizationId, orgId), eq(userThemePrefs.userId, userId)))
-      .returning({ id: userThemePrefs.id });
-    return gone.length > 0;
   }
 
   // ── shared rate-limit counters (E1) ─────────────────────────────────────────

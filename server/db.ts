@@ -1098,4 +1098,32 @@ CREATE TABLE IF NOT EXISTS rate_limit_hits (
   window_start TIMESTAMP NOT NULL,
   count INTEGER NOT NULL DEFAULT 0
 );
+
+-- Indexes for the hot read paths (inbox, board, sweeps, audit screens).
+CREATE INDEX IF NOT EXISTS conversations_participants_gin ON conversations USING GIN (participant_ids jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS conversations_org_idx ON conversations(organization_id);
+CREATE INDEX IF NOT EXISTS mds_user_unread_idx ON message_delivery_status(user_id) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS mds_unacked_idx ON message_delivery_status(message_id) WHERE acknowledged_at IS NULL;
+CREATE INDEX IF NOT EXISTS messages_stat_idx ON messages(id) WHERE priority = 'stat' AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS assignments_org_status_idx ON assignments(organization_id, status);
+CREATE INDEX IF NOT EXISTS assignments_hospitalist_status_idx ON assignments(hospitalist_id, status);
+CREATE INDEX IF NOT EXISTS assignments_patient_idx ON assignments(patient_id);
+CREATE INDEX IF NOT EXISTS patient_consults_patient_idx ON patient_consults(patient_id);
+CREATE INDEX IF NOT EXISTS patient_consults_consultant_idx ON patient_consults(consultant_user_id, status);
+CREATE INDEX IF NOT EXISTS hospitalists_org_idx ON hospitalists(organization_id);
+CREATE INDEX IF NOT EXISTS patients_org_idx ON patients(organization_id);
+CREATE INDEX IF NOT EXISTS audit_logs_org_id_idx ON audit_logs(organization_id, id);
+CREATE INDEX IF NOT EXISTS phi_access_logs_org_id_idx ON phi_access_logs(organization_id, id);
+
+-- A patient has at most ONE live request (pending or accepted). The service
+-- checks first; this makes two simultaneous "Assign" taps impossible. If an
+-- older database already holds a duplicate, the index is skipped (logged) and
+-- the service check alone applies until the data is cleaned.
+DO $$
+BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS assignments_one_live_per_patient
+    ON assignments(patient_id) WHERE status IN ('pending', 'accepted');
+EXCEPTION WHEN unique_violation THEN
+  RAISE NOTICE 'assignments_one_live_per_patient not created: duplicate live assignments exist';
+END $$;
 `;

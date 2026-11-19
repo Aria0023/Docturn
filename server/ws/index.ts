@@ -174,6 +174,9 @@ export class WsHub implements WsFanout {
       ws.close(1008, session.ended === "max_concurrent" ? "session_evicted" : "session_expired");
       return;
     }
+    // The socket may have closed while the session was being read: adding it
+    // now would leave a ghost that keeps the user "online" forever.
+    if (ws.readyState !== ws.OPEN) return;
     const { userId, organizationId, sessionId, impersonatorId } = session;
     this.meta.set(ws, {
       userId,

@@ -911,7 +911,8 @@ export function registerMessagingRoutes(app: Express) {
 
     if (att.messageId != null) {
       const msg = await storage().getMessage(me.organizationId, att.messageId);
-      if (!msg) return res.status(404).json({ error: "not_found" });
+      // A recalled message takes its attachments with it.
+      if (!msg || msg.deletedAt) return res.status(404).json({ error: "not_found" });
       const convo = await storage().getConversation(
         me.organizationId,
         msg.conversationId,
@@ -1438,6 +1439,7 @@ export function registerMessagingRoutes(app: Express) {
           for (const pid of participantIds) {
             const u = await storage().getUser(me.organizationId, pid);
             if (!u) return res.status(400).json({ error: "participant_not_in_org" });
+            if (u.disabledAt) return res.status(409).json({ error: "user_deactivated", userId: u.id });
           }
         }
         const members = Array.from(new Set([me.id, ...participantIds]));
@@ -1478,7 +1480,8 @@ export function registerMessagingRoutes(app: Express) {
         organizationId: me.organizationId,
         senderId: me.id,
         content: (note ? note + "\n" : "") + original.content,
-        priority: parsed.data.keepPriority ? original.priority : "routine",
+        // Priority is a module: with it off, a forward cannot carry STAT/urgent.
+        priority: parsed.data.keepPriority && (await isModuleEnabled(me.organizationId, "messaging.priority")) ? original.priority : "routine",
         forwardedFrom: {
           messageId: original.id,
           senderId: original.senderId,

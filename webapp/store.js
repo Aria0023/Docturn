@@ -849,7 +849,7 @@
   ];
   // The signed-in person's identity and per-user settings — reset on sign-out
   // so nothing of the previous user survives in memory either.
-  var PERSONAL_SLICES = ["me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
+  var PERSONAL_SLICES = ["registrations", "onCallBoard", "manualOnCall", "me", "myPrefs", "dashLayout", "statLayout", "customStats", "commsMetrics", "opsReport", "peerAvail",
     // the previous person's org schedule: its source status, shift names/hours, admissions counts
     "onCallSources", "onCallSourcesError", "shifts", "admissionsInfo",
     // the previous person's ER operations view and care team
@@ -976,10 +976,8 @@
     setNav: function (nav) { set(function (s) { s.ui.nav = nav; s.ui.notifOpen = false; return s; }); },
     setRole: function (role) { set(function (s) { s.session = Object.assign({}, s.session, { role: role }); s.ui.nav = "dashboard"; s.ui.notifOpen = false; return s; }); },
     toggleNotif: function (open) { set(function (s) { s.ui.notifOpen = open == null ? !s.ui.notifOpen : open; if (s.ui.notifOpen) s.notifications = s.notifications.map(function (n) { return Object.assign({}, n, { read: true }); }); return s; }); },
-    toggleRealtime: function (on) { set(function (s) { s.ui.realtime = on == null ? !s.ui.realtime : on; return s; }); },
     // On shift is the rotation profile on the server (api-bridge.js).
     toggleOnShift: function () { set(function (s) { s.__toast = notConnected(); return s; }); },
-    markNotifRead: function (id) { set(function (s) { s.notifications = s.notifications.map(function (n) { return n.id === id ? Object.assign({}, n, { read: true }) : n; }); return s; }); },
 
     /* hospitalist */
     accept: function (id) {
@@ -1535,7 +1533,6 @@
     },
 
     /* danger zone */
-    resetAll: function () { state = seed(); persist(); emit(); },
   };
 
   /* ---- React hooks ------------------------------------------------------- */

@@ -385,11 +385,9 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
   // from design/ui_kits/web-app (its own components, store.js, tokens, assets).
   // This guarantees pixel- and behavior-identical fidelity to the delivered
-  // design. API/WS routes are registered above and win. The earlier hand-built
-  // React client still lives in client/ and builds to client/dist if needed.
+  // design. API/WS routes are registered above and win.
   // webapp/ is the designer's kit served verbatim PLUS api-bridge.js, which
-  // wires its actions/data to the live backend. Falls back to the pristine kit,
-  // then the built React client.
+  // wires its actions/data to the live backend. Falls back to the pristine kit.
   // Resolve the wired kit whether we run from source (tsx) or compiled (dist):
   // try paths relative to this module AND relative to the project cwd.
   const wiredKit = fileURLToPath(new URL("../webapp", import.meta.url));
@@ -398,8 +396,6 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     join(process.cwd(), "webapp"),
     fileURLToPath(new URL("../design/ui_kits/web-app", import.meta.url)),
     join(process.cwd(), "design/ui_kits/web-app"),
-    fileURLToPath(new URL("../client/dist", import.meta.url)),
-    join(process.cwd(), "client/dist"),
   ];
   const uiDir = opts.webapp?.dir ?? (candidates.find((d) => existsSync(d)) || wiredKit);
   if (existsSync(uiDir)) {

@@ -72,7 +72,7 @@ jobs:
           if-no-files-found: ignore
 
   build-web:
-    name: Build web (client + server)
+    name: Build web (bundle + server)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

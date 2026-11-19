@@ -172,8 +172,19 @@ function scheduleEscalation(
   },
 ) {
   // Re-push after ackTimeout if still unacknowledged.
-  const t1 = setTimeout(() => {
-    if (isAcknowledged(assignment.id)) return;
+  // "Still waiting" is read from the database when the timer fires: an
+  // accepted, declined, cancelled, reassigned or expired request alerts nobody.
+  const stillPending = async () => {
+    if (isAcknowledged(assignment.id)) return false;
+    try {
+      const cur = await storage().getAssignment(assignment.organizationId, assignment.id);
+      return !!cur && cur.status === "pending";
+    } catch {
+      return false;
+    }
+  };
+  const t1 = setTimeout(async () => {
+    if (!(await stillPending())) return;
     for (const userId of targetUserIds) {
       deps.push
         .send(userId, { title: "New assignment" })
@@ -184,8 +195,8 @@ function scheduleEscalation(
 
   // SMS after escalationTimeout, only if mode includes SMS and still unacked.
   if (profile.mode === "push") return;
-  const t2 = setTimeout(() => {
-    if (isAcknowledged(assignment.id)) return;
+  const t2 = setTimeout(async () => {
+    if (!(await stillPending())) return;
     void escalateSms(assignment, targetUserIds, profile.smsCarrier);
   }, profile.escalationTimeoutSec * 1000);
   t2.unref?.();

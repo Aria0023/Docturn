@@ -107,9 +107,6 @@ npm run build && NODE_ENV=production npm start         # production (behind TLS 
                                               # cookie is Secure; see the AWS runbook)
 ```
 
-[`client/`](client/) holds an older React + Vite + Tailwind SPA. The server serves it only if
-`webapp/` is missing; `npm run build` still builds it.
-
 ## Mobile
 
 There is no separate phone product: install the web app from the browser (see

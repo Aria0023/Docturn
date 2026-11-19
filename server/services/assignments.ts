@@ -84,6 +84,11 @@ export async function releasePendingForHospitalist(
   return { released, rerouted };
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string }; message?: string } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505" || /assignments_one_live_per_patient/.test(String(e?.message ?? ""));
+}
+
 /** Create the patient's first routing request. */
 export async function createAssignment(
   storage: IStorage,
@@ -132,16 +137,23 @@ export async function createAssignment(
   const timeoutMin = org?.assignmentTimeoutMin ?? 10;
   const expiresAt = new Date(Date.now() + timeoutMin * 60_000);
 
-  const assignment = await storage.createAssignment({
-    organizationId: orgId,
-    patientId,
-    hospitalistId: hospitalist.id,
-    erDoctorId,
-    status: "pending",
-    via: mode,
-    acceptedByUserId: null,
-    expiresAt,
-  });
+  let assignment: Assignment;
+  try {
+    assignment = await storage.createAssignment({
+      organizationId: orgId,
+      patientId,
+      hospitalistId: hospitalist.id,
+      erDoctorId,
+      status: "pending",
+      via: mode,
+      acceptedByUserId: null,
+      expiresAt,
+    });
+  } catch (err) {
+    // Lost the race to another "Assign" for the same patient (unique index).
+    if (isUniqueViolation(err)) throw new AssignmentError("conflict", "patient already has an active assignment");
+    throw err;
+  }
 
   await appendAudit({
     organizationId: orgId,
@@ -418,13 +430,16 @@ export async function runExpirySweep(
 ): Promise<{ expired: number; rerouted: number }> {
   const due = await storage.listPendingExpired(now, limit);
   let rerouted = 0;
+  const touched = new Set<number>();
   for (const a of due) {
+   try {
     // Accepted or declined in the instant before the sweep reached it: theirs.
     const moved = await storage.transitionAssignment(a.organizationId, a.id, ["pending"], {
       status: "expired",
       resolvedAt: now,
     });
     if (!moved) continue;
+    touched.add(a.organizationId);
     await appendAudit({
       organizationId: a.organizationId,
       userId: null,
@@ -436,8 +451,14 @@ export async function runExpirySweep(
     });
     const next = await rerouteToNext(storage, a.organizationId, a);
     if (next) rerouted++;
-    broadcastAssignmentChange(a.organizationId);
+   } catch (err) {
+    // One failing row never stops the rest; the patient shows as unrouted on
+    // the board for the ER physician / director to re-send.
+    console.error(`[expiry] assignment ${a.id} failed; continuing`, (err as Error).message);
+   }
   }
+  // One announcement per hospital per sweep, not one per expired row.
+  for (const orgId of touched) broadcastAssignmentChange(orgId);
   return { expired: due.length, rerouted };
 }
 

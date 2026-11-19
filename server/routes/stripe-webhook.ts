@@ -130,7 +130,25 @@ export function registerStripeWebhookRoutes(app: Express) {
     }
 
     const from = ourInvoice.status;
+    try {
     if (type === "invoice.paid") {
+      // A paid invoice ends "past due": the hospital paid.
+      const pc = await storage().getOrgContract(orgId);
+      if (pc && pc.status === "past_due") {
+        const unpaid = (await storage().listOrgInvoices(orgId)).some((i) => i.id !== ourInvoice!.id && i.status === "issued");
+        if (!unpaid) {
+          await storage().updateOrgContract(orgId, { status: "active", pastDueAt: null });
+          await storage().recordBillingTransition({
+            organizationId: orgId,
+            invoiceId: ourInvoice.id,
+            stripeEventId: null,
+            type: "contract_transition",
+            fromStatus: "past_due",
+            toStatus: "active",
+            detail: { source: "stripe", stripeEventId: eventId },
+          });
+        }
+      }
       if (from !== "paid" && from !== "void") {
         await storage().updateInvoice(ourInvoice.id, {
           status: "paid",
@@ -186,6 +204,12 @@ export function registerStripeWebhookRoutes(app: Express) {
           },
         });
       }
+    }
+    } catch (err) {
+      // The claim was taken before the work; if the work failed, give it back
+      // so Stripe's retry is processed instead of answered "duplicate".
+      await storage().releaseStripeEvent(eventId).catch(() => {});
+      throw err;
     }
 
     await appendAudit({

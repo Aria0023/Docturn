@@ -224,8 +224,8 @@ function CustomizableStats({ statKey, stats, metrics }) {
           took, so what can be acted on is on the first screen. Customize
           switches back to the full tiles (they carry the edit controls). */}
       {visible.length > 0 && mobile && !editing && (
-        <Card data-stats-compact style={{ padding: 0, marginBottom: 14, overflow: "hidden" }}>
-          <div data-keep-cols="2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
+        <Card style={{ padding: 0, marginBottom: 14, overflow: "hidden" }}>
+          <div data-stats-compact data-keep-cols="2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
             {shown.map((id, i) => {
               const s = byId[id];
               return (

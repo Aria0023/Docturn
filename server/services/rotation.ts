@@ -54,11 +54,7 @@ export async function selectNext(
     // Cap relief: nobody in the routable pool has capacity. Let the queue
     // drain by raising the cap of every ROUTABLE provider (never a swing /
     // off-shift / non-working one, who could not be picked by this same pass).
-    for (const h of pool) {
-      await storage.updateHospitalist(orgId, h.id, {
-        patientCap: h.patientCap + 1,
-      });
-    }
+    for (const h of pool) await storage.raisePatientCap(orgId, h.id);
     await appendAudit({
       organizationId: orgId,
       userId: null,
@@ -81,9 +77,7 @@ export async function selectNext(
   const pick = rankEligible(eligible, org)[0]!;
 
   // Advance the cursor so rotation stays fair over time.
-  await storage.updateOrganization(orgId, {
-    rotationIndex: org.rotationIndex + 1,
-  });
+  await storage.advanceRotationIndex(orgId);
 
   return pick;
 }

@@ -143,6 +143,7 @@ export async function syncRotationAfterRoleChange(user: Pick<User, "id" | "organ
 export async function deactivateAccount(target: User): Promise<void> {
   if (!target.disabledAt) {
     await storage().updateUser(target.id, { disabledAt: new Date() });
+    await storage().setUserSessionsRevokedAt(target.id, new Date());
     const profile = await storage().getHospitalistByUser(target.organizationId, target.id);
     if (profile && profile.working) {
       await storage().updateHospitalist(target.organizationId, profile.id, { working: false });

@@ -263,9 +263,15 @@ describe("config: flags & adaptive suggestions", () => {
     // Seed several fast-accepted assignments (accept latency ~1m vs 10m window).
     const now = Date.now();
     for (let i = 0; i < 4; i++) {
+      // One live request per patient (enforced by the database), so each
+      // accepted assignment gets its own patient.
+      const p = await ctx.storage.createPatient({
+        organizationId: ctx.seedResult.orgId, initials: "T" + i, roomNumber: null, issueSummary: "", specialty: null,
+        department: null, acuity: null, status: "assigned", erDoctorId: ctx.seedResult.userIds["er.doc"]!, assignedHospitalistId: null, ehrId: null,
+      });
       const a = await ctx.storage.createAssignment({
         organizationId: ctx.seedResult.orgId,
-        patientId: ctx.seedResult.patientIds.sc!,
+        patientId: p.id,
         hospitalistId: ctx.seedResult.hospitalistIds.chen!,
         erDoctorId: ctx.seedResult.userIds["er.doc"]!,
         status: "accepted",

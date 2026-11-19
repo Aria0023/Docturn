@@ -546,6 +546,9 @@
       DT.set(function (s) { s.rotation = { source: "loading" }; return s; });
     }
     var seq = ++hydrateSeq;
+    // A read that started for one identity never lands after sign-out or a
+    // role switch (it would put the previous person's rows back in memory).
+    var epoch = authEpoch;
     return Promise.all([
       get("/api/hospitalists").catch(function () { return null; }),
       // directory is readable by every role and carries provider names; /api/users
@@ -558,6 +561,7 @@
       // Consults addressed to me on any patient ("Consult requests for you").
       role === "developer" ? Promise.resolve(null) : get("/api/consults/mine").catch(function () { return null; }),
     ]).then(function (res) {
+      if (epoch !== authEpoch) return;
       var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3], myConsults = res[4];
       if (Array.isArray(myConsults)) DT.set(function (s) { s.myConsults = myConsults; return s; });
       var usersById = {};
@@ -572,8 +576,9 @@
       // Hospitalists — and directors who also take patients — get the incoming
       // queue + their census.
       if (role === "hospitalist" || role === "director") {
-        extra.push(get("/api/assignments/pending").catch(function () { return []; }));
-        extra.push(get("/api/assignments/my").catch(function () { return []; }));
+        // null = the read FAILED (kept distinct from "nothing waiting").
+        extra.push(get("/api/assignments/pending").catch(function () { return null; }));
+        extra.push(get("/api/assignments/my").catch(function () { return null; }));
       } else {
         extra.push(Promise.resolve([]));
         extra.push(Promise.resolve([]));
@@ -626,6 +631,7 @@
       extra.push(role === "hospitalist" || role === "director" ? get("/api/care-team").then(okRead, failedRead) : Promise.resolve(null));
 
       return Promise.all(extra).then(function (e) {
+        if (epoch !== authEpoch) return;
         var pending = e[0], mine = e[1], board = e[2], sent = e[3], settings = e[4], regs = e[5], auditData = e[6], orgCfg = e[7], rotation = e[8], admissionsLog = e[9];
         var diversion = e[10], erRoster = e[11], erReport = e[12], careTeam = e[13];
         DT.set(function (s) {
@@ -680,14 +686,18 @@
             }
           });
           if (role === "hospitalist" || role === "director") {
-            s.pending = mapPending(pending, patientsById, usersById);
-            var census = mapAccepted(mine, patientsById, consultByPid, consultDetailByPid);
-            s.myPatients = census;
-            // The hospitalist dashboard AND the director's "My hospitalist work"
-            // widget both render myAdmissions — keep it authoritative from the
-            // server so a reassigned/handed-off patient shows up automatically.
-            s.myAdmissions = census;
-            s.isProvider = (hosps || []).some(function (h) { return h.userId === meId; });
+            // A failed read keeps what is on screen: a network blip must never
+            // show "nothing waiting" or a census of zero.
+            if (pending && patients) s.pending = mapPending(pending, patientsById, usersById);
+            if (mine && patients) {
+              var census = mapAccepted(mine, patientsById, consultByPid, consultDetailByPid);
+              s.myPatients = census;
+              // The hospitalist dashboard AND the director's "My hospitalist work"
+              // widget both render myAdmissions — keep it authoritative from the
+              // server so a reassigned/handed-off patient shows up automatically.
+              s.myAdmissions = census;
+            }
+            if (hosps) s.isProvider = hosps.some(function (h) { return h.userId === meId; });
           }
           if (board) s.board = mapBoard(board);
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
@@ -885,6 +895,23 @@
   // shift, a cap, the order, …) re-reads the roster and "Next up". Frames come
   // in bursts (a bulk change, or this session's own write echoed back), so
   // they are coalesced into one re-read shortly after the last one.
+  // Realtime frames arrive in bursts (one action announces several, a busy
+  // hospital many per second) and each full re-read is a dozen requests, so
+  // frames are coalesced: one re-read shortly after the last frame, and never
+  // two running at once.
+  var rehydrateSoonTimer = null, rehydrateRunning = false, rehydrateAgain = false;
+  function rehydrateSoon() {
+    if (rehydrateSoonTimer) clearTimeout(rehydrateSoonTimer);
+    var epoch = authEpoch;
+    rehydrateSoonTimer = setTimeout(function () {
+      rehydrateSoonTimer = null;
+      if (epoch !== authEpoch || lockActive() || !DT.getState().session) return;
+      if (rehydrateRunning) { rehydrateAgain = true; return; }
+      rehydrateRunning = true;
+      var done = function () { rehydrateRunning = false; if (rehydrateAgain) { rehydrateAgain = false; rehydrateSoon(); } };
+      Promise.resolve(rehydrate()).then(done, done);
+    }, 200);
+  }
   var rotationRefreshTimer = null;
   function rehydrateRotationSoon() {
     if (rotationRefreshTimer) clearTimeout(rotationRefreshTimer);
@@ -1725,7 +1752,7 @@
         }
         // Server-emitted event names (see server/services + routes): consult and
         // care-team changes also re-hydrate so boards/rosters stay live.
-        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrate();
+        else if (ev.type === "ASSIGNMENT_CREATED" || ev.type === "ASSIGNMENT_UPDATED" || ev.type === "CONSULT_UPDATED" || ev.type === "CARE_TEAM_UPDATED") rehydrateSoon();
         // Something round-robin depends on changed in another session (or
         // this one): every "Next up" surface re-reads the planner
         // (A.CON-SHO-29) — never keeps naming the pre-change provider.
@@ -1742,7 +1769,7 @@
         // re-read the boards that show it. The frame carries ids only.
         else if (ev.type === "CONSULT_REQUESTED") {
           DT.set(function (s) { s.__toast = { tone: "sent", title: "New consult request", msg: "A colleague requested you as a consultant on a patient." }; return s; });
-          rehydrate();
+          rehydrateSoon();
         }
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
           // Surface an incoming org-wide broadcast live: insert it (with its
@@ -2356,6 +2383,9 @@
         return s;
       });
     };
+    // Kept so a failed answer puts the request back even when the re-read
+    // fails too (offline): "nothing was changed" must be true on screen.
+    var removed = (DT.getState().myConsults || []).filter(function (c) { return c.id === consultId; })[0] || null;
     setStatus(status);
     return api("PATCH", "/api/consults/" + consultId, { status: status }).then(function () {
       DT.set(function (s) { s.__toast = { tone: status === "accepted" ? "accepted" : "rejected", title: status === "accepted" ? "Consult accepted" : "Consult declined", msg: "" }; return s; });
@@ -2363,6 +2393,10 @@
     }).catch(function (e) {
       var m = String((e && e.message) || "");
       setStatus("requested");
+      if (removed && m !== "not_found") DT.set(function (s) {
+        if (!(s.myConsults || []).some(function (c) { return c.id === consultId; })) s.myConsults = [removed].concat(s.myConsults || []);
+        return s;
+      });
       var msg = m === "only_consultant_can_answer" ? "Only the consulted physician can accept or decline. You can cancel this consult or add another."
         : isNetworkError(e) ? "No connection — nothing was changed."
         : m === "not_found" ? "That consult is no longer on the board."
@@ -3772,7 +3806,6 @@
       DT.set(function (s) { s.broadcasts = (rows || []).map(mapBroadcast); s.broadcastsLive = true; return s; });
     }).catch(function () { /* module off or offline: keep what's there */ });
   }
-  DT.actions.refreshBroadcasts = hydrateBroadcasts;
   DT.actions.ackBroadcast = function (id) {
     if (id == null) return Promise.resolve();
     // Optimistic: flip my own state now; the WS BROADCAST_ACKED event brings
@@ -4778,17 +4811,25 @@
      The server drives the demo accounts through the real endpoints. This poll
      shows its status and tells the server which accounts have the app open,
      so it never acts as them. Nothing is polled on a real-PHI instance. */
-  var liveDemoTimer = null;
+  var liveDemoTimer = null, liveDemoSeq = 0;
   function pollLiveDemo() {
     var st = DT.getState();
     if (!st.session || st.syntheticData === false || lockActive() || localDemoSession) return;
-    if (typeof document !== "undefined" && document.hidden) return;
+    // Hidden tabs do not poll — unless a demo is running: the poll is also how
+    // the server knows this account is being presented and must not be driven.
+    if (typeof document !== "undefined" && document.hidden && !(st.liveDemo && st.liveDemo.running)) return;
+    // Nothing to ask where the server said the feature does not exist here.
+    if (st.liveDemo && st.liveDemo.available === false) return;
     // A quiet read: a 401 here is NOT how a session ends (the identity probe
     // owns that), so this never goes through api()'s sign-out handling.
+    var seq = liveDemoSeq;
     fetch("/api/demo/live", { credentials: "same-origin", headers: { Accept: "application/json" } })
       .then(function (x) { return x.ok ? x.json() : null; })
       .then(function (r) {
-        if (!r || DT.getState().session !== st.session) return;
+        // Dropped when a Go live / Stop / Next was sent meanwhile (its answer
+        // is newer), and skipped when nothing changed (no re-render).
+        if (!r || seq !== liveDemoSeq || DT.getState().session !== st.session) return;
+        if (JSON.stringify(DT.getState().liveDemo) === JSON.stringify(r)) return;
         DT.set(function (s) { s.liveDemo = r; return s; });
       }, function () {});
   }
@@ -4804,7 +4845,11 @@
   DT.actions.setLiveDemo = function (on, pace, mode) {
     var body = { on: !!on, pace: pace || "steady" };
     if (mode) body.mode = mode;
+    var epoch = authEpoch;
+    liveDemoSeq++;
     return api("POST", "/api/demo/live", body).then(function (r) {
+      if (epoch !== authEpoch) return null;
+      liveDemoSeq++;
       DT.set(function (s) {
         var wasStory = s.liveDemo && s.liveDemo.running && s.liveDemo.mode === "story";
         s.liveDemo = r;
@@ -4822,7 +4867,11 @@
   };
 
   DT.actions.storyControl = function (action) {
+    var epoch = authEpoch;
+    liveDemoSeq++;
     return api("POST", "/api/demo/live", { on: true, story: action }).then(function (r) {
+      if (epoch !== authEpoch) return null;
+      liveDemoSeq++;
       DT.set(function (s) { s.liveDemo = r; return s; });
       return r;
     }, function () { return null; });
@@ -4832,13 +4881,14 @@
     var epoch = authEpoch;
     return Promise.all([
       get("/api/dev/billing/contracts"),
-      get("/api/dev/billing/plans"),
-      get("/api/dev/billing/invoices"),
-      get("/api/dev/purchase-requests"),
+      // One failing side read never blanks the console: it shows as empty.
+      get("/api/dev/billing/plans").catch(function () { return null; }),
+      get("/api/dev/billing/invoices").catch(function () { return null; }),
+      get("/api/dev/purchase-requests").catch(function () { return null; }),
     ]).then(function (r) {
       if (epoch !== authEpoch) return null;
       var contracts = r[0], plans = r[1], invoices = r[2];
-      if (!contracts) { DT.set(function (s) { s.devBilling = null; return s; }); return null; }
+      if (!contracts) { DT.set(function (s) { s.devBilling = s.devBilling && s.devBilling.tenants ? Object.assign({}, s.devBilling, { busy: false }) : { error: true }; return s; }); return null; }
       DT.set(function (s) {
         s.devBilling = {
           tenants: contracts.tenants || [],
@@ -4853,7 +4903,9 @@
       });
       return DT.getState().devBilling;
     }, function () {
-      if (epoch === authEpoch) DT.set(function (s) { s.devBilling = null; return s; });
+      // Keep what is on screen after a failed re-read; a first load that
+      // failed says so (with "Try again") instead of "Reading…" forever.
+      if (epoch === authEpoch) DT.set(function (s) { s.devBilling = s.devBilling && s.devBilling.tenants ? Object.assign({}, s.devBilling, { busy: false }) : { error: true }; return s; });
       return null;
     });
   };
@@ -6303,11 +6355,7 @@
       return DT.actions.loadManualSlots().then(function () { return r; });
     }).catch(function (e) {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't add slot", msg: String((e && e.message) || "Try again.") }; return s; });
-    });
-  };
-  DT.actions.updateManualSlot = function (id, patch) {
-    return api("PATCH", "/api/oncall/manual/" + encodeURIComponent(id), patch).then(function (r) { return DT.actions.loadManualSlots().then(function () { return r; }); }).catch(function (e) {
-      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't update slot", msg: String((e && e.message) || "Try again.") }; return s; });
+      return false;
     });
   };
   DT.actions.removeManualSlot = function (id) {

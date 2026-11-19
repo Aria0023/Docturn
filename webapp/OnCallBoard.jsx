@@ -129,10 +129,12 @@ function OcManualEditor({ slots, people, onAdd, onRemove, onUpdate }) {
   const submit = () => {
     const person = sorted.find((p) => String(p.id) === who);
     const providerName = person ? person.name : who.trim();
-    if (!slot.trim() || !providerName) return;
+    if (busy || !slot.trim() || !providerName) return;
     setBusy(true);
+    // The form clears only when the server stored the slot (a refused add
+    // keeps what was typed).
     Promise.resolve(onAdd({ slot: slot.trim(), hours: hours.trim(), providerName, providerUserId: person ? person.id : null, group: group.trim() }))
-      .then(() => { setSlot(""); setGroup(""); })
+      .then((saved) => { if (saved) { setSlot(""); setGroup(""); } })
       .finally(() => setBusy(false));
   };
   const inp = { height: 34, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13, fontFamily: "var(--font-sans)", background: "var(--card)", minWidth: 0 };
@@ -186,7 +188,7 @@ function OnCallBoard() {
     if (!a.loadOnCallBoard) return Promise.resolve();
     return Promise.all([a.loadOnCallBoard(), isDirector && a.loadOnCallSources ? a.loadOnCallSources() : null, isDirector && a.loadManualSlots ? a.loadManualSlots() : null]);
   }, [isDirector]);
-  React.useEffect(() => { refresh(); const t = setInterval(refresh, 60000); return () => clearInterval(t); }, [refresh]);
+  React.useEffect(() => { refresh(); const t = setInterval(() => { if (!document.hidden) refresh(); }, 60000); return () => clearInterval(t); }, [refresh]);
 
   if (!ocModuleOn("oncall.board")) {
     return <PageWrap><Card style={{ padding: 28, textAlign: "center", color: "var(--muted-foreground)", fontSize: 13 }}>The on-call board is switched off for this organization.</Card></PageWrap>;

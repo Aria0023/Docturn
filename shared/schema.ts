@@ -10,7 +10,6 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { MODULE_IDS } from "./modules.js";
 
@@ -1523,38 +1522,6 @@ export const assignmentsRelations = relations(assignments, ({ one }) => ({
   }),
 }));
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Zod insert schemas + inferred types
- * ──────────────────────────────────────────────────────────────────────────── */
-
-export const insertOrganizationSchema = createInsertSchema(organizations).omit({
-  id: true,
-});
-export const insertUserSchema = createInsertSchema(users).omit({
-  id: true,
-  createdAt: true,
-});
-export const insertHospitalistSchema = createInsertSchema(hospitalists).omit({
-  id: true,
-});
-export const insertPatientSchema = createInsertSchema(patients).omit({
-  id: true,
-  createdAt: true,
-});
-export const insertAssignmentSchema = createInsertSchema(assignments).omit({
-  id: true,
-  createdAt: true,
-});
-export const insertConversationSchema = createInsertSchema(conversations).omit({
-  id: true,
-  createdAt: true,
-});
-export const insertMessageSchema = createInsertSchema(messages).omit({
-  id: true,
-  createdAt: true,
-  deletedAt: true,
-});
-
 export type CareTeamMember = typeof careTeamMembers.$inferSelect;
 export type PatientConsult = typeof patientConsults.$inferSelect;
 export type PendingRegistration = typeof pendingRegistrations.$inferSelect;
@@ -1693,15 +1660,11 @@ export const billingContactPatchSchema = z.object({
 });
 
 export type Organization = typeof organizations.$inferSelect;
-export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type User = typeof users.$inferSelect;
-export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Hospitalist = typeof hospitalists.$inferSelect;
-export type InsertHospitalist = z.infer<typeof insertHospitalistSchema>;
+export type InsertHospitalist = Omit<typeof hospitalists.$inferInsert, "id">;
 export type Patient = typeof patients.$inferSelect;
-export type InsertPatient = z.infer<typeof insertPatientSchema>;
 export type Assignment = typeof assignments.$inferSelect;
-export type InsertAssignment = z.infer<typeof insertAssignmentSchema>;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
@@ -1883,13 +1846,14 @@ export const addCareTeamMemberSchema = z.object({
 export const toggleOnCallSchema = z.object({ onCall: z.boolean() });
 
 export const createConsultSchema = z.object({
-  specialty: z.string().min(1),
+  specialty: z.string().trim().min(1).max(120),
   consultantUserId: z.number().int().positive().optional(),
   // Optional explicit team to consult (the consult service's on-call + members),
   // so the requester records WHO was called by name even when a consultant has
   // no user account.
   consultants: z
-    .array(z.object({ name: z.string().min(1), userId: z.number().int().positive().optional() }))
+    .array(z.object({ name: z.string().trim().min(1).max(120), userId: z.number().int().positive().optional() }))
+    .max(20)
     .optional(),
 });
 export const updateConsultSchema = z.object({

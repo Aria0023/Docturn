@@ -223,8 +223,17 @@ export const GATE_TABLE: readonly GateRule[] = [
 ];
 
 /** First gate rule that applies to this request, if any. */
+/**
+ * Express routing is case-insensitive and ignores a trailing slash, so the
+ * gate must see the path the same way: /API/billing and /api/billing/ reach
+ * the same handler as /api/billing and must be gated identically.
+ */
+export function gatePath(req: Request): string {
+  return req.path.toLowerCase().replace(/\/+$/, "") || "/";
+}
+
 export function matchGate(req: Request, table: readonly GateRule[] = GATE_TABLE): GateRule | undefined {
-  const path = req.path;
+  const path = gatePath(req);
   const method = req.method.toUpperCase();
   return table.find(
     (r) =>
@@ -243,7 +252,7 @@ export function matchGate(req: Request, table: readonly GateRule[] = GATE_TABLE)
 export function moduleGate(table: readonly GateRule[] = GATE_TABLE) {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (!req.path.startsWith("/api/")) return next();
+      if (!gatePath(req).startsWith("/api/")) return next();
       if (!req.isAuthenticated || !req.isAuthenticated()) return next();
       const rule = matchGate(req, table);
       if (!rule) return next();
