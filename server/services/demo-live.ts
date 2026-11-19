@@ -21,6 +21,10 @@ import { storage } from "../storage.js";
  */
 
 export type DemoPace = "steady" | "busy";
+export type DemoMode = "free" | "story";
+let STORY_TICK_MS = 1500;
+let STORY_DWELL_MS = 13_000;
+let STORY_WAIT_MS = 45_000;
 const TICK_MS: Record<DemoPace, number> = { steady: 9000, busy: 5000 };
 const RUN_MS = 30 * 60_000;
 const VIEWER_WINDOW_MS = 20_000;
@@ -28,10 +32,13 @@ let RESPOND_AFTER_MS = 25_000;
 let STAT_ACK_AFTER_MS = 30_000;
 
 /** Tests only: shorter delays so a run can be observed in seconds. */
-export function _setDemoTimingForTests(t: { tickMs?: number; respondAfterMs?: number; statAckAfterMs?: number }) {
+export function _setDemoTimingForTests(t: { tickMs?: number; respondAfterMs?: number; statAckAfterMs?: number; storyDwellMs?: number; storyWaitMs?: number; storyTickMs?: number }) {
   if (t.tickMs) { TICK_MS.steady = t.tickMs; TICK_MS.busy = t.tickMs; }
   if (t.respondAfterMs != null) RESPOND_AFTER_MS = t.respondAfterMs;
   if (t.statAckAfterMs != null) STAT_ACK_AFTER_MS = t.statAckAfterMs;
+  if (t.storyDwellMs != null) STORY_DWELL_MS = t.storyDwellMs;
+  if (t.storyWaitMs != null) STORY_WAIT_MS = t.storyWaitMs;
+  if (t.storyTickMs != null) STORY_TICK_MS = t.storyTickMs;
 }
 const MAX_OPEN_PATIENTS = 18;
 
@@ -42,6 +49,8 @@ interface Run {
   orgCode: string;
   base: string;
   pace: DemoPace;
+  mode: DemoMode;
+  story: StoryState | null;
   startedAt: number;
   endsAt: number;
   startedBy: number;
@@ -85,6 +94,8 @@ export function liveDemoStatus(orgId: number) {
     available: true,
     running: true as const,
     pace: r.pace,
+    mode: r.mode,
+    story: r.story ? storyView(r.story) : null,
     startedAt: new Date(r.startedAt).toISOString(),
     endsAt: new Date(r.endsAt).toISOString(),
     counts: r.counts,
@@ -104,18 +115,31 @@ export function stopAllLiveDemos() {
   for (const id of [...runs.keys()]) stopLiveDemo(id);
 }
 
-export function startLiveDemo(opts: { orgId: number; orgCode: string; base: string; pace: DemoPace; startedBy: number }) {
+function schedule(run: Run) {
+  if (run.timer) clearInterval(run.timer);
+  const every = run.mode === "story" ? STORY_TICK_MS : TICK_MS[run.pace];
+  run.timer = setInterval(() => void (run.mode === "story" ? storyTick(run) : tick(run)), every);
+  setTimeout(() => void (run.mode === "story" ? storyTick(run) : tick(run)), Math.min(1200, every));
+}
+
+export function startLiveDemo(opts: { orgId: number; orgCode: string; base: string; pace: DemoPace; startedBy: number; mode?: DemoMode }) {
   if (!liveDemoAvailable()) throw new Error("real_phi_mode");
+  const mode: DemoMode = opts.mode ?? "free";
   const existing = runs.get(opts.orgId);
   if (existing) {
     existing.pace = opts.pace;
-    if (existing.timer) clearInterval(existing.timer);
-    existing.timer = setInterval(() => void tick(existing), TICK_MS[opts.pace]);
+    if (opts.mode && opts.mode !== existing.mode) {
+      existing.mode = opts.mode;
+      existing.story = opts.mode === "story" ? newStory() : null;
+    }
     existing.endsAt = Date.now() + RUN_MS;
+    schedule(existing);
     return existing;
   }
   const run: Run = {
-    ...opts,
+    orgId: opts.orgId, orgCode: opts.orgCode, base: opts.base, pace: opts.pace, startedBy: opts.startedBy,
+    mode,
+    story: mode === "story" ? newStory() : null,
     startedAt: Date.now(),
     endsAt: Date.now() + RUN_MS,
     timer: null,
@@ -127,9 +151,20 @@ export function startLiveDemo(opts: { orgId: number; orgCode: string; base: stri
     counts: { admissions: 0, accepted: 0, messages: 0, stat: 0, consults: 0, answered: 0 },
   };
   runs.set(opts.orgId, run);
-  run.timer = setInterval(() => void tick(run), TICK_MS[opts.pace]);
-  setTimeout(() => void tick(run), Math.min(1200, TICK_MS[opts.pace])); // something happens right away
+  schedule(run);
   return run;
+}
+
+/** Presenter controls for the guided story: next step, pause, resume, replay. */
+export function storyControl(orgId: number, action: "next" | "pause" | "resume" | "replay"): boolean {
+  const r = runs.get(orgId);
+  if (!r || r.mode !== "story" || !r.story) return false;
+  const st = r.story;
+  if (action === "pause") st.paused = true;
+  else if (action === "resume") { st.paused = false; if (st.beatDoneAt) st.beatDoneAt = Date.now(); }
+  else if (action === "next") st.skip = true;
+  else if (action === "replay") { r.story = newStory(); }
+  return true;
 }
 
 /* ── HTTP as a demo account ─────────────────────────────────────────────── */
@@ -354,4 +389,253 @@ async function answerConsult(run: Run, users: DemoUser[]): Promise<boolean> {
     if (r && r.status < 300) { run.counts.answered++; log(run, `${u.displayName} answered a consult`); return true; }
   }
   return false;
+}
+
+
+/* ── guided story: one patient, start to finish ──────────────────────────────
+ * Seven steps, each told as "what just happened" + "why it matters". The
+ * driver performs every step through the real endpoints as a NON-viewer demo
+ * account. When a step belongs to the person presenting (an admission sent to
+ * them, a STAT addressed to them), the story waits for them to tap it — that
+ * is the moment the audience remembers — and moves on by itself after a while.
+ */
+interface StoryCtx {
+  patientId?: number; assignmentId?: number; ownerUserId?: number; ownerName?: string;
+  erUserId?: number; erName?: string; consultantName?: string; consultId?: number;
+  statMessageId?: number; patient2Owner?: string;
+}
+interface StoryState {
+  index: number;
+  started: boolean;
+  startedAt: number;
+  beatDoneAt: number | null;
+  waitingText: string | null;
+  waitUntil: number | null;
+  paused: boolean;
+  skip: boolean;
+  done: boolean;
+  ctx: StoryCtx;
+  happened: string | null;
+}
+type Role = "hospitalist" | "er_doctor" | "er_director" | "director";
+interface Beat {
+  title: string;
+  why: string;
+  /** Which screen to open, per presenter role. */
+  nav: Partial<Record<Role, string>>;
+  /** Perform the step; return the "what just happened" line. */
+  act: (run: Run, users: DemoUser[], ctx: StoryCtx) => Promise<string>;
+  /** Waiting on the presenter? Return the instruction while waiting, null when done. */
+  wait?: (run: Run, ctx: StoryCtx) => Promise<string | null>;
+  /** The line shown once the presenter has done their part. */
+  doneText?: (ctx: StoryCtx) => string;
+  /** If the presenter did not act in time, finish the step for them (as a non-viewer if possible). */
+  finish?: (run: Run, users: DemoUser[], ctx: StoryCtx) => Promise<void>;
+}
+
+function newStory(): StoryState {
+  return { index: 0, started: false, startedAt: Date.now(), beatDoneAt: null, waitingText: null, waitUntil: null, paused: false, skip: false, done: false, ctx: {}, happened: null };
+}
+
+const firstName = (u: DemoUser) => u.displayName;
+
+async function protagonist(run: Run, users: DemoUser[]): Promise<{ user: DemoUser; hospId: number } | null> {
+  const hosp = (await storage().listHospitalists(run.orgId)).filter((h) => h.working && h.currentPatientCount < h.patientCap);
+  // The presenter, when they are a hospitalist: the request lands on THEIR screen.
+  const mine = hosp.find((h) => isViewer(run.orgId, h.userId));
+  const h = mine ?? pick(hosp.filter((x) => users.some((u) => u.id === x.userId && u.role === "hospitalist")));
+  const u = h && users.find((x) => x.id === h.userId);
+  return h && u ? { user: u, hospId: h.id } : null;
+}
+function erActor(run: Run, users: DemoUser[]): DemoUser | undefined {
+  return users.find((u) => u.role === "er_doctor" && !isViewer(run.orgId, u.id))
+    ?? users.find((u) => u.role === "er_director" && !isViewer(run.orgId, u.id));
+}
+
+const BEATS: Beat[] = [
+  {
+    title: "A patient arrives in the ER",
+    why: "No paging operator and no phone tag. DocTurn routes the admission and starts a response clock.",
+    nav: { hospitalist: "dashboard", director: "board", er_doctor: "dashboard", er_director: "dashboard" },
+    act: async (run, users, ctx) => {
+      const er = erActor(run, users);
+      const owner = await protagonist(run, users);
+      if (!er || !owner) return "No ER physician or hospitalist is available for the story.";
+      const p = await as(run, er, "POST", "/api/patients", { initials: "JM", roomNumber: "ER-07", issueSummary: "Chest pain, troponin pending", acuity: 2, department: "ER" });
+      if (!p || p.status !== 201) return "The ER could not add the patient.";
+      const a = await as(run, er, "POST", "/api/assignments", { patientId: p.json.id, mode: "manual", hospitalistId: owner.hospId });
+      Object.assign(ctx, { patientId: p.json.id, assignmentId: a?.json?.id, ownerUserId: owner.user.id, ownerName: firstName(owner.user), erUserId: er.id, erName: firstName(er) });
+      run.counts.admissions++;
+      log(run, `${er.displayName} sent JM (ER-07, chest pain) to ${owner.user.displayName}`);
+      return `${er.displayName} admitted patient JM (room ER-07, chest pain) and sent the request to ${owner.user.displayName}.`;
+    },
+  },
+  {
+    title: "The hospitalist accepts",
+    why: "One tap. The ER sees who has the patient, and the census updates for everyone.",
+    nav: { hospitalist: "dashboard", director: "board", er_doctor: "dashboard", er_director: "dashboard" },
+    act: async (run, users, ctx) => {
+      if (!ctx.assignmentId || !ctx.ownerUserId) return "Waiting for the request.";
+      const owner = users.find((u) => u.id === ctx.ownerUserId)!;
+      if (isViewer(run.orgId, owner.id)) return `The request is on ${owner.displayName}'s screen with a 15-minute clock.`;
+      const r = await as(run, owner, "PATCH", `/api/assignments/${ctx.assignmentId}/accept`, {});
+      if (r && r.status < 300) { run.counts.accepted++; log(run, `${owner.displayName} accepted JM`); }
+      return `${owner.displayName} accepted JM. The request disappears from their queue and JM is on their census.`;
+    },
+    wait: async (run, ctx) => {
+      if (!ctx.assignmentId || !ctx.ownerUserId || !isViewer(run.orgId, ctx.ownerUserId)) return null;
+      const a = (await storage().listAssignments(run.orgId)).find((x) => x.id === ctx.assignmentId);
+      return a && a.status === "pending" ? "Your turn: tap Accept on JM's request." : null;
+    },
+    doneText: (ctx) => `Accepted. JM is on ${ctx.ownerName ?? "the hospitalist"}'s census, and the ER can see who has the patient.`,
+    finish: async (run, users, ctx) => {
+      // The presenter moved on without accepting: leave it pending for them.
+      void run; void users; void ctx;
+    },
+  },
+  {
+    title: "Cardiology is consulted",
+    why: "Ask the on-call service, or a specific physician by name. Everyone on the case sees the request and its status.",
+    nav: { hospitalist: "dashboard", director: "board", er_doctor: "dashboard", er_director: "board" },
+    act: async (run, users, ctx) => {
+      const er = users.find((u) => u.id === ctx.erUserId);
+      const consultant = pick(users.filter((u) => u.role === "hospitalist" && u.id !== ctx.ownerUserId && !isViewer(run.orgId, u.id)));
+      if (!er || !ctx.patientId || !consultant) return "No consultant is available for the story.";
+      const r = await as(run, er, "POST", `/api/patients/${ctx.patientId}/consults`, { specialty: "Cardiology", consultantUserId: consultant.id });
+      const consults = r && r.status < 300 ? (await storage().listConsultsForPatient(run.orgId, ctx.patientId)) : [];
+      ctx.consultId = consults.find((c) => c.consultantUserId === consultant.id)?.id;
+      ctx.consultantName = consultant.displayName;
+      run.counts.consults++;
+      log(run, `${er.displayName} consulted ${consultant.displayName} on JM`);
+      return `${er.displayName} asked ${consultant.displayName} (Cardiology) to see JM. The consult shows as pending on the board.`;
+    },
+  },
+  {
+    title: "The consultant answers",
+    why: "No callback loop. The answer reaches the whole team the moment it is given.",
+    nav: { hospitalist: "dashboard", director: "board", er_doctor: "dashboard", er_director: "board" },
+    act: async (run, users, ctx) => {
+      const consultant = users.find((u) => u.displayName === ctx.consultantName);
+      if (!consultant || !ctx.consultId) return "The consult is still pending.";
+      const r = await as(run, consultant, "PATCH", `/api/consults/${ctx.consultId}`, { status: "accepted" });
+      if (r && r.status < 300) { run.counts.answered++; log(run, `${consultant.displayName} accepted the JM consult`); }
+      return `${consultant.displayName} accepted the consult. JM's row now shows Cardiology as accepted.`;
+    },
+  },
+  {
+    title: "Something urgent happens",
+    why: "STAT messages demand an acknowledgement. If nobody responds, DocTurn escalates to the covering physician.",
+    nav: { hospitalist: "messages", director: "messages", er_doctor: "messages", er_director: "messages" },
+    act: async (run, users, ctx) => {
+      const er = users.find((u) => u.id === ctx.erUserId);
+      const owner = users.find((u) => u.id === ctx.ownerUserId);
+      if (!er || !owner) return "No one to message.";
+      const cid = await directConversation(run, er, owner);
+      if (!cid) return "The message could not be sent.";
+      const sent = await as(run, er, "POST", "/api/messaging/send", { conversationId: cid, content: "JM in ER-07: troponin rising and the repeat ECG changed. Please come now.", priority: "stat" });
+      ctx.statMessageId = Number(sent?.json?.id ?? 0) || undefined;
+      run.counts.messages++; run.counts.stat++;
+      log(run, `STAT from ${er.displayName} to ${owner.displayName} about JM`);
+      return `${er.displayName} sent a STAT message to ${owner.displayName}: troponin rising on JM.`;
+    },
+    wait: async (run, ctx) => {
+      if (!ctx.statMessageId || !ctx.ownerUserId || !isViewer(run.orgId, ctx.ownerUserId)) return null;
+      const rows = await storage().listDeliveryForMessages([ctx.statMessageId]);
+      const mine = rows.find((d) => d.userId === ctx.ownerUserId);
+      return mine && !mine.acknowledgedAt ? "Your turn: open the STAT message and tap Acknowledge." : null;
+    },
+    doneText: () => "Acknowledged in time, so DocTurn did not need to escalate.",
+  },
+  {
+    title: "The STAT is acknowledged",
+    why: "The sender sees exactly who acknowledged and when. Every step is in the audit trail.",
+    nav: { hospitalist: "messages", director: "messages", er_doctor: "messages", er_director: "messages" },
+    act: async (run, users, ctx) => {
+      const owner = users.find((u) => u.id === ctx.ownerUserId);
+      if (!owner || !ctx.statMessageId) return "Acknowledged.";
+      if (!isViewer(run.orgId, owner.id)) {
+        await as(run, owner, "POST", "/api/messaging/messages/ack", { messageIds: [ctx.statMessageId] });
+        log(run, `${owner.displayName} acknowledged the STAT`);
+      }
+      return `${owner.displayName} acknowledged the STAT. ${ctx.erName ?? "The ER"} sees it on the message right away.`;
+    },
+  },
+  {
+    title: "The next patient goes to the next hospitalist",
+    why: "Admissions stay fair automatically, by census and rotation, while directors watch the whole service live.",
+    nav: { hospitalist: "dashboard", director: "dashboard", er_doctor: "dashboard", er_director: "dashboard" },
+    act: async (run, users, ctx) => {
+      const er = users.find((u) => u.id === ctx.erUserId) ?? erActor(run, users);
+      if (!er) return "No ER physician is available.";
+      const p = await as(run, er, "POST", "/api/patients", { initials: "RT", roomNumber: "ER-11", issueSummary: "Pneumonia, needs oxygen", acuity: 3, department: "ER" });
+      if (!p || p.status !== 201) return "The ER could not add the patient.";
+      await as(run, er, "POST", "/api/assignments", { patientId: p.json.id, mode: "round_robin" });
+      const a = (await storage().listAssignments(run.orgId)).filter((x) => x.patientId === p.json.id).pop();
+      const h = a && (await storage().listHospitalists(run.orgId)).find((x) => x.id === a.hospitalistId);
+      const who = h && users.find((u) => u.id === h.userId);
+      run.counts.admissions++;
+      log(run, `${er.displayName} sent RT (ER-11) round-robin${who ? " to " + who.displayName : ""}`);
+      return `${er.displayName} sent patient RT. DocTurn picked ${who ? who.displayName : "the next hospitalist"}, the one with the lowest census.`;
+    },
+  },
+];
+export const STORY_LENGTH = BEATS.length;
+
+function storyView(st: StoryState) {
+  const beat = BEATS[Math.min(st.index, BEATS.length - 1)]!;
+  return {
+    index: st.index,
+    total: BEATS.length,
+    done: st.done,
+    paused: st.paused,
+    title: beat.title,
+    happened: st.happened,
+    why: beat.why,
+    nav: beat.nav,
+    waiting: st.waitingText,
+    // When the step will move on by itself (null while waiting or paused).
+    advanceAt: !st.done && !st.paused && !st.waitingText && st.beatDoneAt ? new Date(st.beatDoneAt + STORY_DWELL_MS).toISOString() : null,
+  };
+}
+
+async function storyTick(run: Run) {
+  if (run.ticking || !run.story) return;
+  if (Date.now() > run.endsAt) { stopLiveDemo(run.orgId); return; }
+  const st = run.story;
+  run.ticking = true;
+  try {
+    if (st.done) return;
+    const beat = BEATS[st.index]!;
+    const users = await demoUsers(run.orgId);
+    if (!st.started) {
+      st.started = true;
+      st.happened = null;
+      st.happened = await beat.act(run, users, st.ctx);
+      st.beatDoneAt = Date.now();
+      st.waitUntil = beat.wait ? Date.now() + STORY_WAIT_MS : null;
+    }
+    // Waiting for the presenter's tap?
+    if (beat.wait) {
+      const w = await beat.wait(run, st.ctx);
+      if (w && !st.skip && st.waitUntil && Date.now() < st.waitUntil) { st.waitingText = w; return; }
+      if (st.waitingText) {
+        st.beatDoneAt = Date.now(); // the tap just happened: dwell from now
+        if (!w && beat.doneText) st.happened = beat.doneText(st.ctx);
+      }
+      st.waitingText = null;
+      if (w && beat.finish) await beat.finish(run, users, st.ctx);
+    }
+    const dwellOver = st.beatDoneAt != null && Date.now() - st.beatDoneAt >= STORY_DWELL_MS;
+    if (st.skip || (!st.paused && dwellOver)) {
+      st.skip = false;
+      if (st.index >= BEATS.length - 1) { st.done = true; return; }
+      st.index++;
+      st.started = false;
+      st.beatDoneAt = null;
+    }
+  } catch (e) {
+    console.warn("[demo-live] story step failed:", (e as Error).message);
+  } finally {
+    run.ticking = false;
+  }
 }

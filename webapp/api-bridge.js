@@ -4792,26 +4792,40 @@
         DT.set(function (s) { s.liveDemo = r; return s; });
       }, function () {});
   }
+  // Every 5 s; every 1.5 s while the guided story runs, so its caption card
+  // keeps pace with what happens on screen.
   function scheduleLiveDemoPoll() {
-    clearInterval(liveDemoTimer);
-    liveDemoTimer = setInterval(pollLiveDemo, 5000);
-    setTimeout(pollLiveDemo, 600);
+    clearTimeout(liveDemoTimer);
+    var ld = DT.getState().liveDemo;
+    var every = ld && ld.running && ld.mode === "story" ? 1500 : 5000;
+    liveDemoTimer = setTimeout(function () { pollLiveDemo(); scheduleLiveDemoPoll(); }, every);
   }
-  if (typeof window !== "undefined") scheduleLiveDemoPoll();
-  DT.actions.setLiveDemo = function (on, pace) {
-    return api("POST", "/api/demo/live", { on: !!on, pace: pace || "steady" }).then(function (r) {
+  if (typeof window !== "undefined") { setTimeout(pollLiveDemo, 600); scheduleLiveDemoPoll(); }
+  DT.actions.setLiveDemo = function (on, pace, mode) {
+    var body = { on: !!on, pace: pace || "steady" };
+    if (mode) body.mode = mode;
+    return api("POST", "/api/demo/live", body).then(function (r) {
       DT.set(function (s) {
+        var wasStory = s.liveDemo && s.liveDemo.running && s.liveDemo.mode === "story";
         s.liveDemo = r;
-        s.__toast = on
-          ? { tone: "accepted", title: "Live demo on", msg: "Admissions, messages and consults will start arriving. It stops by itself after 30 minutes." }
-          : { tone: "accepted", title: "Live demo stopped", msg: "Everything it created stays on the board until you clear it." };
+        if (!on) s.__toast = { tone: "accepted", title: "Live demo stopped", msg: "Everything it created stays on the board until you clear it." };
+        else if (mode === "story") s.__toast = null; // the story card speaks for itself
+        else if (!wasStory || mode === "free") s.__toast = { tone: "accepted", title: "Live demo on", msg: "Admissions, messages and consults will start arriving. It stops by itself after 30 minutes." };
         return s;
       });
+      scheduleLiveDemoPoll();
       return r;
     }, function () {
       DT.set(function (s) { s.__toast = { tone: "rejected", title: "Live demo unavailable", msg: "It runs only on a test-data instance, inside a hospital (not the developer console)." }; return s; });
       return null;
     });
+  };
+
+  DT.actions.storyControl = function (action) {
+    return api("POST", "/api/demo/live", { on: true, story: action }).then(function (r) {
+      DT.set(function (s) { s.liveDemo = r; return s; });
+      return r;
+    }, function () { return null; });
   };
 
   DT.actions.loadDevBilling = function () {

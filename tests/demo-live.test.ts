@@ -17,7 +17,7 @@ beforeEach(async () => {
   ctx = await createTestApp();
   server = ctx.app.listen(0);
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  _setDemoTimingForTests({ tickMs: 250, respondAfterMs: 0, statAckAfterMs: 0 });
+  _setDemoTimingForTests({ tickMs: 250, respondAfterMs: 0, statAckAfterMs: 0, storyDwellMs: 13_000, storyWaitMs: 45_000, storyTickMs: 1500 });
 });
 afterEach(async () => {
   stopAllLiveDemos();
@@ -65,6 +65,56 @@ describe("live demo", () => {
     const off = await director("POST", "/api/demo/live", { on: false });
     expect(off.json.running).toBe(false);
   }, 30_000);
+
+  it("guided story: runs one patient start to finish for a director presenter", async () => {
+    _setDemoTimingForTests({ storyDwellMs: 300, storyWaitMs: 60_000, storyTickMs: 200 });
+    const director = await signIn("director");
+    await director("GET", "/api/demo/live");
+    const on = await director("POST", "/api/demo/live", { on: true, mode: "story" });
+    expect(on.json.mode).toBe("story");
+    expect(on.json.story.total).toBe(7);
+    let st: any = null;
+    for (let i = 0; i < 80; i++) { st = (await director("GET", "/api/demo/live")).json.story; if (st.done) break; await sleep(250); }
+    expect(st.done).toBe(true);
+    const org = (await ctx.storage.getOrganizationByCode("ISPN"))!;
+    const jm = (await ctx.storage.listPatients(org.id)).find((p) => p.initials === "JM")!;
+    expect(jm.status).toBe("assigned");
+    const consults = await ctx.storage.listConsultsForPatient(org.id, jm.id);
+    expect(consults.some((c) => c.specialty === "Cardiology" && c.status === "accepted")).toBe(true);
+    expect((await ctx.storage.listPatients(org.id)).some((p) => p.initials === "RT")).toBe(true);
+    const audit = await ctx.storage.listAuditLogs(org.id, 300);
+    const directorId = (await ctx.storage.listUsers(org.id)).find((u) => u.username === "director")!.id;
+    expect(audit.filter((a) => a.action.startsWith("assignment.")).every((a) => a.userId !== directorId)).toBe(true);
+    // Replay starts over.
+    const again = await director("POST", "/api/demo/live", { on: true, story: "replay" });
+    expect(again.json.story.index).toBe(0);
+    expect(again.json.story.done).toBe(false);
+  }, 40_000);
+
+  it("guided story: waits for the hospitalist presenter to tap Accept", async () => {
+    _setDemoTimingForTests({ storyDwellMs: 300, storyWaitMs: 60_000, storyTickMs: 200 });
+    const chen = await signIn("chen");
+    await chen("GET", "/api/demo/live");
+    await chen("POST", "/api/demo/live", { on: true, mode: "story" });
+    let st: any = null;
+    for (let i = 0; i < 40; i++) { st = (await chen("GET", "/api/demo/live")).json.story; if (st.waiting) break; await sleep(250); }
+    expect(st.index).toBe(1);
+    expect(st.waiting).toMatch(/tap Accept/);
+    // Nothing moves while the presenter has not tapped.
+    await sleep(1200);
+    st = (await chen("GET", "/api/demo/live")).json.story;
+    expect(st.index).toBe(1);
+    const org = (await ctx.storage.getOrganizationByCode("ISPN"))!;
+    const jm = (await ctx.storage.listPatients(org.id)).find((p) => p.initials === "JM")!;
+    const a = (await ctx.storage.listAssignments(org.id)).find((x) => x.patientId === jm.id && x.status === "pending")!;
+    expect((await chen("PATCH", `/api/assignments/${a.id}/accept`, {})).status).toBe(200);
+    for (let i = 0; i < 40; i++) { st = (await chen("GET", "/api/demo/live")).json.story; if (st.index >= 2) break; await sleep(250); }
+    expect(st.index).toBeGreaterThanOrEqual(2);
+    // Next skips ahead; pause holds.
+    await chen("POST", "/api/demo/live", { on: true, story: "pause" });
+    expect((await chen("GET", "/api/demo/live")).json.story.paused).toBe(true);
+    expect((await chen("POST", "/api/demo/live", { on: true, story: "bogus" })).status).toBe(400);
+  }, 40_000);
 
   it("validates input and is refused for the platform org", async () => {
     const director = await signIn("director");
