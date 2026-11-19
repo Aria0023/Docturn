@@ -240,7 +240,14 @@ export function registerProviderRoutes(app: Express) {
       if (await storage().hasPendingForHospitalist(me.organizationId, id)) {
         return res.status(409).json({ error: "has_pending_assignments" });
       }
-      await storage().deleteHospitalist(me.organizationId, id);
+      try {
+        await storage().deleteHospitalist(me.organizationId, id);
+      } catch (err) {
+        // Past assignments / patients still reference this profile. Take the
+        // provider off shift instead of deleting their history.
+        console.error("[providers] delete failed", err);
+        return res.status(409).json({ error: "has_assignment_history" });
+      }
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,

@@ -1,13 +1,34 @@
-import type { Request } from "express";
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Request, RequestHandler } from "express";
 import type { AuditLog, User } from "@shared/schema";
 import { storage } from "./storage.js";
+
+/**
+ * Per-request actor context. When a developer impersonates a tenant user the
+ * session's user becomes the target, so without this every later audit / PHI
+ * row would name the target and the real actor would be lost.
+ */
+const actor = new AsyncLocalStorage<{ impersonatorId?: number }>();
+
+export function auditContext(): RequestHandler {
+  return (req, _res, next) => {
+    actor.run({ impersonatorId: req.session?.impersonatorId }, next);
+  };
+}
+
+function impersonatorId(): number | undefined {
+  return actor.getStore()?.impersonatorId;
+}
 
 /** Append a security-relevant action to the HIPAA audit trail. Never throws. */
 export async function appendAudit(
   row: Omit<AuditLog, "id" | "createdAt">,
 ): Promise<void> {
   try {
-    await storage().appendAudit(row);
+    const by = impersonatorId();
+    await storage().appendAudit(
+      by ? { ...row, details: { ...(row.details ?? {}), impersonatedBy: by } } : row,
+    );
   } catch (err) {
     console.error("[audit] failed to append", err);
   }
@@ -21,10 +42,11 @@ export async function logPhiAccess(
   try {
     const user = req.user as unknown as User | undefined;
     if (!user) return;
+    const by = impersonatorId();
     await storage().logPhiAccess({
       organizationId: user.organizationId,
       userId: user.id,
-      resource,
+      resource: by ? `${resource} (impersonated by user #${by})` : resource,
       method: req.method,
       ip: req.ip,
       userAgent: req.get("user-agent") ?? undefined,

@@ -480,6 +480,61 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
+  /**
+   * Compare-and-set status change: applies `patch` only while the assignment is
+   * still in one of `from`. Returns undefined when it has already moved on, so
+   * two concurrent accepts (attending + on-call member) or an accept racing the
+   * expiry sweep cannot both win.
+   */
+  async transitionAssignment(
+    orgId: number,
+    id: number,
+    from: Assignment["status"][],
+    patch: Partial<Assignment>,
+  ) {
+    const [row] = await this.db
+      .update(assignments)
+      .set(patch)
+      .where(
+        and(
+          eq(assignments.organizationId, orgId),
+          eq(assignments.id, id),
+          inArray(assignments.status, from),
+        ),
+      )
+      .returning();
+    return row;
+  }
+  /** The patient's pending/accepted assignment, if one exists. */
+  async getActiveAssignmentForPatient(orgId: number, patientId: number) {
+    const [row] = await this.db
+      .select()
+      .from(assignments)
+      .where(
+        and(
+          eq(assignments.organizationId, orgId),
+          eq(assignments.patientId, patientId),
+          inArray(assignments.status, ["pending", "accepted"]),
+        ),
+      )
+      .limit(1);
+    return row;
+  }
+  /** Atomic census change (never below zero) — no read-modify-write window. */
+  async adjustCensus(orgId: number, hospitalistId: number, delta: number) {
+    await this.db
+      .update(hospitalists)
+      .set({
+        currentPatientCount: sql`GREATEST(0, ${hospitalists.currentPatientCount} + ${delta})`,
+      })
+      .where(
+        and(
+          eq(hospitalists.organizationId, orgId),
+          eq(hospitalists.id, hospitalistId),
+        ),
+      );
+  }
+
   // ── messaging ────────────────────────────────────────────────────────────────
   async listConversationsForUser(orgId: number, userId: number) {
     const rows = await this.db
@@ -1107,7 +1162,11 @@ export class DatabaseStorage implements IStorage {
       .values(row)
       .onConflictDoUpdate({
         target: deviceTokens.token,
-        set: { userId: row.userId, platform: row.platform },
+        set: {
+          organizationId: row.organizationId,
+          userId: row.userId,
+          platform: row.platform,
+        },
       });
   }
   async deleteDeviceToken(userId: number, token: string) {

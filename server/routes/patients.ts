@@ -15,6 +15,8 @@ export function registerPatientRoutes(app: Express) {
     async (req, res) => {
       const parsed = extractNoteSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      // The free-text intake note is PHI even though nothing is stored yet.
+      await logPhiAccess(req, "patients/extract");
       const extracted = await getExtractor().extract(parsed.data.note);
       res.json(extracted);
     },
@@ -60,8 +62,13 @@ export function registerPatientRoutes(app: Express) {
     requireRole("director", "er_director", "developer"),
     async (req, res) => {
       const me = currentUser(req);
-      const hours = Number((req.body ?? {}).olderThanHours);
-      const olderThanMs = Number.isFinite(hours) ? Math.max(0, hours) * 3600_000 : 24 * 3600_000;
+      // Only an explicit number changes the window: Number(null) / Number("")
+      // are 0, which would otherwise turn a malformed body into "clear ALL".
+      const raw = (req.body ?? {}).olderThanHours;
+      if (raw !== undefined && (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0)) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      const olderThanMs = (raw ?? 24) * 3600_000;
       const removed = await storage().purgeOldPatients(me.organizationId, olderThanMs);
       await appendAudit({
         organizationId: me.organizationId,

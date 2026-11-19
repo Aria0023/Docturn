@@ -12,6 +12,7 @@ import {
 } from "../server/services/notifications.js";
 import { ConsoleSms } from "../server/services/sms.js";
 import { _resetConfigCache } from "../server/config.js";
+import { _resetLoginThrottle } from "../server/auth.js";
 
 export interface TestContext {
   app: Express;
@@ -31,6 +32,7 @@ export async function createTestApp(): Promise<TestContext> {
   setStorage(storage);
   _resetAcks();
   _resetConfigCache();
+  _resetLoginThrottle();
 
   const ws = new NoopWs();
   const push = new NoopPush();

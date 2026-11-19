@@ -20,6 +20,8 @@ export interface PushTransport {
 export interface WsFanout {
   sendToUsers(userIds: number[], message: unknown): void;
   broadcast(orgId: number, message: unknown): void;
+  /** Close every live socket opened under this HTTP session (logout). */
+  disconnectSession?(sessionId: string): void;
 }
 
 export class NoopPush implements PushTransport {
@@ -70,16 +72,22 @@ export function broadcastAssignmentChange(orgId: number) {
   }
 }
 
-/** In-memory acknowledgement state, keyed by assignment id. */
+/**
+ * In-memory acknowledgement state, keyed by assignment id. An assignment is
+ * tracked only while its escalation timers are live (`escalating`), so the set
+ * stays bounded no matter how long the process runs.
+ */
 const acked = new Set<number>();
+const escalating = new Set<number>();
 export function acknowledgeAssignment(assignmentId: number) {
-  acked.add(assignmentId);
+  if (escalating.has(assignmentId)) acked.add(assignmentId);
 }
 export function isAcknowledged(assignmentId: number) {
   return acked.has(assignmentId);
 }
 export function _resetAcks() {
   acked.clear();
+  escalating.clear();
 }
 
 /**
@@ -125,6 +133,17 @@ function scheduleEscalation(
     escalationTimeoutSec: number;
   },
 ) {
+  escalating.add(assignment.id);
+  const smsEnabled = profile.mode !== "push";
+  const lastTimerSec = smsEnabled
+    ? Math.max(profile.ackTimeoutSec, profile.escalationTimeoutSec)
+    : profile.ackTimeoutSec;
+  const done = setTimeout(() => {
+    escalating.delete(assignment.id);
+    acked.delete(assignment.id);
+  }, lastTimerSec * 1000 + 1000);
+  done.unref?.();
+
   // Re-push after ackTimeout if still unacknowledged.
   const t1 = setTimeout(() => {
     if (isAcknowledged(assignment.id)) return;
@@ -137,7 +156,7 @@ function scheduleEscalation(
   t1.unref?.();
 
   // SMS after escalationTimeout, only if mode includes SMS and still unacked.
-  if (profile.mode === "push") return;
+  if (!smsEnabled) return;
   const t2 = setTimeout(() => {
     if (isAcknowledged(assignment.id)) return;
     void escalateSms(assignment, targetUserIds, profile.smsCarrier);

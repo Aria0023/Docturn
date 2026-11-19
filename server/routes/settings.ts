@@ -1,11 +1,21 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { appendAudit } from "../audit.js";
+import { invalidateConfig } from "../config.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
 import { storage } from "../storage.js";
 
+// The org-level keys the server actually reads. Anything else is refused so a
+// director can't plant arbitrary rows in org_settings.
+const ORG_SETTING_KEYS = [
+  "autoReassignOnDecline",
+  "autoCleanHours",
+  "notification_profile",
+  "consultServices",
+  "theme",
+] as const;
 const orgSettingSchema = z.object({
-  key: z.string().min(1),
+  key: z.enum(ORG_SETTING_KEYS),
   value: z.unknown(),
 });
 const userPrefSchema = z.object({
@@ -43,6 +53,7 @@ export function registerSettingsRoutes(app: Express) {
         parsed.data.value,
         me.id,
       );
+      invalidateConfig(me.organizationId, parsed.data.key);
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,

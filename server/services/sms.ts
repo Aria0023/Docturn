@@ -53,8 +53,11 @@ export class TwilioSms implements SmsService {
           From: process.env.TWILIO_FROM_NUMBER,
           Body: body,
         }),
+        signal: AbortSignal.timeout(10_000),
       },
     );
+    // A rejected send (bad number, auth, quota) must not look delivered.
+    if (!res.ok) throw new Error(`twilio send failed: HTTP ${res.status}`);
     const data = (await res.json()) as { sid?: string };
     return { sid: data.sid ?? `twilio_${Date.now()}` };
   }

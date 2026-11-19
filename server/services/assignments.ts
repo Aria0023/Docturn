@@ -1,7 +1,11 @@
 import type { Assignment, Hospitalist } from "@shared/schema";
 import type { DatabaseStorage } from "../storage.js";
 import { appendAudit } from "../audit.js";
-import { broadcastAssignmentChange, notifyAssignment } from "./notifications.js";
+import {
+  acknowledgeAssignment,
+  broadcastAssignmentChange,
+  notifyAssignment,
+} from "./notifications.js";
 import { selectNext } from "./rotation.js";
 
 // Assignment routing always uses the full storage surface (unit fan-out etc.).
@@ -46,6 +50,11 @@ export async function createAssignment(
   const { orgId, patientId, erDoctorId, mode } = params;
   const patient = await storage.getPatient(orgId, patientId);
   if (!patient) throw new AssignmentError("not_found", "patient not found");
+  // One live routing request per patient: a second create would double-page
+  // providers and let two attendings both accept the same patient.
+  if (await storage.getActiveAssignmentForPatient(orgId, patientId)) {
+    throw new AssignmentError("conflict", "patient already has an active assignment");
+  }
 
   let hospitalist: Hospitalist | null = null;
   if (mode === "manual") {
@@ -115,15 +124,18 @@ export async function acceptAssignment(
   const hospitalist = await storage.getHospitalist(orgId, a.hospitalistId);
   if (!hospitalist) throw new AssignmentError("not_found", "provider not found");
 
-  const updated = await storage.updateAssignment(orgId, assignmentId, {
+  // Compare-and-set: only the first accept of a still-pending assignment wins.
+  const updated = await storage.transitionAssignment(orgId, assignmentId, ["pending"], {
     status: "accepted",
     acceptedByUserId: acceptingUserId,
     resolvedAt: new Date(),
   });
+  if (!updated) {
+    throw new AssignmentError("conflict", "assignment is not pending");
+  }
+  acknowledgeAssignment(assignmentId);
 
-  await storage.updateHospitalist(orgId, hospitalist.id, {
-    currentPatientCount: hospitalist.currentPatientCount + 1,
-  });
+  await storage.adjustCensus(orgId, hospitalist.id, 1);
   await storage.updatePatient(orgId, a.patientId, {
     status: "assigned",
     assignedHospitalistId: hospitalist.id,
@@ -139,7 +151,7 @@ export async function acceptAssignment(
     riskLevel: "low",
   });
   broadcastAssignmentChange(orgId);
-  return updated!;
+  return updated;
 }
 
 /**
@@ -160,10 +172,14 @@ export async function rejectAssignment(
     throw new AssignmentError("conflict", "assignment is not pending");
   }
 
-  const rejected = await storage.updateAssignment(orgId, assignmentId, {
+  const rejected = await storage.transitionAssignment(orgId, assignmentId, ["pending"], {
     status: "rejected",
     resolvedAt: new Date(),
   });
+  if (!rejected) {
+    throw new AssignmentError("conflict", "assignment is not pending");
+  }
+  acknowledgeAssignment(assignmentId);
   await appendAudit({
     organizationId: orgId,
     userId: rejectingUserId,
@@ -186,7 +202,7 @@ export async function rejectAssignment(
     });
   }
   broadcastAssignmentChange(orgId);
-  return { rejected: rejected!, reroute: next };
+  return { rejected, reroute: next };
 }
 
 /** Director cancels → cancelled; decrement census if it had been accepted. */
@@ -199,19 +215,23 @@ export async function cancelAssignment(
   const a = await storage.getAssignment(orgId, assignmentId);
   if (!a) throw new AssignmentError("not_found", "assignment not found");
 
+  // Only a live assignment can be cancelled; a resolved one is history and
+  // must not be rewritten (it would also double-decrement census).
+  if (a.status !== "pending" && a.status !== "accepted") {
+    throw new AssignmentError("conflict", "assignment is not active");
+  }
   const wasAccepted = a.status === "accepted";
-  const updated = await storage.updateAssignment(orgId, assignmentId, {
+  const updated = await storage.transitionAssignment(orgId, assignmentId, [a.status], {
     status: "cancelled",
     resolvedAt: new Date(),
   });
+  if (!updated) {
+    throw new AssignmentError("conflict", "assignment changed, retry");
+  }
+  acknowledgeAssignment(assignmentId);
 
   if (wasAccepted) {
-    const h = await storage.getHospitalist(orgId, a.hospitalistId);
-    if (h) {
-      await storage.updateHospitalist(orgId, h.id, {
-        currentPatientCount: Math.max(0, h.currentPatientCount - 1),
-      });
-    }
+    await storage.adjustCensus(orgId, a.hospitalistId, -1);
     await storage.updatePatient(orgId, a.patientId, {
       status: "waiting",
       assignedHospitalistId: null,
@@ -228,7 +248,7 @@ export async function cancelAssignment(
     riskLevel: "medium",
   });
   broadcastAssignmentChange(orgId);
-  return updated!;
+  return updated;
 }
 
 /**
@@ -265,27 +285,34 @@ export async function reassignAssignment(
     }
   }
 
+  // Resolve the target BEFORE releasing anything, so an unknown provider id
+  // can't strand the patient with a cancelled assignment and a lowered census.
+  const target = toHospitalistId
+    ? await storage.getHospitalist(orgId, toHospitalistId)
+    : undefined;
+  if (toHospitalistId && !target) {
+    throw new AssignmentError("not_found", "target not found");
+  }
+
   // Release the current assignment; an accepted one frees the old attending's census.
   let previous = a;
   if (wasActive) {
-    previous = (await storage.updateAssignment(orgId, assignmentId, {
+    const released = await storage.transitionAssignment(orgId, assignmentId, [a.status], {
       status: wasAccepted ? "cancelled" : "expired",
       resolvedAt: new Date(),
-    }))!;
+    });
+    if (!released) {
+      throw new AssignmentError("conflict", "assignment changed, retry");
+    }
+    previous = released;
+    acknowledgeAssignment(assignmentId);
     if (wasAccepted) {
-      const oldH = await storage.getHospitalist(orgId, a.hospitalistId);
-      if (oldH) {
-        await storage.updateHospitalist(orgId, oldH.id, {
-          currentPatientCount: Math.max(0, oldH.currentPatientCount - 1),
-        });
-      }
+      await storage.adjustCensus(orgId, a.hospitalistId, -1);
     }
   }
 
   let next: Assignment | null = null;
-  if (toHospitalistId) {
-    const target = await storage.getHospitalist(orgId, toHospitalistId);
-    if (!target) throw new AssignmentError("not_found", "target not found");
+  if (target) {
     next = wasAccepted
       ? await transferTo(storage, orgId, a, target, actingUserId) // direct handoff
       : await createReroute(storage, orgId, a, target, "manual"); // re-offer
@@ -309,7 +336,7 @@ export async function reassignAssignment(
     riskLevel: "medium",
   });
   broadcastAssignmentChange(orgId);
-  return { previous: previous!, reroute: next };
+  return { previous, reroute: next };
 }
 
 /** Hand an already-accepted patient directly to a new attending (no re-accept). */
@@ -333,15 +360,16 @@ async function transferTo(
     expiresAt: new Date(Date.now() + timeoutMin * 60_000),
   });
   await storage.updateAssignment(orgId, created.id, { resolvedAt: new Date() });
-  await storage.updateHospitalist(orgId, target.id, {
-    currentPatientCount: target.currentPatientCount + 1,
-  });
+  await storage.adjustCensus(orgId, target.id, 1);
   await storage.updatePatient(orgId, previous.patientId, {
     status: "assigned",
     assignedHospitalistId: target.id,
   });
   // Inform the new attending's unit (shows up in their census on rehydrate).
   await notifyAssignment(created, await targetUserIds(storage, orgId, target));
+  // A direct handoff is already accepted — there is nothing for the new unit to
+  // acknowledge, so stop the re-push / SMS escalation clock immediately.
+  acknowledgeAssignment(created.id);
   return created;
 }
 
@@ -353,11 +381,16 @@ export async function runExpirySweep(
 ): Promise<{ expired: number; rerouted: number }> {
   const due = await storage.listPendingExpired(now, limit);
   let rerouted = 0;
+  let expired = 0;
   for (const a of due) {
-    await storage.updateAssignment(a.organizationId, a.id, {
+    // Skip anything accepted/declined between the read above and now.
+    const moved = await storage.transitionAssignment(a.organizationId, a.id, ["pending"], {
       status: "expired",
       resolvedAt: now,
     });
+    if (!moved) continue;
+    expired++;
+    acknowledgeAssignment(a.id);
     await appendAudit({
       organizationId: a.organizationId,
       userId: null,
@@ -371,7 +404,7 @@ export async function runExpirySweep(
     if (next) rerouted++;
     broadcastAssignmentChange(a.organizationId);
   }
-  return { expired: due.length, rerouted };
+  return { expired, rerouted };
 }
 
 // ── reroute helpers ────────────────────────────────────────────────────────────

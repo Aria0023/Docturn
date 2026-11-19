@@ -16,8 +16,21 @@ import { resolveDemoUserId } from "../demoAuth.js";
 interface ClientMeta {
   userId: number;
   organizationId: number;
+  /** HTTP session the socket was opened under (absent for demo-token panes). */
+  sessionId?: string;
   isAlive: boolean;
 }
+
+/** The slice of an express-session store the hub needs to re-check a session. */
+export interface SessionLookup {
+  get(
+    sid: string,
+    cb: (err: unknown, session?: { passport?: { user?: number } } | null) => void,
+  ): void;
+}
+
+/** Close code sent when the HTTP session behind a socket has ended. */
+const WS_SESSION_ENDED = 4401;
 
 const HEARTBEAT_MS = 20_000;
 
@@ -31,6 +44,7 @@ export class WsHub implements WsFanout {
   constructor(
     server: HttpServer,
     private sessionMiddleware: RequestHandler,
+    private sessionStore?: SessionLookup,
   ) {
     this.wss = new WebSocketServer({ server, path: "/ws" });
     this.wss.on("connection", (ws, req) => this.onConnection(ws, req));
@@ -43,8 +57,8 @@ export class WsHub implements WsFanout {
       ws.close(1008, "unauthorized");
       return;
     }
-    const { userId, organizationId } = session;
-    this.meta.set(ws, { userId, organizationId, isAlive: true });
+    const { userId, organizationId, sessionId } = session;
+    this.meta.set(ws, { userId, organizationId, sessionId, isAlive: true });
     if (!this.clients.has(userId)) this.clients.set(userId, new Set());
     this.clients.get(userId)!.add(ws);
 
@@ -89,13 +103,22 @@ export class WsHub implements WsFanout {
       case "typing_start":
       case "typing_stop": {
         // Relay typing intent to the other participants of the conversation.
-        const targets = (msg.participantIds ?? []).filter((id) => id !== m.userId);
-        this.sendToUsers(targets, {
-          type: "user_typing",
-          userId: m.userId,
-          conversationId: msg.conversationId,
-          typing: msg.type === "typing_start",
-        });
+        // The id list comes from the client, so deliver only to sockets in the
+        // sender's own tenant — never let it address users in another org.
+        const ids = Array.isArray(msg.participantIds) ? msg.participantIds : [];
+        const targets = ids
+          .filter((id) => Number.isInteger(id) && id !== m.userId)
+          .slice(0, 100);
+        this.sendToUsers(
+          targets,
+          {
+            type: "user_typing",
+            userId: m.userId,
+            conversationId: msg.conversationId,
+            typing: msg.type === "typing_start",
+          },
+          m.organizationId,
+        );
         break;
       }
       default:
@@ -123,12 +146,14 @@ export class WsHub implements WsFanout {
   /** Resolve the session by replaying the session middleware on the upgrade req. */
   private async resolveSession(
     req: IncomingMessage,
-  ): Promise<{ userId: number; organizationId: number } | null> {
+  ): Promise<{ userId: number; organizationId: number; sessionId?: string } | null> {
     // Demo-token auth (side-by-side console): the socket carries ?token=<t> so a
     // pane authenticates without the shared session cookie. Check it first.
+    // Non-production only, matching where tokens can be issued.
     try {
       const url = new URL(req.url ?? "", "http://localhost");
-      const token = url.searchParams.get("token");
+      const token =
+        process.env.NODE_ENV === "production" ? null : url.searchParams.get("token");
       if (token) {
         const uid = resolveDemoUserId(token);
         if (uid != null) {
@@ -151,7 +176,11 @@ export class WsHub implements WsFanout {
           if (!userId) return resolve(null);
           const user = await storage().getUserById(userId);
           if (!user) return resolve(null);
-          resolve({ userId: user.id, organizationId: user.organizationId });
+          resolve({
+            userId: user.id,
+            organizationId: user.organizationId,
+            sessionId: (req as { sessionID?: string }).sessionID,
+          });
         } catch {
           resolve(null);
         }
@@ -175,20 +204,50 @@ export class WsHub implements WsFanout {
           } catch {
             /* ignore */
           }
+          this.closeIfSessionEnded(ws, m);
         }
       }
     }, HEARTBEAT_MS);
     this.heartbeat.unref?.();
   }
 
+  /**
+   * Automatic logoff for the realtime channel: a socket outlives the request
+   * that opened it, so on each heartbeat confirm its HTTP session still exists
+   * (not expired by inactivity, signed out, or swapped by impersonation) and
+   * still belongs to the same user. Otherwise the tab would keep receiving the
+   * tenant's feed indefinitely.
+   */
+  private closeIfSessionEnded(ws: WebSocket, m: ClientMeta) {
+    if (!this.sessionStore || !m.sessionId) return;
+    this.sessionStore.get(m.sessionId, (err, sess) => {
+      if (err) return; // store hiccup: decide on the next beat
+      if (sess?.passport?.user !== m.userId) {
+        ws.close(WS_SESSION_ENDED, "session_ended");
+      }
+    });
+  }
+
   // ── WsFanout ───────────────────────────────────────────────────────────────
-  sendToUsers(userIds: number[], message: unknown) {
+  /** When `orgId` is given, sockets belonging to any other tenant are skipped. */
+  sendToUsers(userIds: number[], message: unknown, orgId?: number) {
     const payload = JSON.stringify(message);
     for (const uid of new Set(userIds)) {
       const set = this.clients.get(uid);
       if (!set) continue;
       for (const ws of set) {
+        if (orgId !== undefined && this.meta.get(ws)?.organizationId !== orgId) continue;
         if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+      }
+    }
+  }
+
+  disconnectSession(sessionId: string) {
+    for (const set of this.clients.values()) {
+      for (const ws of set) {
+        if (this.meta.get(ws)?.sessionId === sessionId) {
+          ws.close(WS_SESSION_ENDED, "session_ended");
+        }
       }
     }
   }
@@ -215,8 +274,9 @@ export class WsHub implements WsFanout {
 export function attachWebSocket(
   server: HttpServer,
   sessionMiddleware: RequestHandler,
+  sessionStore?: SessionLookup,
 ): WsHub {
-  const hub = new WsHub(server, sessionMiddleware);
+  const hub = new WsHub(server, sessionMiddleware, sessionStore);
   configureNotifications({ ws: hub });
   return hub;
 }

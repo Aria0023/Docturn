@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { completeLoginSchema, mfaVerifySchema, toSafeUser } from "@shared/schema";
 import type { User } from "@shared/schema";
-import { appendAudit } from "../audit.js";
+import { appendAudit, logSecurityIncident } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import {
   beginEnrollment,
@@ -13,10 +13,20 @@ import {
 } from "../services/mfa.js";
 import { storage } from "../storage.js";
 
+/** Wrong second-factor codes allowed before the pending login is discarded. */
+const MAX_MFA_ATTEMPTS = 5;
+
 export function registerMfaRoutes(app: Express) {
   // Begin TOTP enrollment — returns the secret + otpauth URL for a QR code.
   app.post("/api/mfa/enroll", requireAuth, async (req, res) => {
     const me = currentUser(req);
+    // Re-enrolling replaces the stored secret. Doing that to an ACTIVE factor
+    // would leave the account flagged 2FA-on with no working authenticator
+    // (and let a hijacked session swap in its own), so refuse it.
+    const existing = await storage().getMfaCredential(me.id);
+    if (existing?.activated) {
+      return res.status(409).json({ error: "already_enrolled" });
+    }
     const { secret, otpauthUrl } = beginEnrollment(me.username);
     await storage().upsertMfaCredential(me.id, secret);
     res.json({ secret, otpauthUrl });
@@ -63,23 +73,39 @@ export function registerMfaRoutes(app: Express) {
     const parsed = completeLoginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
 
-    const ok = await completeSecondFactor(pendingId, parsed.data.code);
-    if (!ok) {
+    const user = await storage().getUserById(pendingId);
+    const ok = !!user && (await completeSecondFactor(pendingId, parsed.data.code));
+    if (!user || !ok) {
+      const attempts = (req.session.mfaAttempts ?? 0) + 1;
+      req.session.mfaAttempts = attempts;
+      // Scope the row to the user's org so it shows in that tenant's trail.
       await appendAudit({
-        organizationId: null,
-        userId: pendingId,
+        organizationId: user?.organizationId ?? null,
+        userId: user?.id ?? null,
         action: "mfa.failed",
         resourceType: "user",
         resourceId: pendingId,
-        details: {},
+        details: { attempt: attempts },
         riskLevel: "high",
       });
+      // A 6-digit code is guessable; cap tries, then make them start over with
+      // the password again.
+      if (attempts >= MAX_MFA_ATTEMPTS) {
+        delete req.session.pendingMfaUserId;
+        delete req.session.mfaAttempts;
+        await logSecurityIncident({
+          organizationId: user?.organizationId,
+          userId: user?.id,
+          type: "mfa_attempts_exhausted",
+          severity: "high",
+          description: `${MAX_MFA_ATTEMPTS} failed second-factor attempts`,
+        });
+      }
       return res.status(401).json({ error: "invalid_code" });
     }
 
-    const user = await storage().getUserById(pendingId);
-    if (!user) return res.status(401).json({ error: "invalid_code" });
     delete req.session.pendingMfaUserId;
+    delete req.session.mfaAttempts;
     req.login(user as unknown as Express.User, (err) => {
       if (err) return next(err);
       void appendAudit({

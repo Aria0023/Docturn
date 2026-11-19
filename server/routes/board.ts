@@ -123,6 +123,7 @@ export function registerBoardRoutes(app: Express) {
   // Consults feed the board's Consultants column.
   app.get("/api/patients/:id/consults", requireAuth, async (req, res) => {
     const me = currentUser(req);
+    await logPhiAccess(req, "consults");
     const patientId = Number(req.params.id);
     res.json(await storage().listConsultsForPatient(me.organizationId, patientId));
   });
@@ -138,6 +139,17 @@ export function registerBoardRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const patient = await storage().getPatient(me.organizationId, patientId);
       if (!patient) return res.status(404).json({ error: "not_found" });
+      await logPhiAccess(req, "consults");
+      // Every named consultant must be a user of THIS organization.
+      const namedIds = [
+        parsed.data.consultantUserId,
+        ...(parsed.data.consultants ?? []).map((t) => t.userId),
+      ].filter((v): v is number => v != null);
+      for (const uid of new Set(namedIds)) {
+        if (!(await storage().getUser(me.organizationId, uid))) {
+          return res.status(400).json({ error: "consultant_not_in_org" });
+        }
+      }
 
       // Record WHO is being consulted, each as its own row, so we can track who
       // accepts and who doesn't. Priority: an explicit team (the consult service's
@@ -218,6 +230,13 @@ export function registerBoardRoutes(app: Express) {
     const id = Number(req.params.id);
     const parsed = updateConsultSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+    if (
+      parsed.data.consultantUserId !== undefined &&
+      !(await storage().getUser(me.organizationId, parsed.data.consultantUserId))
+    ) {
+      return res.status(400).json({ error: "consultant_not_in_org" });
+    }
+    await logPhiAccess(req, "consults");
     const responded = parsed.data.status === "accepted" || parsed.data.status === "declined";
     const updated = await storage().updateConsult(me.organizationId, id, {
       ...(parsed.data.status ? { status: parsed.data.status } : {}),

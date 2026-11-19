@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import type { RequestHandler } from "express";
+import type { SessionLookup } from "./ws/index.js";
 import { createApp } from "./app.js";
 import { initDbWithRecovery } from "./db.js";
 import { DatabaseStorage, setStorage } from "./storage.js";
@@ -40,15 +41,27 @@ async function main() {
   // Make the demo usable out of the box — including a brand-new cloud deploy
   // with an empty database: seed the demo org + accounts if they're missing,
   // otherwise just ensure the platform org/developer exist. Idempotent.
+  //
+  // The demo accounts all share a published password (including the platform
+  // `dev` root account), so this only ever runs against the throwaway
+  // in-process database. A real Postgres (DATABASE_URL) is never auto-seeded
+  // unless SEED_DEMO=true says it is a demo environment too.
   try {
     const storage = new DatabaseStorage(handle.db);
     setStorage(storage);
-    const existing = await storage.getOrganizationByCode("ISPN");
-    if (!existing) {
-      await seed(storage);
-      console.log("[db] empty database — seeded demo data (org ISPN + platform).");
-    } else {
-      await ensurePlatform(storage);
+    if (handle.ephemeral || process.env.SEED_DEMO === "true") {
+      const existing = await storage.getOrganizationByCode("ISPN");
+      if (!existing) {
+        await seed(storage);
+        console.log("[db] empty database — seeded demo data (org ISPN + platform).");
+      } else {
+        await ensurePlatform(storage);
+      }
+    } else if ((await storage.listOrganizations()).length === 0) {
+      console.warn(
+        "[db] database has no organizations and demo seeding is off for real Postgres. " +
+          "Provision the first org/admin out of band, or set SEED_DEMO=true for a demo environment.",
+      );
     }
   } catch (e) {
     console.error("[db] seed/ensure failed:", e);
@@ -65,6 +78,7 @@ async function main() {
   attachWebSocket(
     server,
     app.locals.sessionMiddleware as RequestHandler,
+    app.locals.sessionStore as SessionLookup,
   );
 
   startExpiryLoop();

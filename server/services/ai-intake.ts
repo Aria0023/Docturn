@@ -102,7 +102,10 @@ export class OpenAIExtractor implements AIExtractor {
             { role: "user", content: note.slice(0, 1000) },
           ],
         }),
+        // Intake must never wait on the model; time out into the local mock.
+        signal: AbortSignal.timeout(10_000),
       });
+      if (!res.ok) throw new Error(`openai extraction failed: HTTP ${res.status}`);
       const data = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
       };

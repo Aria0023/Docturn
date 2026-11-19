@@ -12,6 +12,7 @@ import { configurePassport, verifyPassword } from "./auth.js";
 import { registerRoutes } from "./routes/index.js";
 import { demoTokenAuth, issueDemoToken } from "./demoAuth.js";
 import { storage } from "./storage.js";
+import { auditContext } from "./audit.js";
 import { toSafeUser } from "@shared/schema";
 
 export interface CreateAppOptions {
@@ -28,9 +29,61 @@ export interface CreateAppOptions {
  * `app.locals.sessionMiddleware` so the WebSocket server can authenticate the
  * upgrade request against the SAME session store.
  */
+/**
+ * Express 4 never forwards a rejected async handler to the error middleware —
+ * the request just hangs until the client times out. Wrap every route handler
+ * registered after this call so a thrown/rejected handler becomes a normal 500.
+ */
+function forwardAsyncErrors(app: Express) {
+  const wrap = (fn: RequestHandler): RequestHandler =>
+    function wrapped(req, res, next) {
+      try {
+        const out = fn(req, res, next) as unknown;
+        if (out instanceof Promise) out.catch(next);
+      } catch (err) {
+        next(err);
+      }
+    };
+  for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+    const original = app[method].bind(app) as (...args: unknown[]) => unknown;
+    (app as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
+      // app.get("setting") is the settings getter, not a route registration.
+      if (args.length < 2) return original(...args);
+      return original(
+        ...args.map((a) =>
+          // Arity 4 marks an error handler; leave those untouched.
+          typeof a === "function" && a.length < 4 ? wrap(a as RequestHandler) : a,
+        ),
+      );
+    };
+  }
+}
+
 export function createApp(opts: CreateAppOptions = {}): Express {
   const app = express();
   const isProd = process.env.NODE_ENV === "production";
+
+  // A generated secret is fine for the single-process demo, but against a real
+  // database it silently signs every user out on each restart and can't be
+  // shared across instances — refuse to boot that way.
+  if (
+    isProd &&
+    process.env.DATABASE_URL &&
+    !opts.sessionSecret &&
+    !process.env.SESSION_SECRET
+  ) {
+    throw new Error("SESSION_SECRET must be set in production");
+  }
+
+  forwardAsyncErrors(app);
+  // Path ids are always integers; reject anything else up front instead of
+  // letting NaN reach a query (0 stays valid: the bulk working-status form).
+  app.param(["id", "memberUserId", "userId"], (_req, res, next, value) => {
+    if (!/^\d{1,9}$/.test(String(value))) {
+      return res.status(404).json({ error: "not_found" });
+    }
+    next();
+  });
 
   if (opts.trustProxy) app.set("trust proxy", 1);
 
@@ -69,16 +122,20 @@ export function createApp(opts: CreateAppOptions = {}): Express {
     },
   });
   app.locals.sessionMiddleware = sessionMiddleware;
+  app.locals.sessionStore = store;
 
   app.use(sessionMiddleware);
+  // Carries "who is really acting" (developer impersonation) to the audit trail.
+  app.use(auditContext());
 
   configurePassport();
   app.use(passport.initialize());
   app.use(passport.session());
   // Demo-token auth: lets the side-by-side demo console give each pane its own
   // identity without colliding on the shared session cookie. Additive — a
-  // request with no token is unaffected.
-  app.use(demoTokenAuth());
+  // request with no token is unaffected. Never mounted in production, where no
+  // token can be issued anyway.
+  if (!isProd) app.use(demoTokenAuth());
 
   // Mint a demo token from valid demo credentials. Non-production only; the
   // 3-up demo console (/demo) calls this once per pane, then loads the real app
@@ -176,6 +233,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
 
   // Consistent error shape.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const type = (err as { type?: string } | null)?.type;
+    // Client mistakes from the JSON body parser are 4xx, not server faults.
+    if (type === "entity.parse.failed") {
+      return res.status(400).json({ error: "invalid_json" });
+    }
+    if (type === "entity.too.large") {
+      return res.status(413).json({ error: "payload_too_large" });
+    }
     console.error("[error]", err);
     if (res.headersSent) return;
     res.status(500).json({ error: "internal_error" });

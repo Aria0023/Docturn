@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
 import type { Express } from "express";
-import { devCreateUserSchema, toSafeUser } from "@shared/schema";
+import { z } from "zod";
+import { SHIFT_TYPE, devCreateUserSchema, toSafeUser } from "@shared/schema";
 import { hashPassword } from "../auth.js";
 import { appendAudit } from "../audit.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
@@ -11,6 +13,19 @@ import { storage } from "../storage.js";
  * Developer console: cross-tenant administration. The developer role bypasses
  * org-scoping deliberately; EVERY cross-tenant action is audited before/with it.
  */
+// Shared shape for the tenant fields a developer may set on create / edit.
+const orgFieldsSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  code: z.string().trim().min(2).max(16).regex(/^[A-Za-z0-9_-]+$/),
+  city: z.string().max(100).nullable(),
+  state: z.string().max(50).nullable(),
+  timezone: z.string().min(1).max(64),
+  assignmentTimeoutMin: z.coerce.number().int().min(1).max(120),
+  roundRobinShiftTypes: z.array(z.enum(SHIFT_TYPE)).min(1),
+  rotationMode: z.enum(["lowest_census", "sequential"]),
+});
+const orgPatchSchema = orgFieldsSchema.partial();
+
 export function registerDevRoutes(app: Express) {
   // Web-powered hospital autocomplete: "Cedars Sinai" -> official name + city +
   // state + timezone + a suggested code (NPI registry, curated fallback).
@@ -47,21 +62,29 @@ export function registerDevRoutes(app: Express) {
     async (req, res) => {
       const me = currentUser(req);
       const b = req.body ?? {};
-      if (!b.name) return res.status(400).json({ error: "validation_error" });
-      const code = String(b.code || codeFromName(b.name)).toUpperCase();
-      const existing = await storage().getOrganizationByCode(code);
-      if (existing) return res.status(409).json({ error: "code_taken" });
-      const org = await storage().createOrganization({
-        name: String(b.name),
-        code,
-        city: b.city ?? null,
-        state: b.state ?? null,
+      if (typeof b.name !== "string" || !b.name.trim()) {
+        return res.status(400).json({ error: "validation_error" });
+      }
+      // Empty / omitted optional fields fall back to defaults, as before.
+      const parsed = orgFieldsSchema.safeParse({
+        name: b.name,
+        code: b.code || codeFromName(b.name),
+        city: b.city || null,
+        state: b.state || null,
         timezone: b.timezone || "America/New_York",
-        assignmentTimeoutMin: Number(b.assignmentTimeoutMin) || 15,
+        assignmentTimeoutMin: b.assignmentTimeoutMin || 15,
         roundRobinShiftTypes: Array.isArray(b.roundRobinShiftTypes)
           ? b.roundRobinShiftTypes
           : ["day", "night"],
         rotationMode: b.rotationMode === "sequential" ? "sequential" : "lowest_census",
+      });
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const code = parsed.data.code.toUpperCase();
+      const existing = await storage().getOrganizationByCode(code);
+      if (existing) return res.status(409).json({ error: "code_taken" });
+      const org = await storage().createOrganization({
+        ...parsed.data,
+        code,
         rotationIndex: 0,
       });
       await appendAudit({
@@ -128,18 +151,31 @@ export function registerDevRoutes(app: Express) {
       const me = currentUser(req);
       const id = Number(req.params.id);
       const b = req.body ?? {};
-      const patch: Record<string, unknown> = {};
-      if (typeof b.name === "string") patch.name = b.name;
-      if (typeof b.code === "string") patch.code = b.code.toUpperCase();
-      if (typeof b.city === "string") patch.city = b.city;
-      if (typeof b.state === "string") patch.state = b.state;
-      if (typeof b.timezone === "string") patch.timezone = b.timezone;
+      // Only fields of the right type are considered (others are ignored, as
+      // before); what remains must be valid.
+      const candidate: Record<string, unknown> = {};
+      for (const k of ["name", "code", "city", "state", "timezone"] as const) {
+        if (typeof b[k] === "string") candidate[k] = b[k];
+      }
       if (b.assignmentTimeoutMin != null)
-        patch.assignmentTimeoutMin = Number(b.assignmentTimeoutMin);
+        candidate.assignmentTimeoutMin = b.assignmentTimeoutMin;
       if (Array.isArray(b.roundRobinShiftTypes))
-        patch.roundRobinShiftTypes = b.roundRobinShiftTypes;
+        candidate.roundRobinShiftTypes = b.roundRobinShiftTypes;
       if (b.rotationMode === "sequential" || b.rotationMode === "lowest_census")
-        patch.rotationMode = b.rotationMode;
+        candidate.rotationMode = b.rotationMode;
+      const parsed = orgPatchSchema.safeParse(candidate);
+      if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      const patch = parsed.data;
+      if (patch.code) {
+        patch.code = patch.code.toUpperCase();
+        const clash = await storage().getOrganizationByCode(patch.code);
+        if (clash && clash.id !== id) return res.status(409).json({ error: "code_taken" });
+      }
+      if (Object.keys(patch).length === 0) {
+        const current = await storage().getOrganization(id);
+        if (!current) return res.status(404).json({ error: "not_found" });
+        return res.json(current);
+      }
       const updated = await storage().updateOrganization(id, patch);
       if (!updated) return res.status(404).json({ error: "not_found" });
       await appendAudit({
@@ -360,7 +396,7 @@ export function registerDevRoutes(app: Express) {
         });
 
         // Temporary credential issued out-of-band; here we set a random hash.
-        const tempHash = await hashPassword(Math.random().toString(36).slice(2));
+        const tempHash = await hashPassword(randomBytes(24).toString("hex"));
         const user = await storage().createUser({
           organizationId: d.organizationId,
           username: d.username,
@@ -414,6 +450,9 @@ export function registerDevRoutes(app: Express) {
       });
       req.login(target as unknown as Express.User, (err) => {
         if (err) return next(err);
+        // login() regenerated the session; mark it so every audit / PHI row
+        // written from here on still names the developer who is really acting.
+        req.session.impersonatorId = me.id;
         res.json(toSafeUser(target));
       });
     },
@@ -452,6 +491,7 @@ export function registerDevRoutes(app: Express) {
       });
       req.login(admin as unknown as Express.User, (err) => {
         if (err) return next(err);
+        req.session.impersonatorId = me.id;
         res.json({ ...toSafeUser(admin), orgCode: org.code, orgName: org.name });
       });
     },

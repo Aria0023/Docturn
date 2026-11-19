@@ -4,7 +4,7 @@ import {
   markReadSchema,
   sendMessageSchema,
 } from "@shared/schema";
-import { appendAudit } from "../audit.js";
+import { appendAudit, logPhiAccess } from "../audit.js";
 import { currentUser, requireAuth } from "../rbac.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
@@ -69,6 +69,8 @@ export function registerMessagingRoutes(app: Express) {
       if (!convo.participantIds.includes(me.id)) {
         return res.status(403).json({ error: "forbidden" });
       }
+      // Clinical messages routinely carry PHI — reading a thread is PHI access.
+      await logPhiAccess(req, "messages");
       res.json(await storage().listMessages(me.organizationId, id));
     },
   );
@@ -85,6 +87,7 @@ export function registerMessagingRoutes(app: Express) {
     if (!convo.participantIds.includes(me.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
+    await logPhiAccess(req, "messages");
 
     const message = await storage().createMessage({
       conversationId: convo.id,
