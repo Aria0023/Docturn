@@ -45,7 +45,7 @@ const hosps = (await director("GET", "/api/hospitalists")).body;
 const dir = (await director("GET", "/api/physicians/directory")).body;
 const nameOf = (h) => (dir.find((d) => d.userId === h.userId) || {}).displayName;
 const byName = (re) => hosps.find((h) => re.test(nameOf(h) || ""));
-const liu = byName(/Darouichi/), chen = byName(/Alyesh/), lopez = byName(/Amir Ahmed/);
+const liu = byName(/Dawson/), chen = byName(/Avery/), lopez = byName(/Adam Archer/);
 // Restore point: every provider's census / cap / working as found.
 const original = hosps.map((h) => ({ h, census: h.currentPatientCount, cap: h.patientCap, working: !!h.working }));
 async function restore() { for (const o of original) await setProvider(o.h, o.census, o.cap, o.working); }
@@ -55,12 +55,12 @@ async function setProvider(h, census, cap, working) {
   if (working != null) await director("PATCH", `/api/hospitalists/${h.id}/working-status`, { working });
 }
 async function reproState() {
-  // The finding's repro: Darouichi 2/2 (lowest census, AT CAP), everyone else 6/12, all on shift.
+  // The finding's repro: Dawson 2/2 (lowest census, AT CAP), everyone else 6/12, all on shift.
   for (const h of hosps) await setProvider(h, h.id === liu.id ? 2 : 6, h.id === liu.id ? 2 : 12, true);
 }
 await reproState();
 const serverNext = (await director("GET", "/api/rotation/next")).body;
-rec("server preview names Alyesh (not the at-cap Darouichi)", serverNext.next && serverNext.next.hospitalistId === chen.id, JSON.stringify(serverNext.next));
+rec("server preview names Avery (not the at-cap Dawson)", serverNext.next && serverNext.next.hospitalistId === chen.id, JSON.stringify(serverNext.next));
 
 // ---- browser ----
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
@@ -98,12 +98,12 @@ for (const width of [390, 375, 430]) {
     const nx = window.DT.nextUp();
     return { next: nx && { id: nx.id, name: nx.name, census: nx.census, cap: nx.cap }, card: window.__card() };
   });
-  rec(`[${width}] Director DT.nextUp() = Alyesh`, d.next && d.next.id === "h" + chen.id, JSON.stringify(d.next));
-  rec(`[${width}] Director card names Alyesh, never Darouichi`, !!d.card && /Nathan Alyesh/.test(d.card) && !/Darouichi/.test(d.card), d.card);
+  rec(`[${width}] Director DT.nextUp() = Avery`, d.next && d.next.id === "h" + chen.id, JSON.stringify(d.next));
+  rec(`[${width}] Director card names Avery, never Dawson`, !!d.card && /Nolan Avery/.test(d.card) && !/Dawson/.test(d.card), d.card);
   let o = await overflow(page);
   rec(`[${width}] Director dashboard: no horizontal overflow`, o.main <= o.vw && o.doc <= o.vw, JSON.stringify(o));
 
-  // Hospitalist chip: Alyesh (chen) is told he's next; Darouichi (liu) is not.
+  // Hospitalist chip: Avery (chen) is told he's next; Dawson (liu) is not.
   await loginAs(page, "hospitalist", "chen");
   const chip1 = await page.evaluate(() => [...document.querySelectorAll("span")].map((e) => e.textContent).find((t) => /next up|ahead of you|Not eligible/.test(t || "")) || null);
   rec(`[${width}] hospitalist chen chip says "You're next up"`, /You're next up/.test(chip1 || ""), chip1);
@@ -114,7 +114,7 @@ for (const width of [390, 375, 430]) {
   // ER intake Quick hint + send
   await loginAs(page, "er_doctor", "er.doc");
   const hint = await page.evaluate(() => { const h = document.querySelector("[data-testid=rr-hint]"); return h ? h.textContent.replace(/\s+/g, " ").trim() : null; });
-  rec(`[${width}] ER Quick hint names Alyesh (6/12)`, /Next up: Dr\. Nathan Alyesh \(6\/12\)/.test(hint || "") && !/Darouichi/.test(hint || ""), hint);
+  rec(`[${width}] ER Quick hint names Avery (6/12)`, /Next up: Dr\. Nolan Avery \(6\/12\)/.test(hint || "") && !/Dawson/.test(hint || ""), hint);
   o = await overflow(page);
   rec(`[${width}] ER dashboard: no horizontal overflow`, o.main <= o.vw && o.doc <= o.vw, JSON.stringify(o));
 
@@ -133,27 +133,27 @@ for (const width of [390, 375, 430]) {
   const post = posts[posts.length - 1] || {};
   const resp = responses[responses.length - 1] || {};
   rec(`[${width}] Quick tab POSTs mode round_robin with NO hospitalistId`, post.mode === "round_robin" && post.hospitalistId === undefined, JSON.stringify(post));
-  rec(`[${width}] server picked Alyesh`, resp.hospitalistId === chen.id, "hospitalistId=" + resp.hospitalistId);
-  rec(`[${width}] toast names the server's pick`, /Assignment sent to Dr\. Nathan Alyesh/.test(toast), toast);
+  rec(`[${width}] server picked Avery`, resp.hospitalistId === chen.id, "hospitalistId=" + resp.hospitalistId);
+  rec(`[${width}] toast names the server's pick`, /Assignment sent to Dr\. Nolan Avery/.test(toast), toast);
 
-  // Manual tab: explicitly choose Dr. Amir Ahmed
+  // Manual tab: explicitly choose Dr. Adam Archer
   await page.getByRole("button", { name: /^Manual$/ }).click();
-  await page.getByRole("button", { name: /Dr\. Amir Ahmed/ }).first().click();
+  await page.getByRole("button", { name: /Dr\. Adam Archer/ }).first().click();
   await page.getByLabel("Patient initials").fill(tag.slice(0, 1) + "M");
   await page.getByLabel("Room / location").fill("Bay M" + width);
   await page.getByRole("button", { name: /Send assignment/ }).click();
-  await page.waitForFunction((n) => { const t = document.querySelector("[data-toast]"); return t && /Assignment sent to Dr\. Amir Ahmed|Couldn't/.test(t.textContent); }, null, { timeout: 15000 });
+  await page.waitForFunction((n) => { const t = document.querySelector("[data-toast]"); return t && /Assignment sent to Dr\. Adam Archer|Couldn't/.test(t.textContent); }, null, { timeout: 15000 });
   for (let i = 0; i < 50 && responses.length < 2; i++) await sleep(100); // response bodies are read asynchronously
   const post2 = posts[posts.length - 1] || {};
   const resp2 = responses[responses.length - 1] || {};
   rec(`[${width}] Manual tab POSTs mode manual with the chosen hospitalistId`, post2.mode === "manual" && post2.hospitalistId === lopez.id, JSON.stringify(post2));
-  rec(`[${width}] Manual send assigned Ahmed`, resp2.hospitalistId === lopez.id, "hospitalistId=" + resp2.hospitalistId);
+  rec(`[${width}] Manual send assigned Archer`, resp2.hospitalistId === lopez.id, "hospitalistId=" + resp2.hospitalistId);
   await ctx.close();
 }
 
 // ---- nobody routable: only the swing provider on shift ----
 console.log("\n=== nobody on a round-robin shift ===");
-for (const h of hosps) await director("PATCH", `/api/hospitalists/${h.id}/working-status`, { working: /Manukian/.test(nameOf(h) || "") });
+for (const h of hosps) await director("PATCH", `/api/hospitalists/${h.id}/working-status`, { working: /Mills/.test(nameOf(h) || "") });
 {
   const { ctx, page } = await phone(390);
   await loginAs(page, "er_doctor", "er.doc");
@@ -167,7 +167,7 @@ for (const h of hosps) await director("PATCH", `/api/hospitalists/${h.id}/workin
   rec("Send explains why and offers Manual", !!note, note);
   await loginAs(page, "director", "director");
   const card = await page.evaluate(() => window.__card());
-  rec("Director card says 'No eligible hospitalist' (no swing-shift name)", /No eligible hospitalist/.test(card || "") && !/Manukian/.test(card || ""), card);
+  rec("Director card says 'No eligible hospitalist' (no swing-shift name)", /No eligible hospitalist/.test(card || "") && !/Mills/.test(card || ""), card);
   await ctx.close();
 }
 
@@ -180,7 +180,7 @@ await setProvider(liu, 11, 11, true);
   const { ctx, page } = await phone(390);
   await loginAs(page, "director", "director");
   const card = await page.evaluate(() => window.__card());
-  rec("Director card names the relief pick and says caps will rise", s.capRelief === true && /Darouichi/.test(card || "") && /at cap/.test(card || ""), card);
+  rec("Director card names the relief pick and says caps will rise", s.capRelief === true && /Dawson/.test(card || "") && /at cap/.test(card || ""), card);
   const o = await overflow(page);
   rec("Director dashboard (relief text): no horizontal overflow", o.main <= o.vw && o.doc <= o.vw, JSON.stringify(o));
   await ctx.close();

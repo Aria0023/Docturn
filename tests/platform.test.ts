@@ -74,7 +74,7 @@ describe("v2 patient board", () => {
     const board = await director.get("/api/patient-board");
     expect(board.status).toBe(200);
     const row = board.body.find((r: any) => r.patient.initials === "ZZ");
-    expect(row.responsible.attending.displayName).toContain("Alyesh");
+    expect(row.responsible.attending.displayName).toContain("Avery");
     expect(row.responsible.unit.some((u: any) => u.credential === "PA")).toBe(true);
 
     // PHI access was logged for the board load.
@@ -248,55 +248,6 @@ describe("developer org management", () => {
   });
 });
 
-describe("config: flags & adaptive suggestions", () => {
-  it("sets a feature flag per org", async () => {
-    const { agent } = await login(ctx.app, { username: "director" });
-    const set = await agent
-      .patch("/api/feature-flags")
-      .send({ flag: "new_board", enabled: true });
-    expect(set.status).toBe(200);
-    const list = await agent.get("/api/feature-flags");
-    expect(list.body.find((f: any) => f.flag === "new_board").enabled).toBe(true);
-  });
-
-  it("proposes a timeout suggestion from fast accepts and applies it on accept", async () => {
-    // Seed several fast-accepted assignments (accept latency ~1m vs 10m window).
-    const now = Date.now();
-    for (let i = 0; i < 4; i++) {
-      // One live request per patient (enforced by the database), so each
-      // accepted assignment gets its own patient.
-      const p = await ctx.storage.createPatient({
-        organizationId: ctx.seedResult.orgId, initials: "T" + i, roomNumber: null, issueSummary: "", specialty: null,
-        department: null, acuity: null, status: "assigned", erDoctorId: ctx.seedResult.userIds["er.doc"]!, assignedHospitalistId: null, ehrId: null,
-      });
-      const a = await ctx.storage.createAssignment({
-        organizationId: ctx.seedResult.orgId,
-        patientId: p.id,
-        hospitalistId: ctx.seedResult.hospitalistIds.chen!,
-        erDoctorId: ctx.seedResult.userIds["er.doc"]!,
-        status: "accepted",
-        via: "round_robin",
-        acceptedByUserId: ctx.seedResult.userIds.chen!,
-        expiresAt: new Date(now + 600000),
-      });
-      await ctx.storage.updateAssignment(ctx.seedResult.orgId, a.id, {
-        resolvedAt: new Date(new Date(a.createdAt).getTime() + 60_000),
-      });
-    }
-
-    const { agent } = await login(ctx.app, { username: "director" });
-    const list = await agent.get("/api/suggestions");
-    const s = list.body.find((x: any) => x.key === "assignment_timeout");
-    expect(s).toBeTruthy();
-    expect(s.evidence).toContain("median");
-
-    const accept = await agent.post(`/api/suggestions/${s.id}/accept`);
-    expect(accept.status).toBe(200);
-    const cfg = await agent.get("/api/org/config");
-    expect(cfg.body.assignmentTimeoutMin).toBeLessThan(10);
-  });
-});
-
 describe("resources, sms & oversight endpoints", () => {
   it("director can list all assignments, reassign and cancel", async () => {
     const { assignmentId } = await newPendingAssignment();
@@ -307,20 +258,6 @@ describe("resources, sms & oversight endpoints", () => {
 
     const reassigned = await agent.patch(`/api/assignments/${assignmentId}/reassign`).send({});
     expect(reassigned.status).toBe(200);
-  });
-
-  it("manages beds and equipment with live metrics", async () => {
-    const { agent } = await login(ctx.app, { username: "director" });
-    const bed = await agent.post("/api/beds").send({ label: "ICU-1" });
-    expect(bed.status).toBe(201);
-    await agent.patch(`/api/beds/${bed.body.id}`).send({ occupied: true });
-    const equip = await agent.post("/api/equipment").send({ name: "Ventilator" });
-    expect(equip.status).toBe(201);
-
-    const metrics = await agent.get("/api/resources/metrics");
-    expect(metrics.body.beds.total).toBe(1);
-    expect(metrics.body.beds.occupied).toBe(1);
-    expect(metrics.body.equipment.total).toBe(1);
   });
 
   it("sends SMS through the carrier stub and records history", async () => {
@@ -349,7 +286,7 @@ describe("mobile API", () => {
     expect(own.status).toBe(200);
     expect(own.body).toEqual({
       id: ctx.seedResult.orgId,
-      name: "Cedars-Sinai (ISP North)",
+      name: "Riverside General (demo)",
       code: "ISPN",
       timezone: "America/New_York",
     });

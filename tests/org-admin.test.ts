@@ -249,8 +249,8 @@ describe("Consult services: item-level, locked, audited", () => {
     const ren = await director.patch(`/api/org/consult-services/${id}`).send({ name: "Heme/Onc" });
     expect(ren.status).toBe(200);
     expect(ren.body.service.name).toBe("Heme/Onc");
-    const pin = await director.patch(`/api/org/consult-services/${id}`).send({ onCall: { name: "Dr. Sharon George", avatar: "SG" } });
-    expect(pin.body.service.onCall).toMatchObject({ name: "Dr. Sharon George" });
+    const pin = await director.patch(`/api/org/consult-services/${id}`).send({ onCall: { name: "Dr. Sara Grant", avatar: "SG" } });
+    expect(pin.body.service.onCall).toMatchObject({ name: "Dr. Sara Grant" });
     const mem = await director.post(`/api/org/consult-services/${id}/members`).send({ name: "Taylor Reed, PA", role: "PA" });
     expect(mem.status).toBe(201);
     const memberId = mem.body.member.id;

@@ -186,7 +186,7 @@ console.log("== synthetic server " + BASE);
       return n > before;
     }, 8 * 60_000, 5000);
     rec("T: the server's own sweep sent the reminder (logged as a count only) after the 5-min interval", !!hit, "after " + Math.round((Date.now() - t0) / 1000) + "s");
-    const leak = /timer check|Reyes|George/.test(readFileSync(process.env.SERVER_LOG, "utf8").split("\n").filter((l) => /unread-reminder/.test(l)).join("\n"));
+    const leak = /timer check|Reyes|Grant/.test(readFileSync(process.env.SERVER_LOG, "utf8").split("\n").filter((l) => /unread-reminder/.test(l)).join("\n"));
     rec("T: the sweep's log lines carry no content or names", !leak);
   }
   await dev.ctx.close();

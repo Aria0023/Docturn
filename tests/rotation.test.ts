@@ -119,7 +119,7 @@ describe("selectNext — reroute with a single eligible provider (A.CON-SHO-28)"
 
 describe("selectNext — cap relief stays inside the routable pool (A.CON-MIN-4)", () => {
   it("raises day/night caps but leaves the swing-shift provider's cap alone", async () => {
-    // Seed: roundRobinShiftTypes = [day, night]; Manukian works the swing shift.
+    // Seed: roundRobinShiftTypes = [day, night]; Mills works the swing shift.
     const working = await ctx.storage.listWorkingHospitalists(orgId());
     for (const h of working) await setHosp(h.id, { currentPatientCount: h.patientCap });
     const swing = working.filter((h) => h.shiftType === "swing");
@@ -157,7 +157,7 @@ describe("previewNext — same eligibility as selectNext (A.CON-SHO-29)", () => 
     await setHosp(hid("chen"), { patientCap: 0 });
     const preview = await previewNext(ctx.storage, orgId());
     expect(preview?.id).not.toBe(hid("chen"));
-    // Kohan (night, census 1, lowest routable order) is who selectNext picks.
+    // Keane (night, census 1, lowest routable order) is who selectNext picks.
     expect(preview?.id).toBe(hid("kohan"));
     const live = await selectNext(ctx.storage, orgId(), {});
     expect(live?.id).toBe(preview?.id);
@@ -229,7 +229,12 @@ describe("GET /api/rotation/next — the client's 'Next up' source (A.CON-SHO-29
   };
 
   it("skips the at-cap lowest-census provider and matches the board, the picker and the real pick", async () => {
-    // The finding's repro: Darouichi (liu) 2/2, everyone else 6/12.
+    // The seed leaves one request waiting on chen; a waiting request counts
+    // toward "lowest census", so settle it to test the census rule on its own.
+    for (const a of await ctx.storage.listAssignments(ctx.seedResult.orgId)) {
+      if (a.status === "pending") await ctx.storage.updateAssignment(ctx.seedResult.orgId, a.id, { status: "cancelled", resolvedAt: new Date() });
+    }
+    // The finding's repro: Dawson (liu) 2/2, everyone else 6/12.
     for (const h of await ctx.storage.listHospitalists(orgId())) {
       await setHosp(h.id, h.id === hid("liu") ? { currentPatientCount: 2, patientCap: 2 } : { currentPatientCount: 6, patientCap: 12 });
     }
@@ -242,7 +247,7 @@ describe("GET /api/rotation/next — the client's 'Next up' source (A.CON-SHO-29
     expect(body.capRelief).toBe(false);
     expect(body.next?.hospitalistId).toBe(hid("chen"));
     expect(body.next?.userId).toBe(ctx.seedResult.userIds.chen);
-    expect(body.next?.displayName).toBe("Dr. Nathan Alyesh");
+    expect(body.next?.displayName).toBe("Dr. Nolan Avery");
     expect(body.next).toMatchObject({ census: 6, cap: 12, shiftType: "day" });
     // The ranking never contains the at-cap or the swing-shift provider.
     expect(body.order[0]).toBe(hid("chen"));
@@ -262,6 +267,26 @@ describe("GET /api/rotation/next — the client's 'Next up' source (A.CON-SHO-29
     const created = await er.post("/api/assignments").send({ patientId: patient.id, mode: "round_robin" });
     expect(created.status).toBe(201);
     expect(created.body.hospitalistId).toBe(body.next!.hospitalistId);
+  });
+
+  it("counts waiting requests: a burst of admissions spreads out instead of landing on one provider", async () => {
+    for (const h of await ctx.storage.listHospitalists(orgId())) await setHosp(h.id, { currentPatientCount: 3, patientCap: 12 });
+    for (const a of await ctx.storage.listAssignments(orgId())) {
+      if (a.status === "pending") await ctx.storage.updateAssignment(orgId(), a.id, { status: "cancelled", resolvedAt: new Date() });
+    }
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const picked: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      // The preview names who is next; the real pick agrees; nobody has accepted yet.
+      const preview = (await er.get("/api/rotation/next").expect(200)).body as Preview;
+      const { patient } = await createPatient("B" + i);
+      const created = await er.post("/api/assignments").send({ patientId: patient.id, mode: "round_robin" });
+      expect(created.status).toBe(201);
+      expect(created.body.hospitalistId).toBe(preview.next!.hospitalistId);
+      picked.push(created.body.hospitalistId);
+    }
+    // Four admissions, four different providers.
+    expect(new Set(picked).size).toBe(4);
   });
 
   it("applies the patient's specialty preference exactly like selectNext when ?specialty= is given", async () => {

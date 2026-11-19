@@ -164,7 +164,7 @@ async function ensureFixtures(page) {
   await login(page, "er_doctor", "ISPN", "er.doc");
   const sentTo = await page.evaluate(() => {
     const st = window.DT.getState();
-    const target = (window.DT.sortedProviders() || []).find((p) => /Alyesh/.test(p.name)) || window.DT.sortedProviders()[0];
+    const target = (window.DT.sortedProviders() || []).find((p) => /Avery/.test(p.name)) || window.DT.sortedProviders()[0];
     if (!target) return null;
     const mine = (st.sent || []).filter((s) => s.provider === target.name);
     const out = { target: target.name, sentAccepted: false, sentPending: false };

@@ -29,7 +29,7 @@ const BRIDGE_SRC = readFileSync(ROOT + "webapp/api-bridge.js", "utf8");
 const jsdomName = "jsdom"; // untyped devDependency — loaded dynamically
 const { JSDOM } = (await import(jsdomName)) as any;
 
-const CHEN = { id: 11, username: "chen", displayName: "Dr. Nathan Alyesh", role: "hospitalist", credential: "MD" };
+const CHEN = { id: 11, username: "chen", displayName: "Dr. Nolan Avery", role: "hospitalist", credential: "MD" };
 
 type Req = { method: string; path: string; body: any };
 type Reply = { status: number; body?: any } | { network: true };

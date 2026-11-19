@@ -13,7 +13,7 @@
         "id": "pr-day-1",
         "active": true,
         "period": { "start": "2026-09-03T00:00:00Z", "end": "2026-09-04T00:00:00Z" },
-        "practitioner": { "reference": "Practitioner/prac-alyesh", "display": "Alyesh, Nathan" },
+        "practitioner": { "reference": "Practitioner/prac-alyesh", "display": "Avery, Nolan" },
         "organization": { "reference": "Organization/org-tarzana", "display": "ISP North" },
         "code": [ { "coding": [ { "system": "http://terminology.hl7.org/CodeSystem/practitioner-role", "code": "doctor", "display": "Hospitalist Day 1" } ] } ],
         "specialty": [ { "coding": [ { "system": "http://snomed.info/sct", "code": "419192003", "display": "Hospital Medicine" } ] } ],
@@ -65,7 +65,7 @@
         "resourceType": "Practitioner",
         "id": "prac-alyesh",
         "active": true,
-        "name": [ { "use": "official", "family": "Alyesh", "given": ["Nathan"], "prefix": ["Dr."] } ]
+        "name": [ { "use": "official", "family": "Avery", "given": ["Nolan"], "prefix": ["Dr."] } ]
       },
       "search": { "mode": "include" }
     },
@@ -74,7 +74,7 @@
       "resource": {
         "resourceType": "Practitioner",
         "id": "prac-kohan",
-        "name": [ { "text": "Salar Kohan" } ]
+        "name": [ { "text": "Sam Keane" } ]
       },
       "search": { "mode": "include" }
     },
@@ -83,7 +83,7 @@
       "resource": {
         "resourceType": "Practitioner",
         "id": "prac-lou",
-        "name": [ { "family": "Lou", "given": ["May"] } ]
+        "name": [ { "family": "Lowe", "given": ["May"] } ]
       },
       "search": { "mode": "include" }
     },
@@ -92,7 +92,7 @@
       "resource": {
         "resourceType": "Practitioner",
         "id": "prac-george",
-        "name": [ { "use": "usual", "family": "George", "given": ["Sharon"] } ]
+        "name": [ { "use": "usual", "family": "Grant", "given": ["Sara"] } ]
       },
       "search": { "mode": "include" }
     },
@@ -105,7 +105,7 @@
         "serviceType": [ { "text": "Cardiology On Call" } ],
         "specialty": [ { "text": "Cardiology" } ],
         "actor": [
-          { "reference": "Practitioner/prac-george", "display": "George, Sharon" },
+          { "reference": "Practitioner/prac-george", "display": "Grant, Sara" },
           { "reference": "Organization/org-tarzana", "display": "ISP North" }
         ]
       },

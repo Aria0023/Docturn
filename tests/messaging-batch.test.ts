@@ -67,7 +67,7 @@ describe("broadcast catch-up list + acknowledgement", () => {
     expect(drow.ackCount).toBe(1);
     expect(drow.total).toBe(orgUsers.length - 1);
     expect(drow.ackedBy.map((p: { displayName: string }) => p.displayName)).toContain(
-      "Dr. Nathan Alyesh",
+      "Dr. Nolan Avery",
     );
     expect(drow.acked).toBe(false); // the director themself hasn't acked
 
@@ -124,7 +124,7 @@ describe("message forwarding", () => {
     expect(fwd.body.forwardedFrom).toMatchObject({
       messageId: sent.body.id,
       senderId: chenId,
-      senderName: "Dr. Nathan Alyesh",
+      senderName: "Dr. Nolan Avery",
       conversationId: convo.id,
       attachmentIds: [up.body.id],
     });
@@ -139,7 +139,7 @@ describe("message forwarding", () => {
     expect(msgs.body).toHaveLength(1);
     const m = msgs.body[0];
     expect(m.content).toBe("Please review this ECG");
-    expect(m.forwardedFrom.senderName).toBe("Dr. Nathan Alyesh");
+    expect(m.forwardedFrom.senderName).toBe("Dr. Nolan Avery");
     expect(m.attachments).toHaveLength(1);
     expect(m.attachments[0]).toMatchObject({ id: up.body.id, forwarded: true, isImage: true });
     const allAtts = await ctx.storage.listAttachmentMetaByIds(ctx.seedResult.orgId, [up.body.id]);
@@ -368,7 +368,7 @@ describe("availability + away message", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({
       userId: chenId,
-      displayName: "Dr. Nathan Alyesh",
+      displayName: "Dr. Nolan Avery",
       dnd: true,
       awayMessage: "In clinic until 3pm — page my cover.",
     });
@@ -406,8 +406,8 @@ describe("per-recipient status in group threads", () => {
     expect(m.ackCount).toBe(1);
     expect(m.deliveries).toHaveLength(2); // sender excluded
     const byUser = Object.fromEntries(m.deliveries.map((d: { userId: number }) => [d.userId, d]));
-    expect(byUser[patelId]).toMatchObject({ displayName: "Dr. Sharon George", status: "read" });
-    expect(byUser[lopezId]).toMatchObject({ displayName: "Dr. Amir Ahmed", status: "acknowledged" });
+    expect(byUser[patelId]).toMatchObject({ displayName: "Dr. Sara Grant", status: "read" });
+    expect(byUser[lopezId]).toMatchObject({ displayName: "Dr. Adam Archer", status: "acknowledged" });
     expect(byUser[patelId].acknowledgedAt).toBe(null);
   });
 });

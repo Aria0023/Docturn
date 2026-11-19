@@ -88,12 +88,12 @@ function defaultServer(): Server {
     orgRules: { assignmentTimeoutMin: 37, rotationMode: "sequential", autoReassignOnDecline: true, autoCleanHours: 48 },
     settingsHang: false,
     sources: { selected: "manual", explicit: true, sources: { amion: { id: "amion", configured: true, lastSyncAt: now(), lastStatus: "ok", error: null, rowCount: 13, message: null }, epic: { id: "epic", configured: false, lastSyncAt: null, lastStatus: "never", error: null, rowCount: 0, message: null }, manual: { id: "manual", configured: true, lastSyncAt: null, lastStatus: "never", error: null, rowCount: 0, message: null } }, modules: {} },
-    admissions: { rows: [{ patientId: 31, initials: "NB", room: "B2", specialty: "Cardiology", provider: "Dr. Sharon George", via: "round_robin", status: "pending", routedAt: now(), lastRoutedAt: now(), routings: 1 }], total: 1, last24h: 1, sinceReset: 2, sinceResetRemoved: 1, autoCleanHours: 24, reset: { at: new Date(Date.now() - 48 * 3600_000).toISOString(), by: { id: 2, name: "Dr. Dana Director" } }, limit: 500, generatedAt: now() },
+    admissions: { rows: [{ patientId: 31, initials: "NB", room: "B2", specialty: "Cardiology", provider: "Dr. Sara Grant", via: "round_robin", status: "pending", routedAt: now(), lastRoutedAt: now(), routings: 1 }], total: 1, last24h: 1, sinceReset: 2, sinceResetRemoved: 1, autoCleanHours: 24, reset: { at: new Date(Date.now() - 48 * 3600_000).toISOString(), by: { id: 2, name: "Dr. Dana Director" } }, limit: 500, generatedAt: now() },
     diversion: { active: false, since: null, by: null },
     pending: [],
     my: [],
     candidates: [
-      { userId: 5, displayName: "Dr. Nathan Alyesh", credential: "MD", role: "hospitalist", active: true, canJoinUnit: true },
+      { userId: 5, displayName: "Dr. Nolan Avery", credential: "MD", role: "hospitalist", active: true, canJoinUnit: true },
       { userId: 4, displayName: "Dr. Erin Reyes", credential: "MD", role: "er_doctor", active: true, canJoinUnit: false },
       { userId: 2, displayName: "Dr. Dana Director", credential: "MD", role: "director", active: true, canJoinUnit: true },
     ],
@@ -147,7 +147,7 @@ async function boot(who: Who, server: Partial<Server> = {}): Promise<Harness> {
     // clinical
     if (p === "/api/rotation/next") return { status: 200, body: { mode: "lowest_census", shiftTypes: ["day", "night"], capRelief: false, next: null, order: [] } };
     if (p === "/api/hospitalists" && req.method === "GET") return { status: 200, body: [{ id: 1, userId: 5, specialty: "Hospital Medicine", currentPatientCount: 3, patientCap: 12, working: true, shiftType: "day", inRotation: true }] };
-    if (p === "/api/physicians/directory") return { status: 200, body: [{ id: 1, userId: 5, displayName: "Dr. Nathan Alyesh", credential: "MD", specialty: "Hospital Medicine", working: true, shiftType: "day" }] };
+    if (p === "/api/physicians/directory") return { status: 200, body: [{ id: 1, userId: 5, displayName: "Dr. Nolan Avery", credential: "MD", specialty: "Hospital Medicine", working: true, shiftType: "day" }] };
     if (p === "/api/care-team/candidates") return { status: 200, body: srv.candidates.filter((c) => c.userId !== me.id) };
     if (p === "/api/care-team") return { status: 200, body: { owner: { userId: me.id, displayName: me.displayName }, members: srv.team } };
     if (p === "/api/patients" && req.method === "GET") return { status: 200, body: [{ id: 41, initials: "UV", roomNumber: "12", issueSummary: "synthetic chest pain", specialty: "Cardiology", acuity: 2, status: "waiting", erDoctorId: 4, createdAt: now() }] };
@@ -374,24 +374,24 @@ describe("clinical #1: the diversion banner says what the server recorded", () =
 
 // ── clinical #4 ─────────────────────────────────────────────────────────────
 describe("clinical #4: a care-team member sees and accepts the owner's request", () => {
-  const ownerRow = () => ({ id: 41, patientId: 41, hospitalistId: 1, erDoctorId: 4, status: "pending", via: "manual", acceptedByUserId: null, expiresAt: new Date(Date.now() + 600_000).toISOString(), createdAt: now(), resolvedAt: null, onBehalfOf: { userId: 5, displayName: "Dr. Nathan Alyesh" } });
+  const ownerRow = () => ({ id: 41, patientId: 41, hospitalistId: 1, erDoctorId: 4, status: "pending", via: "manual", acceptedByUserId: null, expiresAt: new Date(Date.now() + 600_000).toISOString(), createdAt: now(), resolvedAt: null, onBehalfOf: { userId: 5, displayName: "Dr. Nolan Avery" } });
 
-  it("Wu's Home lists Chen's request 'for Dr. Nathan Alyesh' with Accept only; Accept is the server's accept", async () => {
+  it("Wu's Home lists Chen's request 'for Dr. Nolan Avery' with Accept only; Accept is the server's accept", async () => {
     const h = await boot("wu", { pending: [ownerRow()] });
     await until(() => !!q(h, '[data-pending-id="41"]'), 6000, "pending card");
     const card = q(h, '[data-pending-id="41"]');
     expect(card.getAttribute("data-pending-for")).toBe("5");
-    expect(card.textContent).toMatch(/For Dr\. Nathan Alyesh/);
+    expect(card.textContent).toMatch(/For Dr\. Nolan Avery/);
     const btns = [...card.querySelectorAll("button")].map((b: any) => b.textContent.trim());
-    expect(btns).toEqual(["Accept for Dr. Nathan Alyesh"]);
+    expect(btns).toEqual(["Accept for Dr. Nolan Avery"]);
     expect(h.text()).not.toMatch(/No pending assignments/);
     const from = h.reqs.length;
     click(h, card.querySelector("button"));
     await until(() => writes(h, from).length >= 1, 4000, "PATCH");
     expect(writes(h, from)[0]).toEqual({ method: "PATCH", path: "/api/assignments/41/accept", body: null });
-    await until(() => h.state().__toast && /Accepted for Dr\. Nathan Alyesh/.test(h.state().__toast.title), 4000, "toast");
+    await until(() => h.state().__toast && /Accepted for Dr\. Nolan Avery/.test(h.state().__toast.title), 4000, "toast");
     await until(() => !!q(h, "[data-accepted-obo]"), 4000, "accepted for");
-    expect(q(h, "[data-accepted-obo]").textContent).toMatch(/Accepted for Dr\. Nathan Alyesh/);
+    expect(q(h, "[data-accepted-obo]").textContent).toMatch(/Accepted for Dr\. Nolan Avery/);
   });
 
   it("decline of an owner's request is refused locally (nothing sent)", async () => {
@@ -400,7 +400,7 @@ describe("clinical #4: a care-team member sees and accepts the owner's request",
     const from = h.reqs.length;
     await h.w.DT.actions.decline(41);
     expect(writes(h, from)).toHaveLength(0);
-    expect(h.state().__toast.title).toMatch(/Only Dr\. Nathan Alyesh can decline/);
+    expect(h.state().__toast.title).toMatch(/Only Dr\. Nolan Avery can decline/);
   });
 
   it("Add member offers only people who can accept a request", async () => {

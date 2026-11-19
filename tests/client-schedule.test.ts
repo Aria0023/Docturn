@@ -43,7 +43,7 @@ type Reply = { status: number; body?: any };
 type Route = (req: Req) => Reply | undefined;
 
 const LIST_PATHS = /^\/api\/(hospitalists|physicians\/directory|patients|care-team\/candidates|assignments\/(pending|my|sent)|patient-board|registrations|messaging\/conversations|broadcasts|oncall\/manual)$/;
-const DEMO_ROWS =/\b(MJ|RV|DK|LP)\b|Amir Patel|Maria Lopez|Omar Haddad/;
+const DEMO_ROWS =/\b(MJ|RV|DK|LP)\b|Adam Patel|Maria Lopez|Omar Haddad/;
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();
 
 function sourcesBody(selected: "amion" | "epic" | "manual", amion: Partial<{ configured: boolean; lastSyncAt: string | null; lastStatus: string; rowCount: number }> = {}) {
@@ -89,7 +89,7 @@ function defaultServer(): Server {
       { id: "night", label: "Night", start: null, end: null },
     ],
     admissions: {
-      rows: [{ patientId: 7, initials: "SC", room: "204", specialty: "Cardiology", provider: "Dr. Nathan Alyesh", via: "round_robin", status: "pending", routedAt: iso(30 * 60_000), lastRoutedAt: iso(30 * 60_000), routings: 1 }],
+      rows: [{ patientId: 7, initials: "SC", room: "204", specialty: "Cardiology", provider: "Dr. Nolan Avery", via: "round_robin", status: "pending", routedAt: iso(30 * 60_000), lastRoutedAt: iso(30 * 60_000), routings: 1 }],
       total: 1, last24h: 1, sinceReset: 1, reset: null, limit: 500, generatedAt: iso(0),
     },
     synthetic: true,

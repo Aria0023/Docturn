@@ -345,7 +345,7 @@
 
       providers: isLive() ? [] : [
         { id: "h1", name: "Dr. Sarah Chen",  avatar: "SC", specialty: "Cardiology",        census: 3, cap: 12, working: true,  shift: "day",   inRotation: true },
-        { id: "h2", name: "Dr. Amir Patel",  avatar: "AP", specialty: "Hospital Medicine", census: 5, cap: 12, working: true,  shift: "day",   inRotation: true },
+        { id: "h2", name: "Dr. Adam Patel",  avatar: "AP", specialty: "Hospital Medicine", census: 5, cap: 12, working: true,  shift: "day",   inRotation: true },
         { id: "h3", name: "Dr. Maria Lopez", avatar: "ML", specialty: "Pulmonology",       census: 7, cap: 10, working: true,  shift: "swing", inRotation: true },
         { id: "h5", name: "Dr. Nina Roy",    avatar: "NR", specialty: "Hospital Medicine", census: 4, cap: 12, working: true,  shift: "swing", inRotation: false },
         { id: "h6", name: "Dr. Omar Haddad", avatar: "OH", specialty: "Hospital Medicine", census: 6, cap: 12, working: true,  shift: "night", inRotation: true },
@@ -395,7 +395,7 @@
       ],
 
       sent: isLive() ? [] : [
-        { id: uid("s"), initials: "MJ", provider: "Dr. Amir Patel",  complaint: "NSTEMI, troponin trending", consultants: ["Cardiology"],  time: "Today · 08:41",     day: "Today",     status: "accepted" },
+        { id: uid("s"), initials: "MJ", provider: "Dr. Adam Patel",  complaint: "NSTEMI, troponin trending", consultants: ["Cardiology"],  time: "Today · 08:41",     day: "Today",     status: "accepted" },
         { id: uid("s"), initials: "RV", provider: "Dr. Maria Lopez", complaint: "COPD exacerbation",          consultants: ["Pulmonology"], time: "Today · 07:55",     day: "Today",     status: "sent" },
         { id: uid("s"), initials: "DK", provider: "Dr. Sarah Chen",  complaint: "Syncope, workup",            consultants: [],              time: "Yesterday · 21:10", day: "Yesterday", status: "accepted" },
         { id: uid("s"), initials: "LP", provider: "Dr. Omar Haddad", complaint: "GI bleed, melena",           consultants: ["GI"],          time: "Yesterday · 16:32", day: "Yesterday", status: "rejected" },
@@ -407,7 +407,7 @@
       // appended (A.CON schedule #6/#7). The demo rows below are the offline
       // kit's only (no api-bridge).
       admissions: isLive() ? [] : [
-        { id: uid("ad"), at: now() - 35 * 60000,    initials: "MJ", room: "402", provider: "Dr. Amir Patel",  specialty: "Cardiology",  via: "Round-robin", status: "accepted" },
+        { id: uid("ad"), at: now() - 35 * 60000,    initials: "MJ", room: "402", provider: "Dr. Adam Patel",  specialty: "Cardiology",  via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 95 * 60000,    initials: "RV", room: "318", provider: "Dr. Maria Lopez", specialty: "Pulmonology", via: "Manual",      status: "sent" },
         { id: uid("ad"), at: now() - 5 * 3600000,   initials: "DK", room: "210", provider: "Dr. Sarah Chen",  specialty: "Neurology",   via: "Round-robin", status: "accepted" },
         { id: uid("ad"), at: now() - 26 * 3600000,  initials: "LP", room: "115", provider: "Dr. Omar Haddad", specialty: "GI",          via: "Manual",      status: "accepted" },
@@ -429,7 +429,7 @@
         { id: uid("b"), initials: "TK", room: "205", dept: "ICU",  issue: "Diabetic ketoacidosis", status: "observation",
           attending: { name: "Dr. Maria Lopez", avatar: "ML" }, unit: [{ avatar: "NR", role: "NP" }], consultants: ["Endocrine", "Nephro"], er: { name: "Dr. Osei", avatar: "Os" } },
         { id: uid("b"), initials: "DW", room: "410", dept: "TELE", issue: "CHF exacerbation", status: "admitted",
-          attending: { name: "Dr. Amir Patel", avatar: "AP" }, unit: [], consultants: ["Cardiology"], er: { name: "Dr. Reyes", avatar: "Re" } },
+          attending: { name: "Dr. Adam Patel", avatar: "AP" }, unit: [], consultants: ["Cardiology"], er: { name: "Dr. Reyes", avatar: "Re" } },
         { id: uid("b"), initials: "BG", room: "402", dept: "MED",  issue: "Community-acquired pneumonia", status: "admitted",
           attending: { name: "Dr. Sarah Chen", avatar: "SC" }, unit: [{ avatar: "JW", role: "PA" }], consultants: [], er: { name: "Dr. Okafor", avatar: "Ok" } },
         { id: uid("b"), initials: "LH", room: "—", dept: "ER", issue: "Chest pain, rule-out ACS", status: "pending",
@@ -448,7 +448,7 @@
         { code: "MAYO",   name: "Mayo General Hospital",   timezone: "America/New_York",    users: 142, assignments: 88 },
         { code: "STJUDE", name: "St. Jude Medical Center", timezone: "America/Chicago",     users: 96,  assignments: 54 },
         { code: "CLEVE",  name: "Cleveland Care Network",  timezone: "America/New_York",    users: 211, assignments: 132 },
-        { code: "ISPN",  name: "Cedars-Sinai (ISP North)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29 },
+        { code: "ISPN",  name: "Riverside General (demo)",              timezone: "America/Los_Angeles", users: 67,  assignments: 29 },
         { code: "PINE",   name: "Pinecrest Regional",      timezone: "America/Denver",      users: 38,  assignments: 12 },
       ],
       orgsLoaded: !isLive(),
@@ -504,7 +504,7 @@
           ] },
         { id: "cv2", name: "ICU Care Team", role: "Group · 6 members", initials: "IC", presence: "online", tint: "blue", unread: 0, group: true, typing: false,
           messages: [{ me: false, text: "Bed 3 is open for the next admit.", at: t0 - 840000 }] },
-        { id: "cv3", name: "Dr. Amir Patel", role: "Hospital Medicine", initials: "AP", presence: "pending", tint: "amber", unread: 0, typing: false,
+        { id: "cv3", name: "Dr. Adam Patel", role: "Hospital Medicine", initials: "AP", presence: "pending", tint: "amber", unread: 0, typing: false,
           messages: [{ me: false, text: "On my way up — give me 5.", at: t0 - 3600000 }] },
         { id: "cv4", name: "Emergency broadcast", role: "Code · all providers", initials: "!", presence: "offline", tint: "slate", unread: 0, broadcast: true, typing: false,
           messages: [{ me: false, text: "Mass casualty drill at 14:00.", at: t0 - 10800000 }] },

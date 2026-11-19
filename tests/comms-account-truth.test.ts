@@ -155,7 +155,7 @@ describe("#7 the Compliance trail: true sizes, named actors and roles", () => {
     const { agent: director } = await login(ctx.app, { username: "director" });
     const body = (await director.get("/api/audit").expect(200)).body;
     const phi = body.phiAccess.find((r: any) => r.userId === ctx.seedResult.userIds.chen);
-    expect(phi).toMatchObject({ actorName: "Dr. Nathan Alyesh", actorRole: "hospitalist" });
+    expect(phi).toMatchObject({ actorName: "Dr. Nolan Avery", actorRole: "hospitalist" });
     expect(phi).not.toHaveProperty("ok");
     expect(phi).not.toHaveProperty("purpose");
     await chen.get("/api/audit").expect(403);

@@ -28,7 +28,7 @@ const { JSDOM } = (await import(jsdomName)) as any;
 
 const DIRECTOR = { id: 1, username: "director", displayName: "Dr. Dana Director", role: "director" };
 const ER = { id: 2, username: "er.doc", displayName: "Dr. Erin Reyes", role: "er_doctor", credential: "MD" };
-const NAMES: Record<number, string> = { 1: "Dr. Nathan Alyesh", 2: "Dr. Sharon George", 3: "Dr. Amir Ahmed", 4: "Dr. Joline Darouichi" };
+const NAMES: Record<number, string> = { 1: "Dr. Nolan Avery", 2: "Dr. Sara Grant", 3: "Dr. Adam Archer", 4: "Dr. Julia Dawson" };
 
 type Req = { method: string; path: string; body: any };
 type Hosp = { id: number; userId: number; specialty: string; currentPatientCount: number; patientCap: number; rotationOrder: number; working: boolean; shiftType: string; inRotation: boolean };
@@ -146,7 +146,7 @@ const nextId = (h: Harness) => { const n = h.w.DT.nextUp(); return n ? n.id : nu
 describe("web client 'Next up' stays live (jsdom, real store.js + api-bridge.js) — A.CON-SHO-29", () => {
   it("Reset rotation re-reads the planner: Next up becomes the post-reset provider and the toast names them", async () => {
     const h = await boot(DIRECTOR);
-    expect(nextId(h)).toBe("h3"); // cursor 2 → Dr. Amir Ahmed
+    expect(nextId(h)).toBe("h3"); // cursor 2 → Dr. Adam Archer
     h.reqs.length = 0;
     h.w.DT.actions.resetRotation();
     await until(() => nextId(h) === "h1");
@@ -155,7 +155,7 @@ describe("web client 'Next up' stays live (jsdom, real store.js + api-bridge.js)
     expect(posts).toBeGreaterThanOrEqual(0);
     expect(reread).toBeGreaterThan(posts);
     expect(h.w.DT.rotationQueue().map((p: any) => p.id)).toEqual(["h1", "h2", "h3", "h4"]);
-    await until(() => /Alyesh/.test(String(h.state().__toast && h.state().__toast.msg)));
+    await until(() => /Avery/.test(String(h.state().__toast && h.state().__toast.msg)));
     expect(h.state().__toast).toMatchObject({ tone: "accepted", title: "Rotation index reset" });
   });
 

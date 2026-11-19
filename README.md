@@ -9,8 +9,8 @@ DocTurn coordinates two things inside a hospital and keeps them fast, safe, and 
    and read receipts.
 
 It is **multi-tenant** (many hospitals, each an `organization`), runs on web and mobile, and is
-marketed publicly as **DoctorHeidi**. This repository implements the spec in
-[`design/design_handoff_docturn/`](design/design_handoff_docturn/).
+marketed publicly as **DoctorHeidi**. The original design hand-off is in the git
+history (removed from the working tree; nothing ran from it).
 
 ## Status
 
@@ -18,7 +18,7 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 
 | Milestone | Scope | State |
 |---|---|---|
-| M0 | Scaffold, schema, `db:push`, `GET /api/health` | ✅ |
+| M0 | Scaffold, schema (applied at boot), `GET /api/health` | ✅ |
 | M1 | Passport auth, sessions, RBAC, deterministic seed | ✅ |
 | M2 | Providers, directory, org config, rotation reset | ✅ |
 | M3 | Patient intake + AI extraction (stub) | ✅ |
@@ -39,7 +39,7 @@ The **backend foundation (milestones M0–M5)** is implemented and tested:
 | C3 | Adaptive suggestions (analyze → propose with evidence → human accept) | ✅ |
 | v2 | Care-team on-call units + fan-out/accept-lock, patient board, consults, census override, dev provisioning | ✅ |
 
-The design system and high-fidelity UI kits live in [`design/`](design/). What is safe and what
+What is safe and what
 is still missing is tracked honestly in [`SECURITY.md`](SECURITY.md) and
 [`docs/AWS_DEPLOYMENT_RUNBOOK.md`](docs/AWS_DEPLOYMENT_RUNBOOK.md) §15.
 
@@ -199,7 +199,6 @@ webapp/               # the web client / PWA (see docs/MOBILE.md)
 tests/                # Vitest + Supertest (+ jsdom client tests)
 scripts/              # build-webapp, live-server smokes, Chromium checks
 deploy/aws/           # bootstrap, systemd unit, Caddyfile, SSM env, update script
-design/               # full design-system handoff + UI kits the client is built from
 ```
 
 ## Core invariants (enforced + tested)

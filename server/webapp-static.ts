@@ -576,9 +576,6 @@ export function mountWebapp(app: Express, dir: string, opts: WebappOptions = {})
       },
     }),
   );
-  // Convenience alias for the side-by-side demo console (served from demo.html
-  // by express.static; without this the SPA fallback below would shadow it).
-  app.get("/demo", (_req, res) => res.redirect("/demo.html"));
   // Not /api, not /ws and not /scim (the SCIM 2.0 API, E2.2 — its 404s must
   // be SCIM errors, never this HTML shell).
   app.get(/^(?!\/api|\/ws|\/scim).*/, sendShell);

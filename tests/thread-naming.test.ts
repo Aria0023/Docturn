@@ -3,7 +3,7 @@ import { createTestApp, login, type TestContext } from "./helpers.js";
 
 /**
  * A.CON-MIN-15: a role-addressed direct thread used to persist the sender-side
- * label ("Next hospitalist (Dr. Nathan Alyesh)") as the SHARED conversation
+ * label ("Next hospitalist (Dr. Nolan Avery)") as the SHARED conversation
  * name, so the recipient saw a thread titled after himself. The API now serves
  * `name: null` for direct threads (each client falls back to the other
  * participant's display name) and carries the label as `addressedAs`.
@@ -17,7 +17,7 @@ describe("direct-thread naming", () => {
   it("serves a role label as addressedAs, never as the direct thread's name, on both sides", async () => {
     const chenId = ctx.seedResult.userIds.chen!;
     const { agent: er } = await login(ctx.app, { username: "er.doc" });
-    const label = "Next hospitalist (Dr. Nathan Alyesh)";
+    const label = "Next hospitalist (Dr. Nolan Avery)";
     const created = await er.post("/api/messaging/conversations").send({ type: "direct", name: label, participantIds: [chenId] });
     expect(created.status).toBe(201);
     expect(created.body.name).toBeNull();

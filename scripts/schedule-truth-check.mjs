@@ -46,7 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 const csp = [];
 const pageErrors = [];
-const DEMO = /\b(MJ|RV|DK|LP)\b.*(Amir Patel|Maria Lopez|Sarah Chen|Omar Haddad)|Dr\. Amir Patel|Dr\. Maria Lopez|Dr\. Omar Haddad|Day call|07:00|15:00|23:00/;
+const DEMO = /\b(MJ|RV|DK|LP)\b.*(Adam Patel|Maria Lopez|Sarah Chen|Omar Haddad)|Dr\. Adam Patel|Dr\. Maria Lopez|Dr\. Omar Haddad|Day call|07:00|15:00|23:00/;
 const RUN = Date.now().toString(36).slice(-4).toUpperCase().replace(/[^A-Z]/g, "Q");
 
 async function open(base, width, org, username, password = PW) {

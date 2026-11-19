@@ -51,7 +51,7 @@ type Reply = { status: number; body?: any };
 type Route = (req: Req) => Reply | undefined;
 type Role = "director" | "er_director" | "er_doctor" | "hospitalist";
 
-const DEMO_NAMES = /Ruth Osei|Paul Okafor|Dana Reyes|Sam Iyer|Nina Roy|Omar Haddad|Priya Shah|Marcus Bell|Lena Ortiz|Sam Cole|Amir Patel|Maria Lopez/;
+const DEMO_NAMES = /Ruth Osei|Paul Okafor|Dana Reyes|Sam Iyer|Nina Roy|Omar Haddad|Priya Shah|Marcus Bell|Lena Ortiz|Sam Cole|Adam Patel|Maria Lopez/;
 const now = () => new Date().toISOString();
 
 interface Server {
@@ -92,7 +92,7 @@ const USERS: Record<Role, any> = {
   director: { id: 2, username: "director", displayName: "Dr. Dana Director", role: "director", credential: "MD", organizationId: 1 },
   er_director: { id: 3, username: "er.director", displayName: "Dr. Evan Marsh", role: "er_director", credential: "MD", organizationId: 1 },
   er_doctor: { id: 4, username: "er.doc", displayName: "Dr. Erin Reyes", role: "er_doctor", credential: "MD", organizationId: 1 },
-  hospitalist: { id: 5, username: "chen", displayName: "Dr. Nathan Alyesh", role: "hospitalist", credential: "MD", organizationId: 1 },
+  hospitalist: { id: 5, username: "chen", displayName: "Dr. Nolan Avery", role: "hospitalist", credential: "MD", organizationId: 1 },
 };
 
 function defaultServer(): Server {
@@ -105,7 +105,7 @@ function defaultServer(): Server {
     candidates: [
       { userId: 2, displayName: "Dr. Dana Director", credential: null, role: "director", active: true },
       { userId: 4, displayName: "Dr. Erin Reyes", credential: "MD", role: "er_doctor", active: true },
-      { userId: 6, displayName: "Dr. Sharon George", credential: "MD", role: "hospitalist", active: true },
+      { userId: 6, displayName: "Dr. Sara Grant", credential: "MD", role: "hospitalist", active: true },
       { userId: 9, displayName: "Jordan Wu, PA-C", credential: "PA", role: "hospitalist", active: true },
       { userId: 12, displayName: "Old Former, NP", credential: "NP", role: "hospitalist", active: false },
     ],
@@ -118,7 +118,7 @@ function defaultServer(): Server {
     board: [{
       patient: { id: 13, initials: "QZ", room: "412", department: "MED", issue: "Chest pain", acuity: 2, status: "assigned" },
       assignmentId: 31, status: "assigned",
-      responsible: { attending: { userId: 5, displayName: "Dr. Nathan Alyesh" }, unit: [] },
+      responsible: { attending: { userId: 5, displayName: "Dr. Nolan Avery" }, unit: [] },
       consultants: [], consultDetails: [], admittedBy: { userId: 4, displayName: "Dr. Erin Reyes" },
     }],
     sent: [],
@@ -391,7 +391,7 @@ describe("#4 My care team is the server's", () => {
     await until(() => writes(h, from).length >= 1, 4000, "POST");
     expect(writes(h, from)[0]).toEqual({ method: "POST", path: "/api/care-team/members", body: { memberUserId: 6 } });
     await until(() => !!h.w.document.querySelector('[data-team-member="6"]'), 4000, "linked");
-    expect(h.state().__toast.title).toMatch(/Dr\. Sharon George added to your on-call unit/);
+    expect(h.state().__toast.title).toMatch(/Dr\. Sara Grant added to your on-call unit/);
     // remove
     from = h.reqs.length;
     click(h, h.w.document.querySelector('[data-team-member="6"] button[aria-label^="Remove"]'));
@@ -433,12 +433,12 @@ describe("#11/#12 provider name, specialty and removal are the server's", () => 
     const h = await boot({ role: "director" });
     await until(() => (h.state().providers || []).some((p: any) => p.id === "h2"), 6000, "providers");
     let from = h.reqs.length;
-    await h.w.DT.actions.updateProvider("h2", { name: "Dr. Sharon George Renamed", specialty: "GI" });
-    expect(writes(h, from)[0]).toEqual({ method: "PATCH", path: "/api/hospitalists/2/profile", body: { displayName: "Dr. Sharon George Renamed", specialty: "GI" } });
-    await until(() => (h.state().providers.find((p: any) => p.id === "h2") || {}).name === "Dr. Sharon George Renamed", 4000, "renamed");
+    await h.w.DT.actions.updateProvider("h2", { name: "Dr. Sara Grant Renamed", specialty: "GI" });
+    expect(writes(h, from)[0]).toEqual({ method: "PATCH", path: "/api/hospitalists/2/profile", body: { displayName: "Dr. Sara Grant Renamed", specialty: "GI" } });
+    await until(() => (h.state().providers.find((p: any) => p.id === "h2") || {}).name === "Dr. Sara Grant Renamed", 4000, "renamed");
     from = h.reqs.length;
-    await until(() => !!h.w.document.querySelector('button[aria-label="Remove Dr. Sharon George Renamed from the rotation"]'), 4000, "trash");
-    const trash = h.w.document.querySelector('button[aria-label="Remove Dr. Sharon George Renamed from the rotation"]');
+    await until(() => !!h.w.document.querySelector('button[aria-label="Remove Dr. Sara Grant Renamed from the rotation"]'), 4000, "trash");
+    const trash = h.w.document.querySelector('button[aria-label="Remove Dr. Sara Grant Renamed from the rotation"]');
     click(h, trash);
     await until(() => writes(h, from).length >= 1, 4000, "DELETE");
     expect(writes(h, from)[0]).toMatchObject({ method: "DELETE", path: "/api/physicians/2" });
@@ -563,7 +563,7 @@ describe("#17-#22 the ER intake extracts and sends on the server", () => {
   });
 
   it("no PA/NP accounts → no picker, no demo pool (syntheticData=false)", async () => {
-    const h = await boot({ role: "er_doctor", server: { synthetic: false, candidates: [{ userId: 6, displayName: "Dr. Sharon George", credential: "MD", role: "hospitalist", active: true }] } });
+    const h = await boot({ role: "er_doctor", server: { synthetic: false, candidates: [{ userId: 6, displayName: "Dr. Sara Grant", credential: "MD", role: "hospitalist", active: true }] } });
     await until(() => !!buttonByText(h, /^Extract fields$/), 6000, "intake");
     click(h, buttons(h, /Cardiology$/)[0]);
     await until(() => !!h.w.document.querySelector('[data-consult-panel="Cardiology"]'), 4000, "panel");

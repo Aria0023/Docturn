@@ -34,7 +34,7 @@ describe("on-call message addressing", () => {
       .patch("/api/org/preferences")
       .send({
         consultServices: [
-          { id: "cs-card", name: "Cardiology", onCall: { name: "Dr. Sharon George", avatar: "SG" }, members: [] },
+          { id: "cs-card", name: "Cardiology", onCall: { name: "Dr. Sara Grant", avatar: "SG" }, members: [] },
           { id: "cs-neuro", name: "Neurology", onCall: { name: "Nobody At All", avatar: "NA" }, members: [] },
           { id: "cs-gi", name: "GI", onCall: null, members: [] },
         ],
@@ -48,7 +48,7 @@ describe("on-call message addressing", () => {
 
     const cardio = res.body.find((t: any) => t.kind === "consult_service" && t.id === "consult_service:cs-card");
     expect(cardio).toBeTruthy();
-    expect(cardio.userId).toBe(ctx.seedResult.userIds.patel); // Dr. Sharon George
+    expect(cardio.userId).toBe(ctx.seedResult.userIds.patel); // Dr. Sara Grant
     expect(cardio.label).toBe("On-call Cardiology");
 
     // Unresolvable name and missing on-call are excluded — never invented.
@@ -117,7 +117,7 @@ describe("on-call message addressing", () => {
     const hospDirector = (await login(ctx.app, { username: "director", orgCode: "HOSP" })).agent;
     await hospDirector.patch("/api/org/preferences").send({
       consultServices: [
-        { id: "cs-y", name: "Cross Tenant", onCall: { name: "Dr. Sharon George", avatar: "SG" }, members: [] },
+        { id: "cs-y", name: "Cross Tenant", onCall: { name: "Dr. Sara Grant", avatar: "SG" }, members: [] },
       ],
     });
     const hospTargets = await hospDirector.get("/api/messaging/on-call-targets");

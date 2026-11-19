@@ -60,20 +60,20 @@ describe("amion parser", () => {
     expect(rows).toHaveLength(13);
 
     expect(rows[0]).toEqual({
-      slot: "Tarzana 1",
+      slot: "Westside 1",
       hrs: "7a-7p",
-      name: "Lou, May",
+      name: "Lowe, May",
       group: "Lead Hospitalist",
       secure: true,
       shift: "day",
     });
-    expect(rows[1]!.name).toBe("Kazanchyan, Moe");
+    expect(rows[1]!.name).toBe("Keller, Max");
     expect(rows[1]!.group).toBe("Moonlighter");
     expect(rows[1]!.secure).toBe(false);
-    expect(rows[10]).toMatchObject({ slot: "Tarzana Swing", hrs: "2p-10p", shift: "swing" });
-    expect(rows[12]).toMatchObject({ slot: "Tarzana Night XC", name: "Niculescu, Alex", shift: "night" });
+    expect(rows[10]).toMatchObject({ slot: "Westside Swing", hrs: "2p-10p", shift: "swing" });
+    expect(rows[12]).toMatchObject({ slot: "Westside Night XC", name: "Novak, Alex", shift: "night" });
 
-    // Shift distribution: 10 day slots (incl. Gopal's duplicate), 1 swing, 2 night.
+    // Shift distribution: 10 day slots (incl. Gordon's duplicate), 1 swing, 2 night.
     const byShift = rows.reduce<Record<string, number>>((m, r) => {
       m[r.shift] = (m[r.shift] ?? 0) + 1;
       return m;
@@ -83,7 +83,7 @@ describe("amion parser", () => {
     // Secure-messaging readiness parsed per row: 8 onboarded, 5 not.
     expect(rows.filter((r) => r.secure)).toHaveLength(8);
 
-    // Gopal holds two slots → 12 unique people once deduped by name.
+    // Gordon holds two slots → 12 unique people once deduped by name.
     const unique = new Set(rows.map((r) => toDisplayName(r.name)));
     expect(unique.size).toBe(12);
   });
@@ -91,14 +91,14 @@ describe("amion parser", () => {
   it("parses the plain-text / tab-separated report shape too", () => {
     const text = [
       "Assignment\tHours\tStaff\tDivision\tMessaging",
-      "Tarzana 1\t7a-7p\tLou, May\tLead Hospitalist\tSecure message to Amion app",
-      "Tarzana Swing\t2p-10p\tKashi, Kioumars\tISP North\tNot ready to receive secure messages",
-      "Tarzana Night Triage\t7p-7a\tKohan, Salar\tISP North\tNot ready to receive secure messages",
+      "Westside 1\t7a-7p\tLowe, May\tLead Hospitalist\tSecure message to Amion app",
+      "Westside Swing\t2p-10p\tKane, Kyle\tISP North\tNot ready to receive secure messages",
+      "Westside Night Triage\t7p-7a\tKeane, Sam\tISP North\tNot ready to receive secure messages",
       "",
     ].join("\n");
     const rows = parseAmionBody(text, "text/plain");
     expect(rows).toHaveLength(3);
-    expect(rows[0]).toMatchObject({ slot: "Tarzana 1", name: "Lou, May", secure: true, shift: "day" });
+    expect(rows[0]).toMatchObject({ slot: "Westside 1", name: "Lowe, May", secure: true, shift: "day" });
     expect(rows[1]).toMatchObject({ shift: "swing", secure: false });
     expect(rows[2]).toMatchObject({ shift: "night", group: "ISP North" });
   });
@@ -149,10 +149,10 @@ describe("amion sync", () => {
 
     const after = await ctx.storage.listUsers(ctx.seedResult.orgId);
     // Seed already has 8 of the 12 unique providers (as "Dr. First Last");
-    // the other 4 (Lou, Rostami, Yu, Kashi) are created.
+    // the other 4 (Lowe, Ross, Young, Kane) are created.
     expect(after.length - before.length).toBe(4);
     const names = after.map((u) => u.displayName);
-    for (const n of ["May Lou", "Matt Rostami", "Allen Yu", "Kioumars Kashi"]) {
+    for (const n of ["May Lowe", "Matt Ross", "Allen Young", "Kyle Kane"]) {
       expect(names).toContain(n);
     }
 
@@ -162,20 +162,20 @@ describe("amion sync", () => {
     const hospFor = (name: string) =>
       hosps.find((h) => byUser.get(h.userId)?.displayName === name);
 
-    expect(hospFor("Dr. Salar Kohan")).toMatchObject({ shiftType: "night", working: true });
-    expect(hospFor("Dr. Nathan Alyesh")).toMatchObject({ shiftType: "day", working: true });
+    expect(hospFor("Dr. Sam Keane")).toMatchObject({ shiftType: "night", working: true });
+    expect(hospFor("Dr. Nolan Avery")).toMatchObject({ shiftType: "day", working: true });
     // New providers carry the grid's group as specialty and come in on-shift.
-    expect(hospFor("Kioumars Kashi")).toMatchObject({
+    expect(hospFor("Kyle Kane")).toMatchObject({
       specialty: "ISP North", shiftType: "swing", working: true, patientCap: 12,
     });
-    expect(hospFor("May Lou")).toMatchObject({ specialty: "Lead Hospitalist", shiftType: "day" });
+    expect(hospFor("May Lowe")).toMatchObject({ specialty: "Lead Hospitalist", shiftType: "day" });
 
     // Additive-only: providers NOT on the grid survive (manual roster intact).
-    expect(hospFor("Dr. Nicole Williams")).toBeTruthy();
-    expect(hospFor("Dr. Naira Manukian")).toBeTruthy();
+    expect(hospFor("Dr. Nina Wells")).toBeTruthy();
+    expect(hospFor("Dr. Nora Mills")).toBeTruthy();
 
     // New accounts never leak a usable password (random hash, not "docturn").
-    const lou = after.find((u) => u.displayName === "May Lou")!;
+    const lou = after.find((u) => u.displayName === "May Lowe")!;
     const res = await login(ctx.app, { username: lou.username, password: "docturn" });
     expect(res.res.status).toBe(401);
 

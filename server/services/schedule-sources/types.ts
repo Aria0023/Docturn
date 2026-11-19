@@ -18,7 +18,7 @@ export const SOURCE_SETTING_KEY = "scheduleSource";
 export type ShiftType = "day" | "swing" | "night";
 
 export interface OnCallSlot {
-  /** Slot / assignment name as published, e.g. "Tarzana 1", "North Triage". */
+  /** Slot / assignment name as published, e.g. "Westside 1", "North Triage". */
   slot: string;
   /** Service / role the slot belongs to, e.g. "Hospital Medicine", "Cardiology". */
   service: string;

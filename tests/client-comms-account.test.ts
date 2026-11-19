@@ -84,7 +84,7 @@ const USERS: Record<Role, any> = {
   director: { id: 2, username: "director", displayName: "Dr. Dana Director", role: "director", credential: "MD", organizationId: 1 },
   er_director: { id: 3, username: "er.director", displayName: "Dr. Evan Marsh", role: "er_director", credential: "MD", organizationId: 1 },
   er_doctor: { id: 4, username: "er.doc", displayName: "Dr. Erin Reyes", role: "er_doctor", credential: "MD", organizationId: 1 },
-  hospitalist: { id: 5, username: "chen", displayName: "Dr. Nathan Alyesh", role: "hospitalist", credential: "MD", organizationId: 1 },
+  hospitalist: { id: 5, username: "chen", displayName: "Dr. Nolan Avery", role: "hospitalist", credential: "MD", organizationId: 1 },
 };
 
 const auditRow = (id: number, userId: number, actorName: string, actorRole: string, action: string) => ({ id, organizationId: 1, userId, impersonatorUserId: null, action, resourceType: "user", resourceId: userId, details: null, riskLevel: "low", createdAt: now(), actorName, actorUsername: actorName.toLowerCase().replace(/[^a-z]/g, ""), actorRole, operatorName: null });
@@ -100,21 +100,21 @@ function defaultServer(): Server {
     candidates: [
       { userId: 2, displayName: "Dr. Dana Director", credential: null, role: "director", active: true },
       { userId: 4, displayName: "Dr. Erin Reyes", credential: "MD", role: "er_doctor", active: true },
-      { userId: 6, displayName: "Dr. Sharon George", credential: "MD", role: "hospitalist", active: true },
+      { userId: 6, displayName: "Dr. Sara Grant", credential: "MD", role: "hospitalist", active: true },
     ],
     prefs: { dnd: false, coveringUserId: null },
     audit: {
       scope: "org",
       audit: [auditRow(901, 4, "Dr. Erin Reyes", "er_doctor", "auth.login"), auditRow(900, 2, "Dr. Dana Director", "director", "auth.login")],
       auditCount: 4321,
-      phiAccess: [phiRow(501, 5, "Dr. Nathan Alyesh", "hospitalist")],
+      phiAccess: [phiRow(501, 5, "Dr. Nolan Avery", "hospitalist")],
       phiAccessCount: 111,
     },
     mine: {
       scope: "mine",
-      audit: [auditRow(950, 5, "Dr. Nathan Alyesh", "hospitalist", "auth.login")],
+      audit: [auditRow(950, 5, "Dr. Nolan Avery", "hospitalist", "auth.login")],
       auditCount: 17,
-      phiAccess: [phiRow(601, 5, "Dr. Nathan Alyesh", "hospitalist")],
+      phiAccess: [phiRow(601, 5, "Dr. Nolan Avery", "hospitalist")],
       phiAccessCount: 33,
     },
     broadcasts: [],
@@ -312,10 +312,10 @@ describe("#2 the profile name is read-only", () => {
   it("no click-to-edit in Settings or the sidebar; no rename action", async () => {
     const h = await boot({ role: "hospitalist" });
     await openNav(h, "account");
-    await until(() => /Dr\. Nathan Alyesh/.test(h.text()), 6000, "name");
+    await until(() => /Dr\. Nolan Avery/.test(h.text()), 6000, "name");
     expect(h.w.DT.actions.renameMe).toBeUndefined();
     const before = h.w.document.querySelectorAll("input").length;
-    const nameEls = [...h.w.document.querySelectorAll("div,span")].filter((e: any) => (e.textContent || "").trim() === "Dr. Nathan Alyesh" && e.children.length === 0) as any[];
+    const nameEls = [...h.w.document.querySelectorAll("div,span")].filter((e: any) => (e.textContent || "").trim() === "Dr. Nolan Avery" && e.children.length === 0) as any[];
     expect(nameEls.length).toBeGreaterThan(0);
     for (const el of nameEls) click(h, el);
     await sleep(100);
@@ -449,8 +449,8 @@ describe("#13/#14 the thread header is live presence, and no loaded-count", () =
   it("on shift but not connected is not Online; a presence frame makes it Online", async () => {
     const h = await boot({ role: "hospitalist", server: { conversations: [convo(41, 6)], presence: { live: true, online: [] } } });
     await openNav(h, "messages");
-    await until(() => buttons(h, /Dr\. Sharon George/).length > 0, 6000, "list");
-    click(h, buttons(h, /Dr\. Sharon George/)[0]);
+    await until(() => buttons(h, /Dr\. Sara Grant/).length > 0, 6000, "list");
+    click(h, buttons(h, /Dr\. Sara Grant/)[0]);
     await until(() => !!h.w.document.querySelector("[data-thread-status]"), 4000, "header");
     expect(h.w.document.querySelector("[data-thread-status]").textContent).not.toMatch(/Online/);
     expect(h.w.document.querySelector("[data-thread-status]").getAttribute("data-thread-status")).toBe("offline");
@@ -462,7 +462,7 @@ describe("#13/#14 the thread header is live presence, and no loaded-count", () =
     const info = h.w.document.querySelector("[data-thread-details] button");
     click(h, info);
     await sleep(50);
-    expect(h.state().__toast.title).toBe("Dr. Sharon George");
+    expect(h.state().__toast.title).toBe("Dr. Sara Grant");
     expect(h.state().__toast.msg).not.toMatch(/messages/);
   });
 
@@ -481,13 +481,13 @@ describe("#15 DND shows what the server stored", () => {
   it("a failed 'turn off' leaves DND on screen (row, button) and says not saved", async () => {
     const h = await boot({ role: "hospitalist", server: { prefs: { dnd: true, coveringUserId: 6 } } });
     await openNav(h, "account");
-    await until(() => /On · covering: Dr\. Sharon George/.test(h.text()), 6000, "dnd on");
+    await until(() => /On · covering: Dr\. Sara Grant/.test(h.text()), 6000, "dnd on");
     h.routes.fail = (r) => (r.method === "PATCH" && r.path === "/api/settings/me" ? { status: 500, body: { error: "boom" } } : undefined);
     const btn = h.w.document.querySelector("main [data-dnd-button]");
     click(h, btn);
     await until(() => h.state().__toast && h.state().__toast.title === "Setting not saved", 4000, "toast");
     await sleep(100);
-    expect(h.text()).toMatch(/On · covering: Dr\. Sharon George/);
+    expect(h.text()).toMatch(/On · covering: Dr\. Sara Grant/);
     expect(h.w.document.querySelector("main [data-dnd-button]").getAttribute("aria-pressed")).toBe("true");
     expect(h.state().myPrefs.dnd).toBe(true);
   });

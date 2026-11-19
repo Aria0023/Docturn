@@ -382,20 +382,14 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // installs land on the unified app. Registered BEFORE the SPA catch-all.
   app.get(/^\/m(\/.*)?$/, (_req, res) => res.redirect(302, "/"));
 
-  // Serve the designer's ORIGINAL UI kit verbatim — the exact clinical web app
-  // from design/ui_kits/web-app (its own components, store.js, tokens, assets).
-  // This guarantees pixel- and behavior-identical fidelity to the delivered
-  // design. API/WS routes are registered above and win.
-  // webapp/ is the designer's kit served verbatim PLUS api-bridge.js, which
-  // wires its actions/data to the live backend. Falls back to the pristine kit.
+  // webapp/ is the web client (the design kit plus api-bridge.js, which wires
+  // its actions and data to the live backend). API/WS routes above win.
   // Resolve the wired kit whether we run from source (tsx) or compiled (dist):
   // try paths relative to this module AND relative to the project cwd.
   const wiredKit = fileURLToPath(new URL("../webapp", import.meta.url));
   const candidates = [
     wiredKit,
     join(process.cwd(), "webapp"),
-    fileURLToPath(new URL("../design/ui_kits/web-app", import.meta.url)),
-    join(process.cwd(), "design/ui_kits/web-app"),
   ];
   const uiDir = opts.webapp?.dir ?? (candidates.find((d) => existsSync(d)) || wiredKit);
   if (existsSync(uiDir)) {

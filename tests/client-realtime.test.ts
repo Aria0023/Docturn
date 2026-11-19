@@ -41,7 +41,7 @@ const BRIDGE_SRC = readFileSync(ROOT + "webapp/api-bridge.js", "utf8");
 const jsdomName = "jsdom"; // untyped devDependency — loaded dynamically
 const { JSDOM } = (await import(jsdomName)) as any;
 
-const CHEN = { id: 11, username: "chen", displayName: "Dr. Nathan Alyesh", role: "hospitalist", credential: "MD" };
+const CHEN = { id: 11, username: "chen", displayName: "Dr. Nolan Avery", role: "hospitalist", credential: "MD" };
 const PATEL = 12;
 const iso = (ms: number) => new Date(ms).toISOString();
 const T0 = Date.now() - 60_000;

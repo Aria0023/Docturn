@@ -29,7 +29,7 @@ import { SCHEDULE_SOURCE_IDS, SOURCE_SETTING_KEY } from "./schedule-sources/type
  */
 
 export interface AmionRow {
-  /** Slot / service name, e.g. "Tarzana 1", "North Triage". */
+  /** Slot / service name, e.g. "Westside 1", "North Triage". */
   slot: string;
   /** Raw hours token, e.g. "7a-7p", "2p-10p", "7p-7a". */
   hrs: string;
@@ -295,7 +295,7 @@ export function toDisplayName(published: string): string {
 }
 
 // Match Amion names against existing accounts regardless of the "Dr." prefix
-// or casing (the seeded roster stores e.g. "Dr. Nathan Alyesh"). Shared with
+// or casing (the seeded roster stores e.g. "Dr. Nolan Avery"). Shared with
 // the schedule-source adapters so every source resolves names the same way.
 export function normalizeName(name: string): string {
   return name.toLowerCase().replace(/^dr\.?\s+/, "").replace(/\s+/g, " ").trim();

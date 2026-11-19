@@ -13,7 +13,6 @@ paths = [
   '''\.pglite/''',
   '''package-lock\.json''',
   '''.*\.(png|jpg|jpeg|svg|ico|webmanifest|lock)$''',
-  '''design/''',            # delivered design kits / handoff assets
 ]
 regexes = [
   # The shared DEMO password used only for seeded demo accounts (documented in

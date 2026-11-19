@@ -57,22 +57,20 @@ at a real Postgres so data is durable and backed up.
    ```powershell
    $env:DATABASE_URL="postgres://USER:PASSWORD@HOST:5432/docturn"
    ```
-3. Create the schema (all tables/columns) in that database:
-   ```powershell
-   npm run db:push
-   ```
+3. The schema (all tables/columns) is created automatically the first time
+   the server or the seed connects.
 4. Seed the starting organization + accounts:
    ```powershell
    npm run seed
    ```
-   This creates org **ISPN** ("Cedars-Sinai (ISP North)") plus demo accounts
+   This creates org **ISPN** ("Riverside General (demo)") plus demo accounts
    (director / er.director / etc., password `docturn`) and the developer account.
 
 When `DATABASE_URL` is set the server uses that Postgres and **never auto-wipes**
 it. Take regular `pg_dump` backups during the trial.
 
 > Quick pilot without Postgres? You can run on `./.pglite` instead — skip
-> `DATABASE_URL`/`db:push` and just `npm run seed`. Then: always stop with
+> `DATABASE_URL` and just `npm run seed`. Then: always stop with
 > **Ctrl+C** (never a hard kill), and copy the `.pglite` folder for backups.
 
 ## 2. Start the server

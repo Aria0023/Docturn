@@ -180,8 +180,8 @@ describe("A.CON-SHO-9 — developer cross-tenant reads are audited", () => {
       res.end(
         [
           "Assignment\tHours\tStaff\tDivision\tMessaging",
-          "Tarzana 1\t7a-7p\tChen, Lisa\tISP North\tSecure message to Amion app",
-          "Tarzana Night\t7p-7a\tPatel, Raj\tISP North\tNot ready to receive secure messages",
+          "Westside 1\t7a-7p\tChen, Lisa\tISP North\tSecure message to Amion app",
+          "Westside Night\t7p-7a\tPatel, Raj\tISP North\tNot ready to receive secure messages",
           "",
         ].join("\n"),
       );
@@ -212,7 +212,7 @@ describe("A.CON-SHO-9 — developer cross-tenant reads are audited", () => {
       for (const [k, v] of Object.entries(row.details ?? {})) {
         expect(typeof v === "number" || v === null, "details." + k).toBe(true);
       }
-      expect(JSON.stringify(row.details)).not.toMatch(/Chen|Patel|Tarzana/);
+      expect(JSON.stringify(row.details)).not.toMatch(/Chen|Patel|Westside/);
       // Filed in the tenant's trail only — the platform trail is unchanged.
       expect(await ctx.storage.countAuditLogs(platformId)).toBe(platformBefore);
       // The tenant's director sees it in their own audit view.

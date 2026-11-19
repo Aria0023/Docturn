@@ -48,7 +48,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
 const csp = [];
 const pageErrors = [];
-const DEMO = /Ruth Osei|Paul Okafor|Dana Reyes|Sam Iyer|Nina Roy|Omar Haddad|Priya Shah|Marcus Bell|Lena Ortiz|Sam Cole|Dr\. Amir Patel|Dr\. Maria Lopez|fhir\.mayo|EHR1|EHR2/;
+const DEMO = /Ruth Osei|Paul Okafor|Dana Reyes|Sam Iyer|Nina Roy|Omar Haddad|Priya Shah|Marcus Bell|Lena Ortiz|Sam Cole|Dr\. Adam Patel|Dr\. Maria Lopez|fhir\.mayo|EHR1|EHR2/;
 const RUN = Date.now().toString(36).slice(-4).toUpperCase().replace(/[^A-Z]/g, "Q");
 
 async function open(base, width, org, username, password = PW) {
@@ -344,14 +344,14 @@ await E1.ctx.close(); await E2.ctx.close();
   const adm = (await Dir.api("GET", "/api/admissions")).json;
   const since = await Dir.page.evaluate(() => { const el = document.querySelector("[data-admissions-since]"); return el ? el.textContent.trim() : null; });
   rec("#8 admissions counter = server's sinceReset (" + adm.sinceReset + ")", since === String(adm.sinceReset), since);
-  rec("#8 no demo admissions on the director dashboard", !/\b(MJ|RV|DK|LP)\b.*Dr\. (Amir Patel|Maria Lopez)/.test(await mainText(Dir.page)));
+  rec("#8 no demo admissions on the director dashboard", !/\b(MJ|RV|DK|LP)\b.*Dr\. (Adam Patel|Maria Lopez)/.test(await mainText(Dir.page)));
   rec("#9 'Reset count' (server reset), not the local 'Reset 24h'", await Dir.page.evaluate(() => [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Reset count") && ![...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Reset 24h")));
   const shifts = (await Dir.api("GET", "/api/org/shifts")).json.shifts;
   const label = await Dir.page.evaluate(() => { const el = document.querySelector('[data-shift-label="day"]'); return el ? el.textContent.trim() : null; });
   rec("#10 shift name = the org's (" + shifts[0].label + ")", label === shifts[0].label, label);
 
   // #11 rename a provider through the row's inline editor
-  const prov = (await Dir.api("GET", "/api/physicians/directory")).json.find((d) => /George/.test(d.displayName));
+  const prov = (await Dir.api("GET", "/api/physicians/directory")).json.find((d) => /Grant/.test(d.displayName));
   const newName = prov.displayName.replace(/ Renamed.*$/, "") + " Renamed " + RUN;
   await nav(Dir.page, "dashboard", 1500);
   mark = Dir.apiLog.length;

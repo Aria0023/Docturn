@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PLATFORM_ORG_CODE } from "@shared/schema";
 import { hashPassword, verifyPassword } from "./auth.js";
 import { getHandle } from "./db.js";
@@ -91,7 +92,7 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
   }
 
   const org = await storage.createOrganization({
-    name: "Cedars-Sinai (ISP North)",
+    name: "Riverside General (demo)",
     code: "ISPN",
     city: "Springfield",
     state: "NY",
@@ -163,7 +164,7 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     return h;
   }
 
-  // Cedars-Sinai / Tarzana ISP North — the REAL Amion on-call roster
+  // The demo on-call roster (fictional names)
   // (amion.com/cgi-bin/ocs), not placeholder names. The first four keep stable
   // demo usernames so the role-based demo login still resolves a hospitalist;
   // the rest fill out the captured grid so the director's roster matches Amion.
@@ -172,18 +173,18 @@ export async function seed(storage: DatabaseStorage): Promise<SeedResult> {
     u: string; name: string; cred: string;
     shift: "day" | "swing" | "night"; census: number; cap: number; working: boolean;
   }> = [
-    { u: "chen",       name: "Dr. Nathan Alyesh",    cred: "MD", shift: "day",   census: 0, cap: 12, working: true },
-    { u: "patel",      name: "Dr. Sharon George",    cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
-    { u: "lopez",      name: "Dr. Amir Ahmed",       cred: "DO", shift: "day",   census: 7, cap: 12, working: true },
-    { u: "liu",        name: "Dr. Joline Darouichi", cred: "MD", shift: "day",   census: 2, cap: 12, working: true },
-    { u: "kazanchyan", name: "Dr. Moe Kazanchyan",   cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
-    { u: "gideon",     name: "Dr. Danny Gideon",     cred: "MD", shift: "day",   census: 6, cap: 12, working: true },
-    { u: "gopal",      name: "Dr. Arun Gopal",       cred: "MD", shift: "day",   census: 3, cap: 12, working: true },
-    { u: "williams",   name: "Dr. Nicole Williams",  cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
-    { u: "malhotra",   name: "Dr. Veshal Malhotra",  cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
-    { u: "manukian",   name: "Dr. Naira Manukian",   cred: "MD", shift: "swing", census: 2, cap: 12, working: true },
-    { u: "kohan",      name: "Dr. Salar Kohan",      cred: "MD", shift: "night", census: 1, cap: 12, working: true },
-    { u: "niculescu",  name: "Dr. Alex Niculescu",   cred: "MD", shift: "night", census: 1, cap: 12, working: true },
+    { u: "chen",       name: "Dr. Nolan Avery",    cred: "MD", shift: "day",   census: 0, cap: 12, working: true },
+    { u: "patel",      name: "Dr. Sara Grant",    cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
+    { u: "lopez",      name: "Dr. Adam Archer",       cred: "DO", shift: "day",   census: 7, cap: 12, working: true },
+    { u: "liu",        name: "Dr. Julia Dawson", cred: "MD", shift: "day",   census: 2, cap: 12, working: true },
+    { u: "kazanchyan", name: "Dr. Max Keller",   cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
+    { u: "gideon",     name: "Dr. Dean Gibson",     cred: "MD", shift: "day",   census: 6, cap: 12, working: true },
+    { u: "gopal",      name: "Dr. Aron Gordon",       cred: "MD", shift: "day",   census: 3, cap: 12, working: true },
+    { u: "williams",   name: "Dr. Nina Wells",  cred: "MD", shift: "day",   census: 5, cap: 12, working: true },
+    { u: "malhotra",   name: "Dr. Victor Mason",  cred: "MD", shift: "day",   census: 4, cap: 12, working: true },
+    { u: "manukian",   name: "Dr. Nora Mills",   cred: "MD", shift: "swing", census: 2, cap: 12, working: true },
+    { u: "kohan",      name: "Dr. Sam Keane",      cred: "MD", shift: "night", census: 1, cap: 12, working: true },
+    { u: "niculescu",  name: "Dr. Alex Novak",   cred: "MD", shift: "night", census: 1, cap: 12, working: true },
   ];
 
   let chen!: Awaited<ReturnType<typeof mkUser>>;
@@ -308,13 +309,53 @@ const DEMO_USERS: Array<{ username: string; role: string; displayName: string; c
   { username: "director", role: "director", displayName: "Dr. Dana Director" },
   { username: "er.director", role: "er_director", displayName: "Dr. Evan Marsh", credential: "MD" },
   { username: "er.doc", role: "er_doctor", displayName: "Dr. Erin Reyes", credential: "MD" },
-  // Real Cedars/Tarzana ISP Amion roster; usernames stay stable for demo login.
-  { username: "chen", role: "hospitalist", displayName: "Dr. Nathan Alyesh", credential: "MD" },
-  { username: "patel", role: "hospitalist", displayName: "Dr. Sharon George", credential: "MD" },
-  { username: "lopez", role: "hospitalist", displayName: "Dr. Amir Ahmed", credential: "DO" },
-  { username: "liu", role: "hospitalist", displayName: "Dr. Joline Darouichi", credential: "MD" },
+  // Fictional demo roster; usernames stay stable for demo login.
+  { username: "chen", role: "hospitalist", displayName: "Dr. Nolan Avery", credential: "MD" },
+  { username: "patel", role: "hospitalist", displayName: "Dr. Sara Grant", credential: "MD" },
+  { username: "lopez", role: "hospitalist", displayName: "Dr. Adam Archer", credential: "DO" },
+  { username: "liu", role: "hospitalist", displayName: "Dr. Julia Dawson", credential: "MD" },
   { username: "wu", role: "hospitalist", displayName: "Jordan Wu, PA-C", credential: "PA" },
 ];
+
+/**
+ * Databases seeded before the demo roster was made fictional still hold the
+ * earlier display names. Rename exactly those rows (matched by seeded username
+ * AND a hash of the earlier name, so a name someone edited is left alone) and
+ * the demo hospital's earlier name. Idempotent; synthetic instances only.
+ */
+const LEGACY_DEMO_NAMES: Array<{ username: string; was: string; name: string }> = [
+  { username: "chen", was: "e7af8b745d9a187a", name: "Dr. Nolan Avery" },
+  { username: "patel", was: "fcc459eb2ecf8629", name: "Dr. Sara Grant" },
+  { username: "lopez", was: "2e48049999c0db07", name: "Dr. Adam Archer" },
+  { username: "liu", was: "6368115b6f6f0df2", name: "Dr. Julia Dawson" },
+  { username: "kazanchyan", was: "7b60673fe0260029", name: "Dr. Max Keller" },
+  { username: "gideon", was: "f3bc5f49a2f1d630", name: "Dr. Dean Gibson" },
+  { username: "gopal", was: "b589416ec9fcca9d", name: "Dr. Aron Gordon" },
+  { username: "williams", was: "6b303c2193a79654", name: "Dr. Nina Wells" },
+  { username: "malhotra", was: "e2a591a63cd73b19", name: "Dr. Victor Mason" },
+  { username: "manukian", was: "701178fecdb3893c", name: "Dr. Nora Mills" },
+  { username: "kohan", was: "af2dee8b51fe1909", name: "Dr. Sam Keane" },
+  { username: "niculescu", was: "ae17da9965eded2d", name: "Dr. Alex Novak" },
+];
+const LEGACY_DEMO_ORG_NAME = "a8425a49505859f5";
+const nameHash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+export async function renameLegacyDemoNames(storage: DatabaseStorage, orgId: number): Promise<number> {
+  if (!isSyntheticDataMode()) return 0;
+  let renamed = 0;
+  for (const row of LEGACY_DEMO_NAMES) {
+    const u = await storage.getUserByUsername(orgId, row.username);
+    if (u && nameHash(u.displayName) === row.was) {
+      await storage.updateUser(u.id, { displayName: row.name });
+      renamed++;
+    }
+  }
+  const org = await storage.getOrganization(orgId);
+  if (org && nameHash(org.name) === LEGACY_DEMO_ORG_NAME) {
+    await storage.updateOrganization(orgId, { name: "Riverside General (demo)" });
+    renamed++;
+  }
+  return renamed;
+}
 
 /** Create any missing demo accounts in an already-seeded org. Returns count added. */
 async function ensureDemoUsers(
@@ -718,6 +759,7 @@ if (isMain) {
         // Already seeded: top up any missing demo accounts and ensure the
         // platform org + developer account exist (migrating a legacy in-tenant
         // dev account out) — no wipe needed.
+        await renameLegacyDemoNames(storage, existing.id);
         const added = await ensureDemoUsers(storage, existing.id);
         const platformChanged = await ensurePlatform(storage);
         const templatesAdded = await ensureMessageTemplates(storage, existing.id);

@@ -258,7 +258,7 @@ describe("login does not reveal org or user existence", () => {
       const own = await agent.get(`/api/mobile/org/${code}`).expect(200);
       expect(own.body).toEqual({
         id: ctx.seedResult.orgId,
-        name: "Cedars-Sinai (ISP North)",
+        name: "Riverside General (demo)",
         code: "ISPN",
         timezone: "America/New_York",
       });

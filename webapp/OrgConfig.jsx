@@ -203,7 +203,7 @@ function OrgConfig({ scope, org }) {
               control={<OCToggle label="Auto-reassign on decline" on={!!rules.autoReassign} disabled={!fresh} onChange={(v) => setRule("autoReassign", v)} />} />
             <RuleRow icon="timer" title="Assignment timeout" desc="How long a pending assignment waits before it expires and is re-paged to the next provider (1–120 minutes)."
               control={<OCNumber label="Assignment timeout in minutes" value={rules.timeout} min={1} max={120} disabled={!fresh} onChange={(v) => setRule("timeout", v)} suffix="min" />} />
-            <RuleRow icon="git-branch" title="Rotation mode" desc="How the next hospitalist is chosen for round-robin routing."
+            <RuleRow icon="git-branch" title="Rotation mode" desc="How the next hospitalist is chosen for round-robin routing. Lowest census also counts requests still waiting on a provider, so a burst of admissions spreads out."
               control={
                 <select aria-label="Rotation mode" value={rules.rotationMode} disabled={!fresh} onChange={(e) => setRule("rotationMode", e.target.value)}
                   style={{ height: 44, padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 16, fontFamily: "inherit", background: "var(--card)", cursor: fresh ? "pointer" : "default", opacity: fresh ? 1 : .5, maxWidth: "100%" }}>

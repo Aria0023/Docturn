@@ -156,7 +156,7 @@ describe("SHO-24 / SHO-35 body-parser errors are 4xx and never logged with the b
 
   it("other http-errors statuses are honoured (bad percent-encoding in a path → 400)", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const res = await supertest(ctx.app).get("/api/cms/%E0%A4%A").timeout(RESPOND);
+    const res = await supertest(ctx.app).get("/api/compliance/policies/%E0%A4%A").timeout(RESPOND);
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "bad_request", requestId: expect.any(String) });
   });
@@ -391,7 +391,6 @@ describe("SHO-34 numeric :id params are validated once, before any route", () =>
       ["get", "/api/mobile/org/ISPN"],
       ["get", "/api/compliance/policies/no-such-policy"],
       ["delete", "/api/mobile/device-tokens/not-a-number"],
-      ["get", "/api/cms/landing"],
       // `:id` here is a generated STRING slot id (exempted in STRING_ID_PATHS).
       ["patch", "/api/oncall/manual/nope"],
       ["delete", "/api/oncall/manual/slot-abc"],

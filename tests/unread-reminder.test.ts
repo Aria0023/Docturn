@@ -86,7 +86,7 @@ describe("Unread-message reminder — sweep", () => {
     const pushes = sentTo(ids().chen!);
     expect(pushes).toHaveLength(1);
     expect(pushes[0]!.title).toBe("You have unread messages in DocTurn");
-    expect(JSON.stringify(ctx.push.sent)).not.toMatch(/bed 12|Reyes|Alyesh/);
+    expect(JSON.stringify(ctx.push.sent)).not.toMatch(/bed 12|Reyes|Avery/);
     expect((await ctx.storage.getReminderPrefs(org(), ids().chen!))!.lastRemindedAt).toBeTruthy();
     // Within the next interval: not again. After it, still unread: again.
     expect((await runUnreadReminderSweep(ctx.storage, { now: at(9) })).reminded).toBe(0);

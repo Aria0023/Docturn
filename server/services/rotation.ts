@@ -74,7 +74,10 @@ export async function selectNext(
 
   if (eligible.length === 0) return null;
 
-  const pick = rankEligible(eligible, org)[0]!;
+  // "Lowest census" counts the requests already WAITING on each provider, so
+  // a burst of admissions spreads out instead of all landing on one person
+  // before anyone has accepted. The preview below uses the same rule.
+  const pick = rankEligible(eligible, org, await storage.pendingCountsByHospitalist(orgId))[0]!;
 
   // Advance the cursor so rotation stays fair over time.
   await storage.advanceRotationIndex(orgId);
@@ -120,7 +123,7 @@ export async function previewRotation(
   if (!org) return null;
   const pool = await routablePool(storage, org);
   const plan = planSelection(pool, { specialty: opts.specialty });
-  const order = rankEligible(plan.eligible, org);
+  const order = rankEligible(plan.eligible, org, await storage.pendingCountsByHospitalist(orgId));
   return {
     mode: org.rotationMode,
     shiftTypes: routableShiftTypes(org),
@@ -217,7 +220,9 @@ function planSelection(
 }
 
 /** The ordering rule, identical for the live pick and the preview (pick = [0]). */
-function rankEligible(eligible: Hospitalist[], org: Organization): Hospitalist[] {
+function rankEligible(eligible: Hospitalist[], org: Organization, pending: Map<number, number> = new Map()): Hospitalist[] {
+  // Load = accepted census + requests still waiting on this provider.
+  const load = (h: Hospitalist) => h.currentPatientCount + (pending.get(h.id) ?? 0);
   if (org.rotationMode === "sequential") {
     // Cycle deterministically through the eligible set by the persisted cursor.
     const ordered = [...eligible].sort(
@@ -229,7 +234,7 @@ function rankEligible(eligible: Hospitalist[], org: Organization): Hospitalist[]
   }
   return [...eligible].sort(
     (a, b) =>
-      a.currentPatientCount - b.currentPatientCount ||
+      load(a) - load(b) ||
       a.rotationOrder - b.rotationOrder ||
       a.id - b.id,
   );

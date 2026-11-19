@@ -113,11 +113,16 @@ async function withAmion() {
 // ── board ────────────────────────────────────────────────────────────────────
 describe("on-call board", () => {
   it("merges Amion slots, consult-service holders and the next hospitalist", async () => {
+    // The seed leaves one request waiting on chen; a waiting request counts
+    // toward "lowest census", so settle it to test the census rule on its own.
+    for (const a of await ctx.storage.listAssignments(ctx.seedResult.orgId)) {
+      if (a.status === "pending") await ctx.storage.updateAssignment(ctx.seedResult.orgId, a.id, { status: "cancelled", resolvedAt: new Date() });
+    }
     await withAmion();
     const { agent: director } = await login(ctx.app, { username: "director" });
     await director.patch("/api/org/preferences").send({
       consultServices: [
-        { id: "cs-card", name: "Cardiology", onCall: { name: "Dr. Sharon George", avatar: "SG" }, members: [] },
+        { id: "cs-card", name: "Cardiology", onCall: { name: "Dr. Sara Grant", avatar: "SG" }, members: [] },
         { id: "cs-gi", name: "GI", onCall: null, members: [] },
       ],
     });
@@ -132,17 +137,17 @@ describe("on-call board", () => {
     const rows = res.body.rows as any[];
     const schedule = rows.filter((r) => r.kind === "schedule");
     expect(schedule).toHaveLength(13);
-    const t1 = schedule.find((r) => r.label === "Tarzana 1");
-    expect(t1).toMatchObject({ holderName: "May Lou", hours: "7a-7p", shift: "day", source: "amion", group: "Hospitalist slots" });
+    const t1 = schedule.find((r) => r.label === "Westside 1");
+    expect(t1).toMatchObject({ holderName: "May Lowe", hours: "7a-7p", shift: "day", source: "amion", group: "Hospitalist slots" });
     expect(t1.asOf).toBeTruthy();
     // Grid names resolve to real in-org users regardless of the "Dr." prefix.
-    const t7 = schedule.find((r) => r.label === "Tarzana 7");
-    expect(t7.holderUserId).toBe(ctx.seedResult.userIds.chen); // "Alyesh, Nathan" → Dr. Nathan Alyesh
+    const t7 = schedule.find((r) => r.label === "Westside 7");
+    expect(t7.holderUserId).toBe(ctx.seedResult.userIds.chen); // "Avery, Nolan" → Dr. Nolan Avery
     expect(t7.messageable).toBe(true);
     expect(schedule.find((r) => r.label === "North Triage").group).toBe("Triage");
-    expect(schedule.find((r) => r.label === "Tarzana Night XC").group).toBe("Night");
-    // Gopal holds two slots — both stay (distinct slots), no duplicate rows.
-    expect(schedule.filter((r) => r.holderName === "Arun Gopal")).toHaveLength(2);
+    expect(schedule.find((r) => r.label === "Westside Night XC").group).toBe("Night");
+    // Gordon holds two slots — both stay (distinct slots), no duplicate rows.
+    expect(schedule.filter((r) => r.holderName === "Aron Gordon")).toHaveLength(2);
     const ids = rows.map((r) => r.id);
     expect(new Set(ids).size).toBe(ids.length);
 
@@ -164,17 +169,17 @@ describe("on-call board", () => {
 
   it("reflects DND → covering on the holder, and is never messageable to yourself", async () => {
     await withAmion();
-    // Patel (Dr. Sharon George, Tarzana 6) goes DND with Lopez covering.
+    // Patel (Dr. Sara Grant, Westside 6) goes DND with Lopez covering.
     const { agent: patel } = await login(ctx.app, { username: "patel" });
     await patel.patch("/api/settings/me").send({ key: "dnd", value: true });
     await patel.patch("/api/settings/me").send({ key: "coveringUserId", value: ctx.seedResult.userIds.lopez });
 
     const { agent: erDoc } = await login(ctx.app, { username: "er.doc" });
     const res = await erDoc.get("/api/oncall/board");
-    const t6 = (res.body.rows as any[]).find((r) => r.label === "Tarzana 6");
+    const t6 = (res.body.rows as any[]).find((r) => r.label === "Westside 6");
     expect(t6.holderUserId).toBe(ctx.seedResult.userIds.patel);
     expect(t6.dnd).toBe(true);
-    expect(t6.covering).toEqual({ userId: ctx.seedResult.userIds.lopez, name: "Dr. Amir Ahmed" });
+    expect(t6.covering).toEqual({ userId: ctx.seedResult.userIds.lopez, name: "Dr. Adam Archer" });
     expect(t6.messageUserId).toBe(ctx.seedResult.userIds.lopez);
     expect(t6.messageable).toBe(true);
 
@@ -182,12 +187,12 @@ describe("on-call board", () => {
     const { agent: kohan } = await login(ctx.app, { username: "kohan" });
     await kohan.patch("/api/settings/me").send({ key: "dnd", value: true });
     const res2 = await erDoc.get("/api/oncall/board");
-    const night = (res2.body.rows as any[]).find((r) => r.label === "Tarzana Night Triage");
+    const night = (res2.body.rows as any[]).find((r) => r.label === "Westside Night Triage");
     expect(night).toMatchObject({ dnd: true, covering: null, messageable: false, messageUserId: null });
 
     // Chen sees his own slot but can't message himself.
     const { agent: chen } = await login(ctx.app, { username: "chen" });
-    const mine = (await chen.get("/api/oncall/board")).body.rows.find((r: any) => r.label === "Tarzana 7");
+    const mine = (await chen.get("/api/oncall/board")).body.rows.find((r: any) => r.label === "Westside 7");
     expect(mine.holderUserId).toBe(ctx.seedResult.userIds.chen);
     expect(mine.messageable).toBe(false);
   });
@@ -202,7 +207,7 @@ describe("on-call board", () => {
     expect(sources.body.sources.epic.message).toMatch(/Epic app credentials/);
     expect(sources.body.sources.manual.configured).toBe(true);
 
-    const slot = { slot: "Swing", hours: "2p-10p", providerName: "Dr. Naira Manukian" };
+    const slot = { slot: "Swing", hours: "2p-10p", providerName: "Dr. Nora Mills" };
     expect((await director.post("/api/oncall/manual").send(slot)).status).toBe(201);
     expect((await director.post("/api/oncall/manual").send(slot)).status).toBe(201);
     const board = await director.get("/api/oncall/board");
@@ -332,7 +337,7 @@ describe("manual on-call slots", () => {
     expect((await director.post("/api/oncall/manual").send({ providerName: "no slot" })).status).toBe(400);
 
     const created = await director.post("/api/oncall/manual").send({
-      slot: "Weekend Triage", hours: "7a-7p", providerName: "Dr. Arun Gopal", group: "ISP Hospitalist",
+      slot: "Weekend Triage", hours: "7a-7p", providerName: "Dr. Aron Gordon", group: "ISP Hospitalist",
       providerUserId: 999999, // not an in-org user → dropped, name still resolves
     });
     expect(created.status).toBe(201);
@@ -351,7 +356,7 @@ describe("manual on-call slots", () => {
 
     // Board honours the pinned user over the (different) name.
     const row = (await chen.get("/api/oncall/board")).body.rows.find((r: any) => r.label === "Weekend Triage");
-    expect(row).toMatchObject({ group: "Triage", holderUserId: ctx.seedResult.userIds.kohan, holderName: "Dr. Arun Gopal", source: "manual" });
+    expect(row).toMatchObject({ group: "Triage", holderUserId: ctx.seedResult.userIds.kohan, holderName: "Dr. Aron Gordon", source: "manual" });
 
     expect((await chen.delete(`/api/oncall/manual/${id}`)).status).toBe(403);
     expect((await director.delete(`/api/oncall/manual/${id}`)).status).toBe(204);
@@ -372,12 +377,12 @@ describe("epic FHIR adapter", () => {
     const rows = parseEpicBundle(EPIC_BUNDLE, EPIC_NOW);
     expect(rows.map((r) => r.slot).sort()).toEqual(["Cardiology On Call", "Hospitalist Day 1", "Night Triage"]);
     expect(rows.find((r) => r.slot === "Hospitalist Day 1")).toMatchObject({
-      providerName: "Nathan Alyesh", service: "Hospital Medicine", hours: "7a-7p", shift: "day", group: "ISP North",
+      providerName: "Nolan Avery", service: "Hospital Medicine", hours: "7a-7p", shift: "day", group: "ISP North",
     });
-    expect(rows.find((r) => r.slot === "Night Triage")).toMatchObject({ providerName: "Salar Kohan", hours: "7p-7a", shift: "night" });
+    expect(rows.find((r) => r.slot === "Night Triage")).toMatchObject({ providerName: "Sam Keane", hours: "7p-7a", shift: "night" });
     // Slot in the current window → holder from the Schedule's practitioner actor.
     expect(rows.find((r) => r.slot === "Cardiology On Call")).toMatchObject({
-      providerName: "Sharon George", service: "Cardiology", hours: "7a-7p", shift: "day",
+      providerName: "Sara Grant", service: "Cardiology", hours: "7a-7p", shift: "day",
     });
     // Expired period, inactive role, tomorrow's slot and free slots are excluded.
     expect(rows.some((r) => r.slot === "Hospitalist Day 2" || r.slot === "Hospitalist Day 3")).toBe(false);

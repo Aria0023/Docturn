@@ -69,7 +69,6 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Operations
   { id: "ops.analytics",          label: "Director analytics",             group: "Operations", default: true, blurb: "Response/acceptance latency, volumes, KPIs (director roles only)." },
-  { id: "ops.resources",          label: "Beds & resources",               group: "Operations", default: true,  blurb: "Beds/equipment/department tracking and /api/resources metrics (legacy surface — switch off to retire it per org)." },
   { id: "ops.retention",          label: "Message retention purge",        group: "Operations", default: true, blurb: "Hourly, audited hard-delete of messages (with their attachment files) older than the org's retention window. Off: nothing is purged, messages are kept indefinitely and directors cannot set a new window (never-sent uploads are still cleared after 24 h)." },
 
   // ---- Security
@@ -88,7 +87,6 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Platform
   { id: "platform.appearance",    label: "Appearance / theming",           group: "Platform",  default: true,  blurb: "Per-org colours and branding." },
-  { id: "platform.cms",           label: "Landing / contact pages",        group: "Platform",  default: false, blurb: "Public landing and contact page content." },
   // Per-user display presets over the org's branding (docs/ENTERPRISE_READINESS.md
   // "Themes"): Classic / Calm / Warm / Night / High contrast, text size, follow
   // device. Server-stored per user (user_theme_prefs). Off = everyone sees the

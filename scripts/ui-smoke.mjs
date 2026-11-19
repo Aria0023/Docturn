@@ -193,7 +193,7 @@ for (const role of ["developer", "director", "er_director", "er_doctor", "hospit
   if (role === "developer") {
     const mercy = (st.orgs || []).find((o) => o.code === "ISPN");
     const noPlatform = !(st.orgs || []).some((o) => o.code === "DOCTURN");
-    // ISPN seeds the real Cedars Amion roster (3 ops roles + hospitalists + PA);
+    // ISPN seeds the demo roster (3 ops roles + hospitalists + PA);
     // assert "a realistic seeded roster", not an exact count that drifts with seed edits.
     rec("developer: orgs hydrated from backend (ISPN seeded, platform hidden)", !!mercy && mercy.users >= 16 && noPlatform, "orgs=" + JSON.stringify((st.orgs || []).map((o) => o.code + ":" + o.users)));
   }

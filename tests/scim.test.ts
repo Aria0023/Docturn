@@ -321,10 +321,10 @@ describe("SCIM — Users", () => {
     const s = scim(token);
     const chenId = ctx.seedResult.userIds.chen!;
     const named = await s.patch(`/scim/v2/Users/${chenId}`, {
-      Operations: [{ op: "replace", path: "displayName", value: "Dr. Nathan Renamed" }],
+      Operations: [{ op: "replace", path: "displayName", value: "Dr. Nolan Renamed" }],
     }).expect(200);
-    expect(named.body.displayName).toBe("Dr. Nathan Renamed");
-    expect((await ctx.storage.getUserById(chenId))!.displayName).toBe("Dr. Nathan Renamed");
+    expect(named.body.displayName).toBe("Dr. Nolan Renamed");
+    expect((await ctx.storage.getUserById(chenId))!.displayName).toBe("Dr. Nolan Renamed");
 
     const family = await s.patch(`/scim/v2/Users/${chenId}`, {
       Operations: [{ op: "replace", path: "name.familyName", value: "Surname" }],

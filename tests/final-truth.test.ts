@@ -258,7 +258,7 @@ describe("clinical #4: an on-call care-team member sees and accepts the owner's 
     const wu = await as("wu");
     const pending = (await wu.get("/api/assignments/pending").expect(200)).body;
     const row = pending.find((x: any) => x.id === assignment.id);
-    expect(row).toMatchObject({ id: assignment.id, patientId: patient.id, status: "pending", onBehalfOf: { userId: uid("chen"), displayName: "Dr. Nathan Alyesh" } });
+    expect(row).toMatchObject({ id: assignment.id, patientId: patient.id, status: "pending", onBehalfOf: { userId: uid("chen"), displayName: "Dr. Nolan Avery" } });
     // Chen's own view marks it as his own (no onBehalfOf).
     const chenPending = (await (await as("chen")).get("/api/assignments/pending").expect(200)).body;
     expect(chenPending.find((x: any) => x.id === assignment.id).onBehalfOf).toBeNull();

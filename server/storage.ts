@@ -474,6 +474,7 @@ export interface IStorage {
   releaseDeliveryEscalation(deliveryId: number): Promise<void>;
   advanceRotationIndex(orgId: number): Promise<void>;
   raisePatientCap(orgId: number, hospitalistId: number): Promise<void>;
+  pendingCountsByHospitalist(orgId: number): Promise<Map<number, number>>;
 
   // message attachments
   createAttachment(a: {
@@ -1123,6 +1124,15 @@ export class DatabaseStorage implements IStorage {
   async raisePatientCap(orgId: number, hospitalistId: number) {
     await this.db.update(hospitalists).set({ patientCap: sql`${hospitalists.patientCap} + 1` })
       .where(and(eq(hospitalists.organizationId, orgId), eq(hospitalists.id, hospitalistId)));
+  }
+  /** Requests waiting on each provider right now: hospitalistId → count. */
+  async pendingCountsByHospitalist(orgId: number): Promise<Map<number, number>> {
+    const rows = await this.db
+      .select({ hid: assignments.hospitalistId, n: sql<number>`count(*)::int` })
+      .from(assignments)
+      .where(and(eq(assignments.organizationId, orgId), eq(assignments.status, "pending")))
+      .groupBy(assignments.hospitalistId);
+    return new Map(rows.map((r) => [r.hid, Number(r.n)]));
   }
   async adjustCensus(orgId: number, hospitalistId: number, delta: number) {
     const [row] = await this.db
@@ -2935,35 +2945,11 @@ export class DatabaseStorage implements IStorage {
   async listBeds(orgId: number): Promise<Bed[]> {
     return this.db.select().from(beds).where(eq(beds.organizationId, orgId));
   }
-  async createBed(row: Omit<Bed, "id">) {
-    const [created] = await this.db.insert(beds).values(row).returning();
-    return created!;
-  }
-  async updateBed(orgId: number, id: number, patch: Partial<Bed>) {
-    const [row] = await this.db
-      .update(beds)
-      .set(patch)
-      .where(and(eq(beds.organizationId, orgId), eq(beds.id, id)))
-      .returning();
-    return row;
-  }
   async listEquipment(orgId: number): Promise<Equipment[]> {
     return this.db
       .select()
       .from(equipment)
       .where(eq(equipment.organizationId, orgId));
-  }
-  async createEquipment(row: Omit<Equipment, "id">) {
-    const [created] = await this.db.insert(equipment).values(row).returning();
-    return created!;
-  }
-  async updateEquipment(orgId: number, id: number, patch: Partial<Equipment>) {
-    const [row] = await this.db
-      .update(equipment)
-      .set(patch)
-      .where(and(eq(equipment.organizationId, orgId), eq(equipment.id, id)))
-      .returning();
-    return row;
   }
 
   // ── broadcasts ───────────────────────────────────────────────────────────────
@@ -3047,123 +3033,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ── feature flags (C2) ───────────────────────────────────────────────────────
-  async listFeatureFlags(orgId: number): Promise<FeatureFlag[]> {
-    return this.db
-      .select()
-      .from(featureFlags)
-      .where(eq(featureFlags.organizationId, orgId));
-  }
-  async setFeatureFlag(
-    orgId: number,
-    flag: string,
-    enabled: boolean,
-    variant?: string | null,
-  ) {
-    await this.db
-      .insert(featureFlags)
-      .values({ organizationId: orgId, flag, enabled, variant: variant ?? null })
-      .onConflictDoUpdate({
-        target: [featureFlags.organizationId, featureFlags.flag],
-        set: { enabled, variant: variant ?? null },
-      });
-  }
 
   // ── suggestions (C3) ─────────────────────────────────────────────────────────
-  async createSuggestion(row: {
-    organizationId: number;
-    scope: "org" | "user";
-    key: string;
-    proposedValue: unknown;
-    evidence: string;
-  }) {
-    await this.db
-      .insert(suggestions)
-      .values({ ...row, status: "pending" });
-  }
-  async listSuggestions(orgId: number) {
-    return this.db
-      .select()
-      .from(suggestions)
-      .where(eq(suggestions.organizationId, orgId))
-      .orderBy(desc(suggestions.createdAt));
-  }
-  async getSuggestion(orgId: number, id: number) {
-    const [row] = await this.db
-      .select()
-      .from(suggestions)
-      .where(
-        and(eq(suggestions.organizationId, orgId), eq(suggestions.id, id)),
-      );
-    return row;
-  }
-  async setSuggestionStatus(
-    orgId: number,
-    id: number,
-    status: "accepted" | "dismissed",
-  ) {
-    await this.db
-      .update(suggestions)
-      .set({ status })
-      .where(
-        and(eq(suggestions.organizationId, orgId), eq(suggestions.id, id)),
-      );
-  }
-  async hasPendingSuggestion(orgId: number, key: string): Promise<boolean> {
-    const [row] = await this.db
-      .select({ id: suggestions.id })
-      .from(suggestions)
-      .where(
-        and(
-          eq(suggestions.organizationId, orgId),
-          eq(suggestions.key, key),
-          eq(suggestions.status, "pending"),
-        ),
-      )
-      .limit(1);
-    return !!row;
-  }
 
   // ── CMS ────────────────────────────────────────────────────────────────────────
-  async getCms(key: "landing" | "contact", orgId: number | null) {
-    if (key === "landing") {
-      const [row] = await this.db
-        .select()
-        .from(landingPageSettings)
-        .where(
-          orgId == null
-            ? isNull(landingPageSettings.organizationId)
-            : eq(landingPageSettings.organizationId, orgId),
-        );
-      return row ?? null;
-    }
-    const [row] = await this.db
-      .select()
-      .from(contactPageSettings)
-      .where(
-        orgId == null
-          ? isNull(contactPageSettings.organizationId)
-          : eq(contactPageSettings.organizationId, orgId),
-      );
-    return row ?? null;
-  }
-  async setCms(
-    key: "landing" | "contact",
-    orgId: number | null,
-    value: Record<string, unknown>,
-  ) {
-    const table = key === "landing" ? landingPageSettings : contactPageSettings;
-    const existing = await this.getCms(key, orgId);
-    if (existing) {
-      await this.db
-        .update(table)
-        .set({ ...value, updatedAt: new Date() } as never)
-        .where(eq(table.id, existing.id));
-    } else {
-      await this.db
-        .insert(table)
-        .values({ organizationId: orgId, ...value } as never);
-    }
-  }
 
   // ── attachment metadata by id (forwarded references) ──────────────────────
   /** Metadata only (never dataBase64) for a set of attachment ids in one org. */

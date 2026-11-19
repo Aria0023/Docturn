@@ -242,11 +242,11 @@ describe("#3 ER throughput is computed by the server", () => {
 describe("#11 a provider's name and specialty are server records", () => {
   it("a director's rename and specialty change persist, are audited and re-route", async () => {
     const director = await as("director");
-    const r = await director.patch(`/api/hospitalists/${hid("chen")}/profile`).send({ displayName: "  Dr. Nathan Alyesh Renamed ", specialty: "Cardiology" });
+    const r = await director.patch(`/api/hospitalists/${hid("chen")}/profile`).send({ displayName: "  Dr. Nolan Avery Renamed ", specialty: "Cardiology" });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ hospitalist: { id: hid("chen"), specialty: "Cardiology" }, user: { id: uid("chen"), displayName: "Dr. Nathan Alyesh Renamed" } });
+    expect(r.body).toMatchObject({ hospitalist: { id: hid("chen"), specialty: "Cardiology" }, user: { id: uid("chen"), displayName: "Dr. Nolan Avery Renamed" } });
     const dir = (await (await as("er.doc")).get("/api/physicians/directory").expect(200)).body;
-    expect(dir.find((d: { userId: number }) => d.userId === uid("chen"))).toMatchObject({ displayName: "Dr. Nathan Alyesh Renamed", specialty: "Cardiology" });
+    expect(dir.find((d: { userId: number }) => d.userId === uid("chen"))).toMatchObject({ displayName: "Dr. Nolan Avery Renamed", specialty: "Cardiology" });
     const rows = (await audit()).filter((a) => a.action === "hospitalist.profile_update");
     expect(rows).toHaveLength(1);
     expect(rows[0]!.details).toMatchObject({ changed: ["displayName", "specialty"] });

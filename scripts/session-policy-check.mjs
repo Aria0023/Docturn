@@ -251,7 +251,7 @@ try {
     await dir.page.locator('[data-person="chen"] button[aria-label^="Manage"]').click();
     await sleep(300);
     const clicked = await dir.page.evaluate(() => {
-      const btn = [...document.querySelectorAll("[data-person] button")].find((b) => /^Sign Dr\..*out of every device$/i.test(b.getAttribute("title") || "") && /chen|Alyesh|Nathan/i.test(b.closest("[data-person]").getAttribute("data-person") + b.closest("[data-person]").innerText));
+      const btn = [...document.querySelectorAll("[data-person] button")].find((b) => /^Sign Dr\..*out of every device$/i.test(b.getAttribute("title") || "") && /chen|Avery|Nolan/i.test(b.closest("[data-person]").getAttribute("data-person") + b.closest("[data-person]").innerText));
       if (!btn) return null;
       btn.click();
       return btn.getAttribute("title");

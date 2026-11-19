@@ -8,9 +8,7 @@ import { registerStripeWebhookRoutes } from "./stripe-webhook.js";
 import { registerBoardRoutes } from "./board.js";
 import { registerBroadcastRoutes } from "./broadcasts.js";
 import { registerCareTeamRoutes } from "./careteam.js";
-import { registerCmsRoutes } from "./cms.js";
 import { registerComplianceRoutes } from "./compliance.js";
-import { registerConfigRoutes } from "./config.js";
 import { registerConsultServiceRoutes } from "./consult-services.js";
 import { registerDevRoutes } from "./dev.js";
 import { registerDirectoryRoutes } from "./directory.js";
@@ -33,7 +31,6 @@ import { registerReminderRoutes } from "./reminders.js";
 import { registerPinRoutes } from "./pin.js";
 import { registerAlertSoundRoutes } from "./alert-sounds.js";
 import { registerThemeRoutes } from "./themes.js";
-import { registerResourceRoutes } from "./resources.js";
 import { registerScimRoutes } from "../scim/users.js";
 import { registerScimTokenRoutes } from "./scim-tokens.js";
 import { registerSessionPolicyRoutes } from "./session-policy.js";
@@ -79,13 +76,11 @@ export function registerRoutes(app: Express) {
   // bearer token, with its own body parser for application/scim+json.
   registerScimRoutes(app, (app.locals.scimJson as RequestHandler | undefined) ?? ((_q, _s, n) => n()));
   registerShiftRoutes(app);
-  registerConfigRoutes(app);
   registerComplianceRoutes(app);
   registerCareTeamRoutes(app);
   registerBoardRoutes(app);
   registerBroadcastRoutes(app);
   registerErRoutes(app);
-  registerResourceRoutes(app);
   registerSmsRoutes(app);
   registerDevRoutes(app);
   // Organization billing (docs/BILLING.md): the hospital's own screen (module
@@ -97,7 +92,6 @@ export function registerRoutes(app: Express) {
   // authentication), with its own raw-body parser and its own rate-limit
   // budget, so a retrying Stripe can never spend a clinician's.
   registerStripeWebhookRoutes(app);
-  registerCmsRoutes(app);
   registerMobileRoutes(app);
   registerAmionRoutes(app);
   registerModuleRoutes(app);

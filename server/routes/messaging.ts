@@ -391,7 +391,7 @@ export interface OnCallTarget {
    *  schedule slot) share one role key. Directory role contacts group by it,
    *  and a role favorite stores it. */
   role: string;
-  /** The role's own label (no holder name), e.g. "Tarzana 7", "On-call Cardiology". */
+  /** The role's own label (no holder name), e.g. "Westside 7", "On-call Cardiology". */
   roleLabel: string;
   /** The person the schedule / catalog / rotation names (before DND redirect). */
   onCallUserId: number;

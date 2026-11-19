@@ -40,7 +40,7 @@ export interface DbHandle {
   durable: boolean;
   /** The pg.Pool behind a real Postgres handle (shared with the session store). */
   pool?: pg.Pool;
-  /** Push the schema. Only meaningful for PGlite; for real PG use `drizzle-kit push`. */
+  /** Apply the schema (idempotent SCHEMA_SQL), for PGlite and Postgres alike. */
   ensureSchema: () => Promise<void>;
   close: () => Promise<void>;
 }
@@ -178,8 +178,7 @@ export function createDb(opts: CreateDbOptions = {}): DbHandle {
         // self-provisions on first boot instead of crashing on an empty schema.
         // SCHEMA_SQL is standard Postgres (CREATE TABLE IF NOT EXISTS + additive
         // ALTER … ADD COLUMN IF NOT EXISTS), so re-running it every start is a
-        // no-op once provisioned. (`drizzle-kit push` remains available for
-        // richer migrations, but is no longer required just to boot.)
+        // no-op once provisioned.
         // Under the boot lock, so N instances starting together apply it one
         // after another instead of racing (tests/pg-boot.test.ts).
         await withBootLock({ pool }, async () => {
@@ -231,8 +230,8 @@ async function pushSchema(client: PGlite): Promise<void> {
 
 /**
  * Hand-maintained DDL mirroring shared/schema.ts. Kept in lockstep with the
- * Drizzle tables; for production Postgres, `drizzle-kit push` is the source of
- * truth, but PGlite (dev/test) bootstraps from this.
+ * Drizzle tables. This is the ONE way the schema is applied, for PGlite and
+ * Postgres alike (there is no separate push/migrate command).
  */
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS organizations (

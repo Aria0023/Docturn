@@ -29,7 +29,7 @@ const windows: any[] = [];
 afterEach(() => { while (windows.length) { try { windows.pop().close(); } catch { /* ignore */ } } });
 
 // Every name, complaint and initials pair the kit seeds (store.js seed()).
-const DEMO = /Sarah Chen|Amir Patel|Maria Lopez|Nina Roy|Omar Haddad|James Liu|Jordan Chen|Dr\. Reyes|Dr\. Osei|Dr\. Okafor|Acute abdominal pain|Diabetic ketoacidosis|CHF exacerbation|Community-acquired pneumonia|Chest pain|Septic shock|AKI on CKD|NSTEMI|COPD exacerbation|Syncope, workup|GI bleed|Sepsis, source unclear/;
+const DEMO = /Sarah Chen|Adam Patel|Maria Lopez|Nina Roy|Omar Haddad|James Liu|Jordan Chen|Dr\. Reyes|Dr\. Osei|Dr\. Okafor|Acute abdominal pain|Diabetic ketoacidosis|CHF exacerbation|Community-acquired pneumonia|Chest pain|Septic shock|AKI on CKD|NSTEMI|COPD exacerbation|Syncope, workup|GI bleed|Sepsis, source unclear/;
 const CLINICAL = ["providers", "board", "sent", "pending", "myPatients", "myAdmissions"];
 
 const ER_DOC = { id: 21, username: "er.doc", displayName: "Dr. Erin Vale", role: "er_doctor", credential: "MD", organizationId: 7 };

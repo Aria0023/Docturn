@@ -245,7 +245,7 @@ console.log("== synthetic server " + BASE);
     const card = await waitFor(() => wu.page.evaluate((id) => { const el = document.querySelector(`[data-pending-id="${id}"]`); return el ? { for: el.getAttribute("data-pending-for"), text: el.innerText, buttons: [...el.querySelectorAll("button")].map((b) => b.innerText.trim()) } : null; }, uv.aid), 20000, 300);
     const srvPending = (await wu.api("GET", "/api/assignments/pending")).json;
     rec(`C @${width}: the server lists Chen's request for Wu (onBehalfOf Chen)`, srvPending.some((x) => x.id === uv.aid && x.onBehalfOf && x.onBehalfOf.userId === meId), JSON.stringify(srvPending.map((x) => [x.id, x.onBehalfOf && x.onBehalfOf.userId])));
-    rec(`C @${width}: Wu's Home shows it 'For Dr. Nathan Alyesh' with Accept only`, card && card.for === String(meId) && /For Dr\. Nathan Alyesh/.test(card.text) && JSON.stringify(card.buttons) === JSON.stringify(["Accept for Dr. Nathan Alyesh"]), JSON.stringify(card));
+    rec(`C @${width}: Wu's Home shows it 'For Dr. Nolan Avery' with Accept only`, card && card.for === String(meId) && /For Dr\. Nolan Avery/.test(card.text) && JSON.stringify(card.buttons) === JSON.stringify(["Accept for Dr. Nolan Avery"]), JSON.stringify(card));
     await checkLayout(wu.page, `care-team request card @${width}`, [`card:[data-pending-id="${uv.aid}"]`]);
     const mark = wu.apiLog.length;
     await wu.page.locator(`[data-pending-id="${uv.aid}"] button`).first().click();
@@ -255,7 +255,7 @@ console.log("== synthetic server " + BASE);
     const board = (await chen.api("GET", "/api/assignments/my")).json;
     rec(`C @${width}: the patient is on Chen's census, accepted by Wu`, board.some((x) => x.id === uv.aid && x.acceptedByUserId === wuId), "");
     const acc = await waitFor(() => wu.page.evaluate(() => { const el = document.querySelector("[data-accepted-obo]"); return el ? el.innerText : null; }), 8000);
-    rec(`C @${width}: Wu sees it under accepted ('Accepted for Dr. Nathan Alyesh')`, acc && /Accepted for Dr\. Nathan Alyesh/.test(acc), acc);
+    rec(`C @${width}: Wu sees it under accepted ('Accepted for Dr. Nolan Avery')`, acc && /Accepted for Dr\. Nolan Avery/.test(acc), acc);
     rec(`C @${width}: no 'No pending assignments' claim while it was waiting`, !!card);
     await wu.ctx.close();
   }
@@ -388,19 +388,19 @@ if (AMION) {
   await reload(D.page);
   const pm = await waitFor(() => D.page.evaluate(() => { const el = document.querySelector('[data-schedule-panel="manual"]'); return el ? el.innerText.replace(/\s+/g, " ") : null; }), 10000);
   rec("S manual: the panel says Manual list and that Amion is connected but not pulled", pm && /Manual list/.test(pm) && /Amion is connected but not pulled while Manual list is selected/.test(pm), pm);
-  if (!(await working("Dr. Nathan Alyesh"))) await D.api("PATCH", `/api/hospitalists/${idOf("Dr. Nathan Alyesh")}/working-status`, { working: true });
+  if (!(await working("Dr. Nolan Avery"))) await D.api("PATCH", `/api/hospitalists/${idOf("Dr. Nolan Avery")}/working-status`, { working: true });
   await reload(D.page);
   const mark = D.apiLog.length;
   await D.page.evaluate((name) => {
     const btn = [...document.querySelectorAll('button[title="Toggle shift"]')].find((b) => { let p = b; for (let i = 0; i < 6 && p; i++) { p = p.parentElement; if (p && p.innerText && p.innerText.includes(name)) return true; } return false; });
     if (btn) btn.setAttribute("data-fx-toggle", "1");
-  }, "Dr. Nathan Alyesh");
+  }, "Dr. Nolan Avery");
   await D.page.locator('[data-fx-toggle="1"]').click();
   await sleep(2000);
-  rec("S manual: the dashboard's switch took Dr. Alyesh off shift on the server", (await working("Dr. Nathan Alyesh")) === false && writes(D.apiLog, mark).some((r) => /working-status/.test(r.p) && r.s === 200), writes(D.apiLog, mark).map((r) => r.p + " " + r.s).join(", "));
+  rec("S manual: the dashboard's switch took Dr. Avery off shift on the server", (await working("Dr. Nolan Avery")) === false && writes(D.apiLog, mark).some((r) => /working-status/.test(r.p) && r.s === 200), writes(D.apiLog, mark).map((r) => r.p + " " + r.s).join(", "));
   await sleep(TICK_MS); // at least one scheduled tick (interval 1 min) after the Off
   rec("S manual: the server log shows the scheduled pull paused for ISPN (another source selected)", new RegExp("scheduled sync paused for org " + ispn.id + " — another schedule source is selected").test(logTail()));
-  rec("S manual: after the scheduled pull Dr. Alyesh is STILL off shift", (await working("Dr. Nathan Alyesh")) === false);
+  rec("S manual: after the scheduled pull Dr. Avery is STILL off shift", (await working("Dr. Nolan Avery")) === false);
   const pm2 = await text(D.page, "[data-schedule-panel]");
   rec("S manual: the panel still says Manual list", /Manual list/.test(pm2 || ""), pm2);
 
@@ -408,18 +408,18 @@ if (AMION) {
   await D.api("PATCH", "/api/oncall/source", { source: "amion" });
   const off = await dev.api("PATCH", `/api/dev/modules/${ispn.id}`, { id: "oncall.board", enabled: false });
   rec("S board off: (setup) oncall.board switched off", off.status === 200, "status=" + off.status);
-  await D.api("PATCH", `/api/hospitalists/${idOf("Dr. Sharon George")}/working-status`, { working: false });
+  await D.api("PATCH", `/api/hospitalists/${idOf("Dr. Sara Grant")}/working-status`, { working: false });
   await reload(D.page);
   const pb = await text(D.page, "[data-schedule-line]");
   rec("S board off: the panel says no schedule source is read and no feed changes shifts", /no schedule source is read and no feed changes who is on shift/.test(pb || ""), pb);
   await sleep(TICK_MS);
   rec("S board off: the server log shows the scheduled pull paused for ISPN (board off)", new RegExp("scheduled sync paused for org " + ispn.id + " — the on-call board is switched off").test(logTail()));
-  rec("S board off: hospitalist #2 (Dr. George) is STILL off shift after the pull", (await working("Dr. Sharon George")) === false);
+  rec("S board off: hospitalist #2 (Dr. Grant) is STILL off shift after the pull", (await working("Dr. Sara Grant")) === false);
 
   // Board back on with Amion selected → the pull applies (so the panel's Amion line is true).
   await dev.api("PATCH", `/api/dev/modules/${ispn.id}`, { id: "oncall.board", enabled: true });
-  const back = await waitFor(async () => (await working("Dr. Sharon George")) === true, 140000, 3000);
-  rec("S amion: board on + Amion selected → the scheduled pull puts Dr. George back on shift", !!back);
+  const back = await waitFor(async () => (await working("Dr. Sara Grant")) === true, 140000, 3000);
+  rec("S amion: board on + Amion selected → the scheduled pull puts Dr. Grant back on shift", !!back);
   await reload(D.page);
   const pa = await text(D.page, "[data-schedule-panel]");
   rec("S amion: the panel says it syncs from Amion and that each pull sets shifts", /Amion/.test(pa || "") && /Each (successful )?Amion pull puts everyone on the grid on shift/.test(pa || ""), pa);

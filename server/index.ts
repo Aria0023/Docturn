@@ -11,6 +11,7 @@ import { DatabaseStorage, setStorage } from "./storage.js";
 import {
   ensureDemoTenants,
   ensurePlatform,
+  renameLegacyDemoNames,
   isSyntheticDataMode,
   seed,
 } from "./seed.js";
@@ -68,7 +69,7 @@ async function main() {
   // until the minimum safeguards are present (server/phi-preflight.ts).
   enforceRealPhiPreflight();
   // PGlite (no DATABASE_URL) bootstraps its schema in-process so the app boots
-  // with zero secrets. Real Postgres is provisioned via `npm run db:push`.
+  // with zero secrets. Real Postgres gets the same schema at boot (SCHEMA_SQL in server/db.ts).
   // initDbWithRecovery self-heals a corrupted on-disk PGlite store (e.g. after a
   // hard kill) so the server always boots instead of dying on init.
   const { handle, recovered } = await initDbWithRecovery();
@@ -116,6 +117,8 @@ async function main() {
           console.log("[db] empty database — seeded demo data (org ISPN + platform).");
         } else {
           await ensurePlatform(storage);
+          const n = await renameLegacyDemoNames(storage, existing.id);
+          if (n) console.log(`[db] demo roster: ${n} earlier display name(s) replaced with the fictional ones.`);
         }
         // Idempotently provision the two isolated demo tenants (HOSP + ER).
         await ensureDemoTenants(storage);
