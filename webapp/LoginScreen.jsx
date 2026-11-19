@@ -226,7 +226,11 @@ function LoginScreen({ onLogin, appName }) {
             </div>
             <div style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.5 }}>
               {demoMode && <React.Fragment>Demo — pick a role (the form pre-fills that seeded account; password <b style={{ color: "var(--foreground)", fontWeight: 600 }}>docturn</b>) and sign in. </React.Fragment>}
-              New here? {linkBtn("Create an account", () => { setMode("register"); setRegMsg(null); setRegErr(null); })}.
+              {/* The App Store / Play app is for accounts a hospital has already
+                  provisioned: it offers no sign-up (Apple requires in-app account
+                  deletion wherever an app offers account creation). */}
+              {!(window.DT && window.DT.shell) && <React.Fragment>New here? {linkBtn("Create an account", () => { setMode("register"); setRegMsg(null); setRegErr(null); })}.</React.Fragment>}
+              {window.DT && window.DT.shell && <span data-shell-accounts>Accounts are created by your hospital's DocTurn administrator.</span>}
             </div>
           </form>
           ) : (

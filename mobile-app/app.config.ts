@@ -32,7 +32,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   backgroundColor: "#FFFFFF",
   ios: {
     bundleIdentifier: BUNDLE_ID,
-    supportsTablet: true,
+    // iPhone only for 1.0: the clinical phone layout is what the shell ships,
+    // and an iPad build would need its own App Store screenshots and review.
+    supportsTablet: false,
     associatedDomains: https ? [`applinks:${host}`, `webcredentials:${host}`] : [],
     config: { usesNonExemptEncryption: false }, // HTTPS only — standard, exempt encryption
     infoPlist: {
