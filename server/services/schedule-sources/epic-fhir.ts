@@ -141,7 +141,7 @@ export async function readEpicSync(
  * reach a public https host (SSRF guard); the operator's env URLs are trusted.
  * `fetchImpl` (tests) replaces only the transport underneath.
  */
-function fetchFor(cfg: EpicSourcedConfig, fetchImpl?: typeof fetch, outer?: AbortSignal): typeof fetch {
+export function fetchFor(cfg: EpicSourcedConfig, fetchImpl?: typeof fetch, outer?: AbortSignal): typeof fetch {
   return ((input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     return cfg.source === "organization"
@@ -401,7 +401,7 @@ export interface EpicSyncState {
  * most 20 pages). `fetchImpl` is the bounded seam from fetchFor, so each page
  * is ≤ 10 s / ≤ 5 MB and all pages share the sync's overall deadline.
  */
-async function fetchAllPages(url: string, token: string, fetchImpl: typeof fetch): Promise<FhirBundle> {
+export async function fetchAllPages(url: string, token: string, fetchImpl: typeof fetch): Promise<FhirBundle> {
   const out: FhirBundle = { resourceType: "Bundle", entry: [] };
   let next: string | null = url;
   for (let page = 0; next && page < 20; page++) {
@@ -417,7 +417,7 @@ async function fetchAllPages(url: string, token: string, fetchImpl: typeof fetch
 }
 
 // Secrets must never leak through error text.
-function sanitizeError(err: unknown, cfg: EpicConfig): string {
+export function sanitizeError(err: unknown, cfg: EpicConfig): string {
   if (err instanceof IntegrationCallError) return `epic_${err.code}`;
   let msg = err instanceof Error ? (err.name === "AbortError" ? "epic_timeout" : err.message) : String(err);
   for (const s of [cfg.privateKeyPem, cfg.clientId]) if (s) msg = msg.split(s).join("<redacted>");

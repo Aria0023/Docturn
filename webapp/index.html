@@ -240,6 +240,7 @@
 <script type="text/babel" src="/ScheduleSync.jsx"></script>
 <script type="text/babel" src="/OnCallBoard.jsx"></script>
 <script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/Reports.jsx"></script>
 <script type="text/babel" src="/Integrations.jsx"></script>
 <script type="text/babel" src="/OrgSettings.jsx"></script>
 <script type="text/babel" src="/Billing.jsx"></script>
@@ -291,6 +292,7 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "reports",   label: "Reports", icon: "table-2" },
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
@@ -303,6 +305,7 @@ const NAV = {
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "reports",   label: "Reports", icon: "table-2" },
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
     { id: "directory", label: "Directory", icon: "contact" },
@@ -313,6 +316,7 @@ const NAV = {
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
@@ -327,6 +331,7 @@ const NAV = {
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "consult",    label: "Consult services", icon: "stethoscope" },
@@ -359,7 +364,7 @@ const NAV = {
 // the signed-in org is hidden; the server enforces the same switch (404).
 const NAV_MODULE = {
   consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
-  admissions: "routing.assignments", history: "routing.assignments",
+  admissions: "routing.assignments", history: "routing.assignments", reports: "ops.reports",
   appearance: "platform.appearance",
 };
 // Appearance is the one screen two modules share: the organization's branding
@@ -375,6 +380,7 @@ const navModuleOn = (it) => {
 const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
   admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
+  reports:    ["Reports", "Team census, pending admits and your own saved reports"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
@@ -867,6 +873,7 @@ function App() {
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
+  else if (nav === "reports") screen = <Reports />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};

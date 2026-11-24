@@ -954,6 +954,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code)
 ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Order requests from the public website (/home). Business contacts only.
+-- Saved reports: the definition only (dataset, columns, filters), never rows.
+-- owner_user_id has no FK on purpose. Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS report_definitions (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  owner_user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  dataset TEXT NOT NULL,
+  config JSONB NOT NULL,
+  shared BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS report_definitions_org_idx ON report_definitions(organization_id);
+
 CREATE TABLE IF NOT EXISTS purchase_requests (
   id SERIAL PRIMARY KEY,
   organization_name TEXT NOT NULL,

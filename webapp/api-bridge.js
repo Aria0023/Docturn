@@ -6447,6 +6447,42 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // ── Reports (module ops.reports; server/routes/reporting.ts) ───────────────
+  // Rows are clinical content: they are handed to the screen that asked and
+  // never put in the store, so they are never persisted on this device.
+  DT.actions.reporting = {
+    catalog: function () { return get("/api/reporting/catalog"); },
+    list: function () { return get("/api/reporting/reports").then(function (r) { return (r && r.reports) || []; }); },
+    run: function (target) { return apiWithBody("POST", "/api/reporting/run", target); },
+    save: function (id, input) {
+      return id ? apiWithBody("PATCH", "/api/reporting/reports/" + encodeURIComponent(id), input)
+                : apiWithBody("POST", "/api/reporting/reports", input);
+    },
+    remove: function (id) { return apiWithBody("DELETE", "/api/reporting/reports/" + encodeURIComponent(id)); },
+    ehrLists: function () { return apiWithBody("GET", "/api/reporting/ehr/lists").then(function (r) { return (r && r.lists) || []; }); },
+    exportCsv: function (target, name) {
+      var headers = { "Content-Type": "application/json" };
+      if (DEMO_TOKEN) headers.Authorization = "Bearer " + DEMO_TOKEN;
+      var req = lockActive() ? Promise.reject(lockedError())
+        : fetch("/api/reporting/export", { method: "POST", credentials: "include", headers: headers, body: JSON.stringify(target) });
+      return req.then(function (res) {
+        return res.text().then(function (text) {
+          if (!res.ok) {
+            var code = "export_failed";
+            try { var b = JSON.parse(text); if (b && b.error) code = b.error; } catch (_) {}
+            var e = new Error(code); e.status = res.status; throw e;
+          }
+          var file = String(name || "report").replace(/[^A-Za-z0-9 _-]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "report";
+          var url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+          var link = document.createElement("a"); link.href = url; link.download = "docturn-" + file.toLowerCase() + ".csv";
+          document.body.appendChild(link); link.click(); link.remove();
+          setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 1000);
+          DT.set(function (s) { s.__toast = { tone: "accepted", title: "Report downloaded", msg: link.download }; return s; });
+          return true;
+        });
+      });
+    },
+  };
   DT.actions.loadIntegrations = function (orgId) {
     return get("/api/integrations" + integrationsQuery(orgId));
   };

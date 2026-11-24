@@ -1570,6 +1570,29 @@ export const purchaseRequests = pgTable("purchase_requests", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+/**
+ * A saved report (server/services/reporting.ts): which dataset, which columns,
+ * filters, grouping and sort — never the rows themselves, so no PHI is stored
+ * here. `owner_user_id` has no foreign key on purpose (a saved report never
+ * blocks deleting a user); the tenant cascade removes the org's rows. Mirrored
+ * in server/db.ts SCHEMA_SQL.
+ */
+export const reportDefinitions = pgTable("report_definitions", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  ownerUserId: integer("owner_user_id").notNull(),
+  name: text("name").notNull(),
+  dataset: text("dataset").notNull(),
+  config: jsonb("config").$type<Record<string, unknown>>().notNull(),
+  shared: boolean("shared").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type ReportDefinition = typeof reportDefinitions.$inferSelect;
+export type InsertReportDefinition = typeof reportDefinitions.$inferInsert;
+
 export type PurchaseRequest = typeof purchaseRequests.$inferSelect;
 export type InsertPurchaseRequest = typeof purchaseRequests.$inferInsert;
 export const PURCHASE_TERMS = ["pilot", "annual", "multi_year"] as const;

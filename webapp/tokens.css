@@ -252,3 +252,13 @@
 @media (prefers-contrast: high) {
   :root { --border-ch: 214 32% 70%; --input-ch: 214 32% 70%; }
 }
+
+/* Reports → Print: only the report card goes to paper. */
+@media print {
+  body.dt-print-report * { visibility: hidden !important; }
+  body.dt-print-report [data-report-print],
+  body.dt-print-report [data-report-print] * { visibility: visible !important; }
+  body.dt-print-report [data-report-print] { position: absolute; left: 0; top: 0; width: 100%; }
+  body.dt-print-report .dt-no-print,
+  body.dt-print-report .dt-no-print * { display: none !important; }
+}

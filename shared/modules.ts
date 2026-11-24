@@ -69,6 +69,7 @@ export const MODULES: readonly ModuleDef[] = [
 
   // ---- Operations
   { id: "ops.analytics",          label: "Director analytics",             group: "Operations", default: true, blurb: "Response/acceptance latency, volumes, KPIs (director roles only)." },
+  { id: "ops.reports",            label: "Reports",                        group: "Operations", default: true, blurb: "Team census, pending admits, provider load and saved custom reports, from DocTurn's own records or — once the hospital's Epic app is connected — an Epic patient list. Results are never stored." },
   { id: "ops.retention",          label: "Message retention purge",        group: "Operations", default: true, blurb: "Hourly, audited hard-delete of messages (with their attachment files) older than the org's retention window. Off: nothing is purged, messages are kept indefinitely and directors cannot set a new window (never-sent uploads are still cleared after 24 h)." },
 
   // ---- Security

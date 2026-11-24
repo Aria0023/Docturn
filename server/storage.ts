@@ -71,6 +71,7 @@ import {
   type BillingPlan,
   type InsertBillingPlan,
   purchaseRequests,
+  reportDefinitions,
   type PurchaseRequest,
   type InsertPurchaseRequest,
   type OrgContract,
@@ -1627,6 +1628,43 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /** All consult rows for an org (analytics). */
+  // ── saved reports (definitions only; server/services/reporting.ts) ────────
+  async listReportDefinitions(orgId: number) {
+    return this.db
+      .select()
+      .from(reportDefinitions)
+      .where(eq(reportDefinitions.organizationId, orgId))
+      .orderBy(asc(reportDefinitions.name), asc(reportDefinitions.id));
+  }
+  async getReportDefinition(orgId: number, id: number) {
+    const [row] = await this.db
+      .select()
+      .from(reportDefinitions)
+      .where(and(eq(reportDefinitions.organizationId, orgId), eq(reportDefinitions.id, id)));
+    return row;
+  }
+  async createReportDefinition(row: typeof reportDefinitions.$inferInsert) {
+    const [saved] = await this.db.insert(reportDefinitions).values(row).returning();
+    return saved!;
+  }
+  async updateReportDefinition(
+    orgId: number,
+    id: number,
+    patch: Partial<Pick<typeof reportDefinitions.$inferInsert, "name" | "dataset" | "config" | "shared">>,
+  ) {
+    const [saved] = await this.db
+      .update(reportDefinitions)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(reportDefinitions.organizationId, orgId), eq(reportDefinitions.id, id)))
+      .returning();
+    return saved;
+  }
+  async deleteReportDefinition(orgId: number, id: number) {
+    await this.db
+      .delete(reportDefinitions)
+      .where(and(eq(reportDefinitions.organizationId, orgId), eq(reportDefinitions.id, id)));
+  }
+
   async listConsultsForOrg(orgId: number) {
     return this.db
       .select()
@@ -2459,6 +2497,7 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(messageDeliveryStatus).where(inArray(messageDeliveryStatus.userId, userIds));
       }
       await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
+      await tx.delete(reportDefinitions).where(eq(reportDefinitions.organizationId, id));
       await tx.delete(assignments).where(eq(assignments.organizationId, id));
       await tx.delete(admissionEvents).where(eq(admissionEvents.organizationId, id));
       await tx.delete(patientConsults).where(eq(patientConsults.organizationId, id));
