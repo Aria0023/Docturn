@@ -6472,6 +6472,9 @@
     var epoch = authEpoch, mine = ++codesSeq;
     return get("/api/codes").then(function (d) {
       if (epoch !== authEpoch || mine !== codesSeq) return null;
+      // Anything but the board's own shape is a failed read, not an empty board.
+      if (!d || !Array.isArray(d.activations) || !Array.isArray(d.protocols)) throw new Error("unavailable");
+      if (!Array.isArray(d.templates)) d.templates = [];
       codesState = { epoch: epoch, loaded: true, error: null, data: d };
       codesEmit();
       return d;
