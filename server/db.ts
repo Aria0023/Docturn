@@ -954,6 +954,62 @@ CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code)
 ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Order requests from the public website (/home). Business contacts only.
+-- Code protocols and their activations. User ids have no FK on purpose.
+-- Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS code_protocols (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  team JSONB NOT NULL,
+  steps JSONB NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS code_protocols_org_idx ON code_protocols(organization_id);
+CREATE TABLE IF NOT EXISTS code_activations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  protocol_id INTEGER,
+  protocol_name TEXT NOT NULL,
+  location TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  patient_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  activated_by INTEGER NOT NULL,
+  activated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  closed_by INTEGER,
+  closed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS code_activations_org_idx ON code_activations(organization_id, status, activated_at);
+CREATE TABLE IF NOT EXISTS code_activation_members (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  activation_id INTEGER NOT NULL REFERENCES code_activations(id),
+  label TEXT NOT NULL,
+  user_id INTEGER,
+  holder_name TEXT,
+  covering_for TEXT,
+  alert_count INTEGER NOT NULL DEFAULT 0,
+  last_alert_at TIMESTAMP,
+  acknowledged_at TIMESTAMP,
+  arrived_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS code_activation_members_act_idx ON code_activation_members(activation_id);
+CREATE TABLE IF NOT EXISTS code_activation_steps (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  activation_id INTEGER NOT NULL REFERENCES code_activations(id),
+  position INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  target_min INTEGER,
+  done_at TIMESTAMP,
+  done_by INTEGER
+);
+CREATE INDEX IF NOT EXISTS code_activation_steps_act_idx ON code_activation_steps(activation_id);
+
 -- Saved reports: the definition only (dataset, columns, filters), never rows.
 -- owner_user_id has no FK on purpose. Mirrors shared/schema.ts.
 CREATE TABLE IF NOT EXISTS report_definitions (

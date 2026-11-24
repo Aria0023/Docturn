@@ -240,6 +240,7 @@
 <script type="text/babel" src="/ScheduleSync.jsx"></script>
 <script type="text/babel" src="/OnCallBoard.jsx"></script>
 <script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/Codes.jsx"></script>
 <script type="text/babel" src="/Reports.jsx"></script>
 <script type="text/babel" src="/Integrations.jsx"></script>
 <script type="text/babel" src="/OrgSettings.jsx"></script>
@@ -292,6 +293,7 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "codes",     label: "Codes", icon: "siren" },
     { id: "reports",   label: "Reports", icon: "table-2" },
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
@@ -305,6 +307,7 @@ const NAV = {
   ],
   er_doctor: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
+    { id: "codes",     label: "Codes", icon: "siren" },
     { id: "reports",   label: "Reports", icon: "table-2" },
     { id: "oncall",    label: "On call", icon: "phone-call" },
     { id: "messages",  label: "Messages",  icon: "message-square", badge: 2 },
@@ -316,6 +319,7 @@ const NAV = {
   er_director: [
     { id: "dashboard",  label: "ER operations", icon: "ambulance" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
+    { id: "codes",      label: "Codes", icon: "siren" },
     { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
@@ -331,6 +335,7 @@ const NAV = {
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
     { id: "admissions", label: "Admissions log", icon: "scroll-text" },
+    { id: "codes",      label: "Codes", icon: "siren" },
     { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
     { id: "approvals",  label: "Approvals", icon: "user-check" },
@@ -364,7 +369,7 @@ const NAV = {
 // the signed-in org is hidden; the server enforces the same switch (404).
 const NAV_MODULE = {
   consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
-  admissions: "routing.assignments", history: "routing.assignments", reports: "ops.reports",
+  admissions: "routing.assignments", history: "routing.assignments", reports: "ops.reports", codes: "codes.protocols",
   appearance: "platform.appearance",
 };
 // Appearance is the one screen two modules share: the organization's branding
@@ -381,6 +386,7 @@ const TOP = {
   board:      ["Patient board", "Who's responsible for every distributed patient"],
   admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
   reports:    ["Reports", "Team census, pending admits and your own saved reports"],
+  codes:      ["Codes", "Call a code, see who has answered, and track each step"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
@@ -874,6 +880,7 @@ function App() {
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
   else if (nav === "reports") screen = <Reports />;
+  else if (nav === "codes") screen = <Codes />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};
@@ -970,6 +977,7 @@ function App() {
           <button type="button" onClick={lockByHand} title="Lock" aria-label="Lock app" style={{ width: 44, height: 44, borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name="lock" size={19} /></button>
         </header>
         {impersonationBanner}
+        <CodeBanner nav={nav} onOpen={() => a.setNav("codes")} />
         <LiveDemoTicker ld={st.liveDemo} />
         <StoryCard ld={st.liveDemo} role={role} onControl={a.storyControl} onSet={a.setLiveDemo} onNav={a.setNav} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: nav === "messages" ? "hidden" : "auto", background: nav === "messages" ? "var(--card)" : "var(--secondary)", paddingBottom: TABBAR_TOTAL }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>
@@ -1048,6 +1056,7 @@ function App() {
             <div style={{ overflowX: "auto", minWidth: 0, maxWidth: "100%" }}><RoleSwitcher role={role} onChange={a.setRole} /></div>
           </React.Fragment> : null} />
         {impersonationBanner}
+        <CodeBanner nav={nav} onOpen={() => a.setNav("codes")} />
         <LiveDemoTicker ld={st.liveDemo} />
         <StoryCard ld={st.liveDemo} role={role} onControl={a.storyControl} onSet={a.setLiveDemo} onNav={a.setNav} />
         <main style={{ flex: 1, minWidth: 0, background: nav === "messages" ? "var(--card)" : "var(--secondary)" }}><ErrorBoundary key={nav}>{screen}</ErrorBoundary></main>

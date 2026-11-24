@@ -72,6 +72,10 @@ import {
   type InsertBillingPlan,
   purchaseRequests,
   reportDefinitions,
+  codeProtocols,
+  codeActivations,
+  codeActivationMembers,
+  codeActivationSteps,
   type PurchaseRequest,
   type InsertPurchaseRequest,
   type OrgContract,
@@ -1628,6 +1632,158 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /** All consult rows for an org (analytics). */
+  // ── code protocols and activations (server/services/codes.ts) ─────────────
+  async listCodeProtocols(orgId: number) {
+    return this.db.select().from(codeProtocols).where(eq(codeProtocols.organizationId, orgId)).orderBy(asc(codeProtocols.name), asc(codeProtocols.id));
+  }
+  async getCodeProtocol(orgId: number, id: number) {
+    const [row] = await this.db.select().from(codeProtocols).where(and(eq(codeProtocols.organizationId, orgId), eq(codeProtocols.id, id)));
+    return row;
+  }
+  async createCodeProtocol(row: typeof codeProtocols.$inferInsert) {
+    const [saved] = await this.db.insert(codeProtocols).values(row).returning();
+    return saved!;
+  }
+  async updateCodeProtocol(orgId: number, id: number, patch: Partial<typeof codeProtocols.$inferInsert>) {
+    const [saved] = await this.db
+      .update(codeProtocols)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(codeProtocols.organizationId, orgId), eq(codeProtocols.id, id)))
+      .returning();
+    return saved;
+  }
+  async deleteCodeProtocol(orgId: number, id: number) {
+    await this.db.delete(codeProtocols).where(and(eq(codeProtocols.organizationId, orgId), eq(codeProtocols.id, id)));
+  }
+  /** One activation with its frozen team and steps, written together or not at all. */
+  async createCodeActivation(
+    row: typeof codeActivations.$inferInsert,
+    members: Array<Omit<typeof codeActivationMembers.$inferInsert, "activationId" | "organizationId">>,
+    steps: Array<Omit<typeof codeActivationSteps.$inferInsert, "activationId" | "organizationId">>,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [act] = await tx.insert(codeActivations).values(row).returning();
+      if (members.length) {
+        await tx.insert(codeActivationMembers).values(members.map((m) => ({ ...m, activationId: act!.id, organizationId: row.organizationId })));
+      }
+      if (steps.length) {
+        await tx.insert(codeActivationSteps).values(steps.map((s) => ({ ...s, activationId: act!.id, organizationId: row.organizationId })));
+      }
+      return act!;
+    });
+  }
+  async getCodeActivation(orgId: number, id: number) {
+    const [row] = await this.db.select().from(codeActivations).where(and(eq(codeActivations.organizationId, orgId), eq(codeActivations.id, id)));
+    return row;
+  }
+  /** Every active code, plus the most recent closed ones. */
+  async listCodeActivations(orgId: number, closedLimit = 20) {
+    const active = await this.db
+      .select()
+      .from(codeActivations)
+      .where(and(eq(codeActivations.organizationId, orgId), eq(codeActivations.status, "active")))
+      .orderBy(desc(codeActivations.activatedAt));
+    const closed = await this.db
+      .select()
+      .from(codeActivations)
+      .where(and(eq(codeActivations.organizationId, orgId), ne(codeActivations.status, "active")))
+      .orderBy(desc(codeActivations.activatedAt))
+      .limit(closedLimit);
+    return [...active, ...closed];
+  }
+  async listCodeMembers(orgId: number, activationIds: number[]) {
+    if (!activationIds.length) return [];
+    return this.db
+      .select()
+      .from(codeActivationMembers)
+      .where(and(eq(codeActivationMembers.organizationId, orgId), inArray(codeActivationMembers.activationId, activationIds)))
+      .orderBy(asc(codeActivationMembers.id));
+  }
+  async listCodeSteps(orgId: number, activationIds: number[]) {
+    if (!activationIds.length) return [];
+    return this.db
+      .select()
+      .from(codeActivationSteps)
+      .where(and(eq(codeActivationSteps.organizationId, orgId), inArray(codeActivationSteps.activationId, activationIds)))
+      .orderBy(asc(codeActivationSteps.position), asc(codeActivationSteps.id));
+  }
+  /** First acknowledgement / arrival wins; a repeat changes nothing. Returns rows changed. */
+  async markCodeMember(orgId: number, activationId: number, userId: number, what: "ack" | "arrived", at: Date) {
+    const mine = and(
+      eq(codeActivationMembers.organizationId, orgId),
+      eq(codeActivationMembers.activationId, activationId),
+      eq(codeActivationMembers.userId, userId),
+    );
+    // Arriving is also an acknowledgement.
+    const acked = await this.db
+      .update(codeActivationMembers)
+      .set({ acknowledgedAt: at })
+      .where(and(mine, isNull(codeActivationMembers.acknowledgedAt)))
+      .returning({ id: codeActivationMembers.id });
+    if (what === "ack") return acked.length;
+    const arrived = await this.db
+      .update(codeActivationMembers)
+      .set({ arrivedAt: at })
+      .where(and(mine, isNull(codeActivationMembers.arrivedAt)))
+      .returning({ id: codeActivationMembers.id });
+    return acked.length + arrived.length;
+  }
+  async setCodeStep(orgId: number, activationId: number, stepId: number, done: { at: Date; by: number } | null) {
+    const [row] = await this.db
+      .update(codeActivationSteps)
+      .set({ doneAt: done ? done.at : null, doneBy: done ? done.by : null })
+      .where(
+        and(
+          eq(codeActivationSteps.organizationId, orgId),
+          eq(codeActivationSteps.activationId, activationId),
+          eq(codeActivationSteps.id, stepId),
+          done ? isNull(codeActivationSteps.doneAt) : isNotNull(codeActivationSteps.doneAt),
+        ),
+      )
+      .returning();
+    return row;
+  }
+  /** Close an ACTIVE code. Undefined when it was already closed (someone else got there first). */
+  async closeCodeActivation(orgId: number, id: number, status: "completed" | "stood_down", by: number, at: Date) {
+    const [row] = await this.db
+      .update(codeActivations)
+      .set({ status, closedBy: by, closedAt: at })
+      .where(and(eq(codeActivations.organizationId, orgId), eq(codeActivations.id, id), eq(codeActivations.status, "active")))
+      .returning();
+    return row;
+  }
+  /** Team members of active codes (any org) alerted before `before`, still unacknowledged, under `maxAlerts`. */
+  async listCodeMembersDueRealert(before: Date, maxAlerts: number) {
+    return this.db
+      .select({ member: codeActivationMembers, protocolName: codeActivations.protocolName })
+      .from(codeActivationMembers)
+      .innerJoin(codeActivations, eq(codeActivations.id, codeActivationMembers.activationId))
+      .where(
+        and(
+          eq(codeActivations.status, "active"),
+          isNotNull(codeActivationMembers.userId),
+          isNull(codeActivationMembers.acknowledgedAt),
+          lt(codeActivationMembers.alertCount, maxAlerts),
+          lte(codeActivationMembers.lastAlertAt, before),
+        ),
+      );
+  }
+  /** Claim one re-alert: only the caller whose view of alert_count is current wins. */
+  async claimCodeRealert(memberId: number, seenCount: number, at: Date) {
+    const rows = await this.db
+      .update(codeActivationMembers)
+      .set({ alertCount: seenCount + 1, lastAlertAt: at })
+      .where(
+        and(
+          eq(codeActivationMembers.id, memberId),
+          eq(codeActivationMembers.alertCount, seenCount),
+          isNull(codeActivationMembers.acknowledgedAt),
+        ),
+      )
+      .returning({ id: codeActivationMembers.id });
+    return rows.length === 1;
+  }
+
   // ── saved reports (definitions only; server/services/reporting.ts) ────────
   async listReportDefinitions(orgId: number) {
     return this.db
@@ -2498,6 +2654,10 @@ export class DatabaseStorage implements IStorage {
       }
       await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
       await tx.delete(reportDefinitions).where(eq(reportDefinitions.organizationId, id));
+      await tx.delete(codeActivationMembers).where(eq(codeActivationMembers.organizationId, id));
+      await tx.delete(codeActivationSteps).where(eq(codeActivationSteps.organizationId, id));
+      await tx.delete(codeActivations).where(eq(codeActivations.organizationId, id));
+      await tx.delete(codeProtocols).where(eq(codeProtocols.organizationId, id));
       await tx.delete(assignments).where(eq(assignments.organizationId, id));
       await tx.delete(admissionEvents).where(eq(admissionEvents.organizationId, id));
       await tx.delete(patientConsults).where(eq(patientConsults.organizationId, id));

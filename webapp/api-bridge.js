@@ -1771,6 +1771,14 @@
           DT.set(function (s) { s.__toast = { tone: "sent", title: "New consult request", msg: "A colleague requested you as a consultant on a patient." }; return s; });
           rehydrateSoon();
         }
+        // Code protocols: frames carry ids, the protocol's name and the
+        // location only. The board itself is always re-read from the server.
+        else if (ev.type === "CODE_CHANGED") { codesRefresh(); }
+        else if (ev.type === "CODE_ALERT") {
+          codesRefresh();
+          try { playTone("siren"); } catch (e) {}
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: String(ev.protocolName || "Code") + (ev.again ? " — still waiting for you" : " activated"), msg: String(ev.location || "") + " · open Codes to acknowledge" }; return s; });
+        }
         else if (ev.type === "BROADCAST_CREATED" && ev.broadcast) {
           // Surface an incoming org-wide broadcast live: insert it (with its
           // real ack requirement) so the banner + card show an Acknowledge
@@ -6447,6 +6455,52 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // ── Code protocols (module codes.protocols; server/routes/codes.ts) ────────
+  // The board can name a patient, so it is kept here in memory for the
+  // screens that subscribe — never in the store, never on the device — and it
+  // belongs to one sign-in: a new session starts empty.
+  var codesState = { epoch: -1, loaded: false, error: null, data: null };
+  var codesSubs = [];
+  function codesSnapshot() {
+    return codesState.epoch === authEpoch ? codesState : { epoch: authEpoch, loaded: false, error: null, data: null };
+  }
+  function codesEmit() { codesSubs.slice().forEach(function (fn) { try { fn(codesSnapshot()); } catch (e) {} }); }
+  var codesSeq = 0;
+  function codesRefresh() {
+    var sess = DT.getState().session;
+    if (!sess || !sess.role || (DT.moduleOn && !DT.moduleOn("codes.protocols"))) return Promise.resolve(null);
+    var epoch = authEpoch, mine = ++codesSeq;
+    return get("/api/codes").then(function (d) {
+      if (epoch !== authEpoch || mine !== codesSeq) return null;
+      codesState = { epoch: epoch, loaded: true, error: null, data: d };
+      codesEmit();
+      return d;
+    }).catch(function (e) {
+      if (epoch !== authEpoch || mine !== codesSeq) return null;
+      // A failed read shows as a failure, never as "no active codes".
+      codesState = { epoch: epoch, loaded: true, error: String((e && e.message) || "unavailable"), data: null };
+      codesEmit();
+      return null;
+    });
+  }
+  function codesDo(method, path, body) {
+    return apiWithBody(method, path, body).then(function (r) { codesRefresh(); return r; });
+  }
+  DT.actions.codes = {
+    get: codesSnapshot,
+    refresh: codesRefresh,
+    subscribe: function (fn) { codesSubs.push(fn); return function () { codesSubs = codesSubs.filter(function (x) { return x !== fn; }); }; },
+    teamOptions: function () { return apiWithBody("GET", "/api/codes/team-options"); },
+    previewTeam: function (protocolId) { return apiWithBody("GET", "/api/codes/protocols/" + Number(protocolId) + "/team").then(function (r) { return (r && r.team) || []; }); },
+    saveProtocol: function (id, input) { return codesDo(id ? "PATCH" : "POST", "/api/codes/protocols" + (id ? "/" + Number(id) : ""), input); },
+    removeProtocol: function (id) { return codesDo("DELETE", "/api/codes/protocols/" + Number(id)); },
+    activate: function (input) { return codesDo("POST", "/api/codes/activate", input); },
+    ack: function (id) { return codesDo("POST", "/api/codes/activations/" + Number(id) + "/ack"); },
+    arrived: function (id) { return codesDo("POST", "/api/codes/activations/" + Number(id) + "/arrived"); },
+    step: function (id, stepId, done) { return codesDo("POST", "/api/codes/activations/" + Number(id) + "/steps/" + Number(stepId), { done: !!done }); },
+    close: function (id, outcome) { return codesDo("POST", "/api/codes/activations/" + Number(id) + "/close", { outcome: outcome }); },
+  };
+
   // ── Reports (module ops.reports; server/routes/reporting.ts) ───────────────
   // Rows are clinical content: they are handed to the screen that asked and
   // never put in the store, so they are never persisted on this device.

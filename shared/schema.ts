@@ -1593,6 +1593,91 @@ export const reportDefinitions = pgTable("report_definitions", {
 export type ReportDefinition = typeof reportDefinitions.$inferSelect;
 export type InsertReportDefinition = typeof reportDefinitions.$inferInsert;
 
+/* ── Code protocols (server/services/codes.ts) ────────────────────────────
+ * A PROTOCOL is the hospital's standing plan for one kind of emergency (Code
+ * Stroke, Code STEMI): who is on the team and which timed steps follow. An
+ * ACTIVATION is one real event: the team resolved to the people holding those
+ * roles at that moment (frozen in code_activation_members) and the steps
+ * (frozen in code_activation_steps), each with its own timestamps. User ids
+ * carry no foreign key so a code's history never blocks deleting an account;
+ * the tenant cascade removes the org's rows. Mirrored in server/db.ts. */
+export const CODE_STATUS = ["active", "completed", "stood_down"] as const;
+export type CodeStatus = (typeof CODE_STATUS)[number];
+export interface CodeTeamSlot { id: string; label: string; kind: "oncall" | "user"; ref: string }
+export interface CodeStepDef { id: string; label: string; targetMin: number | null }
+
+export const codeProtocols = pgTable("code_protocols", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  team: jsonb("team").$type<CodeTeamSlot[]>().notNull(),
+  steps: jsonb("steps").$type<CodeStepDef[]>().notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  updatedBy: integer("updated_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const codeActivations = pgTable("code_activations", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  protocolId: integer("protocol_id"),
+  protocolName: text("protocol_name").notNull(),
+  location: text("location").notNull(),
+  note: text("note").notNull().default(""),
+  patientId: integer("patient_id"),
+  status: text("status", { enum: CODE_STATUS }).notNull().default("active"),
+  activatedBy: integer("activated_by").notNull(),
+  activatedAt: timestamp("activated_at").notNull().defaultNow(),
+  closedBy: integer("closed_by"),
+  closedAt: timestamp("closed_at"),
+});
+
+export const codeActivationMembers = pgTable("code_activation_members", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  activationId: integer("activation_id")
+    .notNull()
+    .references(() => codeActivations.id),
+  label: text("label").notNull(),
+  /** Who was alerted (the covering provider when the holder was on DND); null = nobody on DocTurn holds this role. */
+  userId: integer("user_id"),
+  /** The name the schedule gave, shown when nobody could be alerted. */
+  holderName: text("holder_name"),
+  /** Set when the alert went to a covering provider: who they cover. */
+  coveringFor: text("covering_for"),
+  alertCount: integer("alert_count").notNull().default(0),
+  lastAlertAt: timestamp("last_alert_at"),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  arrivedAt: timestamp("arrived_at"),
+});
+
+export const codeActivationSteps = pgTable("code_activation_steps", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  activationId: integer("activation_id")
+    .notNull()
+    .references(() => codeActivations.id),
+  position: integer("position").notNull(),
+  label: text("label").notNull(),
+  targetMin: integer("target_min"),
+  doneAt: timestamp("done_at"),
+  doneBy: integer("done_by"),
+});
+export type CodeProtocol = typeof codeProtocols.$inferSelect;
+export type CodeActivation = typeof codeActivations.$inferSelect;
+export type CodeActivationMember = typeof codeActivationMembers.$inferSelect;
+export type CodeActivationStep = typeof codeActivationSteps.$inferSelect;
+
 export type PurchaseRequest = typeof purchaseRequests.$inferSelect;
 export type InsertPurchaseRequest = typeof purchaseRequests.$inferInsert;
 export const PURCHASE_TERMS = ["pilot", "annual", "multi_year"] as const;

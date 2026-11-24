@@ -19,6 +19,7 @@ import { registerMessagingRoutes } from "./messaging.js";
 import { registerMetricsRoutes } from "./metrics.js";
 import { registerReportsRoutes } from "./reports.js";
 import { registerReportingRoutes } from "./reporting.js";
+import { registerCodeRoutes } from "./codes.js";
 import { registerMfaRoutes } from "./mfa.js";
 import { registerMobileRoutes } from "./mobile.js";
 import { registerModuleRoutes } from "./modules.js";
@@ -68,6 +69,7 @@ export function registerRoutes(app: Express) {
   registerMetricsRoutes(app);
   registerReportsRoutes(app);
   registerReportingRoutes(app);
+  registerCodeRoutes(app);
   registerOrgRoutes(app);
   registerConsultServiceRoutes(app);
   registerSettingsRoutes(app);
