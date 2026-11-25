@@ -53,7 +53,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const csp = [];
 const pageErrors = [];
 const RUN = Date.now().toString(36).slice(-5).replace(/[^a-z0-9]/g, "q");
-const today = () => new Date().toISOString().slice(0, 10);
+// The server snapshots seats by the HOSPITAL's local day, so "today" here is
+// that day too (set once the org is known) — the UTC date is a day ahead of
+// a US hospital every evening.
+let orgTz = "UTC";
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: orgTz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 const browser = await chromium.launch({ executablePath: CHROME, args: ["--no-sandbox"] });
 
@@ -153,6 +157,7 @@ const screen = (page) =>
 const director = await apiSession(BASE, "ISPN", "director");
 const dev = await apiSession(BASE, "DOCTURN", "dev");
 const orgId = (await director("GET", "/api/user")).json.organizationId;
+orgTz = ((await director("GET", "/api/org/config")).json || {}).timezone || "UTC";
 const setModule = async (enabled, id = MODULE, org = orgId) => {
   const r = await dev("PATCH", "/api/dev/modules/" + org, { id, enabled });
   if (r.status !== 200) throw new Error("module flip " + r.status + " " + r.text);

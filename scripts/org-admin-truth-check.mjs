@@ -217,7 +217,7 @@ for (const width of [375, 390, 430]) {
   const acc2 = (await api("GET", "/api/accounts")).json;
   const want2 = {};
   for (const u of acc2) if (!u.disabled && u.role !== "developer") want2[cat(u)] = (want2[cat(u)] || 0) + 1;
-  rec(`B@${width}: per-role counts equal the server's`, Object.keys(roleCounts).length === 5 && Object.keys(roleCounts).every((k) => (want2[k] || 0) === roleCounts[k]), JSON.stringify(roleCounts) + " vs " + JSON.stringify(want2));
+  rec(`B@${width}: per-role counts equal the server's`, Object.keys(roleCounts).length === 6 && Object.keys(roleCounts).every((k) => (want2[k] || 0) === roleCounts[k]), JSON.stringify(roleCounts) + " vs " + JSON.stringify(want2));
   await checkLayout(page, `Roles @${width}`);
   // Directory → Consult services tab and the director's Roles nav item.
   await nav(page, "roles");
@@ -231,11 +231,11 @@ for (const width of [375, 390, 430]) {
   await openPeople(page);
   const accounts = (await api("GET", "/api/accounts")).json;
   const rows = await page.$$eval("[data-person]", (els) => els.map((e) => e.getAttribute("data-person")));
-  const want = accounts.filter((u) => u.role === "er_doctor" || u.role === "er_director").map((u) => u.username).sort();
+  const want = accounts.filter((u) => u.role === "er_doctor" || u.role === "er_director" || u.role === "staff").map((u) => u.username).sort();
   rec("A(ER): rows are the server's ER staff", JSON.stringify(rows.slice().sort()) === JSON.stringify(want), rows.join(","));
   const ctl = await page.$$eval("[data-person]", (els) => els.map((e) => [e.getAttribute("data-person"), !!e.querySelector('button[aria-label^="Manage"]')]));
-  const ok = ctl.every(([u, has]) => { const a = accounts.find((x) => x.username === u); return a && has === (a.role === "er_doctor"); });
-  rec("A(ER): account controls only on ER physicians (the server's rule)", ok, JSON.stringify(ctl));
+  const ok = ctl.every(([u, has]) => { const a = accounts.find((x) => x.username === u); return a && has === (a.role === "er_doctor" || a.role === "staff"); });
+  rec("A(ER): account controls only on ER physicians and staff (the server's rule)", ok, JSON.stringify(ctl));
   await page.locator('[data-person] button[aria-label^="Manage"]').first().click();
   await sleep(300);
   const erPanel = await page.$$eval("[data-manage-panel] button", (els) => els.map((e) => e.textContent.trim()));
