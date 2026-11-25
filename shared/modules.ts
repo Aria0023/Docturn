@@ -65,6 +65,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "shift.handoff",          label: "End shift / Start shift",        group: "Schedule",  default: true,  blurb: "One action ends a shift: off rotation, a covering provider (required while requests are pending), optional away message / DND, audited. Accepted patients are never re-routed." },
 
   // ---- EHR
+  { id: "patients.identity",      label: "Patient name, date of birth and MRN", group: "EHR",  default: true,  blurb: "Patients carry a name, date of birth and MRN beside their initials, shown on patient rows to your signed-in staff only. Never placed in a push notification, a text message or a live update. Off: DocTurn stores and shows initials only." },
+  { id: "ehr.adtFeed",            label: "EHR admission feed (HL7 ADT)",   group: "EHR",       default: false, blurb: "The hospital's interface engine posts admit, transfer, update and discharge messages; DocTurn adds and updates patients from them, so nobody retypes a patient and the census is complete." },
   { id: "ehr.deepLinks",          label: "Open in EHR",                    group: "EHR",       default: false, blurb: "Deep-link a patient into Epic Haiku/Canto or Cerner from any patient row." },
 
   // ---- Operations

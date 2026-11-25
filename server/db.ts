@@ -298,6 +298,14 @@ CREATE TABLE IF NOT EXISTS patients (
   assigned_hospitalist_id INTEGER REFERENCES hospitalists(id),
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS mrn TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_unit TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_ready_at TIMESTAMP;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_ready_by INTEGER;
+CREATE INDEX IF NOT EXISTS patients_org_mrn_idx ON patients(organization_id, mrn);
 -- EHR identifier (MRN/CSN) for "Open in EHR" deep links; additive + nullable.
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS ehr_id TEXT;
 

@@ -1,5 +1,6 @@
 import type { Express } from "express";
-import { createPatientSchema, extractNoteSchema, patientPatchSchema } from "@shared/schema";
+import { PATIENT_IDENTITY_KEYS, createPatientSchema, extractNoteSchema, patientPatchSchema, type Patient } from "@shared/schema";
+import { isModuleEnabled } from "../modules.js";
 import { logPhiAccess } from "../audit.js";
 import { appendAudit } from "../audit.js";
 import { parseId } from "../params.js";
@@ -15,6 +16,14 @@ import { storage } from "../storage.js";
  * editable here — only room, issue and unit are.
  */
 const BOARD_EDIT_ROLES = ["director", "er_director"] as const;
+
+/** Name, date of birth and MRN leave the server only while patients.identity is on. */
+export function withoutIdentity<T extends Partial<Patient>>(p: T): T {
+  return { ...p, fullName: null, dateOfBirth: null, mrn: null };
+}
+const hasIdentity = (o: Record<string, unknown>) => PATIENT_IDENTITY_KEYS.some((k) => o[k] !== undefined);
+/** Who may say a bed is ready: staff (the charge nurse) and the roles that run the board. */
+const BED_ROLES = ["staff", "director", "er_director", "er_doctor"] as const;
 
 export function registerPatientRoutes(app: Express) {
   app.post(
@@ -49,7 +58,13 @@ export function registerPatientRoutes(app: Express) {
       await logPhiAccess(req, "patients");
       const parsed = createPatientSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
+      if (hasIdentity(parsed.data) && !(await isModuleEnabled(me.organizationId, "patients.identity"))) {
+        return res.status(404).json({ error: "module_disabled", module: "patients.identity" });
+      }
       const patient = await storage().createPatient({
+        fullName: parsed.data.fullName ?? null,
+        dateOfBirth: parsed.data.dateOfBirth ?? null,
+        mrn: parsed.data.mrn ?? null,
         organizationId: me.organizationId,
         initials: parsed.data.initials.toUpperCase(),
         roomNumber: parsed.data.roomNumber ?? null,
@@ -84,6 +99,9 @@ export function registerPatientRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const existing = await storage().getPatient(me.organizationId, id);
       if (!existing) return res.status(404).json({ error: "not_found" });
+      if (hasIdentity(parsed.data) && !(await isModuleEnabled(me.organizationId, "patients.identity"))) {
+        return res.status(404).json({ error: "module_disabled", module: "patients.identity" });
+      }
       const patch = Object.fromEntries(Object.entries(parsed.data).filter(([, v]) => v !== undefined));
       const updated = await storage().updatePatient(me.organizationId, id, patch);
       await logPhiAccess(req, "patients", { resourceId: id, patientId: id });
@@ -150,7 +168,34 @@ export function registerPatientRoutes(app: Express) {
   app.get("/api/patients", requireAuth, async (req, res) => {
     const me = currentUser(req);
     await logPhiAccess(req, "patients");
-    res.json(await storage().listPatients(me.organizationId));
+    const rows = await storage().listPatients(me.organizationId);
+    res.json((await isModuleEnabled(me.organizationId, "patients.identity")) ? rows : rows.map(withoutIdentity));
+  });
+
+  // A bed is ready (or no longer is) for a patient, and on which unit. The
+  // charge nurse's one action on an admission; everyone's board follows.
+  app.post("/api/patients/:id/bed", requireAuth, requireRole(...BED_ROLES), async (req, res) => {
+    const me = currentUser(req);
+    const id = parseId(req.params.id);
+    const b = (req.body ?? {}) as { ready?: unknown; unit?: unknown };
+    const unit = typeof b.unit === "string" ? b.unit.trim() : "";
+    if (id === null || typeof b.ready !== "boolean" || unit.length > 30 || /[\u0000-\u001f\u007f-\u009f]/.test(unit)) {
+      return res.status(id === null ? 404 : 400).json({ error: id === null ? "not_found" : "validation_error" });
+    }
+    const existing = await storage().getPatient(me.organizationId, id);
+    if (!existing) return res.status(404).json({ error: "not_found" });
+    const updated = await storage().updatePatient(me.organizationId, id, {
+      bedUnit: unit || (b.ready ? existing.bedUnit : null),
+      bedReadyAt: b.ready ? new Date() : null,
+      bedReadyBy: b.ready ? me.id : null,
+    });
+    await logPhiAccess(req, "patients", { resourceId: id, patientId: id });
+    await appendAudit({
+      organizationId: me.organizationId, userId: me.id, action: b.ready ? "patient.bed_ready" : "patient.bed_not_ready",
+      resourceType: "patient", resourceId: id, details: { unitSet: !!unit }, riskLevel: "low",
+    });
+    broadcastAssignmentChange(me.organizationId);
+    res.json({ id, bedUnit: updated?.bedUnit ?? null, bedReadyAt: updated?.bedReadyAt ?? null });
   });
 
   // Clear out old patients (and their assignments/consults). Default removes

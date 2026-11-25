@@ -121,7 +121,8 @@ import {
 } from "@shared/schema";
 
 /** Insert shape for a patient — the EHR id (MRN/CSN) is optional. */
-export type NewPatient = Omit<Patient, "id" | "createdAt" | "ehrId"> & { ehrId?: string | null };
+type PatientOptional = "ehrId" | "fullName" | "dateOfBirth" | "mrn" | "source" | "bedUnit" | "bedReadyAt" | "bedReadyBy";
+export type NewPatient = Omit<Patient, "id" | "createdAt" | PatientOptional> & Partial<Pick<Patient, PatientOptional>>;
 
 /** The executor handed to a `db.transaction()` callback. */
 type Tx = Parameters<Parameters<DbType["transaction"]>[0]>[0];
@@ -832,6 +833,16 @@ export class DatabaseStorage implements IStorage {
    * delete, hung request, stalled auto-clean). Returns per-table counts so the
    * caller can audit exactly what left the system.
    */
+  /** The organization's patient with this MRN (the newest, if a number was reused). */
+  async findPatientByMrn(orgId: number, mrn: string) {
+    const [row] = await this.db
+      .select()
+      .from(patients)
+      .where(and(eq(patients.organizationId, orgId), eq(patients.mrn, mrn)))
+      .orderBy(desc(patients.id))
+      .limit(1);
+    return row;
+  }
   async purgeOldPatients(orgId: number, olderThanMs: number): Promise<PurgeResult> {
     const cutoff = olderThanMs > 0 ? new Date(Date.now() - olderThanMs) : null;
     const rows = await this.db
@@ -839,7 +850,13 @@ export class DatabaseStorage implements IStorage {
       .from(patients)
       .where(
         cutoff
-          ? and(eq(patients.organizationId, orgId), lt(patients.createdAt, cutoff))
+          ? and(
+              eq(patients.organizationId, orgId),
+              lt(patients.createdAt, cutoff),
+              // A patient the EHR feed added stays until the EHR discharges
+              // them; the age rule applies to them only after that.
+              or(ne(patients.source, "adt"), eq(patients.status, "discharged")),
+            )
           : eq(patients.organizationId, orgId),
       );
     const ids = rows.map((r) => r.id);

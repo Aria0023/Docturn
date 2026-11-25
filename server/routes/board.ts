@@ -3,6 +3,7 @@ import { createConsultSchema, updateConsultSchema, type PatientConsult } from "@
 import { appendAudit, logPhiAccess } from "../audit.js";
 import { parseId } from "../params.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
+import { isModuleEnabled } from "../modules.js";
 import { notificationDeps } from "../services/notifications.js";
 import { storage } from "../storage.js";
 
@@ -23,6 +24,7 @@ export function registerBoardRoutes(app: Express) {
       await logPhiAccess(req, "patient-board");
 
       const department = req.query.department as string | undefined;
+      const identityOn = await isModuleEnabled(me.organizationId, "patients.identity");
       const [patients, hospitalists, users, latest, consults] =
         await Promise.all([
           storage().listPatients(me.organizationId),
@@ -106,6 +108,13 @@ export function registerBoardRoutes(app: Express) {
             issue: p.issueSummary,
             acuity: p.acuity,
             status: p.status,
+            fullName: identityOn ? p.fullName : null,
+            dateOfBirth: identityOn ? p.dateOfBirth : null,
+            mrn: identityOn ? p.mrn : null,
+            source: p.source,
+            bedUnit: p.bedUnit,
+            bedReadyAt: p.bedReadyAt,
+            bedReadyBy: p.bedReadyBy != null ? userById.get(p.bedReadyBy)?.displayName ?? null : null,
           },
           // Current assignment id (if any), so director/ER reassign can target it.
           assignmentId: a?.id ?? null,

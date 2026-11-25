@@ -154,6 +154,7 @@ export const GATE_TABLE: readonly GateRule[] = [
   { path: /^\/api\/reports(\/|$)/, module: "ops.analytics" },
   { path: /^\/api\/reporting(\/|$)/, module: "ops.reports" },
   { path: /^\/api\/codes(\/|$)/, module: "codes.protocols" },
+  { path: /^\/api\/ehr\/adt(\/|$)/, module: "ehr.adtFeed" },
   // ops.retention is also enforced in two places this table cannot express:
   // the hourly sweep (services/retention.ts) skips the org, and PATCH
   // /api/settings/org refuses a NEW messageRetentionDays window (after that

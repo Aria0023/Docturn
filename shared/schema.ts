@@ -212,6 +212,19 @@ export const patients = pgTable("patients", {
   // server-side only (GET /api/patients/:id/ehr-link) and never included in
   // push, SMS or WebSocket payloads.
   ehrId: text("ehr_id"),
+  // Identity (module patients.identity). PHI: shown on patient rows to the
+  // organization's own signed-in staff, and NEVER put in a push, a text
+  // message, a realtime frame, an audit detail or a log line.
+  fullName: text("full_name"),
+  dateOfBirth: text("date_of_birth"), // YYYY-MM-DD
+  mrn: text("mrn"),
+  // "manual" (typed in DocTurn) or "adt" (arrived on the EHR admission feed).
+  // A patient from the feed stays until the EHR says they were discharged.
+  source: text("source").notNull().default("manual"),
+  // Set by the charge nurse / staff once a bed is ready for the patient.
+  bedUnit: text("bed_unit"),
+  bedReadyAt: timestamp("bed_ready_at"),
+  bedReadyBy: integer("bed_ready_by"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -1883,6 +1896,14 @@ export const extractNoteSchema = z.object({
   note: z.string().min(1),
 });
 
+/** Name, date of birth and MRN (module patients.identity). All optional. */
+const patientIdentityFields = {
+  fullName: z.string().trim().min(1).max(80).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/).optional(),
+  dateOfBirth: z.string().regex(/^(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/).optional(),
+  mrn: z.string().trim().min(1).max(32).regex(/^[A-Za-z0-9._:-]+$/).optional(),
+};
+export const PATIENT_IDENTITY_KEYS = ["fullName", "dateOfBirth", "mrn"] as const;
+
 export const createPatientSchema = z.object({
   initials: z.string().min(1).max(8),
   roomNumber: z.string().optional(),
@@ -1892,6 +1913,7 @@ export const createPatientSchema = z.object({
   acuity: z.number().int().min(1).max(5).optional(),
   // Optional EHR identifier (MRN/CSN) — printable characters only, no spaces.
   ehrId: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9._:-]+$/).optional(),
+  ...patientIdentityFields,
 });
 
 export const createAssignmentSchema = z.object({
@@ -2173,6 +2195,7 @@ export const patientPatchSchema = z
     roomNumber: z.string().trim().min(1).max(40).regex(noControlChars).optional(),
     issueSummary: z.string().trim().min(1).max(500).regex(noControlChars).optional(),
     department: z.string().trim().min(1).max(20).regex(noControlChars).optional(),
+    ...patientIdentityFields,
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: "at least one field is required" });
