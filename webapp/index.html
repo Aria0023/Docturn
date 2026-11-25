@@ -335,31 +335,32 @@ const NAV = {
     { id: "codes",      label: "Codes", icon: "siren" },
     { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
-    { id: "approvals",  label: "Approvals", icon: "user-check" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
+    // Compliance, the compliance monitor and Appearance are tabs of Settings
+    // (SettingsTabs); People, Approvals, Consult services and Roles are tabs
+    // of Directory (DirectoryHub); the admissions log is on the dashboard.
+    // Each of those screens is still routed by its own id (setNav) — they
+    // just no longer take a line of the menu each.
     { id: "settings",   label: "Settings",   icon: "settings" },
-    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "account",    label: "My settings", icon: "user" },
   ],
   director: [
     { id: "dashboard",  label: "Dashboard",   icon: "layout-dashboard" },
     { id: "board",      label: "Patient board", icon: "layout-list" },
-    { id: "admissions", label: "Admissions log", icon: "scroll-text" },
     { id: "codes",      label: "Codes", icon: "siren" },
     { id: "reports",    label: "Reports", icon: "table-2" },
     { id: "oncall",     label: "On call", icon: "phone-call" },
-    { id: "approvals",  label: "Approvals", icon: "user-check" },
-    { id: "consult",    label: "Consult services", icon: "stethoscope" },
-    { id: "roles",      label: "Roles", icon: "shield-half" },
     { id: "broadcasts", label: "Broadcasts", icon: "megaphone" },
     { id: "messages",   label: "Messages",   icon: "message-square", badge: 2 },
     { id: "directory",  label: "Directory",  icon: "contact" },
-    // Compliance & Appearance are consolidated under Settings (SettingsTabs).
+    // Compliance, the compliance monitor and Appearance are tabs of Settings
+    // (SettingsTabs); People, Approvals, Consult services and Roles are tabs
+    // of Directory (DirectoryHub); the admissions log is on the dashboard.
+    // Each of those screens is still routed by its own id (setNav) — they
+    // just no longer take a line of the menu each.
     { id: "settings",   label: "Settings",   icon: "settings" },
-    { id: "compliance-monitor", label: "Compliance monitor", icon: "shield-check" },
     { id: "account",    label: "My settings", icon: "user" },
   ],
   developer: [
@@ -888,7 +889,9 @@ function App() {
   let screen;
   if (nav === "messages") screen = <Messaging />;
   else if (nav === "directory") screen = canManagePeople
-    ? <DirectoryHub providers={sortedProviders} onMessage={message} domainRoles={dirDomain.roles} />
+    ? <DirectoryHub providers={sortedProviders} onMessage={message} domainRoles={dirDomain.roles}
+        approvals={<RegistrationApprovals registrations={st.registrations || []} onApprove={a.approveRegistration} onDeny={a.denyRegistration} onRefresh={a.refreshRegistrations} />}
+        approvalsWaiting={(st.registrations || []).filter((r) => r.status === "pending").length} />
     : <Directory providers={sortedProviders} onMessage={message} />;
   else if (nav === "board") screen = boardEl;
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;

@@ -26,7 +26,7 @@ import {
 import { isModuleEnabled } from "../modules.js";
 import { isPlatformOrg } from "../billing/seats.js";
 import { currentUser, requireAuth, requireRole } from "../rbac.js";
-import { storage } from "../storage.js";
+import { InvoicePeriodTakenError, storage } from "../storage.js";
 import { publicContract, publicInvoice, publicPlan } from "./billing.js";
 
 /**
@@ -409,18 +409,31 @@ export function registerDevBillingRoutes(app: Express) {
       return res.status(409).json({ error: "no_snapshots", message: "No seat snapshot exists in that period, so there is nothing an invoice line could cite." });
     }
     const generated = generateInvoiceLines(contract, plan, snapshots);
-    const invoice = await db.createInvoiceWithNumber({
-      organizationId: d.orgId,
-      contractId: contract.id,
-      periodStart: d.periodStart,
-      periodEnd: d.periodEnd,
-      currency: generated.currency,
-      lines: generated.lines,
-      subtotalCents: generated.subtotalCents,
-      totalCents: generated.totalCents,
-      status: "draft",
-      createdBy: me.id,
-    });
+    let invoice;
+    try {
+      invoice = await db.createInvoiceWithNumber({
+        organizationId: d.orgId,
+        contractId: contract.id,
+        periodStart: d.periodStart,
+        periodEnd: d.periodEnd,
+        currency: generated.currency,
+        lines: generated.lines,
+        subtotalCents: generated.subtotalCents,
+        totalCents: generated.totalCents,
+        status: "draft",
+        createdBy: me.id,
+      });
+    } catch (err) {
+      // A second request for the same period got in between the check above
+      // and the write: same refusal, nothing created.
+      if (!(err instanceof InvoicePeriodTakenError)) throw err;
+      const other = await db.getInvoice(err.invoiceId);
+      return res.status(409).json({
+        error: "period_already_invoiced",
+        message: `Invoice ${other?.number ?? ""} already covers part of ${d.periodStart} to ${d.periodEnd}. Void it first to bill that period again.`.replace("  ", " "),
+        invoice: other ? { id: other.id, number: other.number, status: other.status } : null,
+      });
+    }
     await appendAudit({
       organizationId: d.orgId,
       userId: me.id,
@@ -560,20 +573,24 @@ export function registerDevBillingRoutes(app: Express) {
     // One Customer per hospital, remembered on the contract.
     let customerId = contract.stripeCustomerId;
     if (!customerId) {
-      const made = await createStripeCustomer(config, { org, contract });
+      const made = await createStripeCustomer(config, { org, contract }, `docturn-org-${org.id}-contract-${contract.id}-customer`);
       if (!made.ok || !made.body?.id) return res.status(502).json({ error: "stripe_failed", stage: "customer", detail: made.error });
       customerId = made.body.id;
       await storage().updateOrgContract(org.id, { stripeCustomerId: customerId });
     }
 
-    for (const line of inv.lines) {
-      const item = await createStripeInvoiceItem(config, customerId, inv, line);
+    // Every Stripe write carries a key derived from OUR invoice, so pressing
+    // Push again after a failure part-way (or a lost response) makes Stripe
+    // return what it already created instead of a second item or invoice.
+    const key = (step: string) => `docturn-invoice-${inv.id}-${step}`;
+    for (const [i, line] of inv.lines.entries()) {
+      const item = await createStripeInvoiceItem(config, customerId, inv, line, key(`item-${i}`));
       if (!item.ok) return res.status(502).json({ error: "stripe_failed", stage: "invoice_item", detail: item.error });
     }
     const peakSeats = Math.max(contract.committedSeats, ...inv.lines.map((l) => l.quantity), 0);
-    const made = await createStripeInvoice(config, customerId, inv, contract, plan.code, peakSeats);
+    const made = await createStripeInvoice(config, customerId, inv, contract, plan.code, peakSeats, key("invoice"));
     if (!made.ok || !made.body?.id) return res.status(502).json({ error: "stripe_failed", stage: "invoice", detail: made.error });
-    const finalized = await finalizeStripeInvoice(config, made.body.id);
+    const finalized = await finalizeStripeInvoice(config, made.body.id, key("finalize"));
     if (!finalized.ok) return res.status(502).json({ error: "stripe_failed", stage: "finalize", detail: finalized.error });
 
     // OUTBOUND EMAIL: one explicit call, made only on this contract's opt-in.
@@ -581,7 +598,7 @@ export function registerDevBillingRoutes(app: Express) {
     // claim something the server did not do.
     let emailed = false;
     if (contract.stripeSendInvoiceEmail) {
-      const sent = await sendStripeInvoice(config, made.body.id);
+      const sent = await sendStripeInvoice(config, made.body.id, key("send"));
       if (!sent.ok) return res.status(502).json({ error: "stripe_failed", stage: "send", detail: sent.error });
       emailed = true;
     }

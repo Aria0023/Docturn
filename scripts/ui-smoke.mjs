@@ -170,10 +170,13 @@ async function clickEveryButton(roleLabel, screen) {
 
 const NAV = {
   developer: ["dashboard", "enterprise", "settings", "users", "compliance", "appearance"],
-  director: ["dashboard", "board", "consult", "roles", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
-  er_director: ["dashboard", "board", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
-  er_doctor: ["dashboard", "messages", "directory", "compliance"],
-  hospitalist: ["dashboard", "history", "messages", "directory", "compliance"],
+  // Includes the screens that are tabs of Directory / Settings rather than
+  // menu lines (consult, roles, approvals, admissions, compliance-monitor).
+  director: ["dashboard", "board", "codes", "reports", "consult", "roles", "approvals", "admissions", "broadcasts", "messages", "directory", "compliance", "compliance-monitor", "appearance", "settings"],
+  er_director: ["dashboard", "board", "codes", "reports", "approvals", "broadcasts", "messages", "directory", "compliance", "appearance", "settings"],
+  er_doctor: ["dashboard", "codes", "reports", "messages", "directory", "compliance"],
+  hospitalist: ["dashboard", "history", "codes", "reports", "messages", "directory", "compliance"],
+  staff: ["dashboard", "codes", "reports", "oncall", "messages", "directory", "compliance"],
 };
 
 // The sign-in form submits the credentials it is given — nothing substitutes a
@@ -185,7 +188,7 @@ const demoLogin = (role) => { const d = DT.demoAccount(role); return DT.actions.
 await flush();
 rec("App mounted", !!window.document.querySelector("#root").children.length);
 
-for (const role of ["developer", "director", "er_director", "er_doctor", "hospitalist"]) {
+for (const role of ["developer", "director", "er_director", "er_doctor", "hospitalist", "staff"]) {
   await demoLogin(role, "ISPN");
   await flush(); await flush();
   const st = DT.getState();

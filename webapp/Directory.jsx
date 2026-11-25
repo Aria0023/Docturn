@@ -212,11 +212,12 @@ function Directory({ providers, onMessage }) {
 // there's a single place for "everyone in the org". People and Roles are the
 // server's (GET /api/accounts; fixed roles); Consult services is hidden while
 // the routing.consults module is off for the org (its API answers 404 then).
-function DirectoryHub({ providers, onMessage, domainRoles }) {
+function DirectoryHub({ providers, onMessage, domainRoles, approvals, approvalsWaiting }) {
   const [tab, setTab] = React.useState("directory");
   const mobile = useIsMobile();
   const consultOn = !window.DT || !window.DT.moduleOn || window.DT.moduleOn("routing.consults");
   const tabs = [["directory", "Directory", "contact"], ["people", "People", "users-round"]]
+    .concat(approvals ? [["approvals", "Approvals" + (approvalsWaiting ? " (" + approvalsWaiting + ")" : ""), "user-check"]] : [])
     .concat(consultOn ? [["consult", "Consult services", "stethoscope"]] : [])
     .concat([["roles", "Roles", "shield-half"]]);
   const shown = tab === "consult" && !consultOn ? "directory" : tab;
@@ -229,7 +230,7 @@ function DirectoryHub({ providers, onMessage, domainRoles }) {
           {tabs.map(([id, label, icon]) => {
             const on = shown === id;
             return (
-              <button key={id} type="button" onClick={() => setTab(id)} aria-pressed={on}
+              <button key={id} type="button" data-directory-tab={id} onClick={() => setTab(id)} aria-pressed={on}
                 style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", minHeight: mobile ? 44 : undefined, borderRadius: 6, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", flex: "none",
                   background: on ? "var(--card)" : "transparent", color: on ? "var(--primary-ink)" : "var(--muted-foreground)", boxShadow: on ? "var(--shadow-sm)" : "none" }}>
                 <Icon name={icon} size={15} />{label}
@@ -242,6 +243,8 @@ function DirectoryHub({ providers, onMessage, domainRoles }) {
         ? <Directory providers={providers} onMessage={onMessage} />
         : shown === "people"
           ? <PeopleManager domainRoles={domainRoles} />
+          : shown === "approvals"
+          ? approvals
           : shown === "consult"
             ? <ConsultServices />
             : <RoleManagement />}

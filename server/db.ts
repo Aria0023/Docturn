@@ -955,6 +955,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code)
 ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Order requests from the public website (/home). Business contacts only.
+-- Who each server holds a live socket for. Ids only, no FKs. Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS user_presence (
+  instance_id TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  organization_id INTEGER NOT NULL,
+  seen_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_presence_instance_user_uniq ON user_presence(instance_id, user_id);
+CREATE INDEX IF NOT EXISTS user_presence_org_idx ON user_presence(organization_id, seen_at);
+
 -- Code protocols and their activations. User ids have no FK on purpose.
 -- Mirrors shared/schema.ts.
 CREATE TABLE IF NOT EXISTS code_protocols (

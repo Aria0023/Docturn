@@ -32,7 +32,7 @@ import {
 } from "../services/attachment-store.js";
 import { MESSAGE_PAGE_DEFAULT, MESSAGE_PAGE_MAX, storage } from "../storage.js";
 import { parseId } from "../params.js";
-import { liveOnlineUserIds } from "../ws/index.js";
+import { onlineUserIdsEverywhere } from "../ws/index.js";
 import { registerFrameResolver } from "../services/bus.js";
 
 // Attachment mime allowlist — only these types can be uploaded. Anything else is
@@ -612,18 +612,22 @@ async function fanOutMessage(
   me: User,
   convo: Conversation,
   message: Message,
+  /** The delivery rows were written with the message (createMessageDelivered). */
+  deliveriesWritten = false,
 ): Promise<number[]> {
-  await storage().createDeliveryStatuses(
-    convo.participantIds.map((uid) => ({
-      messageId: message.id,
-      userId: uid,
-      deliveredAt: new Date(),
-      readAt: uid === me.id ? new Date() : null,
-      acknowledgedAt: uid === me.id ? new Date() : null,
-      realertedAt: null,
-      escalatedAt: null,
-    })),
-  );
+  if (!deliveriesWritten) {
+    await storage().createDeliveryStatuses(
+      convo.participantIds.map((uid) => ({
+        messageId: message.id,
+        userId: uid,
+        deliveredAt: new Date(),
+        readAt: uid === me.id ? new Date() : null,
+        acknowledgedAt: uid === me.id ? new Date() : null,
+        realertedAt: null,
+        escalatedAt: null,
+      })),
+    );
+  }
 
   if (message.priority === "stat") {
     await appendAudit({
@@ -804,8 +808,9 @@ export function registerMessagingRoutes(app: Express) {
   // of their own (A.CON comms-account #13). On shift is NOT online. The
   // client keeps it current from USER_PRESENCE_CHANGED frames; `live:false`
   // (no realtime hub in this process) means nobody can be shown as online.
-  app.get("/api/presence", requireAuth, (req, res) => {
-    const online = liveOnlineUserIds(currentUser(req).organizationId);
+  app.get("/api/presence", requireAuth, async (req, res) => {
+    // Across every server, not just the one that happened to answer.
+    const online = await onlineUserIdsEverywhere(currentUser(req).organizationId);
     res.setHeader("Cache-Control", "no-store");
     res.json({ live: online !== null, online: online ?? [] });
   });
@@ -1358,27 +1363,23 @@ export function registerMessagingRoutes(app: Express) {
       return res.status(400).json({ error: "empty_message" });
     }
 
-    const message = await storage().createMessage({
-      conversationId: convo.id,
-      organizationId: me.organizationId,
-      senderId: me.id,
-      content: parsed.data.content,
-      priority: parsed.data.priority,
-    });
+    // The message, its attachment links (only the uploader's own still-
+    // unlinked attachments in this org are claimed) and every participant's
+    // delivery row are ONE write: all of it, or none.
+    const message = await storage().createMessageDelivered(
+      {
+        conversationId: convo.id,
+        organizationId: me.organizationId,
+        senderId: me.id,
+        content: parsed.data.content,
+        priority: parsed.data.priority,
+      },
+      convo.participantIds,
+      parsed.data.attachmentIds?.length ? { ids: parsed.data.attachmentIds, uploaderId: me.id } : undefined,
+    );
 
-    // Link any pre-uploaded attachments to this message (only the uploader's own
-    // still-unlinked attachments in this org are claimed).
-    if (parsed.data.attachmentIds?.length) {
-      await storage().linkAttachmentsToMessage(
-        me.organizationId,
-        message.id,
-        parsed.data.attachmentIds,
-        me.id,
-      );
-    }
-
-    // Delivery rows, DND forwarding, WS fan-out + push (see fanOutMessage).
-    const forwardedTo = await fanOutMessage(me, convo, message);
+    // DND forwarding, WS fan-out + push (see fanOutMessage).
+    const forwardedTo = await fanOutMessage(me, convo, message, true);
     res.status(201).json({ ...message, forwardedTo });
   });
 
@@ -1475,7 +1476,7 @@ export function registerMessagingRoutes(app: Express) {
         // A forward of a forward keeps pointing at the ORIGINAL bytes.
         .concat(forwardedAttachmentIds(original));
       const note = parsed.data.note?.trim();
-      const message = await storage().createMessage({
+      const message = await storage().createMessageDelivered({
         conversationId: target.id,
         organizationId: me.organizationId,
         senderId: me.id,
@@ -1490,8 +1491,8 @@ export function registerMessagingRoutes(app: Express) {
           sentAt: new Date(original.createdAt).toISOString(),
           ...(attachmentIds.length ? { attachmentIds } : {}),
         },
-      });
-      const forwardedTo = await fanOutMessage(me, target, message);
+      }, target.participantIds);
+      const forwardedTo = await fanOutMessage(me, target, message, true);
       await appendAudit({
         organizationId: me.organizationId,
         userId: me.id,

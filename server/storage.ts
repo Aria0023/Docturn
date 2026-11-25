@@ -72,6 +72,7 @@ import {
   type InsertBillingPlan,
   purchaseRequests,
   reportDefinitions,
+  userPresence,
   codeProtocols,
   codeActivations,
   codeActivationMembers,
@@ -277,6 +278,13 @@ export interface PurgeResult {
   conversations: number;
   messages: number;
   attachments: number;
+}
+
+/** Another non-void invoice of this organization already covers part of the period. */
+export class InvoicePeriodTakenError extends Error {
+  constructor(public invoiceId: number) {
+    super("period_already_invoiced");
+  }
 }
 
 export interface IStorage {
@@ -1342,6 +1350,52 @@ export class DatabaseStorage implements IStorage {
       .returning();
     return row!;
   }
+  /**
+   * A message, its attachments' link and every participant's delivery row,
+   * written together or not at all. Without this a crash between the steps
+   * left a message nobody had a delivery row for: never unread, never
+   * re-alerted, never escalated. The sender's own row is read and acknowledged.
+   */
+  async createMessageDelivered(
+    m: NewMessage,
+    participantIds: number[],
+    attachments?: { ids: number[]; uploaderId: number },
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(messages)
+        .values({ ...m, forwardedFrom: m.forwardedFrom ?? null })
+        .returning();
+      if (attachments?.ids.length) {
+        await tx
+          .update(messageAttachments)
+          .set({ messageId: row!.id })
+          .where(
+            and(
+              eq(messageAttachments.organizationId, m.organizationId),
+              eq(messageAttachments.uploaderId, attachments.uploaderId),
+              isNull(messageAttachments.messageId),
+              inArray(messageAttachments.id, attachments.ids),
+            ),
+          );
+      }
+      const now = new Date();
+      if (participantIds.length) {
+        await tx.insert(messageDeliveryStatus).values(
+          participantIds.map((uid) => ({
+            messageId: row!.id,
+            userId: uid,
+            deliveredAt: now,
+            readAt: uid === m.senderId ? now : null,
+            acknowledgedAt: uid === m.senderId ? now : null,
+            realertedAt: null,
+            escalatedAt: null,
+          })),
+        );
+      }
+      return row!;
+    });
+  }
   async getMessage(orgId: number, id: number) {
     const [row] = await this.db
       .select()
@@ -1632,6 +1686,24 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /** All consult rows for an org (analytics). */
+  // ── shared presence (server/services/presence.ts) ────────────────────────
+  async replacePresence(instanceId: string, entries: Array<{ userId: number; organizationId: number }>, now: Date, dropOlderThan: Date) {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(userPresence).where(eq(userPresence.instanceId, instanceId));
+      if (entries.length) {
+        await tx.insert(userPresence).values(entries.map((e) => ({ instanceId, userId: e.userId, organizationId: e.organizationId, seenAt: now })));
+      }
+      await tx.delete(userPresence).where(lt(userPresence.seenAt, dropOlderThan));
+    });
+  }
+  async listPresenceElsewhere(orgId: number, instanceId: string, since: Date) {
+    const rows = await this.db
+      .selectDistinct({ userId: userPresence.userId })
+      .from(userPresence)
+      .where(and(eq(userPresence.organizationId, orgId), ne(userPresence.instanceId, instanceId), gt(userPresence.seenAt, since)));
+    return rows.map((r) => r.userId);
+  }
+
   // ── code protocols and activations (server/services/codes.ts) ─────────────
   async listCodeProtocols(orgId: number) {
     return this.db.select().from(codeProtocols).where(eq(codeProtocols.organizationId, orgId)).orderBy(asc(codeProtocols.name), asc(codeProtocols.id));
@@ -3943,6 +4015,24 @@ export class DatabaseStorage implements IStorage {
         .set({ value: sql`${billingCounters.value} + 1` })
         .where(eq(billingCounters.name, "invoice"))
         .returning({ value: billingCounters.value });
+      // Holding the counter's row lock, look again for an invoice that already
+      // covers any day of this period. Two requests for the same period (a
+      // double click, a retry, two servers) pass the route's own check
+      // together; only one gets past this one. The loser's number is given
+      // back with the rollback.
+      const clash = await tx
+        .select({ id: billingInvoices.id })
+        .from(billingInvoices)
+        .where(
+          and(
+            eq(billingInvoices.organizationId, row.organizationId),
+            ne(billingInvoices.status, "void"),
+            lte(billingInvoices.periodStart, row.periodEnd),
+            gte(billingInvoices.periodEnd, row.periodStart),
+          ),
+        )
+        .limit(1);
+      if (clash.length) throw new InvoicePeriodTakenError(clash[0]!.id);
       const number = "DT-" + String(counter!.value).padStart(6, "0");
       const [created] = await tx.insert(billingInvoices).values({ ...row, number }).returning();
       return created!;

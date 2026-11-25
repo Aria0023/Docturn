@@ -1600,6 +1600,23 @@ export const reportDefinitions = pgTable("report_definitions", {
 export type ReportDefinition = typeof reportDefinitions.$inferSelect;
 export type InsertReportDefinition = typeof reportDefinitions.$inferInsert;
 
+/**
+ * Who each server holds a live realtime socket for (server/services/presence.ts),
+ * so "who is online" is right with more than one server. Ids only; rows of a
+ * server that stops refreshing age out. No foreign keys: a presence row must
+ * never block deleting a user or a tenant. Mirrored in server/db.ts.
+ */
+export const userPresence = pgTable(
+  "user_presence",
+  {
+    instanceId: text("instance_id").notNull(),
+    userId: integer("user_id").notNull(),
+    organizationId: integer("organization_id").notNull(),
+    seenAt: timestamp("seen_at").notNull().defaultNow(),
+  },
+  (t) => ({ pk: uniqueIndex("user_presence_instance_user_uniq").on(t.instanceId, t.userId) }),
+);
+
 /* ── Code protocols (server/services/codes.ts) ────────────────────────────
  * A PROTOCOL is the hospital's standing plan for one kind of emergency (Code
  * Stroke, Code STEMI): who is on the team and which timed steps follow. An

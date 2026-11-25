@@ -64,6 +64,8 @@ async function call<T>(
   config: StripePlatformConfig,
   path: string,
   payload: Record<string, string | number | boolean | Record<string, string>> | null,
+  /** Stripe replays the first response for a repeated key instead of acting twice. */
+  idempotencyKey?: string,
 ): Promise<StripeCallResult<T>> {
   const url = config.apiBase + path;
   try {
@@ -73,6 +75,7 @@ async function call<T>(
         Authorization: "Bearer " + config.secretKey,
         ...(payload ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
         "Stripe-Version": "2024-06-20",
+        ...(payload && idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
       ...(payload ? { body: stripeForm(payload) } : {}),
     });
@@ -200,16 +203,17 @@ export function invoicePayload(
 
 /* ── the calls ────────────────────────────────────────────────────────────── */
 
-export async function createStripeCustomer(config: StripePlatformConfig, input: StripeCustomerInput) {
-  return call<{ id: string }>(config, "/v1/customers", customerPayload(input));
+export async function createStripeCustomer(config: StripePlatformConfig, input: StripeCustomerInput, idempotencyKey?: string) {
+  return call<{ id: string }>(config, "/v1/customers", customerPayload(input), idempotencyKey);
 }
 export async function createStripeInvoiceItem(
   config: StripePlatformConfig,
   customerId: string,
   invoice: Parameters<typeof invoiceItemPayload>[1],
   line: Parameters<typeof invoiceItemPayload>[2],
+  idempotencyKey?: string,
 ) {
-  return call<{ id: string }>(config, "/v1/invoiceitems", invoiceItemPayload(customerId, invoice, line));
+  return call<{ id: string }>(config, "/v1/invoiceitems", invoiceItemPayload(customerId, invoice, line), idempotencyKey);
 }
 export async function createStripeInvoice(
   config: StripePlatformConfig,
@@ -218,20 +222,23 @@ export async function createStripeInvoice(
   contract: Parameters<typeof invoicePayload>[2],
   planCode: string,
   peakSeats: number,
+  idempotencyKey?: string,
 ) {
   return call<{ id: string; hosted_invoice_url?: string }>(
     config,
     "/v1/invoices",
     invoicePayload(customerId, invoice, contract, planCode, peakSeats),
+    idempotencyKey,
   );
 }
-export async function finalizeStripeInvoice(config: StripePlatformConfig, stripeInvoiceId: string) {
+export async function finalizeStripeInvoice(config: StripePlatformConfig, stripeInvoiceId: string, idempotencyKey?: string) {
   return call<{ id: string; status: string; hosted_invoice_url?: string }>(
     config,
     "/v1/invoices/" + encodeURIComponent(stripeInvoiceId) + "/finalize",
     // Finalize, and nothing else: auto_advance false means Stripe will not
     // email or chase this invoice on its own.
     { auto_advance: false },
+    idempotencyKey,
   );
 }
 
@@ -240,10 +247,11 @@ export async function finalizeStripeInvoice(config: StripePlatformConfig, stripe
  * contract carries `stripe_send_invoice_email`; with no opt-in this call is
  * never made, so there is no flag anywhere that could quietly send one.
  */
-export async function sendStripeInvoice(config: StripePlatformConfig, stripeInvoiceId: string) {
+export async function sendStripeInvoice(config: StripePlatformConfig, stripeInvoiceId: string, idempotencyKey?: string) {
   return call<{ id: string; status: string; hosted_invoice_url?: string }>(
     config,
     "/v1/invoices/" + encodeURIComponent(stripeInvoiceId) + "/send",
     {},
+    idempotencyKey,
   );
 }

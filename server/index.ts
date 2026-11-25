@@ -21,6 +21,7 @@ import { startAmionSyncLoop } from "./services/amion.js";
 import { startEpicSyncLoop } from "./services/schedule-sources/epic-fhir.js";
 import { startStatEscalationLoop } from "./services/escalation.js";
 import { startCodeRealertLoop } from "./services/codes.js";
+import { startPresenceLoop, stopPresenceLoop } from "./services/presence.js";
 import { startUnreadReminderLoop } from "./services/unread-reminder.js";
 import { startRetentionLoop } from "./services/retention.js";
 import { startSeatSnapshotLoop } from "./billing/seats.js";
@@ -158,12 +159,16 @@ async function main() {
     { bus },
   );
 
+  // Share who this server holds a live socket for, so "who is online" is
+  // right with more than one server (server/services/presence.ts).
+  startPresenceLoop(() => hub.ownPresence());
+
   // Graceful shutdown (server/shutdown.ts): SIGTERM → stop timers, stop
   // accepting, close sockets with 1012 (clients reconnect), drain in-flight
   // requests, give the job leases back, close the bus and the pool, exit.
   installGracefulShutdown({
     server,
-    stopTimers: () => { stopAllLiveDemos(); stopAllLeasedTimers(); },
+    stopTimers: () => { stopAllLiveDemos(); stopAllLeasedTimers(); void stopPresenceLoop(); },
     closeSockets: () => hub.closeForRestart(),
     releaseLeases: releaseInstanceLeases,
     closeBus: () => bus.close(),

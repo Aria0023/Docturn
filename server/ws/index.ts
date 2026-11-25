@@ -1,3 +1,4 @@
+import { onlineElsewhere, presenceChanged } from "../services/presence.js";
 import { ServerResponse, type IncomingMessage, type Server as HttpServer } from "node:http";
 import type { RequestHandler } from "express";
 import { WebSocketServer, WebSocket } from "ws";
@@ -203,6 +204,7 @@ export class WsHub implements WsFanout {
 
     // Presence: announce online to the tenant when the person's first own
     // socket opens.
+    if (impersonatorId == null && !wasOnline) presenceChanged();
     if (impersonatorId == null && !wasOnline) {
       this.broadcast(organizationId, {
         type: "USER_PRESENCE_CHANGED",
@@ -283,12 +285,32 @@ export class WsHub implements WsFanout {
     // Offline when the person's last OWN socket closes (a borrowed socket
     // closing changes nothing).
     if (m.impersonatorId == null && !this.isPresent(m.userId)) {
-      this.broadcast(m.organizationId, {
-        type: "USER_PRESENCE_CHANGED",
-        userId: m.userId,
-        online: false,
-      });
+      presenceChanged();
+      // Still connected to another server (a second device)? Then they are
+      // not offline. If that cannot be read, say offline as before.
+      const { userId, organizationId } = m;
+      void onlineElsewhere(organizationId)
+        .catch(() => [] as number[])
+        .then((others) => {
+          if (others.includes(userId) || this.isPresent(userId)) return;
+          this.broadcast(organizationId, { type: "USER_PRESENCE_CHANGED", userId, online: false });
+        });
     }
+  }
+
+  /** Everyone this server holds a live socket of their own for (the shared presence list). */
+  ownPresence(): Array<{ userId: number; organizationId: number }> {
+    const out: Array<{ userId: number; organizationId: number }> = [];
+    for (const [userId, set] of this.clients) {
+      for (const ws of set) {
+        const m = this.meta.get(ws);
+        if (m && m.impersonatorId == null && ws.readyState === WebSocket.OPEN) {
+          out.push({ userId, organizationId: m.organizationId });
+          break;
+        }
+      }
+    }
+    return out;
   }
 
   /** Does this user hold at least one registered socket of their own (not a borrowed one)? */
@@ -583,6 +605,15 @@ export function liveSocketStats(): { connections: number; users: number } | null
  */
 export function liveOnlineUserIds(orgId: number): number[] | null {
   return liveHub ? liveHub.onlineUserIds(orgId) : null;
+}
+
+/** The same, plus the people other servers hold a socket for. */
+export async function onlineUserIdsEverywhere(orgId: number): Promise<number[] | null> {
+  if (!liveHub) return null;
+  const here = liveHub.onlineUserIds(orgId);
+  // If the shared list cannot be read, this server's own view still stands.
+  const there = await onlineElsewhere(orgId).catch(() => [] as number[]);
+  return [...new Set([...here, ...there])].sort((a, b) => a - b);
 }
 
 /**
