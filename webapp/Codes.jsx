@@ -103,7 +103,7 @@ function CodeMemberRow({ a, m }) {
         </div>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted-foreground)", textAlign: "right", whiteSpace: "nowrap" }}>
-        {state === "waiting" && a.status === "active" ? "alerted " + m.alertCount + "×" : m.ackMin != null ? "answered in " + cdMin(m.ackMin) : ""}
+        {state === "waiting" && a.status === "active" ? "alerted " + m.alertCount + "×" + (m.textedAt ? " · texted" : "") : m.ackMin != null ? "answered in " + cdMin(m.ackMin) : ""}
       </div>
     </div>
   );

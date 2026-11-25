@@ -47,7 +47,7 @@ for (const nav of ["codes", "reports", "oncall", "messages", "directory", "compl
   rec("staff can open " + nav, !crashed && await N.p.evaluate(() => window.DT.getState().ui.nav) === nav);
 }
 await N.p.evaluate(() => window.DT.actions.setNav("reports")); await N.p.waitForSelector("[data-report-table], [data-report-state]", { timeout: 20000 });
-rec("staff can run the built-in reports", await N.p.locator("[data-report-tab^='builtin:']").count() === 3);
+rec("staff can run the built-in reports", await N.p.locator("[data-report-tab^='builtin:']").count() === 4);
 await N.p.evaluate(() => window.DT.actions.setNav("codes")); await N.p.waitForSelector("[data-code-idle], [data-code-card]", { timeout: 20000 });
 rec("staff cannot manage code protocols", await N.p.locator('button:has-text("New protocol")').count() === 0);
 rec("no page errors (staff)", N.errs.length === 0, N.errs.join(" | "));

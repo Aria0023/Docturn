@@ -12,6 +12,8 @@ import type {
   CodeTeamSlot,
   User,
 } from "../../shared/schema.js";
+import { getNotificationProfile } from "../config.js";
+import { smsAllowedForOrg } from "../integrations/gates.js";
 import { isDnd, resolveCovering } from "./escalation.js";
 import { notificationDeps } from "./notifications.js";
 
@@ -317,6 +319,7 @@ export async function codeViews(db: DatabaseStorage, me: User) {
         me: m.userId === me.id,
         alerted: m.userId != null,
         alertCount: m.alertCount,
+        textedAt: iso(m.smsSentAt),
         acknowledgedAt: iso(m.acknowledgedAt),
         arrivedAt: iso(m.arrivedAt),
         ackMin: m.acknowledgedAt ? minutesBetween(a.activatedAt, m.acknowledgedAt) : null,
@@ -343,6 +346,34 @@ export function publicProtocol(p: CodeProtocol) {
 /** Seconds between alerts, and how many alerts one person gets in total. */
 export const REALERT_AFTER_MS = 60_000;
 export const MAX_ALERTS = 4;
+/** The text-message fallback goes with this alert (the third: two went unanswered). */
+export const SMS_ON_ALERT = 3;
+
+/**
+ * One text to a member who has not answered two alerts — when the hospital
+ * has text messaging switched on and the person has a mobile number on file.
+ * It names the protocol and nothing else: no location, no patient. Returns
+ * whether a text was handed to the carrier.
+ */
+async function textMember(member: CodeActivationMember, protocolName: string, now: Date): Promise<boolean> {
+  if (member.userId == null || member.smsSentAt) return false;
+  if (!(await smsAllowedForOrg(member.organizationId))) return false;
+  const user = await storage().getUserById(member.userId);
+  if (!user?.phone) return false;
+  if (!(await storage().claimCodeSms(member.id, now))) return false;
+  try {
+    const profile = await getNotificationProfile(member.organizationId);
+    const sms = notificationDeps().smsFor(profile.smsCarrier);
+    const body = `${protocolName} activated. Open DocTurn now to acknowledge.`;
+    await sms.send(user.phone, body);
+    await storage().appendSmsHistory({ organizationId: member.organizationId, userId: user.id, toPhone: user.phone, body, carrier: sms.carrier });
+    return true;
+  } catch (err) {
+    await storage().releaseCodeSms(member.id).catch(() => {});
+    console.error("[codes] text fallback failed", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
 
 export async function runCodeRealertSweep(now = new Date(), afterMs = REALERT_AFTER_MS): Promise<number> {
   const db = storage();
@@ -356,6 +387,7 @@ export async function runCodeRealertSweep(now = new Date(), afterMs = REALERT_AF
       const act = await db.getCodeActivation(member.organizationId, member.activationId);
       if (!act || act.status !== "active") continue;
       await alertUsers([member.userId!], { id: act.id, protocolName, location: act.location }, true);
+      if (member.alertCount + 1 >= SMS_ON_ALERT) await textMember(member, protocolName, now);
       broadcastCodeChange(member.organizationId, act.id);
       sent++;
     } catch (err) {

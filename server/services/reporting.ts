@@ -95,6 +95,49 @@ export const DATASETS = {
     ],
     defaults: { columns: ["hospitalist", "shift", "onShift", "inRotation", "census", "cap", "openSlots", "pending"], groupBy: null, sort: { column: "census", dir: "desc" } },
   },
+  code_history: {
+    label: "Code history",
+    source: "docturn",
+    patientData: false,
+    blurb: "Every code called: how fast the team answered, how long it ran and how many steps met their target.",
+    columns: [
+      { id: "protocol", label: "Protocol", type: "text" },
+      { id: "month", label: "Month", type: "text" },
+      { id: "calledAt", label: "Called", type: "datetime" },
+      { id: "location", label: "Location", type: "text" },
+      { id: "calledBy", label: "Called by", type: "text" },
+      { id: "outcome", label: "Outcome", type: "text" },
+      { id: "durationMin", label: "Duration (min)", type: "number" },
+      { id: "firstAnswerMin", label: "First answer (min)", type: "number" },
+      { id: "allAnsweredMin", label: "All answered (min)", type: "number" },
+      { id: "alerted", label: "Alerted", type: "number" },
+      { id: "answered", label: "Answered", type: "number" },
+      { id: "notAlerted", label: "Not alerted", type: "number" },
+      { id: "stepsDone", label: "Steps done", type: "number" },
+      { id: "stepsTotal", label: "Steps", type: "number" },
+      { id: "stepsOverTarget", label: "Steps over target", type: "number" },
+    ],
+    defaults: { columns: ["protocol", "calledAt", "location", "outcome", "durationMin", "firstAnswerMin", "answered", "alerted", "notAlerted", "stepsDone", "stepsTotal", "stepsOverTarget"], groupBy: "protocol", sort: { column: "calledAt", dir: "desc" } },
+  },
+  code_steps: {
+    label: "Code steps against target",
+    source: "docturn",
+    patientData: false,
+    blurb: "Each timed step of each code: its target, when it was done and by how much it missed.",
+    columns: [
+      { id: "protocol", label: "Protocol", type: "text" },
+      { id: "step", label: "Step", type: "text" },
+      { id: "month", label: "Month", type: "text" },
+      { id: "calledAt", label: "Code called", type: "datetime" },
+      { id: "location", label: "Location", type: "text" },
+      { id: "targetMin", label: "Target (min)", type: "number" },
+      { id: "doneMin", label: "Done at (min)", type: "number" },
+      { id: "overByMin", label: "Over target by (min)", type: "number" },
+      { id: "result", label: "Result", type: "text" },
+      { id: "doneBy", label: "Done by", type: "text" },
+    ],
+    defaults: { columns: ["step", "calledAt", "location", "targetMin", "doneMin", "overByMin", "result"], groupBy: "protocol", sort: { column: "calledAt", dir: "desc" } },
+  },
   ehr_patient_list: {
     label: "Epic patient list",
     source: "ehr",
@@ -166,7 +209,7 @@ export function defaultConfig(dataset: DatasetId): ReportConfig {
 }
 
 /** The reports every organization has without saving anything. */
-export const BUILTIN_REPORTS = (["team_census", "pending_admits", "provider_load"] as const).map((dataset) => ({
+export const BUILTIN_REPORTS = (["team_census", "pending_admits", "provider_load", "code_history"] as const).map((dataset) => ({
   id: `builtin:${dataset}`,
   name: DATASETS[dataset].label,
   dataset,
@@ -248,6 +291,59 @@ async function docturnRows(db: DatabaseStorage, orgId: number, dataset: DatasetI
       openSlots: Math.max(0, h.patientCap - h.currentPatientCount),
       pending: pending.get(h.id) ?? 0,
     }));
+  }
+
+  if (dataset === "code_history" || dataset === "code_steps") {
+    const acts = await db.listAllCodeActivations(orgId);
+    const ids = acts.map((a) => a.id);
+    const [members, steps] = await Promise.all([db.listCodeMembers(orgId, ids), db.listCodeSteps(orgId, ids)]);
+    const mins = (from: Date | string, to: Date | string) => Math.round(((new Date(to).getTime() - new Date(from).getTime()) / 60_000) * 10) / 10;
+    const outcome = { active: "In progress", completed: "Completed", stood_down: "Stood down" } as const;
+    if (dataset === "code_steps") {
+      const act = new Map(acts.map((a) => [a.id, a]));
+      return steps.map((s) => {
+        const a = act.get(s.activationId)!;
+        const doneMin = s.doneAt ? mins(a.activatedAt, s.doneAt) : null;
+        const over = doneMin != null && s.targetMin != null ? Math.round((doneMin - s.targetMin) * 10) / 10 : null;
+        return {
+          protocol: a.protocolName,
+          step: s.label,
+          month: new Date(a.activatedAt).toISOString().slice(0, 7),
+          calledAt: iso(a.activatedAt),
+          location: a.location,
+          targetMin: s.targetMin,
+          doneMin,
+          overByMin: over != null && over > 0 ? over : over != null ? 0 : null,
+          result: doneMin == null ? (a.status === "active" ? "Open" : "Not done") : s.targetMin == null ? "Done" : doneMin <= s.targetMin ? "Within target" : "Over target",
+          doneBy: s.doneBy != null ? userName.get(s.doneBy) ?? null : null,
+        };
+      });
+    }
+    return acts.map((a) => {
+      const team = members.filter((m) => m.activationId === a.id);
+      // The person who called it is answered at once; they do not count as a response time.
+      const others = team.filter((m) => m.userId != null && m.userId !== a.activatedBy);
+      const answers = others.filter((m) => m.acknowledgedAt).map((m) => mins(a.activatedAt, m.acknowledgedAt!));
+      const own = steps.filter((s) => s.activationId === a.id);
+      const alerted = team.filter((m) => m.userId != null).length;
+      return {
+        protocol: a.protocolName,
+        month: new Date(a.activatedAt).toISOString().slice(0, 7),
+        calledAt: iso(a.activatedAt),
+        location: a.location,
+        calledBy: userName.get(a.activatedBy) ?? null,
+        outcome: outcome[a.status as keyof typeof outcome] ?? a.status,
+        durationMin: a.closedAt ? mins(a.activatedAt, a.closedAt) : null,
+        firstAnswerMin: answers.length ? Math.min(...answers) : null,
+        allAnsweredMin: others.length && answers.length === others.length ? Math.max(...answers) : null,
+        alerted,
+        answered: team.filter((m) => m.userId != null && m.acknowledgedAt).length,
+        notAlerted: team.length - alerted,
+        stepsDone: own.filter((s) => s.doneAt).length,
+        stepsTotal: own.length,
+        stepsOverTarget: own.filter((s) => s.doneAt && s.targetMin != null && mins(a.activatedAt, s.doneAt) > s.targetMin).length,
+      };
+    });
   }
 
   const [patients, assignments] = await Promise.all([db.listPatients(orgId), db.listAssignments(orgId)]);

@@ -117,7 +117,7 @@ describe("reports — DocTurn's own records", () => {
 
     const seen = (await patel.get("/api/reporting/reports")).body.reports;
     expect(seen.some((r: { id: string }) => r.id === priv.body.id)).toBe(false);
-    expect(seen.filter((r: { builtin: boolean }) => r.builtin)).toHaveLength(3);
+    expect(seen.filter((r: { builtin: boolean }) => r.builtin)).toHaveLength(4);
     expect((await run(patel, { ref: priv.body.id })).status).toBe(404);
     expect((await patel.delete(`/api/reporting/reports/${priv.body.id}`)).status).toBe(404);
 

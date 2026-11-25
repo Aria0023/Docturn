@@ -1681,6 +1681,8 @@ export const codeActivationMembers = pgTable("code_activation_members", {
   lastAlertAt: timestamp("last_alert_at"),
   acknowledgedAt: timestamp("acknowledged_at"),
   arrivedAt: timestamp("arrived_at"),
+  /** When the one text-message fallback went out (never more than one). */
+  smsSentAt: timestamp("sms_sent_at"),
 });
 
 export const codeActivationSteps = pgTable("code_activation_steps", {

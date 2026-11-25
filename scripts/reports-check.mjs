@@ -23,7 +23,7 @@ const goReports = async (p) => { await p.evaluate(() => window.DT.actions.setNav
 const D = await open("director", { width: 1366, height: 860 }, false);
 rec("Reports is in the director's navigation", await D.p.locator('text="Reports"').count() > 0);
 await goReports(D.p);
-rec("three built-in reports", await D.p.locator("[data-report-tab^='builtin:']").count() === 3);
+rec("four built-in reports", await D.p.locator("[data-report-tab^='builtin:']").count() === 4);
 rec("opens on Team census", (await D.p.textContent("[data-report-title]")) === "Team census");
 rec("source is stated", /From DocTurn records/.test(await D.p.textContent("[data-report-source]")));
 // The screen shows exactly what the server returns for the same report.

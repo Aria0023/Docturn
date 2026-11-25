@@ -1,6 +1,6 @@
 # Reports
 
-Reports is a screen for hospitalists, ER doctors, ER directors and directors
+Reports is a screen for hospitalists, ER doctors, staff, ER directors and directors
 (module `ops.reports`, on by default). Rows are built on each run and are never
 stored, cached or written to the device. A patient report writes one PHI-access
 row per run; every CSV export and every change to a saved report is audited.
@@ -12,6 +12,7 @@ row per run; every CSV export and every change to a saved report is audited.
 | Team census | Patients a hospitalist has accepted, grouped by hospitalist |
 | Pending admits | Patients not routed yet, or routed and not accepted |
 | Provider load | Each hospitalist's census counter, cap, open slots, waiting requests |
+| Code history | Every code called: answers, duration, steps against target |
 
 These read DocTurn's own records. DocTurn removes a patient after the
 organization's auto-clean window (24 hours by default), so Team census is the

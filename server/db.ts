@@ -1009,6 +1009,7 @@ CREATE TABLE IF NOT EXISTS code_activation_members (
   arrived_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS code_activation_members_act_idx ON code_activation_members(activation_id);
+ALTER TABLE code_activation_members ADD COLUMN IF NOT EXISTS sms_sent_at TIMESTAMP;
 CREATE TABLE IF NOT EXISTS code_activation_steps (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations(id),

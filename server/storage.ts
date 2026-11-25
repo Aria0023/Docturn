@@ -1763,6 +1763,15 @@ export class DatabaseStorage implements IStorage {
       .limit(closedLimit);
     return [...active, ...closed];
   }
+  /** Every code the organization has called, newest first (reports). */
+  async listAllCodeActivations(orgId: number, limit = 2000) {
+    return this.db
+      .select()
+      .from(codeActivations)
+      .where(eq(codeActivations.organizationId, orgId))
+      .orderBy(desc(codeActivations.activatedAt))
+      .limit(limit);
+  }
   async listCodeMembers(orgId: number, activationIds: number[]) {
     if (!activationIds.length) return [];
     return this.db
@@ -1839,6 +1848,19 @@ export class DatabaseStorage implements IStorage {
           lte(codeActivationMembers.lastAlertAt, before),
         ),
       );
+  }
+  /** Claim the one text for a member: true for exactly one caller. */
+  async claimCodeSms(memberId: number, at: Date) {
+    const rows = await this.db
+      .update(codeActivationMembers)
+      .set({ smsSentAt: at })
+      .where(and(eq(codeActivationMembers.id, memberId), isNull(codeActivationMembers.smsSentAt), isNull(codeActivationMembers.acknowledgedAt)))
+      .returning({ id: codeActivationMembers.id });
+    return rows.length === 1;
+  }
+  /** The text could not be sent: give the claim back so the board never says it was. */
+  async releaseCodeSms(memberId: number) {
+    await this.db.update(codeActivationMembers).set({ smsSentAt: null }).where(eq(codeActivationMembers.id, memberId));
   }
   /** Claim one re-alert: only the caller whose view of alert_count is current wins. */
   async claimCodeRealert(memberId: number, seenCount: number, at: Date) {

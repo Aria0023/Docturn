@@ -1,6 +1,6 @@
 # Code protocols
 
-Codes is a screen for hospitalists, ER doctors, ER directors and directors
+Codes is a screen for hospitalists, ER doctors, staff, ER directors and directors
 (module `codes.protocols`, on by default).
 
 ## Setting up a protocol (director or ER director)
@@ -37,15 +37,33 @@ red when overdue. The clock runs from activation. The team, the caller and the
 director roles can tick steps, complete the code or stand it down. Every
 action is audited.
 
+## Text-message fallback
+
+A member who has not answered two alerts gets one text with the third alert.
+It names the protocol only ("Code Stroke activated. Open DocTurn now to
+acknowledge."), never the location or the patient. It is sent only when the
+hospital has text messaging switched on (Settings → Integrations) and the
+person has a mobile number on file; the board shows "texted" only when a
+text was handed to the carrier.
+
+## Afterwards
+
+Two reports (Reports → New report, or the built-in "Code history"):
+
+- **Code history** — one row per code: outcome, duration, time to first
+  answer, how many were alerted, answered and not alerted, steps done and
+  steps over target.
+- **Code steps against target** — one row per step per code: target, when it
+  was done, by how much it missed.
+
 ## Limits to know
 
-- **Only people with a DocTurn account can be alerted.** DocTurn's account
-  types today are hospitalist (including PA/NP), ER physician, ER director and
-  director. Nurses, radiology and CT staff, pharmacists and other staff have no
-  account type yet, so a slot for them shows as "Not alerted — call them"
-  unless it points at someone who does have an account. A role nobody holds is
-  shown the same way. Nothing is ever shown as notified when it was not.
-- There is no text message or overhead page from a code. Push needs the app
-  installed with notifications allowed.
+- **Only people with a DocTurn account can be alerted.** Nurses,
+  technologists, pharmacists and other staff can now have a staff account
+  (People → Add person → Nurse / staff) and be put on a team. A slot nobody
+  with an account holds shows as "Not alerted — call them". Nothing is ever
+  shown as notified when it was not.
+- There is no overhead page from a code. Push needs the app installed with
+  notifications allowed.
 - A patient link disappears when DocTurn's auto-clean removes that patient.
 - The starting targets are not clinical guidance from DocTurn.

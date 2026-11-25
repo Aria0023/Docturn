@@ -145,6 +145,17 @@ describe("code protocols", () => {
     expect((await lopez.post(`${url}/ack`)).status).toBe(409);
     view = (await board(er)).activations[0]!;
     expect(view).toMatchObject({ status: "completed", canAct: false, closedByName: "Dr. Erin Reyes" });
+
+    // The same code, in the reports a director reads afterwards.
+    const hist = (await director.post("/api/reporting/run").send({ ref: "builtin:code_history" })).body;
+    expect(hist.rows).toHaveLength(1);
+    expect(hist.rows[0]).toMatchObject({ protocol: "Code Stroke", location: "ED 4", outcome: "Completed", alerted: 2, answered: 2, notAlerted: 2, stepsDone: 0, stepsTotal: 2, stepsOverTarget: 0 });
+    expect(typeof hist.rows[0].firstAnswerMin).toBe("number");
+    expect(typeof hist.rows[0].durationMin).toBe("number");
+    const stepRows = (await director.post("/api/reporting/run").send({ dataset: "code_steps", config: { columns: ["step", "targetMin", "result"], filters: [], groupBy: null, sort: null, ehrListId: null } })).body.rows;
+    expect(stepRows.map((r: { step: string; targetMin: number; result: string }) => [r.step, r.targetMin, r.result]).sort()).toEqual([["CT head started", 25, "Not done"], ["Thrombolysis decision", 45, "Not done"]]);
+    // No patient-access row: these reports carry no patient.
+    expect((await ctx.storage.listPhiAccess(orgId(), 50)).filter((r) => r.resource === "reports")).toHaveLength(0);
   });
 
   it("re-alerts only those who have not acknowledged, and stops at the limit and when the code closes", async () => {
@@ -169,6 +180,25 @@ describe("code protocols", () => {
     const before = alertsTo(uid("patel"));
     expect(await runCodeRealertSweep(later(60))).toBe(0);
     expect(alertsTo(uid("patel"))).toBe(before);
+  });
+
+  it("texts a member once after two unanswered alerts — the protocol name only — and never without a number", async () => {
+    const { agent: director } = await login(ctx.app, { username: "director" });
+    const { agent: er } = await login(ctx.app, { username: "er.doc" });
+    const p = await strokeProtocol(director);
+    await ctx.storage.updateUser(uid("patel"), { phone: "+15550100" }); // lopez has no number on file
+    await er.post("/api/patients").send({ initials: "ST", roomNumber: "ED 4", issueSummary: "weakness" });
+    await er.post("/api/codes/activate").send({ protocolId: p.id, location: "ED 4" });
+    const later = (min: number) => new Date(Date.now() + min * 60_000);
+    await runCodeRealertSweep(later(2)); // second alert: no text yet
+    expect(ctx.sms.sent).toHaveLength(0);
+    await runCodeRealertSweep(later(4)); // third alert: the text goes with it
+    await runCodeRealertSweep(later(6));
+    await runCodeRealertSweep(later(8));
+    expect(ctx.sms.sent).toEqual([{ to: "+15550100", body: "Code Stroke activated. Open DocTurn now to acknowledge." }]);
+    const members = (await board(er)).activations[0]!.members;
+    expect(members.find((m) => m.label === "Hospitalist")!.textedAt).toBeTruthy();
+    expect(members.find((m) => m.label === "Neurologist on call")!.textedAt).toBeNull();
   });
 
   it("a member on Do Not Disturb hands the alert to their covering provider", async () => {
