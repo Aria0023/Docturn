@@ -24,6 +24,24 @@ to eight filters, a grouping and a sort, then run it unsaved or save it. A
 saved report is private to its owner; a director or ER director can share one
 with the organization. Reports download as CSV and print.
 
+## Shift review and Trends (directors)
+
+Two views in the Reports screen for the hospitalist director and ER director:
+
+- **Shift review** — the last 12 hours.
+- **Trends** — the last 30 days, with a row per day.
+
+Each shows admission requests by outcome (accepted, declined, unanswered,
+waiting), the median and slowest time to accept, a table by hospitalist and by
+time of day (07–15, 15–23, 23–07 in the hospital's time zone), how many
+stuck-admission alerts fired and the codes called. Staff names and numbers
+only; no patient appears. Both print.
+
+DocTurn removes a patient and its requests after the auto-clean window. From
+this version on, the outcome of each request (ids and times only) is kept when
+that happens, so trends keep counting them. Requests removed before this
+version are not in the older days.
+
 ## Epic patient lists
 
 Once the hospital's Epic backend app is connected (Settings → Integrations →
