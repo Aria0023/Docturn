@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS users_org_username_uniq ON users(organization_id, username);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS job_title TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
 -- "Sign out everywhere" (E2): every session issued before this stops resolving.

@@ -16,6 +16,8 @@ const ORG_ROLES = [
     does: "Admits patients and routes them to the next hospitalist, requests consults and messages the care team." },
   { id: "er_director", name: "ER director", icon: "siren",
     does: "ER operations: intake, the patient board, broadcasts, registration approvals and analytics. Adds ER physicians and manages their accounts." },
+  { id: "staff", name: "Nurse / staff", icon: "heart-pulse", sub: "charge nurses, technologists, pharmacists and other staff",
+    does: "Messages the care team, sees who is on call, follows which admissions have been accepted, runs reports and takes part in codes. Cannot send, accept or manage admissions." },
   { id: "director", name: "Hospitalist director", icon: "clipboard-list",
     does: "Runs the hospitalist group: rotation, shifts and caps, consult services and organization settings. Adds and manages every clinical account in the organization." },
 ];

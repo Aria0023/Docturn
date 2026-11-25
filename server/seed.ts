@@ -357,6 +357,28 @@ export async function renameLegacyDemoNames(storage: DatabaseStorage, orgId: num
   return renamed;
 }
 
+/**
+ * The demo's charge nurse — a STAFF account, so the demo can show what a
+ * nurse sees. Added at server start on synthetic instances only (never by
+ * seed(), which the test suite counts accounts against). Idempotent.
+ */
+export async function ensureDemoStaff(storage: DatabaseStorage, orgId: number): Promise<boolean> {
+  if (!isSyntheticDataMode()) return false;
+  if (await storage.getUserByUsername(orgId, "nurse")) return false;
+  await storage.createUser({
+    organizationId: orgId,
+    username: "nurse",
+    passwordHash: await hashPassword(demoPassword()),
+    role: "staff",
+    displayName: "Riley Morgan",
+    credential: "RN",
+    jobTitle: "Charge nurse, ED",
+    phone: null,
+    twoFactorEnabled: false,
+  });
+  return true;
+}
+
 /** Create any missing demo accounts in an already-seeded org. Returns count added. */
 async function ensureDemoUsers(
   storage: DatabaseStorage,

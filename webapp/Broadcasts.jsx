@@ -20,8 +20,8 @@ function Broadcasts({ onSend, broadcasts = [] }) {
     ["critical", "Critical", "alert-octagon", "var(--status-rejected)", "var(--status-rejected-bg)"],
   ];
   // Roles the server can address (BROADCAST_AUDIENCE) — or everyone.
-  const ROLES = [["hospitalist", "Hospitalists"], ["er_doctor", "ER physicians"], ["er_director", "ER directors"], ["director", "Directors"], ["all", "Everyone"]];
-  const ROLE_LABEL = { hospitalist: "Hospitalists", er_doctor: "ER physicians", er_director: "ER directors", director: "Directors" };
+  const ROLES = [["hospitalist", "Hospitalists"], ["er_doctor", "ER physicians"], ["er_director", "ER directors"], ["director", "Directors"], ["staff", "Nurses and staff"], ["all", "Everyone"]];
+  const ROLE_LABEL = { hospitalist: "Hospitalists", er_doctor: "ER physicians", er_director: "ER directors", director: "Directors", staff: "Nurses and staff" };
 
   // "Everyone" stands alone; picking a role replaces it, and vice versa.
   const toggleAud = (r) => setAudience((a) => {

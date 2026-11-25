@@ -22,6 +22,10 @@ export const ROLES = [
   "er_director",
   "er_doctor",
   "hospitalist",
+  // Nurses, technologists, pharmacists and other non-physician staff. They
+  // message, see the on-call board, follow admissions and codes, and take
+  // part in a code — and never route, accept or manage anything.
+  "staff",
   "developer",
 ] as const;
 export type Role = (typeof ROLES)[number];
@@ -54,7 +58,7 @@ export const BROADCAST_SEVERITY = ["info", "urgent", "critical"] as const;
  * audience (null) goes to everyone in the org; otherwise only to the org's
  * active accounts holding one of these roles when it is sent.
  */
-export const BROADCAST_AUDIENCE = ["hospitalist", "er_doctor", "er_director", "director"] as const;
+export const BROADCAST_AUDIENCE = ["hospitalist", "er_doctor", "er_director", "director", "staff"] as const;
 export type BroadcastAudienceRole = (typeof BROADCAST_AUDIENCE)[number];
 export const REGISTRATION_STATUS = ["pending", "approved", "rejected"] as const;
 
@@ -124,6 +128,9 @@ export const users = pgTable(
     role: text("role", { enum: ROLES }).notNull(),
     displayName: text("display_name").notNull(),
     credential: text("credential", { enum: CREDENTIAL }),
+    // What the person does, as the hospital words it ("Charge nurse, ED").
+    // Shown beside their name; carries no permission.
+    jobTitle: text("job_title"),
     phone: text("phone"),
     twoFactorEnabled: boolean("two_factor_enabled").notNull().default(false),
     // Set on every provisioned / admin-reset account: the one-time credential

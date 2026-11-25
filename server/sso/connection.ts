@@ -26,7 +26,7 @@ export const SSO_INTEGRATION_ID = "sso-oidc";
 export const SSO_MODULE = "enterprise.sso";
 
 /** Roles an SSO mapping may grant. `developer` is the operator's, never an IdP's. */
-export const SSO_ASSIGNABLE_ROLES: readonly string[] = ["hospitalist", "er_doctor", "er_director", "director"];
+export const SSO_ASSIGNABLE_ROLES: readonly string[] = ["hospitalist", "er_doctor", "er_director", "director", "staff"];
 
 export const DEFAULT_SCOPES = "openid profile email";
 export const DEFAULT_CLAIM = "groups";

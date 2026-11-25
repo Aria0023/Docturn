@@ -28,7 +28,7 @@ import type { User } from "../../shared/schema.js";
  * stored. A patient report is ONE PHI-access row per run, and every export
  * and every change to a saved report is audited (ids and names only).
  */
-const ROLES = ["hospitalist", "er_doctor", "er_director", "director", "developer"] as const;
+const ROLES = ["hospitalist", "er_doctor", "er_director", "director", "staff", "developer"] as const;
 /** Who may publish a report to the whole organization, and edit a published one. */
 const canShare = (u: User) => u.role === "director" || u.role === "er_director" || u.role === "developer";
 

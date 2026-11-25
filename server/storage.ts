@@ -296,7 +296,7 @@ export interface IStorage {
   getUserById(id: number): Promise<User | undefined>;
   getUserByUsername(orgId: number, username: string): Promise<User | undefined>;
   listUsers(orgId: number): Promise<User[]>;
-  createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt">>): Promise<User>;
+  createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "jobTitle"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "jobTitle">>): Promise<User>;
 
   // hospitalists
   getHospitalist(orgId: number, id: number): Promise<Hospitalist | undefined>;
@@ -695,7 +695,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(users.organizationId, orgId))
       .orderBy(asc(users.id));
   }
-  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt">>) {
+  async createUser(user: Omit<User, "id" | "createdAt" | "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt" | "jobTitle"> & Partial<Pick<User, "mustChangePassword" | "disabledAt" | "passwordChangedAt" | "sessionsRevokedAt" | "jobTitle">>) {
     // Stored trimmed; uniqueness is on lower(username) (server/db.ts).
     const [row] = await this.db.insert(users).values({ ...user, username: normalizeUsername(user.username) }).returning();
     return row!;

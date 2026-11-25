@@ -12,6 +12,7 @@ import {
   ensureDemoTenants,
   ensurePlatform,
   renameLegacyDemoNames,
+  ensureDemoStaff,
   isSyntheticDataMode,
   seed,
 } from "./seed.js";
@@ -121,6 +122,8 @@ async function main() {
           const n = await renameLegacyDemoNames(storage, existing.id);
           if (n) console.log(`[db] demo roster: ${n} earlier display name(s) replaced with the fictional ones.`);
         }
+        const demoOrg = await storage.getOrganizationByCode("ISPN");
+        if (demoOrg && (await ensureDemoStaff(storage, demoOrg.id))) console.log("[db] demo roster: added the charge nurse (staff) account.");
         // Idempotently provision the two isolated demo tenants (HOSP + ER).
         await ensureDemoTenants(storage);
       }

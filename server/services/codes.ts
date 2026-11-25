@@ -37,7 +37,7 @@ import { notificationDeps } from "./notifications.js";
 
 export const MODULE = "codes.protocols";
 /** Roles that may call a code and take part in one. */
-export const CODE_ROLES = ["hospitalist", "er_doctor", "er_director", "director", "developer"] as const;
+export const CODE_ROLES = ["hospitalist", "er_doctor", "er_director", "director", "staff", "developer"] as const;
 export const canManageCodes = (u: Pick<User, "role">) => u.role === "director" || u.role === "er_director" || u.role === "developer";
 
 const text = (max: number) => z.string().trim().min(1).max(max).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/);
@@ -142,7 +142,7 @@ export async function teamOptions(db: DatabaseStorage, me: User) {
     roles,
     people: users
       .filter((u) => !u.disabledAt && u.role !== "developer")
-      .map((u) => ({ id: u.id, name: u.displayName, role: u.role }))
+      .map((u) => ({ id: u.id, name: u.displayName, role: u.role, jobTitle: u.jobTitle ?? null }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   };
 }

@@ -10,7 +10,7 @@ function userInitialsSD(name) {
 function SupportDirectory({ users = [], organizations = [], roleColors = {}, onImpersonate }) {
   const [q, setQ] = React.useState("");
   const [collapsed, setCollapsed] = React.useState({});
-  const ROLE_LABEL = { hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Developer" };
+  const ROLE_LABEL = { hospitalist: "Hospitalist", er_doctor: "ER physician", er_director: "ER director", director: "Director", staff: "Nurse / staff", developer: "Developer" };
   const orgName = (code) => (organizations.find((o) => o.code === code) || {}).name || code;
 
   const filtered = (users || []).filter((u) =>

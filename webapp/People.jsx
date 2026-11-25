@@ -19,6 +19,7 @@ const PEOPLE_ROLES = [
   ["er_doctor", "ER physician", "ambulance"],
   ["er_director", "ER director", "siren"],
   ["director", "Hospitalist director", "clipboard-list"],
+  ["staff", "Nurse / staff", "heart-pulse"],
 ];
 const PEOPLE_ROLE_LABEL = Object.fromEntries(PEOPLE_ROLES.map((r) => [r[0], r[1]]));
 
@@ -27,28 +28,34 @@ const PEOPLE_ROLE_LABEL = Object.fromEntries(PEOPLE_ROLES.map((r) => [r[0], r[1]
 // from attending physicians.
 const MIDLEVEL_CREDS = { PA: 1, NP: 1, RN: 1 };
 function personCategory(u) { return u.role === "hospitalist" && MIDLEVEL_CREDS[u.credential] ? "consultant" : u.role; }
+// The line under a person's name.
+function personSubline(u) {
+  if (u.role === "staff") return [u.credential, u.jobTitle || "Staff"].filter(Boolean).join(" · ");
+  return u.credential && MIDLEVEL_CREDS[u.credential] ? u.credential + (u.specialty ? " · " + u.specialty : "") : (u.specialty || PEOPLE_ROLE_LABEL[u.role] || u.role);
+}
 
 // The server's rules (server/routes/accounts.ts reachableTarget, providers.ts).
 function peopleCanManage(myRole, u) {
   if (!u || u.self || u.role === "developer") return false;
   if (myRole === "director") return true;
-  if (myRole === "er_director") return u.role === "er_doctor";
+  if (myRole === "er_director") return u.role === "er_doctor" || u.role === "staff";
   return false;
 }
 function peopleAddableRoles(myRole) {
-  if (myRole === "director") return ["hospitalist", "consultant", "er_doctor", "er_director", "director"];
-  if (myRole === "er_director") return ["er_doctor"];
+  if (myRole === "director") return ["hospitalist", "consultant", "er_doctor", "er_director", "director", "staff"];
+  if (myRole === "er_director") return ["er_doctor", "staff"];
   return [];
 }
 // The roles a director may move a person between (server/routes/accounts.ts
 // CHANGEABLE_ROLES). "PA / NP" is a credential on a hospitalist account, not a
 // role, so it is not offered here.
-const PEOPLE_CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director"];
+const PEOPLE_CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director", "staff"];
 // What the server does on a role change, in the director's words.
 function peopleRoleChangeNote(from, to) {
   var parts = ["They are signed out everywhere and sign in again as " + (PEOPLE_ROLE_LABEL[to] || to) + ". Same account, same messages."];
   if (to === "hospitalist") parts.push("They get a place in the rotation, off shift until they start one.");
-  if (from === "hospitalist" && (to === "er_doctor" || to === "er_director")) parts.push("They come off the rotation now; any admission waiting on them goes to the next hospitalist.");
+  if (to === "staff") parts.push("Staff follow admissions and codes and message; they cannot send, accept or manage admissions.");
+  if (from === "hospitalist" && (to === "er_doctor" || to === "er_director" || to === "staff")) parts.push("They come off the rotation now; any admission waiting on them goes to the next hospitalist.");
   if (to === "director" || to === "er_director") parts.push("Director accounts set up two-factor at their next sign-in where your organization requires it.");
   return parts.join(" ");
 }
@@ -107,7 +114,7 @@ function PeopleManager({ domainRoles }) {
   const [roleEdit, setRoleEdit] = React.useState(null); // { id, role, busy }
   const [manageId, setManageId] = React.useState(null); // the one person whose actions are open
   const canChangeRoles = myRole === "director";
-  const blank = { name: "", username: "", usernameTouched: false, role: addable[0] || "", specialty: "Hospital Medicine", credential: "NP" };
+  const blank = { name: "", username: "", usernameTouched: false, role: addable[0] || "", specialty: "Hospital Medicine", credential: "NP", jobTitle: "", staffRn: true };
   const [form, setForm] = React.useState(blank);
   const set = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }));
   const setName = (v) => setForm((f) => Object.assign({}, f, { name: v }, f.usernameTouched ? {} : { username: suggestUsername(v) }));
@@ -188,6 +195,15 @@ function PeopleManager({ domainRoles }) {
           {form.role === "hospitalist" && (
             <div style={{ marginBottom: 16 }}><Field label="Specialty" icon="stethoscope" value={form.specialty} onChange={(v) => set("specialty", v)} placeholder="e.g. Hospital Medicine" /></div>
           )}
+          {form.role === "staff" && (
+            <div data-staff-fields style={{ marginBottom: 16 }}>
+              <Field label="Job title" icon="id-card" value={form.jobTitle} onChange={(v) => set("jobTitle", v)} placeholder="e.g. Charge nurse, ED · CT technologist · Pharmacist" inputProps={{ maxLength: 60, "data-staff-job-title": true }} />
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!form.staffRn} onChange={(e) => set("staffRn", e.target.checked)} /> Registered nurse (shows RN beside their name)
+              </label>
+              <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, lineHeight: 1.45 }}>Staff can message, see who is on call, follow admissions, run reports and take part in codes. They cannot send, accept or manage admissions.</div>
+            </div>
+          )}
           {form.role === "consultant" && (
             <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 14, marginBottom: 16, alignItems: mobile ? "stretch" : "flex-end" }}>
               <div style={{ width: mobile ? "100%" : 200 }}>
@@ -252,7 +268,7 @@ function PeopleManager({ domainRoles }) {
                         {u.disabled && <Badge status="rejected">Access removed</Badge>}
                         {!u.disabled && u.mustChangePassword && <Badge status="pending">Awaiting first sign-in</Badge>}
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>{u.credential && MIDLEVEL_CREDS[u.credential] ? u.credential + (u.specialty ? " · " + u.specialty : "") : (u.specialty || PEOPLE_ROLE_LABEL[u.role] || u.role)}{u.username ? " · @" + u.username : ""}</div>
+                      <div style={{ fontSize: 12, color: "var(--muted-foreground)", overflowWrap: "anywhere" }}>{personSubline(u)}{u.username ? " · @" + u.username : ""}</div>
                       {!manage && !u.self && <div data-managed-elsewhere style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 2 }}>Managed by a hospitalist director</div>}
                     </div>
                     {/* Account lifecycle: one-time password; second factor; remove

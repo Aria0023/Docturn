@@ -79,6 +79,7 @@ function LoginScreen({ onLogin, appName }) {
     { id: "er_doctor", label: "ER physician", icon: "ambulance" },
     { id: "er_director", label: "ER director", icon: "siren" },
     { id: "director", label: "Hospitalist director", icon: "clipboard-list" },
+    { id: "staff", label: "Charge nurse", icon: "heart-pulse" },
     { id: "developer", label: "Developer", icon: "terminal" },
   ];
   // Only the roles the server accepts from a stranger (SELF_REGISTRABLE_ROLES in

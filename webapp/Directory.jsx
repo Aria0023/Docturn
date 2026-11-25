@@ -85,7 +85,7 @@ function StarToggle({ kind, id, label, mobile }) {
     </button>
   );
 }
-const DIR_ROLE_LABEL = { hospitalist: "Hospitalist", consultant: "Consultant", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Developer" };
+const DIR_ROLE_LABEL = { hospitalist: "Hospitalist", consultant: "Consultant", er_doctor: "ER physician", er_director: "ER director", director: "Director", staff: "Staff", developer: "Developer" };
 function PersonRow({ person, first, presence, mobile, onMessage, sub }) {
   const p = presenceOf(presence, person.userId);
   const initials = (window.dtFmt && window.dtFmt.initialsOf) ? window.dtFmt.initialsOf(person.displayName) : "";

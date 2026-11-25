@@ -64,6 +64,7 @@ export function registerCareTeamRoutes(app: Express) {
           displayName: u.displayName,
           credential: u.credential,
           role: u.role,
+          jobTitle: u.jobTitle ?? null,
           // Kept for name resolution (an old thread still names a
           // deactivated colleague); a deactivated account cannot be linked.
           active: !u.disabledAt,

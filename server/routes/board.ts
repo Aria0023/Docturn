@@ -16,7 +16,8 @@ export function registerBoardRoutes(app: Express) {
   app.get(
     "/api/patient-board",
     requireAuth,
-    requireRole("hospitalist", "er_doctor", "er_director", "director"),
+    // Staff read the board (who has accepted, who has not); they change nothing.
+    requireRole("hospitalist", "er_doctor", "er_director", "director", "staff"),
     async (req, res) => {
       const me = currentUser(req);
       await logPhiAccess(req, "patient-board");
@@ -111,6 +112,23 @@ export function registerBoardRoutes(app: Express) {
           responsible,
           consultants: consultsByPatient.get(p.id) ?? [],
           consultDetails: consultDetailByPatient.get(p.id) ?? [],
+          // The latest request, whatever became of it: who was asked, when,
+          // and (while it waits) when it lapses. This is what lets a charge
+          // nurse see who has and has not accepted.
+          request: a
+            ? {
+                status: a.status,
+                hospitalist: (() => {
+                  const h = hById.get(a.hospitalistId);
+                  const u = h ? userById.get(h.userId) : undefined;
+                  return u ? { userId: u.id, displayName: u.displayName } : null;
+                })(),
+                sentAt: a.createdAt,
+                resolvedAt: a.resolvedAt ?? null,
+                expiresAt: a.status === "pending" ? a.expiresAt : null,
+              }
+            : null,
+          enteredAt: p.createdAt,
           admittedBy: admittedByUser
             ? { userId: admittedByUser.id, displayName: admittedByUser.displayName }
             : null,

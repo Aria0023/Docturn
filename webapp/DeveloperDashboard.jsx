@@ -55,6 +55,7 @@ const DEV_ROLES = [
   ["er_doctor", "ER physician"],
   ["er_director", "ER director"],
   ["director", "Director"],
+  ["staff", "Nurse / staff"],
   ["developer", "Developer"],
 ];
 const ROLE_LABEL = Object.fromEntries(DEV_ROLES.map((r) => [r[0], r[1]]));

@@ -38,6 +38,7 @@
     // server answers — or if a read fails — these lists are empty, never the
     // seed's fabricated rows presented as the org's.
     s.providers = []; s.board = []; s.sent = []; s.pending = [];
+    s.boardLoaded = false; s.boardError = false;
     s.myPatients = []; s.myAdmissions = []; s.acceptedToday = 0;
     s.directory = []; s.orgPeople = {};
     s.roleContacts = []; s.favorites = []; s.recents = [];
@@ -167,6 +168,7 @@
     er_doctor: "er.doc",
     er_director: "er.director",
     director: "director",
+    staff: "nurse",
     developer: "dev",
   };
 
@@ -206,7 +208,7 @@
   // Analytics (/api/metrics/comms, /api/reports/ops) are director-level.
   var PRIVILEGED = { director: 1, er_director: 1, developer: 1 };
   // GET /api/patient-board: requireRole(hospitalist, er_doctor, er_director, director).
-  var BOARD_ROLES = { hospitalist: 1, er_doctor: 1, er_director: 1, director: 1 };
+  var BOARD_ROLES = { hospitalist: 1, er_doctor: 1, er_director: 1, director: 1, staff: 1 };
 
   // `meta` (optional) receives response metadata: meta.hasMore from a paged
   // thread read's X-Has-More header.
@@ -531,6 +533,15 @@
         // Per-consultant detail: who was consulted on each specialty + status.
         consultDetails: mapConsultDetails(r.consultDetails),
         er: r.admittedBy ? { name: r.admittedBy.displayName, avatar: initials(r.admittedBy.displayName) } : { name: "", avatar: "" },
+        // The latest request as the server has it (who was asked, when).
+        request: r.request ? {
+          status: r.request.status,
+          to: r.request.hospitalist ? { userId: r.request.hospitalist.userId, name: r.request.hospitalist.displayName } : null,
+          sentAt: r.request.sentAt ? Date.parse(r.request.sentAt) : null,
+          resolvedAt: r.request.resolvedAt ? Date.parse(r.request.resolvedAt) : null,
+          expiresAt: r.request.expiresAt ? Date.parse(r.request.expiresAt) : null,
+        } : null,
+        enteredAt: r.enteredAt ? Date.parse(r.enteredAt) : null,
       };
     });
   }
@@ -559,7 +570,7 @@
       // physician or director shows their real name, not "Conversation".
       get("/api/care-team/candidates").catch(function () { return null; }),
       // Consults addressed to me on any patient ("Consult requests for you").
-      role === "developer" ? Promise.resolve(null) : get("/api/consults/mine").catch(function () { return null; }),
+      (role === "developer" || role === "staff") ? Promise.resolve(null) : get("/api/consults/mine").catch(function () { return null; }),
     ]).then(function (res) {
       if (epoch !== authEpoch) return;
       var hosps = res[0], directory = res[1], patients = res[2], candidates = res[3], myConsults = res[4];
@@ -663,7 +674,7 @@
               people[d.userId] = { id: d.userId, name: d.displayName, credential: d.credential || "", specialty: d.specialty || "", working: !!d.working, role: "hospitalist" };
             });
             (candidates || []).forEach(function (c) {
-              if (!people[c.userId]) people[c.userId] = { id: c.userId, name: c.displayName, credential: c.credential || "", specialty: roleLabel(c.role), working: false, role: c.role };
+              if (!people[c.userId]) people[c.userId] = { id: c.userId, name: c.displayName, credential: c.credential || "", specialty: c.jobTitle || roleLabel(c.role), working: false, role: c.role };
               // A deactivated account still resolves its name in old threads,
               // but is never offered as someone to alert or link.
               people[c.userId] = Object.assign({}, people[c.userId], { active: c.active !== false });
@@ -700,6 +711,9 @@
             if (hosps) s.isProvider = hosps.some(function (h) { return h.userId === meId; });
           }
           if (board) s.board = mapBoard(board);
+          // Whether the server's board has been read for THIS sign-in, and
+          // whether the latest read failed — a failed read is not an empty board.
+          if (BOARD_ROLES[role]) { s.boardLoaded = !!board || !!s.boardLoaded; s.boardError = !board; }
           if (wantsSent && sent) s.sent = mapSent(sent).map(function (row) {
             return Object.assign({}, row, { consultDetails: consultDetailByPid[row.patientId] || [] });
           });
@@ -883,7 +897,7 @@
     });
   }
   function mapCandidate(c) {
-    return { id: c.userId, userId: c.userId, name: c.displayName, avatar: initials(c.displayName), role: TEAM_CREDS[c.credential] ? c.credential : null, roleLabel: roleLabel(c.role), specialty: roleLabel(c.role),
+    return { id: c.userId, userId: c.userId, name: c.displayName, avatar: initials(c.displayName), role: TEAM_CREDS[c.credential] ? c.credential : null, roleLabel: c.jobTitle || roleLabel(c.role), specialty: roleLabel(c.role),
       // The server links only accounts that can see and accept a request.
       canJoinUnit: c.canJoinUnit !== false };
   }
@@ -927,7 +941,7 @@
   // Human label for a raw role code (used when a conversation partner is not a
   // hospitalist, so the directory has no specialty for them).
   function roleLabel(role) {
-    return ({ hospitalist: "Provider", er_doctor: "ER physician", er_director: "ER director", director: "Director", developer: "Admin" })[role] || "Provider";
+    return ({ hospitalist: "Provider", er_doctor: "ER physician", er_director: "ER director", director: "Director", staff: "Staff", developer: "Admin" })[role] || "Provider";
   }
   // Resolve a userId to a person, preferring the rich directory entry and
   // falling back to the org-wide people map (covers ER physicians, directors,
@@ -2061,7 +2075,7 @@
       DT.set(function (s) {
         dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
-        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
         s.ui.nav = "dashboard";
         s.ui.notifOpen = false;
         s.loginError = null;
@@ -5301,7 +5315,7 @@
   // (urgent and critical need one, info does not) — A.CON comms-account
   // #10-#12. The toast reports what the server did: how many people, which
   // roles.
-  var AUDIENCE_LABEL = { hospitalist: "hospitalists", er_doctor: "ER physicians", er_director: "ER directors", director: "directors" };
+  var AUDIENCE_LABEL = { hospitalist: "hospitalists", er_doctor: "ER physicians", er_director: "ER directors", director: "directors", staff: "nurses and staff" };
   DT.actions.sendBroadcast = function (data) {
     var SEV_MAP = { info: "info", warning: "urgent", critical: "critical" };
     var msg = (data.title || "").trim() + (data.message && data.message.trim() ? " — " + data.message.trim() : "");
@@ -5502,7 +5516,7 @@
         // server has no single-organization developer (A.CON developer #1).
         s.devUsers = (users || []).map(function (u) {
           return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
-            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword };
+            jobTitle: u.jobTitle || "", disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword };
         });
         s.devUsersLoaded = true;
         return s;
@@ -5526,7 +5540,7 @@
         var myId = s.me && s.me.id != null ? s.me.id : meId;
         s.accounts = (users || []).map(function (u) {
           return { id: u.id, name: u.name, username: u.username || "", role: u.role, org: u.org, specialty: u.specialty || "", credential: u.credential || "",
-            disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword, self: u.id === myId };
+            jobTitle: u.jobTitle || "", disabled: !!u.disabled, mustChangePassword: !!u.mustChangePassword, self: u.id === myId };
         });
         s.accountsOrg = org;
         s.accountsError = null;
@@ -5556,6 +5570,8 @@
     var body = { username: username, displayName: name, role: role === "consultant" ? "hospitalist" : role };
     if (role === "consultant") { body.credential = form.credential === "PA" ? "PA" : "NP"; body.specialty = String(form.specialty || "").trim() || "Hospital Medicine"; }
     else if (role === "hospitalist") { body.specialty = String(form.specialty || "").trim() || "Hospital Medicine"; }
+    // Staff: a job title, and RN when they are a nurse. No rotation profile.
+    else if (role === "staff") { body.jobTitle = String(form.jobTitle || "").trim(); if (form.staffRn) body.credential = "RN"; }
     return api("POST", "/api/director/hospitalists", body).then(function (res) {
       DT.actions.loadAccounts();
       if (body.role === "hospitalist") rehydrate();
@@ -5728,7 +5744,7 @@
         DT.set(function (s) {
           dropPreviousThreads(s, switched);
           s.session = { role: u.role, org: user.org || s.selectedOrg, user: u.username, name: u.displayName };
-          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
           s.impersonating = { name: u.displayName, role: u.role, org: user.org || s.selectedOrg };
           s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
           s.ui.nav = "dashboard"; s.ui.notifOpen = false;
@@ -5758,7 +5774,7 @@
         dropPreviousThreads(s, switched);
         s.impersonating = null;
         s.session = { role: u.role, org: PLATFORM_ORG, user: u.username, name: u.displayName };
-        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
         s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
         s.ui.nav = "dashboard"; s.ui.notifOpen = false;
         return s;
@@ -5788,7 +5804,7 @@
         DT.set(function (s) {
           dropPreviousThreads(s, switched);
           s.session = { role: u.role, org: u.orgCode || code, user: u.username, name: u.displayName };
-          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+          s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
           s.selectedOrg = u.orgCode || code;
           s.impersonating = { name: u.orgName || code, role: u.role, org: u.orgCode || code, managing: true };
           s.mfaEnrollmentRequired = g.mfa; s.passwordChangeRequired = g.pw;
@@ -5948,7 +5964,7 @@
       DT.set(function (s) {
         dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: lastAuth.org, user: u.username, name: u.displayName };
-        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
         s.ui.nav = "dashboard"; s.ui.notifOpen = false; s.loginError = null;
         s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;
         return s;
@@ -6000,7 +6016,7 @@
       DT.set(function (s) {
         dropPreviousThreads(s, switched);
         s.session = { role: u.role, org: orgCode, user: u.username, name: u.displayName };
-        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || "MD", id: u.id };
+        s.me = { name: u.displayName, avatar: initials(u.displayName), role: u.credential || (u.role === "staff" ? "" : "MD"), id: u.id, jobTitle: u.jobTitle || "" };
         s.loginError = null;
         s.mfaChallenge = null;
         s.mfaEnrollmentRequired = !!u.mfaEnrollmentRequired;

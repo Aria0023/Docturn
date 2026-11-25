@@ -35,7 +35,7 @@ export const SCIM_SCHEMA_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Schema"
 export const SCIM_CONTENT_TYPE = "application/scim+json; charset=utf-8";
 
 /** Roles an identity provider may provision. Privileged roles are not on it. */
-export const SCIM_ASSIGNABLE_ROLES: readonly Role[] = ["hospitalist", "er_doctor"];
+export const SCIM_ASSIGNABLE_ROLES: readonly Role[] = ["hospitalist", "er_doctor", "staff"];
 
 export interface ScimError {
   schemas: [typeof SCIM_ERROR_SCHEMA];

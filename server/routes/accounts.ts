@@ -32,7 +32,7 @@ import { storage } from "../storage.js";
 
 const MANAGE_ROLES = ["director", "er_director", "developer"] as const;
 /** The roles a director may move a person between (never `developer`). */
-const CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director"] as const;
+const CHANGEABLE_ROLES = ["hospitalist", "er_doctor", "er_director", "director", "staff"] as const;
 
 async function reachableTarget(req: Request, res: Response): Promise<User | null> {
   const me = currentUser(req);
@@ -51,7 +51,7 @@ async function reachableTarget(req: Request, res: Response): Promise<User | null
     (me.role === "developer" ||
       (target.organizationId === me.organizationId &&
         target.role !== "developer" &&
-        (me.role === "director" || (me.role === "er_director" && target.role === "er_doctor"))));
+        (me.role === "director" || (me.role === "er_director" && (target.role === "er_doctor" || target.role === "staff")))));
   if (!target || !allowed) {
     res.status(404).json({ error: "not_found" });
     return null;
@@ -72,6 +72,7 @@ function publicRow(
     org: orgCode,
     specialty: specialty ?? "",
     credential: u.credential,
+    jobTitle: u.jobTitle ?? null,
     disabled: !!u.disabledAt,
     mustChangePassword: !!u.mustChangePassword,
   };
@@ -294,6 +295,30 @@ export function registerAccountRoutes(app: Express) {
       riskLevel: "high",
     });
     res.json({ ok: true, id: target.id, role, changed: true, sessionsEnded: ended });
+  });
+
+  // What a person does, as the hospital words it ("Charge nurse, ED"). Shown
+  // beside their name; it grants nothing. Empty clears it.
+  app.post("/api/accounts/:id/job-title", requireAuth, requireRole(...MANAGE_ROLES), async (req, res) => {
+    const me = currentUser(req);
+    const target = await reachableTarget(req, res);
+    if (!target) return;
+    const raw = (req.body ?? {}).jobTitle;
+    const jobTitle = typeof raw === "string" ? raw.trim() : null;
+    if (jobTitle === null || jobTitle.length > 60 || /[\u0000-\u001f\u007f-\u009f]/.test(jobTitle)) {
+      return res.status(400).json({ error: "validation_error" });
+    }
+    await storage().updateUser(target.id, { jobTitle: jobTitle || null });
+    await appendAudit({
+      organizationId: target.organizationId,
+      userId: me.id,
+      action: "account.job_title",
+      resourceType: "user",
+      resourceId: target.id,
+      details: { username: target.username, set: !!jobTitle },
+      riskLevel: "low",
+    });
+    res.json({ ok: true, id: target.id, jobTitle: jobTitle || null });
   });
 
   // Administrative MFA reset for a locked-out clinician (lost phone, no backup

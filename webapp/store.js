@@ -469,6 +469,7 @@
         er_doctor:   "#C07A33",
         er_director: "#C25A6B",
         director:    "#7A60C0",
+        staff:       "#B0578D",
         developer:   "#3E9B6E",
         consultant:  "#2C8C92",
       },

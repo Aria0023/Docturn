@@ -19,9 +19,11 @@ const createProviderSchema = z.object({
   patientCap: z.number().int().min(1).max(50).default(12),
   shiftType: z.enum(["day", "night", "swing"]).default("day"),
   role: z
-    .enum(["hospitalist", "er_doctor", "er_director", "director"])
+    .enum(["hospitalist", "er_doctor", "er_director", "director", "staff"])
     .default("hospitalist"),
-  credential: z.enum(["MD", "DO", "NP", "PA"]).optional(),
+  credential: z.enum(["MD", "DO", "NP", "PA", "RN"]).optional(),
+  // Staff accounts: what the person does ("Charge nurse, ED", "CT technologist").
+  jobTitle: z.string().trim().max(60).regex(/^[^\u0000-\u001f\u007f-\u009f]*$/).optional(),
   // Imported-from-schedule providers come in on-shift (drives on-call roster).
   working: z.boolean().optional(),
 });
@@ -133,8 +135,8 @@ export function registerProviderRoutes(app: Express) {
       if (!parsed.success) return res.status(400).json({ error: "validation_error" });
       const data = parsed.data;
 
-      // er_director may only create er_doctor accounts.
-      if (me.role === "er_director" && data.role !== "er_doctor") {
+      // er_director may only create ER physician and staff accounts.
+      if (me.role === "er_director" && data.role !== "er_doctor" && data.role !== "staff") {
         return res.status(403).json({ error: "forbidden" });
       }
 
@@ -187,6 +189,7 @@ export function registerProviderRoutes(app: Express) {
         role: data.role,
         displayName: data.displayName,
         credential: data.credential ?? null,
+        jobTitle: data.role === "staff" ? data.jobTitle || null : null,
         phone: null,
         twoFactorEnabled: false,
         mustChangePassword: true,

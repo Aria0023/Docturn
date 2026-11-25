@@ -826,7 +826,7 @@ export function registerDevRoutes(app: Express) {
       // deserialises, so the portal would be a dead session.
       const users = (await storage().listUsers(orgId)).filter((u) => !u.disabledAt);
       // Prefer the broadest admin surface available in the tenant.
-      const order = ["director", "er_director", "er_doctor", "hospitalist"];
+      const order = ["director", "er_director", "er_doctor", "hospitalist", "staff"];
       let admin = null;
       for (const role of order) {
         admin = users.find((u) => u.role === role) || null;
