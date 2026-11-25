@@ -34,7 +34,7 @@ afterEach(async () => {
 describe("the seat definition — one function, used everywhere", () => {
   it("every role except developer is a billable seat role", () => {
     expect([...BILLABLE_SEAT_ROLES].sort()).toEqual(
-      ["director", "er_director", "er_doctor", "hospitalist"].sort(),
+      ["director", "er_director", "er_doctor", "hospitalist", "staff"].sort(),
     );
     expect(isBillableSeatRole("developer")).toBe(false);
     expect(isBillableSeatRole("hospitalist")).toBe(true);
