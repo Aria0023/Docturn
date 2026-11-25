@@ -297,6 +297,10 @@ function PeopleManager({ domainRoles }) {
                           <PeopleAction title={"Change role for " + u.name} icon="user-cog" label="Change role"
                             onClick={() => setRoleEdit(roleEdit && roleEdit.id === u.id ? null : { id: u.id, role: u.role, busy: false })} />
                         )}
+                        {u.role === "staff" && !u.disabled && (
+                          <PeopleAction title={"Change job title for " + u.name} icon="id-card" label="Job title"
+                            onClick={() => { const v = window.prompt("Job title for " + u.name + " (shown beside their name; leave empty to clear):", u.jobTitle || ""); if (v !== null) a.setUserJobTitle(u.id, u.name, v); }} />
+                        )}
                         <PeopleAction title={"Reset two-factor for " + u.name} icon="shield-off" label="Reset two-factor"
                           onClick={() => { if (window.confirm("Clear " + u.name + "'s two-factor authentication? They will sign in with their password and set it up again.")) a.resetUserMfa(u.id, u.name); }} />
                         {/* Sign out everywhere (E2, module enterprise.sessionPolicy):

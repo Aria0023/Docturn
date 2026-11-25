@@ -119,4 +119,102 @@ export function registerReportsRoutes(app: Express) {
       });
     },
   );
+  // ── Shift review and trends (directors) ───────────────────────────────────
+  // Every admission request in a window — the live ones plus the outcomes
+  // kept after their patients were removed (assignment_facts) — as counts and
+  // times by day, by time of day and by hospitalist, with the codes called.
+  // Ids, names of staff and numbers only: no patient appears here.
+  app.get(
+    "/api/reports/review",
+    requireAuth,
+    requireRole("director", "er_director", "developer"),
+    async (req, res) => {
+      const me = currentUser(req);
+      const orgId = me.organizationId;
+      const hours = Math.min(24 * 90, Math.max(1, Number(req.query.hours) || 12));
+      const now = new Date();
+      const since = new Date(now.getTime() - hours * 3_600_000);
+      const db = storage();
+      const [org, live, facts, hosps, users, codes, audit] = await Promise.all([
+        db.getOrganization(orgId),
+        db.listAssignments(orgId),
+        db.listAssignmentFacts(orgId, since),
+        db.listHospitalists(orgId),
+        db.listUsers(orgId),
+        db.listAllCodeActivations(orgId),
+        db.listAuditLogs(orgId, 2000),
+      ]);
+      type Row = { id: number; hospitalistId: number; status: string; createdAt: Date; resolvedAt: Date | null };
+      const seen = new Set<number>();
+      const rows: Row[] = [];
+      for (const a of live) {
+        if (new Date(a.createdAt) < since) continue;
+        seen.add(a.id);
+        rows.push({ id: a.id, hospitalistId: a.hospitalistId, status: a.status, createdAt: new Date(a.createdAt), resolvedAt: a.resolvedAt ? new Date(a.resolvedAt) : null });
+      }
+      for (const f of facts) {
+        if (seen.has(f.assignmentId)) continue;
+        rows.push({ id: f.assignmentId, hospitalistId: f.hospitalistId, status: f.status, createdAt: new Date(f.createdAt), resolvedAt: f.resolvedAt ? new Date(f.resolvedAt) : null });
+      }
+      const tz = (org?.timezone ?? "").trim() || "UTC";
+      const part = (d: Date, opt: Intl.DateTimeFormatOptions) => {
+        try {
+          return new Intl.DateTimeFormat("en-CA", { timeZone: tz, ...opt }).format(d);
+        } catch {
+          return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opt }).format(d);
+        }
+      };
+      const dayOf = (d: Date) => part(d, { year: "numeric", month: "2-digit", day: "2-digit" });
+      const hourOf = (d: Date) => Number(part(d, { hour: "2-digit", hourCycle: "h23" }).slice(0, 2));
+      // Time of day in the hospital's own clock: 07–15, 15–23, 23–07.
+      const blockOf = (d: Date): string => { const h = hourOf(d); return h >= 7 && h < 15 ? "Day (07–15)" : h >= 15 && h < 23 ? "Evening (15–23)" : "Night (23–07)"; };
+      const acceptMin = (r: Row) => (r.status === "accepted" && r.resolvedAt ? (r.resolvedAt.getTime() - r.createdAt.getTime()) / 60_000 : null);
+      const summarize = (set: Row[]) => {
+        const mins = set.map(acceptMin).filter((m): m is number => m != null && m >= 0);
+        return {
+          requests: set.length,
+          accepted: set.filter((r) => r.status === "accepted").length,
+          declined: set.filter((r) => r.status === "rejected").length,
+          unanswered: set.filter((r) => r.status === "expired").length,
+          waiting: set.filter((r) => r.status === "pending").length,
+          medianAcceptMin: toMin(median(mins.map((m) => m * 60_000))),
+          slowestAcceptMin: mins.length ? Math.round(Math.max(...mins) * 10) / 10 : null,
+        };
+      };
+      const groupBy = <K extends string | number>(key: (r: Row) => K) => {
+        const m = new Map<K, Row[]>();
+        for (const r of rows) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
+        return m;
+      };
+      const name = new Map(users.map((u) => [u.id, u.displayName]));
+      const hospName = new Map(hosps.map((h) => [h.id, name.get(h.userId) ?? "Former provider"]));
+      const blocks = ["Day (07–15)", "Evening (15–23)", "Night (23–07)"];
+      const byBlock = groupBy<string>((r) => blockOf(r.createdAt));
+      const inWindow = codes.filter((c) => new Date(c.activatedAt) >= since);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        hours,
+        from: since.toISOString(),
+        to: now.toISOString(),
+        timezone: tz,
+        totals: summarize(rows),
+        byDay: [...groupBy((r) => dayOf(r.createdAt))].sort((a, b) => a[0].localeCompare(b[0])).map(([day, set]) => ({ day, ...summarize(set) })),
+        byTimeOfDay: blocks.map((b) => ({ block: b, ...summarize(byBlock.get(b) ?? []) })),
+        byHospitalist: [...groupBy((r) => r.hospitalistId)]
+          .map(([id, set]) => ({ hospitalist: hospName.get(id) ?? "Former provider", ...summarize(set) }))
+          .sort((a, b) => b.requests - a.requests || a.hospitalist.localeCompare(b.hospitalist)),
+        stuckAlerts: audit.filter((r) => r.action === "assignment.escalated" && new Date(r.createdAt) >= since).length,
+        codes: {
+          called: inWindow.length,
+          completed: inWindow.filter((c) => c.status === "completed").length,
+          stoodDown: inWindow.filter((c) => c.status === "stood_down").length,
+          running: inWindow.filter((c) => c.status === "active").length,
+          byProtocol: Object.entries(inWindow.reduce<Record<string, number>>((m, c) => ((m[c.protocolName] = (m[c.protocolName] ?? 0) + 1), m), {})).map(([protocol, count]) => ({ protocol, count })),
+        },
+        // What this cannot see, said once: requests removed before this
+        // version kept their outcomes are not in the older days.
+        note: "Requests are counted by when they were sent, in the hospital's time zone. Outcomes of requests whose patient was removed before DocTurn began keeping them are not included.",
+      });
+    },
+  );
 }

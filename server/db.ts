@@ -974,6 +974,20 @@ CREATE TABLE IF NOT EXISTS user_presence (
 CREATE UNIQUE INDEX IF NOT EXISTS user_presence_instance_user_uniq ON user_presence(instance_id, user_id);
 CREATE INDEX IF NOT EXISTS user_presence_org_idx ON user_presence(organization_id, seen_at);
 
+-- Outcome of each admission request, kept after the patient is removed. Ids and times only.
+CREATE TABLE IF NOT EXISTS assignment_facts (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL,
+  assignment_id INTEGER NOT NULL,
+  hospitalist_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  via TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  resolved_at TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS assignment_facts_org_assignment_uniq ON assignment_facts(organization_id, assignment_id);
+CREATE INDEX IF NOT EXISTS assignment_facts_org_created_idx ON assignment_facts(organization_id, created_at);
+
 -- Hand-off notes: clinical free text, removed with the patient. Mirrors shared/schema.ts.
 CREATE TABLE IF NOT EXISTS patient_handoffs (
   id SERIAL PRIMARY KEY,

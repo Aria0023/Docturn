@@ -1634,6 +1634,28 @@ export const userPresence = pgTable(
 );
 
 /**
+ * What became of each admission request, kept after the patient and its
+ * requests are removed, so trends cover more than the auto-clean window.
+ * PHI-free on purpose: ids, the outcome and two times. Written when a
+ * patient's rows are purged (storage.purgePatientRows); reports read these
+ * plus the live requests. No foreign keys. Removed with the tenant.
+ */
+export const assignmentFacts = pgTable(
+  "assignment_facts",
+  {
+    id: serial("id").primaryKey(),
+    organizationId: integer("organization_id").notNull(),
+    assignmentId: integer("assignment_id").notNull(),
+    hospitalistId: integer("hospitalist_id").notNull(),
+    status: text("status").notNull(),
+    via: text("via").notNull(),
+    createdAt: timestamp("created_at").notNull(),
+    resolvedAt: timestamp("resolved_at"),
+  },
+  (t) => ({ uniq: uniqueIndex("assignment_facts_org_assignment_uniq").on(t.organizationId, t.assignmentId) }),
+);
+
+/**
  * Hand-off notes (server/routes/handoffs.ts): what the next physician needs
  * to know about one patient. A new row each time the note is saved; the
  * newest is the note. Clinical free text — PHI: removed with the patient

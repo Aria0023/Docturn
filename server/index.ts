@@ -13,6 +13,7 @@ import {
   ensurePlatform,
   renameLegacyDemoNames,
   ensureDemoStaff,
+  ensureDemoBoard,
   isSyntheticDataMode,
   seed,
 } from "./seed.js";
@@ -125,6 +126,10 @@ async function main() {
         }
         const demoOrg = await storage.getOrganizationByCode("ISPN");
         if (demoOrg && (await ensureDemoStaff(storage, demoOrg.id))) console.log("[db] demo roster: added the charge nurse (staff) account.");
+        if (demoOrg) {
+          const added = await ensureDemoBoard(storage, demoOrg.id);
+          if (added) console.log(`[db] demo board: ${added} invented patients placed behind the seeded census numbers.`);
+        }
         // Idempotently provision the two isolated demo tenants (HOSP + ER).
         await ensureDemoTenants(storage);
       }

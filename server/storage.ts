@@ -74,6 +74,7 @@ import {
   reportDefinitions,
   userPresence,
   patientHandoffs,
+  assignmentFacts,
   codeProtocols,
   codeActivations,
   codeActivationMembers,
@@ -856,7 +857,7 @@ export class DatabaseStorage implements IStorage {
               lt(patients.createdAt, cutoff),
               // A patient the EHR feed added stays until the EHR discharges
               // them; the age rule applies to them only after that.
-              or(ne(patients.source, "adt"), eq(patients.status, "discharged")),
+              or(and(ne(patients.source, "adt"), ne(patients.source, "demo")), eq(patients.status, "discharged")),
             )
           : eq(patients.organizationId, orgId),
       );
@@ -944,7 +945,14 @@ export class DatabaseStorage implements IStorage {
       const gone = await tx
         .delete(assignments)
         .where(and(eq(assignments.organizationId, orgId), inArray(assignments.patientId, ids)))
-        .returning({ id: assignments.id });
+        .returning();
+      // Keep what became of each request (ids and times only) for trends.
+      if (gone.length) {
+        await tx
+          .insert(assignmentFacts)
+          .values(gone.map((a) => ({ organizationId: orgId, assignmentId: a.id, hospitalistId: a.hospitalistId, status: a.status, via: a.via, createdAt: a.createdAt, resolvedAt: a.resolvedAt })))
+          .onConflictDoNothing();
+      }
       const consultsGone = await tx
         .delete(patientConsults)
         .where(and(eq(patientConsults.organizationId, orgId), inArray(patientConsults.patientId, ids)))
@@ -1706,6 +1714,11 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /** All consult rows for an org (analytics). */
+  /** Outcomes of requests whose patient has been removed, since a moment. */
+  async listAssignmentFacts(orgId: number, since: Date) {
+    return this.db.select().from(assignmentFacts).where(and(eq(assignmentFacts.organizationId, orgId), gte(assignmentFacts.createdAt, since)));
+  }
+
   // ── hand-off notes (server/routes/handoffs.ts) ───────────────────────────
   async listHandoffs(orgId: number) {
     return this.db.select().from(patientHandoffs).where(eq(patientHandoffs.organizationId, orgId)).orderBy(desc(patientHandoffs.id));
@@ -2796,6 +2809,7 @@ export class DatabaseStorage implements IStorage {
       await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
       await tx.delete(reportDefinitions).where(eq(reportDefinitions.organizationId, id));
       await tx.delete(patientHandoffs).where(eq(patientHandoffs.organizationId, id));
+      await tx.delete(assignmentFacts).where(eq(assignmentFacts.organizationId, id));
       await tx.delete(codeActivationMembers).where(eq(codeActivationMembers.organizationId, id));
       await tx.delete(codeActivationSteps).where(eq(codeActivationSteps.organizationId, id));
       await tx.delete(codeActivations).where(eq(codeActivations.organizationId, id));

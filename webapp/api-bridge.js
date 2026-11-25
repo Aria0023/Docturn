@@ -6489,6 +6489,18 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // A staff member's job title (server/routes/accounts.ts). The list is re-read.
+  DT.actions.setUserJobTitle = function (id, name, title) {
+    return apiWithBody("POST", "/api/accounts/" + Number(id) + "/job-title", { jobTitle: String(title || "").trim().slice(0, 60) }).then(function () {
+      DT.set(function (s) { s.__toast = { tone: "accepted", title: "Job title saved", msg: name }; return s; });
+      if (DT.actions.loadAccounts) DT.actions.loadAccounts();
+      return true;
+    }).catch(function () {
+      DT.set(function (s) { s.__toast = { tone: "rejected", title: "Couldn't save the job title", msg: "The server did not accept that. Nothing changed." }; return s; });
+      return false;
+    });
+  };
+
   // ── Hand-off notes (clinical text: handed to the screen, never stored) ────
   var handoffSubs = [];
   DT.actions.handoffs = {
@@ -6562,6 +6574,7 @@
   // never put in the store, so they are never persisted on this device.
   DT.actions.reporting = {
     catalog: function () { return get("/api/reporting/catalog"); },
+    review: function (hours) { return apiWithBody("GET", "/api/reports/review?hours=" + Number(hours)); },
     list: function () { return get("/api/reporting/reports").then(function (r) { return (r && r.reports) || []; }); },
     run: function (target) { return apiWithBody("POST", "/api/reporting/run", target); },
     save: function (id, input) {

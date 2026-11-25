@@ -216,6 +216,76 @@ function ReportBuilder({ catalog, initial, onClose, onSaved, onPreview }) {
   );
 }
 
+/* Shift review / trends (directors): the server's counts for a window —
+   requests by outcome, by day, by time of day and by hospitalist, plus codes.
+   Numbers and staff names only; no patient. */
+function ReviewView({ hours }) {
+  const [data, setData] = React.useState(null);
+  const [failed, setFailed] = React.useState(false);
+  const load = () => { setData(null); setFailed(false); window.DT.actions.reporting.review(hours).then(setData).catch(() => setFailed(true)); };
+  React.useEffect(load, [hours]);
+  const th = { textAlign: "left", padding: "8px 12px", fontSize: 11.5, fontWeight: 700, color: "var(--muted-foreground)", textTransform: "uppercase", letterSpacing: ".04em", whiteSpace: "nowrap", borderBottom: "1px solid var(--border)" };
+  const td = { padding: "8px 12px", fontSize: 13, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" };
+  const min = (v) => (v == null ? "—" : v + " min");
+  if (failed) return <Card style={{ padding: 32, textAlign: "center" }}><div data-review-error role="alert" style={{ fontSize: 14, fontWeight: 700 }}>The review could not be loaded from the server.</div><div style={{ marginTop: 12 }}><Button variant="outline" icon="refresh-cw" onClick={load}>Try again</Button></div></Card>;
+  if (!data) return <Card style={{ padding: 36, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>Loading…</Card>;
+  const t = data.totals;
+  const tile = (key, label, value, sub) => (
+    <Card style={{ padding: "12px 16px", flex: "1 1 130px", minWidth: 120 }}>
+      <div style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>{label}</div>
+      <div data-review-tile={key} style={{ fontSize: 24, fontWeight: 800, marginTop: 2 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>{sub}</div>}
+    </Card>
+  );
+  const table = (key, first, rows, label) => (
+    <Card style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
+      <div style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, borderBottom: "1px solid var(--border)" }}>{label}</div>
+      {rows.length === 0 ? <div style={{ padding: 20, fontSize: 13, color: "var(--muted-foreground)" }}>No requests in this period.</div> : (
+        <div style={{ overflowX: "auto" }}>
+          <table data-review-table={key} style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>{[first, "Requests", "Accepted", "Declined", "Unanswered", "Waiting", "Median to accept", "Slowest"].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+            <tbody>{rows.map((r, i) => (
+              <tr key={i} data-review-row>
+                <td style={Object.assign({}, td, { fontWeight: 600 })}>{r.label}</td>
+                <td style={td}>{r.requests}</td><td style={td}>{r.accepted}</td>
+                <td style={Object.assign({}, td, r.declined ? { color: "var(--destructive)", fontWeight: 700 } : null)}>{r.declined}</td>
+                <td style={Object.assign({}, td, r.unanswered ? { color: "var(--destructive)", fontWeight: 700 } : null)}>{r.unanswered}</td>
+                <td style={td}>{r.waiting}</td><td style={td}>{min(r.medianAcceptMin)}</td><td style={td}>{min(r.slowestAcceptMin)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+  const stamp = (x) => (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(Date.parse(x)) : new Date(x).toLocaleString());
+  return (
+    <div data-report-print data-review={hours}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <h3 data-review-title style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>{hours <= 24 ? "Last " + hours + " hours" : "Last " + Math.round(hours / 24) + " days"}</h3>
+        <span style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{stamp(data.from)} to {stamp(data.to)} · {data.timezone}</span>
+        <span className="dt-no-print" style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <Button size="sm" variant="outline" icon="refresh-cw" onClick={load}>Refresh</Button>
+          <Button size="sm" variant="outline" icon="printer" onClick={() => { document.body.classList.add("dt-print-report"); const done = () => { document.body.classList.remove("dt-print-report"); window.removeEventListener("afterprint", done); }; window.addEventListener("afterprint", done); window.print(); }}>Print</Button>
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+        {tile("requests", "Admission requests", t.requests)}
+        {tile("accepted", "Accepted", t.accepted, t.requests ? Math.round((t.accepted / t.requests) * 100) + "% of requests" : "")}
+        {tile("declined", "Declined", t.declined)}
+        {tile("unanswered", "Unanswered", t.unanswered, "lapsed with no reply")}
+        {tile("median", "Median to accept", min(t.medianAcceptMin), t.slowestAcceptMin != null ? "slowest " + t.slowestAcceptMin + " min" : "")}
+        {tile("stuck", "Stuck-admission alerts", data.stuckAlerts)}
+        {tile("codes", "Codes called", data.codes.called, data.codes.called ? data.codes.byProtocol.map((c) => c.count + " " + c.protocol).join(", ") : "")}
+      </div>
+      {table("hospitalist", "Hospitalist", data.byHospitalist.map((r) => Object.assign({ label: r.hospitalist }, r)), "By hospitalist")}
+      {table("time", "Time of day", data.byTimeOfDay.map((r) => Object.assign({ label: r.block }, r)), "By time of day")}
+      {hours > 24 && table("day", "Day", data.byDay.map((r) => Object.assign({ label: r.day }, r)), "By day")}
+      <div style={{ fontSize: 12, color: "var(--muted-foreground)", lineHeight: 1.45 }}>{data.note}</div>
+    </div>
+  );
+}
+
 function Reports() {
   const act = window.DT.actions.reporting;
   const mobile = useIsMobile();
@@ -295,10 +365,21 @@ function Reports() {
             </button>
           );
         })}
+        {catalog.canShare && [[12, "Shift review"], [720, "Trends"]].map(([h, label]) => {
+          const on = current && current.review === h;
+          return (
+            <button key={h} type="button" data-report-tab={"review:" + h} aria-pressed={on} onClick={() => { seq.current++; setCurrent({ review: h }); setView({ state: "idle" }); }}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", minHeight: 36, borderRadius: 999, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600,
+                border: "1px solid " + (on ? "var(--primary)" : "var(--border)"), background: on ? "var(--status-active-bg)" : "var(--card)", color: on ? "var(--primary-ink)" : "var(--foreground)" }}>
+              <Icon name={h === 12 ? "sunrise" : "trending-up"} size={13} />{label}
+            </button>
+          );
+        })}
         <Button size="sm" icon="plus" onClick={() => setBuilder({ initial: null })} style={{ marginLeft: mobile ? 0 : "auto" }}>New report</Button>
       </div>
 
-      <div data-report-print>
+      {current && current.review ? <ReviewView hours={current.review} /> : null}
+      <div data-report-print style={current && current.review ? { display: "none" } : undefined}>
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 10, rowGap: 10, padding: "14px 18px", borderBottom: "1px solid var(--border)" }}>
             <Icon name="table-2" size={17} color="var(--primary-ink)" />

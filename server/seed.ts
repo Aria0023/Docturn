@@ -379,6 +379,67 @@ export async function ensureDemoStaff(storage: DatabaseStorage, orgId: number): 
   return true;
 }
 
+/**
+ * A believable board for the demo: each hospitalist's seeded census number
+ * gets that many accepted patients behind it, so Team census, the Patient
+ * board, hand-off and the trends have something real to show. Entirely
+ * invented people. Added once at server start on synthetic instances only
+ * (never by seed(), which the test suite counts rows against); these
+ * patients are kept by auto-clean so the demo does not empty overnight.
+ */
+const DEMO_GIVEN = ["Ada", "Ben", "Cora", "Dev", "Elena", "Felix", "Gia", "Hugo", "Iris", "Jonah", "Kira", "Leo", "Mina", "Noel", "Opal", "Pablo", "Quinn", "Rosa", "Seth", "Tess"];
+const DEMO_FAMILY = ["Abbott", "Barlow", "Castell", "Dunmore", "Ellery", "Fenwick", "Garrow", "Hollis", "Ingram", "Jarvis", "Kessler", "Lindqvist", "Marlowe", "Nakata", "Orsini", "Pruett", "Quill", "Rennick", "Sorrell", "Tamsin"];
+const DEMO_WHY: Array<[string, string, number]> = [
+  ["Community-acquired pneumonia, on oxygen", "Pulmonology", 3], ["CHF exacerbation, diuresing", "Cardiology", 3], ["Cellulitis of the left leg", "General", 4],
+  ["Upper GI bleed, stable after transfusion", "Gastroenterology", 2], ["COPD exacerbation", "Pulmonology", 3], ["Urosepsis, improving", "General", 2],
+  ["Atrial fibrillation with rapid rate", "Cardiology", 3], ["Diabetic ketoacidosis, gap closed", "Endocrinology", 2], ["Acute kidney injury", "Nephrology", 3],
+  ["Hip fracture, awaiting surgery", "Orthopedics", 3], ["Syncope, telemetry", "Cardiology", 4], ["Small bowel obstruction, NG tube", "Surgery", 3],
+];
+export async function ensureDemoBoard(storage: DatabaseStorage, orgId: number): Promise<number> {
+  if (!isSyntheticDataMode()) return 0;
+  if ((await storage.getOrgSetting(orgId, "demoBoardSeeded")) === true) return 0;
+  const [hosps, erDoc, existing] = await Promise.all([storage.listHospitalists(orgId), storage.getUserByUsername(orgId, "er.doc"), storage.listPatients(orgId)]);
+  // Only onto a board that still looks as seeded; a demo someone has been using is left alone.
+  if (existing.length > 3 || !erDoc) {
+    await storage.setOrgSetting(orgId, "demoBoardSeeded", true, null as unknown as number);
+    return 0;
+  }
+  let n = 0;
+  const now = Date.now();
+  for (const h of hosps) {
+    for (let i = 0; i < Math.min(h.currentPatientCount, 9); i++, n++) {
+      const given = DEMO_GIVEN[(n * 7 + 3) % DEMO_GIVEN.length]!, family = DEMO_FAMILY[(n * 11 + 5) % DEMO_FAMILY.length]!;
+      const [why, specialty, acuity] = DEMO_WHY[n % DEMO_WHY.length]!;
+      const sentAt = new Date(now - (2 + ((n * 37) % 20)) * 3_600_000 - ((n * 13) % 50) * 60_000);
+      const patient = await storage.createPatient({
+        organizationId: orgId,
+        initials: given[0]! + family[0]!,
+        roomNumber: String(300 + ((n * 17) % 240)),
+        issueSummary: why,
+        specialty,
+        department: ["4 West", "5 West", "5 East", "6 North", "ICU step-down"][n % 5]!,
+        acuity,
+        status: "assigned",
+        erDoctorId: erDoc.id,
+        assignedHospitalistId: h.id,
+        fullName: `${given} ${family}`,
+        dateOfBirth: `${1938 + ((n * 5) % 55)}-${String(1 + ((n * 3) % 12)).padStart(2, "0")}-${String(1 + ((n * 7) % 28)).padStart(2, "0")}`,
+        mrn: "DEMO" + String(100200 + n * 37),
+        source: "demo",
+      });
+      const a = await storage.createAssignment({
+        organizationId: orgId, patientId: patient.id, hospitalistId: h.id, erDoctorId: erDoc.id, status: "accepted",
+        via: n % 4 === 0 ? "manual" : "round_robin", acceptedByUserId: h.userId, expiresAt: new Date(sentAt.getTime() + 15 * 60_000),
+      });
+      // Sent some hours ago, accepted a few minutes later.
+      await storage.updateAssignment(orgId, a.id, { createdAt: sentAt, resolvedAt: new Date(sentAt.getTime() + (2 + ((n * 5) % 9)) * 60_000) });
+      await storage.updatePatient(orgId, patient.id, { createdAt: new Date(sentAt.getTime() - 20 * 60_000) });
+    }
+  }
+  await storage.setOrgSetting(orgId, "demoBoardSeeded", true, null as unknown as number);
+  return n;
+}
+
 /** Create any missing demo accounts in an already-seeded org. Returns count added. */
 async function ensureDemoUsers(
   storage: DatabaseStorage,
