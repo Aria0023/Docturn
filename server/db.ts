@@ -305,6 +305,7 @@ ALTER TABLE patients ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manu
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_unit TEXT;
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_ready_at TIMESTAMP;
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS bed_ready_by INTEGER;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMP;
 CREATE INDEX IF NOT EXISTS patients_org_mrn_idx ON patients(organization_id, mrn);
 -- EHR identifier (MRN/CSN) for "Open in EHR" deep links; additive + nullable.
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS ehr_id TEXT;
@@ -972,6 +973,22 @@ CREATE TABLE IF NOT EXISTS user_presence (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_presence_instance_user_uniq ON user_presence(instance_id, user_id);
 CREATE INDEX IF NOT EXISTS user_presence_org_idx ON user_presence(organization_id, seen_at);
+
+-- Hand-off notes: clinical free text, removed with the patient. Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS patient_handoffs (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations(id),
+  patient_id INTEGER NOT NULL,
+  from_user_id INTEGER NOT NULL,
+  to_user_id INTEGER,
+  severity TEXT NOT NULL DEFAULT 'stable',
+  summary TEXT NOT NULL DEFAULT '',
+  todo TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  acknowledged_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS patient_handoffs_org_patient_idx ON patient_handoffs(organization_id, patient_id);
+CREATE INDEX IF NOT EXISTS patient_handoffs_to_idx ON patient_handoffs(organization_id, to_user_id);
 
 -- Code protocols and their activations. User ids have no FK on purpose.
 -- Mirrors shared/schema.ts.

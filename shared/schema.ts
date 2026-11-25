@@ -225,6 +225,9 @@ export const patients = pgTable("patients", {
   bedUnit: text("bed_unit"),
   bedReadyAt: timestamp("bed_ready_at"),
   bedReadyBy: integer("bed_ready_by"),
+  // When the directors were alerted that this admission is stuck (declined
+  // or unanswered twice, or nobody left to ask). Once per patient.
+  escalatedAt: timestamp("escalated_at"),
 });
 
 export const assignments = pgTable("assignments", {
@@ -1629,6 +1632,30 @@ export const userPresence = pgTable(
   },
   (t) => ({ pk: uniqueIndex("user_presence_instance_user_uniq").on(t.instanceId, t.userId) }),
 );
+
+/**
+ * Hand-off notes (server/routes/handoffs.ts): what the next physician needs
+ * to know about one patient. A new row each time the note is saved; the
+ * newest is the note. Clinical free text — PHI: removed with the patient
+ * (storage.purgePatientRows) and with the tenant, never in a notification.
+ * No foreign keys on the user columns. Mirrored in server/db.ts.
+ */
+export const HANDOFF_SEVERITY = ["stable", "watcher", "unstable"] as const;
+export const patientHandoffs = pgTable("patient_handoffs", {
+  id: serial("id").primaryKey(),
+  organizationId: integer("organization_id")
+    .notNull()
+    .references(() => organizations.id),
+  patientId: integer("patient_id").notNull(),
+  fromUserId: integer("from_user_id").notNull(),
+  toUserId: integer("to_user_id"),
+  severity: text("severity", { enum: HANDOFF_SEVERITY }).notNull().default("stable"),
+  summary: text("summary").notNull().default(""),
+  todo: text("todo").notNull().default(""),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  acknowledgedAt: timestamp("acknowledged_at"),
+});
+export type PatientHandoff = typeof patientHandoffs.$inferSelect;
 
 /* ── Code protocols (server/services/codes.ts) ────────────────────────────
  * A PROTOCOL is the hospital's standing plan for one kind of emergency (Code

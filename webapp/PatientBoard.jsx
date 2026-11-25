@@ -219,6 +219,7 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
             {p.synced && <Icon name="cloud" size={13} color="var(--status-accepted)" title="Synced from EHR" />}
             {p.fromEhr && <Badge variant="outline">From EHR</Badge>}
             <BedReadyChip p={p} />
+            {p.escalatedAt && p.status !== "assigned" && <Badge status="rejected">Needs a hospitalist</Badge>}
           </div>
           <PatientIdentity p={p} />
           <div style={{ fontSize: 13, color: "var(--muted-foreground)", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>

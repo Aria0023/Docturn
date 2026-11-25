@@ -519,6 +519,7 @@
         initials: r.patient.initials,
         fullName: r.patient.fullName || "", dob: r.patient.dateOfBirth || "", mrn: r.patient.mrn || "",
         fromEhr: r.patient.source === "adt",
+        escalatedAt: r.patient.escalatedAt ? Date.parse(r.patient.escalatedAt) : null,
         bedUnit: r.patient.bedUnit || "", bedReadyAt: r.patient.bedReadyAt ? Date.parse(r.patient.bedReadyAt) : null, bedReadyBy: r.patient.bedReadyBy || "",
         room: r.patient.room || "—",
         dept: r.patient.department || "MED",
@@ -1791,6 +1792,15 @@
         }
         // Code protocols: frames carry ids, the protocol's name and the
         // location only. The board itself is always re-read from the server.
+        else if (ev.type === "HANDOFF_RECEIVED") {
+          handoffSubs.slice().forEach(function (fn) { try { fn(); } catch (e) {} });
+          DT.set(function (s) { s.__toast = { tone: "sent", title: "Hand-off notes waiting", msg: "A colleague handed " + (ev.count > 1 ? ev.count + " patients" : "a patient") + " to you. Open Hand-off to read and acknowledge." }; return s; });
+        }
+        else if (ev.type === "HANDOFF_ACKED") { handoffSubs.slice().forEach(function (fn) { try { fn(); } catch (e) {} }); }
+        else if (ev.type === "ADMISSION_ESCALATED") {
+          DT.set(function (s) { s.__toast = { tone: "rejected", title: "An admission needs a hospitalist", msg: "It has been declined or left unanswered. Open the Patient board to send it to someone." }; return s; });
+          rehydrateSoon();
+        }
         else if (ev.type === "CODE_CHANGED") { codesRefresh(); }
         else if (ev.type === "CODE_ALERT") {
           codesRefresh();
@@ -6479,6 +6489,15 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // ── Hand-off notes (clinical text: handed to the screen, never stored) ────
+  var handoffSubs = [];
+  DT.actions.handoffs = {
+    load: function () { return apiWithBody("GET", "/api/handoffs"); },
+    save: function (patientId, note) { return apiWithBody("PUT", "/api/handoffs/" + Number(patientId), note); },
+    ack: function (id) { return apiWithBody("POST", "/api/handoffs/" + Number(id) + "/ack"); },
+    subscribe: function (fn) { handoffSubs.push(fn); return function () { handoffSubs = handoffSubs.filter(function (x) { return x !== fn; }); }; },
+  };
+
   // ── Bed ready, and the EHR admission feed ──────────────────────────────────
   DT.actions.setBedReady = function (patientId, ready, unit) {
     return apiWithBody("POST", "/api/patients/" + Number(patientId) + "/bed", { ready: !!ready, unit: String(unit || "") }).then(function (r) { rehydrateSoon(); return r; });

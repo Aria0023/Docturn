@@ -73,6 +73,7 @@ import {
   purchaseRequests,
   reportDefinitions,
   userPresence,
+  patientHandoffs,
   codeProtocols,
   codeActivations,
   codeActivationMembers,
@@ -121,7 +122,7 @@ import {
 } from "@shared/schema";
 
 /** Insert shape for a patient — the EHR id (MRN/CSN) is optional. */
-type PatientOptional = "ehrId" | "fullName" | "dateOfBirth" | "mrn" | "source" | "bedUnit" | "bedReadyAt" | "bedReadyBy";
+type PatientOptional = "ehrId" | "fullName" | "dateOfBirth" | "mrn" | "source" | "bedUnit" | "bedReadyAt" | "bedReadyBy" | "escalatedAt";
 export type NewPatient = Omit<Patient, "id" | "createdAt" | PatientOptional> & Partial<Pick<Patient, PatientOptional>>;
 
 /** The executor handed to a `db.transaction()` callback. */
@@ -933,6 +934,8 @@ export class DatabaseStorage implements IStorage {
         await tx.delete(conversationDone).where(inArray(conversationDone.conversationId, convoIds));
         await tx.delete(conversations).where(inArray(conversations.id, convoIds));
       }
+      // Hand-off notes are about the patient: they go with it.
+      await tx.delete(patientHandoffs).where(and(eq(patientHandoffs.organizationId, orgId), inArray(patientHandoffs.patientId, ids)));
       const accepted = await tx
         .select({ hospitalistId: assignments.hospitalistId })
         .from(assignments)
@@ -1703,6 +1706,33 @@ export class DatabaseStorage implements IStorage {
       );
   }
   /** All consult rows for an org (analytics). */
+  // ── hand-off notes (server/routes/handoffs.ts) ───────────────────────────
+  async listHandoffs(orgId: number) {
+    return this.db.select().from(patientHandoffs).where(eq(patientHandoffs.organizationId, orgId)).orderBy(desc(patientHandoffs.id));
+  }
+  async createHandoff(row: typeof patientHandoffs.$inferInsert) {
+    const [saved] = await this.db.insert(patientHandoffs).values(row).returning();
+    return saved!;
+  }
+  /** Address the given notes to a receiver (only notes not yet addressed to anyone). */
+  async addressHandoffs(orgId: number, ids: number[], toUserId: number) {
+    if (!ids.length) return [];
+    return this.db
+      .update(patientHandoffs)
+      .set({ toUserId })
+      .where(and(eq(patientHandoffs.organizationId, orgId), inArray(patientHandoffs.id, ids), isNull(patientHandoffs.toUserId)))
+      .returning({ id: patientHandoffs.id });
+  }
+  /** The receiver's acknowledgement; first one wins. */
+  async ackHandoff(orgId: number, id: number, userId: number, at: Date) {
+    const [row] = await this.db
+      .update(patientHandoffs)
+      .set({ acknowledgedAt: at })
+      .where(and(eq(patientHandoffs.organizationId, orgId), eq(patientHandoffs.id, id), eq(patientHandoffs.toUserId, userId), isNull(patientHandoffs.acknowledgedAt)))
+      .returning();
+    return row;
+  }
+
   // ── shared presence (server/services/presence.ts) ────────────────────────
   async replacePresence(instanceId: string, entries: Array<{ userId: number; organizationId: number }>, now: Date, dropOlderThan: Date) {
     await this.db.transaction(async (tx) => {
@@ -2765,6 +2795,7 @@ export class DatabaseStorage implements IStorage {
       }
       await tx.delete(broadcastAcknowledgments).where(eq(broadcastAcknowledgments.organizationId, id));
       await tx.delete(reportDefinitions).where(eq(reportDefinitions.organizationId, id));
+      await tx.delete(patientHandoffs).where(eq(patientHandoffs.organizationId, id));
       await tx.delete(codeActivationMembers).where(eq(codeActivationMembers.organizationId, id));
       await tx.delete(codeActivationSteps).where(eq(codeActivationSteps.organizationId, id));
       await tx.delete(codeActivations).where(eq(codeActivations.organizationId, id));

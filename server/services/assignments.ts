@@ -1,7 +1,8 @@
 import type { Assignment, Hospitalist } from "@shared/schema";
 import type { DatabaseStorage } from "../storage.js";
 import { appendAudit } from "../audit.js";
-import { broadcastAssignmentChange, notifyAssignment } from "./notifications.js";
+import { isModuleEnabled } from "../modules.js";
+import { broadcastAssignmentChange, notificationDeps, notifyAssignment } from "./notifications.js";
 import { selectNext } from "./rotation.js";
 
 // Assignment routing always uses the full storage surface (unit fan-out etc.).
@@ -260,8 +261,42 @@ export async function rejectAssignment(
       assignedHospitalistId: null,
     });
   }
+  await escalateIfStuck(storage, orgId, a.patientId, next).catch((e) => console.error("[routing] escalation failed", (e as Error).message));
   broadcastAssignmentChange(orgId);
   return { rejected: rejected!, reroute: next };
+}
+
+/** How many declined or unanswered requests make an admission "stuck". */
+export const STUCK_AFTER = 2;
+
+/**
+ * An admission nobody is taking: declined or left unanswered STUCK_AFTER
+ * times, or just declined / lapsed with nobody else being asked. The
+ * directors (hospitalist and ER) are alerted ONCE per patient — live and by
+ * push, with no patient detail — and the board says they were. Returns
+ * whether it alerted.
+ */
+export async function escalateIfStuck(storage: IStorage, orgId: number, patientId: number, reroute: Assignment | null): Promise<boolean> {
+  if (!(await isModuleEnabled(orgId, "routing.escalation"))) return false;
+  const patient = await storage.getPatient(orgId, patientId);
+  if (!patient || patient.escalatedAt || patient.status === "discharged") return false;
+  const mine = (await storage.listAssignments(orgId)).filter((x) => x.patientId === patientId);
+  if (mine.some((x) => x.status === "accepted")) return false;
+  const failed = mine.filter((x) => x.status === "rejected" || x.status === "expired").length;
+  if (failed < STUCK_AFTER && reroute) return false;
+  if (failed === 0) return false;
+  await storage.updatePatient(orgId, patientId, { escalatedAt: new Date() });
+  const directors = (await storage.listUsers(orgId)).filter((u) => !u.disabledAt && (u.role === "director" || u.role === "er_director")).map((u) => u.id);
+  const { ws, push } = notificationDeps();
+  try {
+    ws.sendToUsers(directors, { type: "ADMISSION_ESCALATED", patientId });
+  } catch { /* the board is the record */ }
+  for (const id of directors) void push.send(id, { title: "An admission needs a hospitalist" }).catch(() => {});
+  await appendAudit({
+    organizationId: orgId, userId: null, action: "assignment.escalated", resourceType: "patient", resourceId: patientId,
+    details: { failedRequests: failed, stillBeingAsked: !!reroute, directorsAlerted: directors.length }, riskLevel: "medium",
+  });
+  return true;
 }
 
 /** Director cancels → cancelled; decrement census if it had been accepted. */
@@ -451,6 +486,7 @@ export async function runExpirySweep(
     });
     const next = await rerouteToNext(storage, a.organizationId, a);
     if (next) rerouted++;
+    await escalateIfStuck(storage, a.organizationId, a.patientId, next).catch((e) => console.error("[routing] escalation failed", (e as Error).message));
    } catch (err) {
     // One failing row never stops the rest; the patient shows as unrouted on
     // the board for the ER physician / director to re-send.

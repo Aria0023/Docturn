@@ -62,6 +62,8 @@ export const MODULES: readonly ModuleDef[] = [
   { id: "schedule.amion",         label: "Amion schedule sync",            group: "Schedule",  default: true,  blurb: "Automated pull of the Amion on-call grid — the hospital's own OCS feed (Settings → Integrations) or the operator's AMION_OCS_URL." },
   { id: "schedule.epic",          label: "Epic on-call (FHIR)",            group: "Schedule",  default: false, blurb: "On-call from Epic via FHIR R4 — the hospital's own Epic backend-app credentials (Settings → Integrations) or the operator's EPIC_* env." },
 
+  { id: "routing.escalation",     label: "Stuck-admission alert",          group: "Routing",   default: true,  blurb: "When an admission has been declined or left unanswered twice, or nobody is left to ask, the directors are alerted once and the tracker says so." },
+  { id: "shift.handoffNotes",     label: "Hand-off notes",                 group: "Schedule",  default: true,  blurb: "A short note per patient for the next physician: how sick, the summary, what to watch. Ending a shift with a covering provider addresses the notes to them; they acknowledge receipt." },
   { id: "shift.handoff",          label: "End shift / Start shift",        group: "Schedule",  default: true,  blurb: "One action ends a shift: off rotation, a covering provider (required while requests are pending), optional away message / DND, audited. Accepted patients are never re-routed." },
 
   // ---- EHR

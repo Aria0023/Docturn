@@ -93,6 +93,7 @@ function StaffDashboard({ board, boardLoaded, boardError, onMessage, myUserId })
           return (
             <div key={r.id} data-staff-open={s.key} style={rowStyle}>
               <Badge status={s.tone}>{s.label}</Badge>
+              {r.escalatedAt && <span data-staff-escalated style={{ padding: "2px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: "var(--status-rejected-bg)", color: "var(--status-rejected-fg)", whiteSpace: "nowrap" }}>Directors alerted</span>}
               {patientCell(r)}
               <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 13 }}>{s.text}</div>
               {to && to.userId !== myUserId && onMessage && <Button size="sm" variant="outline" icon="message-square" onClick={() => onMessage({ userId: to.userId, id: to.userId, name: to.name })}>Message</Button>}

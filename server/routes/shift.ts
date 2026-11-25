@@ -1,3 +1,4 @@
+import { addressHandoffsOnShiftEnd } from "./handoffs.js";
 import type { Express } from "express";
 import { z } from "zod";
 import { attributedAuditRow } from "../audit.js";
@@ -152,10 +153,12 @@ export function registerShiftRoutes(app: Express) {
       for (const a of result.handedOff) await notifyAssignment(a, targets);
     }
     for (const id of result.released) acknowledgeAssignment(id);
+    // Hand-off notes not yet addressed to anyone go to the covering provider.
+    const notesHandedOver = coveringId != null ? await addressHandoffsOnShiftEnd(orgId, me, coveringId).catch(() => 0) : 0;
     broadcastRotationChange(orgId);
     if (result.handedOff.length) broadcastAssignmentChange(orgId);
     const after = (await shiftState(orgId, me.id)).view;
-    res.json({ ...after, handedOff: result.handedOff.length, acceptedKept: result.acceptedKept });
+    res.json({ ...after, handedOff: result.handedOff.length, acceptedKept: result.acceptedKept, notesHandedOver });
   });
 
   app.post("/api/shift/start", requireAuth, requireRole(...ROLES), async (req, res) => {

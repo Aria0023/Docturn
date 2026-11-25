@@ -240,6 +240,7 @@
 <script type="text/babel" src="/ScheduleSync.jsx"></script>
 <script type="text/babel" src="/OnCallBoard.jsx"></script>
 <script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/Handoffs.jsx"></script>
 <script type="text/babel" src="/StaffDashboard.jsx"></script>
 <script type="text/babel" src="/Codes.jsx"></script>
 <script type="text/babel" src="/Reports.jsx"></script>
@@ -295,6 +296,7 @@ const NAV = {
   hospitalist: [
     { id: "dashboard", label: "Dashboard", icon: "layout-dashboard" },
     { id: "history",   label: "History", icon: "history" },
+    { id: "handoff",   label: "Hand-off", icon: "arrow-right-left" },
     { id: "codes",     label: "Codes", icon: "siren" },
     { id: "reports",   label: "Reports", icon: "table-2" },
     { id: "oncall",    label: "On call", icon: "phone-call" },
@@ -383,7 +385,7 @@ const NAV = {
 // the signed-in org is hidden; the server enforces the same switch (404).
 const NAV_MODULE = {
   consult: "routing.consults", broadcasts: "broadcasts", oncall: "oncall.board",
-  admissions: "routing.assignments", history: "routing.assignments", reports: "ops.reports", codes: "codes.protocols",
+  admissions: "routing.assignments", history: "routing.assignments", reports: "ops.reports", codes: "codes.protocols", handoff: "shift.handoffNotes",
   appearance: "platform.appearance",
 };
 // Appearance is the one screen two modules share: the organization's branding
@@ -401,6 +403,7 @@ const TOP = {
   admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
   reports:    ["Reports", "Team census, pending admits and your own saved reports"],
   codes:      ["Codes", "Call a code, see who has answered, and track each step"],
+  handoff:    ["Hand-off", "What the next physician needs to know about each of your patients"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
   messages:   ["Secure messaging", "Direct, group and emergency broadcast"],
@@ -897,6 +900,7 @@ function App() {
   else if (nav === "admissions") screen = <AdmissionsLog admissions={st.admissions} resetAt={st.admissionsResetAt} info={st.admissionsInfo} onPurge={(role === "director" || role === "er_director" || role === "developer") ? a.purgeData : undefined} />;
   else if (nav === "reports") screen = <Reports />;
   else if (nav === "codes") screen = <Codes />;
+  else if (nav === "handoff") screen = <Handoffs />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};

@@ -112,6 +112,7 @@ export function registerBoardRoutes(app: Express) {
             dateOfBirth: identityOn ? p.dateOfBirth : null,
             mrn: identityOn ? p.mrn : null,
             source: p.source,
+            escalatedAt: p.escalatedAt,
             bedUnit: p.bedUnit,
             bedReadyAt: p.bedReadyAt,
             bedReadyBy: p.bedReadyBy != null ? userById.get(p.bedReadyBy)?.displayName ?? null : null,
