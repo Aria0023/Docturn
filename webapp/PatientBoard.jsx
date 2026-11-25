@@ -58,7 +58,7 @@ function BoardReassign({ providers, onPick, label }) {
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", marginTop: 2, maxWidth: "100%" }}>
       <Icon name="repeat" size={11} color="var(--primary-ink)" style={{ position: "absolute", left: 8, pointerEvents: "none" }} />
-      <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
+      <select aria-label={label || "Reassign to another hospitalist"} value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
         style={{ appearance: "none", WebkitAppearance: "none", height: 26, width: "auto", maxWidth: "min(100%, 190px)", padding: "0 22px 0 24px", borderRadius: "var(--radius-md)",
           textOverflow: "ellipsis", border: "1px solid var(--border)", background: "var(--card)", fontSize: 11.5, fontWeight: 600, color: "var(--primary-ink)", fontFamily: "var(--font-sans)", cursor: "pointer" }}>
         <option value="">{label}</option>

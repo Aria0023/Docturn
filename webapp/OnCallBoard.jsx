@@ -149,7 +149,7 @@ function OcManualEditor({ slots, people, onAdd, onRemove, onUpdate }) {
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.7fr 1.4fr 1fr auto", gap: 8, alignItems: "center", marginBottom: 12 }}>
         <input value={slot} onChange={(e) => setSlot(e.target.value)} placeholder="Slot (e.g. Westside 1)" style={inp} />
         <input value={hours} onChange={(e) => setHours(e.target.value)} placeholder="Hours (7a-7p)" style={{ ...inp, fontFamily: "var(--font-mono, monospace)" }} />
-        <select value={who} onChange={(e) => setWho(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
+        <select aria-label="Provider" value={who} onChange={(e) => setWho(e.target.value)} style={{ ...inp, cursor: "pointer" }}>
           <option value="">Provider…</option>
           {sorted.map((p) => <option key={p.id} value={String(p.id)}>{p.name}</option>)}
         </select>

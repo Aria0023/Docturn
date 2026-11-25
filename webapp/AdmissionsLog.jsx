@@ -81,7 +81,7 @@ function AdmissionsLog({ admissions, resetAt, info, bare, onPurge }) {
         ) : log.length === 0 ? (
           <div data-adm-empty style={{ padding: 36, textAlign: "center", fontSize: 13, color: "var(--muted-foreground)" }}>No admissions on record.</div>
         ) : (
-          <div style={{ maxHeight: "62vh", overflowY: "auto" }}>
+          <div tabIndex={0} role="region" aria-label="Admissions log entries" style={{ maxHeight: "62vh", overflowY: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ position: "sticky", top: 0, background: "var(--card)" }}>

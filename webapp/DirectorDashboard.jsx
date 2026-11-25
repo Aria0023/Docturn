@@ -35,7 +35,7 @@ function Stepper({ label, value, onDec, onInc, onSet, min = 0, max = 50, who, mo
       <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", fontWeight: 500 }}>{label}</span>
       <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", background: "var(--card)", overflow: "hidden" }}>
         <button type="button" style={btn} onClick={onDec} onMouseEnter={(e) => e.currentTarget.style.background = "var(--secondary)"} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"} title={`Decrease ${label}`} aria-label={`Decrease ${label}${who ? " for " + who : ""}`}><Icon name="minus" size={13} /></button>
-        <input data-stepper={label.toLowerCase()} type="text" inputMode="numeric" pattern="[0-9]*" value={shown}
+        <input data-stepper={label.toLowerCase()} aria-label={label} type="text" inputMode="numeric" pattern="[0-9]*" value={shown}
           aria-label={`${label}${who ? " for " + who : ""} (${min}–${max})`} title={`Type a ${label.toLowerCase()} from ${min} to ${max}`}
           onFocus={(e) => { setDraft(String(value)); e.target.select(); }}
           onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
@@ -51,7 +51,7 @@ function Stepper({ label, value, onDec, onInc, onSet, min = 0, max = 50, who, mo
 function ShiftSelect({ shifts, value, onChange, mobile }) {
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
-      <select value={value} onChange={(e) => onChange(e.target.value)}
+      <select aria-label="Shift" value={value} onChange={(e) => onChange(e.target.value)}
         style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 28, maxWidth: "100%", padding: "0 24px 0 10px", borderRadius: "var(--radius-md)",
           border: "1px solid var(--border)", background: "var(--secondary)", fontSize: mobile ? 16 : 12, fontWeight: 600, color: "var(--foreground)",
           fontFamily: "var(--font-sans)", cursor: "pointer" }}>
@@ -351,7 +351,7 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
         <Icon name="layers" size={16} color="var(--primary-ink)" />
         <span style={{ fontSize: 13, fontWeight: 700 }}>Mass set daily census limit</span>
         <div style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", overflow: "hidden", background: "var(--card)" }}>
-          <input value={capInput} onChange={(e) => setCapInput(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric"
+          <input aria-label="Patient cap to set for everyone" value={capInput} onChange={(e) => setCapInput(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric"
             style={{ width: 52, height: 34, border: "none", outline: "none", textAlign: "center", fontSize: 14, fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFamily: "var(--font-sans)" }} />
         </div>
         <Button size="sm" variant="default" icon="check" onClick={() => { const n = parseInt(capInput, 10); if (n > 0) onSetAllCap(n); }}>Apply to all</Button>
@@ -361,8 +361,8 @@ function DirectorDashboard({ bare, providers, shifts, settings, onToggleWorking,
       {/* wraps on a phone: the three buttons keep their labels (they no
           longer shrink) and need ~378px, more than a 375-390px Card row */}
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8, marginLeft: "auto", minWidth: 0, maxWidth: "100%" }}>
-        <Button size="sm" variant="outline" icon="toggle-left" onClick={() => onBulkWorking(false)} style={allOff ? { opacity: .5 } : null}>All off shift</Button>
-        <Button size="sm" variant="outline" icon="toggle-right" onClick={() => onBulkWorking(true)} style={allOn ? { opacity: .5 } : null}>All on shift</Button>
+        <Button size="sm" variant="outline" icon="toggle-left" onClick={() => onBulkWorking(false)} disabled={allOff} title={allOff ? "Everyone is already off shift" : undefined}>All off shift</Button>
+        <Button size="sm" variant="outline" icon="toggle-right" onClick={() => onBulkWorking(true)} disabled={allOn} title={allOn ? "Everyone is already on shift" : undefined}>All on shift</Button>
         <Button size="sm" variant="default" icon="user-plus" onClick={() => setAdding(true)}>Add provider</Button>
       </div>
     </Card>

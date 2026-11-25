@@ -44,7 +44,7 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     link: { background: "transparent", color: "var(--primary-ink)", textDecoration: "underline", height: "auto", padding: 0 },
   };
   return (
-    <button type={type || "button"} onClick={disabled ? undefined : onClick} disabled={!!disabled} title={title} aria-label={ariaLabel || title}
+    <button type={type || "button"} onClick={disabled ? undefined : onClick} disabled={!!disabled} title={title} aria-label={ariaLabel || (children ? undefined : title)}
       onMouseEnter={(e) => { if (variant === "ghost" || variant === "secondary") e.currentTarget.style.background = "var(--secondary)"; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-md)"; if (variant === "outline") e.currentTarget.style.background = "var(--secondary)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = variants[variant].background; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
       style={{ ...base, ...sizes[size], ...variants[variant], ...style, ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}) }}>
@@ -455,7 +455,7 @@ function ConsultRoster({ details, onRespond, canAnswer, onRemove, compact }) {
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 9px", background: "color-mix(in srgb, " + c.color + " 16%, var(--card))" }}>
               <span style={{ width: 7, height: 7, borderRadius: 99, background: c.color, flex: "none" }} />
               <span style={{ fontSize: 12, fontWeight: 700, color: "var(--foreground)", minWidth: 0, overflowWrap: "anywhere" }}>{spec}</span>
-              <span style={{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap", fontSize: 11, color: "var(--muted-foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
+              <span style={{ marginLeft: "auto", flex: "none", whiteSpace: "nowrap", fontSize: 11, color: "var(--foreground)", fontWeight: 600 }}>{accepted}/{members.length} accepted</span>
             </div>
             {members.map((m, i) => {
               const ss = consultStatusStyle(m.status);

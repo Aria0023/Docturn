@@ -247,7 +247,7 @@ function EhrDeepLinkCard({ canEdit = true }) {
       <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10, alignItems: "end" }}>
         <div>
           <label style={{ display: "block", fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Vendor</label>
-          <select value={vendor} onChange={(e) => { setVendor(e.target.value); setDirty(true); }}
+          <select aria-label="Vendor" value={vendor} onChange={(e) => { setVendor(e.target.value); setDirty(true); }}
             style={{ height: 40, width: "100%", padding: "0 10px", border: "1px solid var(--input)", borderRadius: "var(--radius-md)", fontSize: 13.5, fontFamily: "inherit", background: "var(--card)", cursor: "pointer" }}>
             <option value="epic">Epic</option>
             <option value="cerner">Cerner</option>

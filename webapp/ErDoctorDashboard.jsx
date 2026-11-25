@@ -114,7 +114,7 @@ function ReassignSelect({ providers, onPick, mobile }) {
   return (
     <div style={{ position: "relative", display: "inline-flex", alignItems: "center", maxWidth: "100%" }}>
       <Icon name="repeat" size={13} color="var(--muted-foreground)" style={{ position: "absolute", left: 10, pointerEvents: "none" }} />
-      <select value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
+      <select aria-label="Reassign to another hospitalist" value="" onChange={(e) => { if (e.target.value) onPick(e.target.value); }}
         style={{ appearance: "none", WebkitAppearance: "none", height: mobile ? 44 : 32, maxWidth: "100%", minWidth: 0, padding: "0 26px 0 28px", borderRadius: "var(--radius-md)",
           border: "1px solid var(--border)", background: "var(--card)", fontSize: mobile ? 16 : 12.5, fontWeight: 600, color: "var(--foreground)",
           fontFamily: "var(--font-sans)", cursor: "pointer" }}>
@@ -387,7 +387,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
                   const e = window.ESI[n];
                   return (
                     <button key={n} type="button" onClick={() => setFields({ ...fields, acuity: n })}
-                      title={"ESI " + n + " · " + e.name} aria-label={"ESI " + n + " · " + e.name} aria-pressed={on}
+                      title={"ESI " + n + " · " + e.name} aria-pressed={on}
                       style={{ flex: 1, minWidth: mobile ? 0 : undefined, minHeight: mobile ? 44 : undefined, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: mobile ? "center" : undefined, gap: 2, padding: "7px 4px", borderRadius: "var(--radius-md)", cursor: "pointer", fontFamily: "var(--font-sans)",
                         border: `1px solid ${on ? e.dot : "var(--border)"}`, background: on ? e.bg : "var(--card)", color: on ? e.fg : "var(--muted-foreground)" }}>
                       <span style={{ fontSize: mobile ? 16 : 14, fontWeight: 800 }}>{n}</span>
@@ -527,7 +527,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
           </div>
 
           <div style={{ marginTop: 16 }}>
-            <Button full icon="send" onClick={doSend} style={{ opacity: canSend ? 1 : 0.5, pointerEvents: canSend ? "auto" : "none" }}>
+            <Button full icon="send" onClick={doSend} disabled={!canSend}>
               {(() => { const n = allConsults().length; return "Send assignment" + (n ? ` + ${n} consult${n > 1 ? "s" : ""}` : ""); })()}
             </Button>
             {!canSend && sendHint && <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 8, textAlign: "center" }}>{sendHint}</div>}

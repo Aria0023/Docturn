@@ -49,7 +49,7 @@ function IntSwitch({ on, disabled, busy, onChange, label }) {
 function IntButton({ children, icon, onClick, disabled, title, primary, danger, dataAttr }) {
   const props = dataAttr ? { [dataAttr]: "" } : {};
   return (
-    <button type="button" onClick={() => { if (!disabled) onClick(); }} disabled={disabled} title={title} aria-label={title || undefined} {...props}
+    <button type="button" onClick={() => { if (!disabled) onClick(); }} disabled={disabled} title={title} {...props}
       style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44, padding: "0 14px", borderRadius: "var(--radius-md)", fontSize: 13.5, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1, whiteSpace: "nowrap",
         border: primary ? "1px solid var(--primary)" : danger ? "1px solid var(--destructive)" : "1px solid var(--border)",
         background: primary ? "var(--primary)" : "var(--card)", color: primary ? "var(--primary-foreground)" : danger ? "var(--destructive)" : "var(--foreground)" }}>

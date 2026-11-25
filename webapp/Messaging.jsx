@@ -644,7 +644,7 @@ function Messaging() {
         <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h2 style={{ fontSize: 17, fontWeight: 700, margin: 0 }}>Messages</h2>
-            <Button size="icon" variant={composing ? "secondary" : "outline"} icon={composing ? "x" : "pen-square"} onClick={() => { const n = !composing; setComposing(n); if (!n) setForwarding(null); }} />
+            <Button size="icon" variant={composing ? "secondary" : "outline"} icon={composing ? "x" : "pen-square"} aria-label={composing ? "Close new message" : "New message"} title={composing ? "Close" : "New message"} onClick={() => { const n = !composing; setComposing(n); if (!n) setForwarding(null); }} />
           </div>
           <Field icon="search" placeholder="Search conversations…" value={q} onChange={setQ} />
           {doneOn && (
