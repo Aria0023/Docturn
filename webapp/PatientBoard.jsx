@@ -217,7 +217,10 @@ function BoardPatientCard({ p, i, providers, canEdit, onReassign, onUpdate, onRe
             {p.initials}
             {p.acuity ? <AcuityChip level={p.acuity} size="sm" /> : null}
             {p.synced && <Icon name="cloud" size={13} color="var(--status-accepted)" title="Synced from EHR" />}
+            {p.fromEhr && <Badge variant="outline">From EHR</Badge>}
+            <BedReadyChip p={p} />
           </div>
+          <PatientIdentity p={p} />
           <div style={{ fontSize: 13, color: "var(--muted-foreground)", marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
             Rm {canEdit ? <EditableText value={p.room} onSave={(v) => onUpdate(p.id, { room: v })} size={13} weight={400} color="var(--muted-foreground)" /> : p.room} · {p.dept}
           </div>

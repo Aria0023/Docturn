@@ -413,6 +413,7 @@
         onBehalfOf: obo,
         patientId: a.patientId,
         initials: p.initials || "??",
+        fullName: p.fullName || "", dob: p.dateOfBirth || "", mrn: p.mrn || "", bedUnit: p.bedUnit || "", bedReadyAt: p.bedReadyAt ? Date.parse(p.bedReadyAt) : null,
         room: p.roomNumber || "—",
         complaint: p.issueSummary || "",
         from: (er.displayName || "ER") + " (ER)",
@@ -428,7 +429,7 @@
       var p = patientsById[a.patientId] || {};
       // `at` drives the hospitalist dashboard's "this shift" filter — without it
       // a handed-off/reassigned patient would be filtered out and never show.
-      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [], consultDetails: (consultDetailByPid && consultDetailByPid[a.patientId]) || [],
+      return { id: "p" + a.id, patientId: a.patientId, at: a.createdAt ? new Date(a.createdAt).getTime() : Date.now(), initials: p.initials || "??", fullName: p.fullName || "", dob: p.dateOfBirth || "", mrn: p.mrn || "", bedUnit: p.bedUnit || "", bedReadyAt: p.bedReadyAt ? Date.parse(p.bedReadyAt) : null, room: p.roomNumber || "—", complaint: p.issueSummary || "", consultants: (consultByPid && consultByPid[a.patientId]) || [], consultDetails: (consultDetailByPid && consultDetailByPid[a.patientId]) || [],
         // Accepted for a care-team owner: on THEIR census, named here.
         onBehalfOf: a.onBehalfOf && a.onBehalfOf.userId != null ? { userId: a.onBehalfOf.userId, name: a.onBehalfOf.displayName || "your unit's attending" } : null };
     });
@@ -516,6 +517,9 @@
         assignmentId: r.assignmentId || null, // backend id, for director/ER reassign
         patientId: r.patient.id,
         initials: r.patient.initials,
+        fullName: r.patient.fullName || "", dob: r.patient.dateOfBirth || "", mrn: r.patient.mrn || "",
+        fromEhr: r.patient.source === "adt",
+        bedUnit: r.patient.bedUnit || "", bedReadyAt: r.patient.bedReadyAt ? Date.parse(r.patient.bedReadyAt) : null, bedReadyBy: r.patient.bedReadyBy || "",
         room: r.patient.room || "—",
         dept: r.patient.department || "MED",
         issue: r.patient.issue || "",
@@ -4065,6 +4069,10 @@
     api("POST", "/api/patients", {
       initials: fields.initials, roomNumber: fields.room, issueSummary: fields.complaint, specialty: fields.specialty || undefined,
       acuity: fields.acuity || undefined,
+      // Identity (module patients.identity): sent only when filled in.
+      fullName: String(fields.fullName || "").trim() || undefined,
+      dateOfBirth: fields.dob || undefined,
+      mrn: String(fields.mrn || "").trim() || undefined,
     }).then(function (p) {
       body.patientId = p.id;
       return api("POST", "/api/assignments", body);
@@ -6471,6 +6479,16 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // ── Bed ready, and the EHR admission feed ──────────────────────────────────
+  DT.actions.setBedReady = function (patientId, ready, unit) {
+    return apiWithBody("POST", "/api/patients/" + Number(patientId) + "/bed", { ready: !!ready, unit: String(unit || "") }).then(function (r) { rehydrateSoon(); return r; });
+  };
+  DT.actions.adtFeed = {
+    status: function () { return apiWithBody("GET", "/api/ehr/adt/token"); },
+    issue: function () { return apiWithBody("POST", "/api/ehr/adt/token"); },
+    revoke: function () { return apiWithBody("DELETE", "/api/ehr/adt/token"); },
+  };
+
   // ── Code protocols (module codes.protocols; server/routes/codes.ts) ────────
   // The board can name a patient, so it is kept here in memory for the
   // screens that subscribe — never in the store, never on the device — and it

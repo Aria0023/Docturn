@@ -191,7 +191,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
   // { engine: "openai" | "local" | "external" } once the server extracted.
   const [extracted, setExtracted] = React.useState(null);
   const [extracting, setExtracting] = React.useState(false);
-  const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 });
+  const [fields, setFields] = React.useState({ initials: "", room: "", complaint: "", specialty: "", acuity: 3, fullName: "", dob: "", mrn: "" });
   const [mode, setMode] = React.useState("quick"); // quick | manual
   const [manual, setManual] = React.useState(""); // selected provider id (empty until chosen)
   const [consults, setConsults] = React.useState([]);
@@ -224,7 +224,7 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
       toast({ tone: "rejected", title: "Couldn't extract", msg: (e && /network|fetch|connection/i.test(String(e.message))) ? "No connection — fill in the fields by hand." : "The server didn't extract anything — fill in the fields by hand." });
     }).then(() => setExtracting(false));
   };
-  const reset = () => { setNote(""); setExtracted(null); setConsults([]); setConsultMembers({}); setPersonConsults([]); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3 }); };
+  const reset = () => { setNote(""); setExtracted(null); setConsults([]); setConsultMembers({}); setPersonConsults([]); setFields({ initials: "", room: "", complaint: "", specialty: "", acuity: 3, fullName: "", dob: "", mrn: "" }); };
   const toggleConsult = (s) => setConsults((c) => {
     if (c.includes(s)) {
       setConsultMembers((cm) => { const n = Object.assign({}, cm); delete n[s]; return n; });
@@ -355,6 +355,19 @@ function IntakeRoutingPanel({ providers, onSend, consultConfig, midlevels, servi
               <Field label="Patient initials" icon="user" value={fields.initials} onChange={(v) => setFields({ ...fields, initials: v.toUpperCase().slice(0, 3) })} placeholder="e.g. JS" />
               <Field label="Room / location" icon="door-open" value={fields.room} onChange={(v) => setFields({ ...fields, room: v })} placeholder="e.g. 412, Hall, Bay A, Disaster" />
             </div>
+            {window.DT.moduleOn && window.DT.moduleOn("patients.identity") && (
+              <div data-intake-identity style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                <Field label="Patient name (optional)" icon="id-card" value={fields.fullName || ""} placeholder="First Last" inputProps={{ maxLength: 80, autoComplete: "off", "data-intake-name": true }}
+                  onChange={(v) => {
+                    // Fill the initials from the name until someone types their own.
+                    const parts = v.trim().split(/\s+/).filter(Boolean);
+                    const auto = parts.length >= 2 ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase() : "";
+                    setFields({ ...fields, fullName: v, initials: fields.initials && fields.initials !== fields.autoInitials ? fields.initials : auto || fields.initials, autoInitials: auto });
+                  }} />
+                <Field label="Date of birth" icon="calendar" type="date" value={fields.dob || ""} onChange={(v) => setFields({ ...fields, dob: v })} inputProps={{ "data-intake-dob": true }} />
+                <Field label="MRN" icon="hash" value={fields.mrn || ""} onChange={(v) => setFields({ ...fields, mrn: v.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 32) })} placeholder="From the EHR" inputProps={{ autoComplete: "off", "data-intake-mrn": true }} />
+              </div>
+            )}
             <Field label="Chief complaint" icon="clipboard-list" value={fields.complaint} onChange={(v) => setFields({ ...fields, complaint: v })} placeholder="Reason for admission" />
             {/* Triage / acuity (ESI 1–5) — sets urgency so multiple admissions
                 are prioritized. AI suggests; the physician confirms. */}

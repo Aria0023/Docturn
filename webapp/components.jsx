@@ -206,6 +206,24 @@ function Modal({ title, subtitle, icon, onClose, children, width = 460 }) {
   );
 }
 
+/* A patient's name, date of birth and MRN under their initials — shown only
+   when the server sent them (module patients.identity). Screen only: these
+   never go into a notification. */
+function PatientIdentity({ p, style }) {
+  if (!p || !(p.fullName || p.dob || p.mrn)) return null;
+  const dob = p.dob && /^\d{4}-\d{2}-\d{2}$/.test(p.dob) ? p.dob.slice(5, 7) + "/" + p.dob.slice(8, 10) + "/" + p.dob.slice(0, 4) : "";
+  return (
+    <div data-patient-identity style={Object.assign({ fontSize: 12.5, color: "var(--muted-foreground)", overflowWrap: "anywhere" }, style || {})}>
+      {[p.fullName, dob && "DOB " + dob, p.mrn && "MRN " + p.mrn].filter(Boolean).join(" · ")}
+    </div>
+  );
+}
+/* "Bed ready · 5 West" once the charge nurse has said so. */
+function BedReadyChip({ p }) {
+  if (!p || !p.bedReadyAt) return null;
+  return <span data-bed-ready style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: "var(--status-accepted-bg)", color: "var(--status-accepted-fg)", whiteSpace: "nowrap" }}><Icon name="bed" size={12} />Bed ready{p.bedUnit ? " · " + p.bedUnit : ""}</span>;
+}
+
 function EditableText({ value, onSave, placeholder, mono, size = 14, weight = 600, color = "var(--foreground)", multiline, width }) {
   const [editing, setEditing] = React.useState(false);
   const [v, setV] = React.useState(value);

@@ -389,4 +389,68 @@ function IntegrationsOverview() {
   );
 }
 
-Object.assign(window, { IntegrationsPanel, IntegrationsOverview, IntStatusBadge });
+/* EHR admission feed (module ehr.adtFeed). The hospital's interface engine
+   posts HL7 ADT messages here with a token a director generates. The token is
+   shown once; the server keeps only a hash. Counts and the last message time
+   are the server's. */
+function AdtFeedCard() {
+  const act = window.DT.actions.adtFeed;
+  const on = !window.DT.moduleOn || window.DT.moduleOn("ehr.adtFeed");
+  const [s, setS] = React.useState(null);
+  const [failed, setFailed] = React.useState(false);
+  const [token, setToken] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const load = () => act.status().then((r) => { setS(r); setFailed(false); }).catch(() => setFailed(true));
+  React.useEffect(() => { if (on) load(); }, [on]);
+  const when = (t) => (t ? (window.dtFmt && window.dtFmt.stamp ? window.dtFmt.stamp(Date.parse(t)) : new Date(t).toLocaleString()) : "never");
+  const issue = () => {
+    if (s && s.connected && !window.confirm("Generate a new token? The current one stops working at once, and the feed stops until the interface engine has the new one.")) return;
+    setBusy(true);
+    act.issue().then((r) => { setToken(r.token); load(); }).catch(() => setFailed(true)).then(() => setBusy(false));
+  };
+  const revoke = () => {
+    if (!window.confirm("Disconnect the admission feed? Messages from the EHR will be refused until a new token is generated.")) return;
+    setBusy(true);
+    act.revoke().then(() => { setToken(""); load(); }).catch(() => setFailed(true)).then(() => setBusy(false));
+  };
+  const url = window.location.origin + "/api/ehr/adt";
+  return (
+    <Card style={{ padding: 18, minWidth: 0, marginTop: 16 }}>
+      <div data-adt-card>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+          <Icon name="arrow-down-to-line" size={17} color="var(--primary-ink)" />
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>EHR admission feed</h3>
+          {on && s && <Badge status={s.connected ? "accepted" : "offline"}>{s.connected ? "Token active" : "Not connected"}</Badge>}
+        </div>
+        <div style={{ fontSize: 13, color: "var(--muted-foreground)", lineHeight: 1.5, marginBottom: 12 }}>
+          Your interface engine sends admit, transfer, update and discharge messages (HL7 v2 ADT) and DocTurn adds and updates patients from them, so nobody retypes a patient. Patients from the feed stay until the EHR discharges them.
+        </div>
+        {!on ? <div data-adt-off style={{ fontSize: 13 }}>Not switched on for this hospital. Ask DocTurn to switch on the EHR admission feed.</div>
+          : failed ? <div role="alert" style={{ fontSize: 13, color: "var(--destructive)" }}>The feed's status could not be loaded.</div>
+          : !s ? <div style={{ fontSize: 13, color: "var(--muted-foreground)" }}>Loading…</div>
+          : (
+            <React.Fragment>
+              <div style={{ fontSize: 13, lineHeight: 1.7, marginBottom: 12 }}>
+                <div>Send messages to: <code style={{ overflowWrap: "anywhere" }}>POST {url}</code></div>
+                <div>Header: <code>Authorization: Bearer &lt;token&gt;</code> · one message per request</div>
+                <div data-adt-counts>Received {s.received} · refused {s.rejected} · last message {when(s.lastMessageAt)}{s.lastEvent ? " (" + s.lastEvent + ")" : ""}</div>
+              </div>
+              {token && (
+                <div data-adt-token style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--status-pending-bg)", marginBottom: 12 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 6 }}>Copy this token now. It is not shown again.</div>
+                  <code style={{ fontSize: 12.5, overflowWrap: "anywhere", userSelect: "all" }}>{token}</code>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Button size="sm" icon="key-round" onClick={issue} disabled={busy}>{s.connected ? "Generate a new token" : "Generate token"}</Button>
+                {s.connected && <Button size="sm" variant="outline" icon="unplug" onClick={revoke} disabled={busy}>Disconnect</Button>}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 10, lineHeight: 1.45 }}>Tested against generated messages, not yet against a live interface engine. Field positions vary by hospital and are confirmed during onboarding.</div>
+            </React.Fragment>
+          )}
+      </div>
+    </Card>
+  );
+}
+
+Object.assign(window, { IntegrationsPanel, IntegrationsOverview, IntStatusBadge, AdtFeedCard });

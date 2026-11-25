@@ -166,8 +166,10 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
                   <span style={{ fontSize: 15, fontWeight: 700, whiteSpace: "nowrap" }}>Patient {p.initials}</span>
                   {p.acuity ? <AcuityChip level={p.acuity} /> : null}
                   <span style={{ fontSize: 12.5, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>· Room {p.room}</span>
+                  <BedReadyChip p={p} />
                   {p.expiresAt ? <ExpiryBadge expiresAt={p.expiresAt} /> : <Badge status="pending">Pending</Badge>}
                 </div>
+                <PatientIdentity p={p} />
                 <div style={{ fontSize: 13.5, color: "var(--foreground)", marginTop: 4 }}>{p.complaint}</div>
                 <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 12.5, color: "var(--muted-foreground)", flexWrap: "wrap" }}>
                   <span style={{ display: "flex", gap: 5, alignItems: "center" }}><Icon name="ambulance" size={13} />from {p.from}</span>
@@ -209,7 +211,8 @@ function HospitalistDashboard({ pending, onAccept, onDecline, myAdmissions = [],
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <Avatar initials={p.initials} size={34} tint="blue" />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Patient {p.initials} · Room {p.room}</div>
+                <div style={{ fontSize: 14, fontWeight: 600, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>Patient {p.initials} · Room {p.room} <BedReadyChip p={p} /></div>
+                <PatientIdentity p={p} />
                 {p.onBehalfOf && <div data-accepted-obo style={{ fontSize: 12, color: "var(--muted-foreground)", fontWeight: 600 }}>Accepted for {p.onBehalfOf.name} · on their census</div>}
                 <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <span>{p.complaint}</span>

@@ -140,6 +140,7 @@ function OrgSettings() {
           each card carries purpose, PHI/BAA, live status, switch, test, set-up. */}
       <div id="integrations" style={{ marginTop: 18 }}>
         <IntegrationsPanel />
+        {(window.DT.getState().session || {}).role === "director" && <AdtFeedCard />}
       </div>
 
       {/* Danger zone — platform operators only, bottom of settings (standard

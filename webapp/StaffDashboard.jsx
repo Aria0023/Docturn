@@ -17,6 +17,30 @@ function sdIn(ms, now) {
   return m <= 0 ? "lapsing now" : "lapses in " + m + " min";
 }
 
+/* The charge nurse's one action on an admission: the bed is ready, and where. */
+function StaffBed({ r }) {
+  const [unit, setUnit] = React.useState(r.bedUnit || "");
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => { setUnit(r.bedUnit || ""); }, [r.bedUnit]);
+  const set = (ready) => {
+    setBusy(true);
+    window.DT.actions.setBedReady(r.patientId, ready, unit).catch(() => window.DT.set((s) => { s.__toast = { tone: "rejected", title: "Couldn't update the bed", msg: "The server did not accept that. Nothing changed." }; return s; })).then(() => setBusy(false));
+  };
+  if (r.bedReadyAt) return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <BedReadyChip p={r} />
+      <Button size="sm" variant="ghost" onClick={() => set(false)} disabled={busy}>Undo</Button>
+    </span>
+  );
+  return (
+    <span data-staff-bed style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <input aria-label={"Unit or bed for patient " + r.initials} value={unit} maxLength={30} placeholder="Unit / bed" onChange={(e) => setUnit(e.target.value)}
+        style={{ height: 34, width: 120, padding: "0 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", fontFamily: "var(--font-sans)", fontSize: 13 }} />
+      <Button size="sm" icon="bed" onClick={() => set(true)} disabled={busy}>Bed ready</Button>
+    </span>
+  );
+}
+
 function StaffDashboard({ board, boardLoaded, boardError, onMessage, myUserId }) {
   const [now, setNow] = React.useState(Date.now());
   React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
@@ -45,6 +69,7 @@ function StaffDashboard({ board, boardLoaded, boardError, onMessage, myUserId })
   const patientCell = (r) => (
     <div style={{ flex: "1 1 180px", minWidth: 0 }}>
       <div style={{ fontSize: 14, fontWeight: 700 }}>Patient {r.initials}{r.room && r.room !== "—" ? " · " + r.room : ""}</div>
+      <PatientIdentity p={r} />
       {r.issue && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.issue}</div>}
     </div>
   );
@@ -83,9 +108,10 @@ function StaffDashboard({ board, boardLoaded, boardError, onMessage, myUserId })
           <div key={r.id} data-staff-accepted style={rowStyle}>
             <Badge status="accepted">Accepted</Badge>
             {patientCell(r)}
-            <div style={{ flex: "2 1 240px", minWidth: 0, fontSize: 13 }}>
+            <div style={{ flex: "2 1 200px", minWidth: 0, fontSize: 13 }}>
               {(r.attending && r.attending.name) || "A hospitalist"}{r.request && r.request.resolvedAt ? " · " + sdAgo(r.request.resolvedAt, now) : ""}
             </div>
+            <StaffBed r={r} />
           </div>
         ))}
       </Card>
