@@ -1,7 +1,7 @@
 import supertest from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestApp, login, DEV_PASSWORD, type TestContext } from "./helpers.js";
-import { _resetDemoGate, DEMO_RATE_LIMIT, hashDemoToken } from "../server/demo-gate.js";
+import { _resetDemoGate, DEMO_RATE_LIMIT } from "../server/demo-gate.js";
 
 const KEY = "owner-key-0123456789abcdefghij";
 let ctx: TestContext;
@@ -44,7 +44,7 @@ describe("the demo is by invitation", () => {
     const owner = await anon.get("/demo-access/" + KEY);
     expect(owner.headers.location).toBe("/");
     const ownerCookie = cookieFrom(owner);
-    expect(ownerCookie).toMatch(/^dt_demo=v1\.0\./);
+    expect(ownerCookie).toMatch(/^dt_demo=v2\.owner\./);
     expect(String(owner.headers["set-cookie"])).toMatch(/HttpOnly/i);
 
     // The operator signs in (through the gate) and makes a link.
@@ -74,18 +74,33 @@ describe("the demo is by invitation", () => {
     // A tampered cookie, a made-up link and someone else's cookie format all fail.
     expect((await anon.get("/api/config").set("Cookie", guest.slice(0, -3) + "abc")).status).toBe(401);
     expect((await anon.get("/demo-access/" + "x".repeat(40))).headers.location).toBe("/home?demo=expired");
-    expect((await anon.get("/api/config").set("Cookie", "dt_demo=v1.0.99999999999999.forged")).status).toBe(401);
+    expect((await anon.get("/api/config").set("Cookie", "dt_demo=v2.owner.99999999999999.forgedforgedforgedforged")).status).toBe(401);
+    // A link whose end date was edited no longer matches its signature.
+    const [rand, , sig] = path.split("/").pop()!.split(".");
+    expect((await anon.get(`/demo-access/${rand}.${Date.now() + 365 * 86_400_000}.${sig}`)).headers.location).toBe("/home?demo=expired");
 
     // Revoked: the same cookie stops working.
     expect((await dev.delete(`/api/dev/demo-invites/${stored.id}`)).status).toBe(204);
     expect((await anon.get("/api/config").set("Cookie", guest)).status).toBe(401);
     expect((await anon.get(path)).headers.location).toBe("/home?demo=expired");
 
-    // An invitation past its end date is refused even when its link is opened again.
-    const ended = "e".repeat(40);
-    await ctx.storage.createDemoInvite({ tokenHash: hashDemoToken(ended), label: "Ended", createdBy: null, expiresAt: new Date(Date.now() - 60_000) });
-    expect((await anon.get("/demo-access/" + ended)).headers.location).toBe("/home?demo=expired");
-    expect((await dev.get("/api/dev/demo-invites")).body.invites.find((x: { label: string }) => x.label === "Ended").state).toBe("expired");
+    // The database is reset (a demo host with no persistent database restarts
+    // empty): an unexpired link still works and is listed again as restored.
+    const second = await dev.post("/api/dev/demo-invites").send({ label: "Dr. Ortiz", days: 3 });
+    const ortiz = (await ctx.storage.listDemoInvites()).find((x) => x.label === "Dr. Ortiz")!;
+    await ctx.handle.db.delete((await import("../shared/schema.js")).demoInvites);
+    _resetDemoGate();
+    expect(await ctx.storage.listDemoInvites()).toHaveLength(0);
+    const again = await anon.get(second.body.path);
+    expect(again.headers.location).toBe("/");
+    expect((await anon.get("/api/config").set("Cookie", cookieFrom(again))).status).toBe(200);
+    const restored = (await ctx.storage.listDemoInvites())[0]!;
+    expect(restored.label).toBe("Restored after a server restart");
+    expect(Math.abs(restored.expiresAt.getTime() - ortiz.expiresAt.getTime())).toBeLessThan(1000);
+    // …and a cookie issued before the reset keeps working too.
+    await ctx.handle.db.delete((await import("../shared/schema.js")).demoInvites);
+    _resetDemoGate();
+    expect((await anon.get("/api/config").set("Cookie", cookieFrom(again))).status).toBe(200);
   });
 
   it("slows down one invitation that makes an unusual number of requests; link guessing is limited", async () => {
@@ -95,6 +110,7 @@ describe("the demo is by invitation", () => {
     const anon = supertest(ctx.app);
     let limited = 0;
     for (let i = 0; i < 14; i++) if ((await anon.get("/demo-access/" + "g".repeat(40) + i)).status === 429) limited++;
+    // With the gate off no link can be made (it would be signed with nothing).
     expect(limited).toBe(4); // 10 tries a minute
     expect(DEMO_RATE_LIMIT).toBeGreaterThan(500);
   });

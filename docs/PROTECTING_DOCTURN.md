@@ -27,6 +27,20 @@ that the demo is by invitation.
 
 Give each person their own link. A shared link cannot tell you who looked.
 
+### On a host without a permanent database
+
+The current Render demo has no database attached, so it starts empty at every
+restart, and a free Render service restarts after it has been idle. A link's
+end date is signed into the link itself, so links keep working through a
+restart. What a restart loses is the record around them: who each link was
+for, when it was used, and any revocation. A link used after a restart is
+listed again as "made before the last restart", and you can revoke it again.
+
+Until a database is attached, treat revocation as temporary: to end every
+link for certain, change `DEMO_ACCESS_KEY`. Attaching the Postgres database
+that `render.yaml` describes makes invitations, revocations and everything
+else in the demo permanent.
+
 The gate is off when the key is not set, and it never applies to an instance
 holding real patient data: there people have their own accounts.
 

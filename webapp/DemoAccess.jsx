@@ -19,7 +19,7 @@ function DemoAccess() {
     if (!label.trim()) { setError("Say who the link is for."); return; }
     setBusy(true); setError("");
     act.create(label.trim(), Number(days)).then((r) => { setMade({ label: r.invite.label, link: window.location.origin + r.path, expiresAt: r.invite.expiresAt }); setLabel(""); load(); })
-      .catch(() => setError("The server did not create the link.")).then(() => setBusy(false));
+      .catch((e) => setError(String(e && e.message) === "demo_gate_off" ? "The gate is off, so there is nothing for a link to open. Set DEMO_ACCESS_KEY on the server first." : "The server did not create the link.")).then(() => setBusy(false));
   };
   const revoke = (i) => { if (window.confirm("Revoke the link for " + i.label + "? It stops working within 20 seconds.")) act.revoke(i.id).then(load).catch(() => setError("The server did not revoke that link.")); };
   const copy = () => { try { navigator.clipboard.writeText(made.link); window.DT.set((s) => { s.__toast = { tone: "accepted", title: "Link copied", msg: made.label }; return s; }); } catch (e) {} };
@@ -64,7 +64,7 @@ function DemoAccess() {
             <div style={{ marginTop: 10 }}><Button size="sm" variant="outline" icon="copy" onClick={copy}>Copy link</Button></div>
           </div>
         )}
-        <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 12, lineHeight: 1.45 }}>One link per person, so you can see who looked and revoke one without affecting the others. An invitation making more than {data.rateLimit} requests in five minutes is slowed down.</div>
+        <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 12, lineHeight: 1.45 }}>A link keeps working until its end date even if this server restarts and loses its records; it then shows below as made before the last restart. On a server without a permanent database a revocation is also lost at a restart, so to end every link for certain, change the access key. One link per person, so you can see who looked and revoke one without affecting the others. An invitation making more than {data.rateLimit} requests in five minutes is slowed down.</div>
       </Card>
 
       <Card style={{ padding: 0, overflow: "hidden" }}>
@@ -75,7 +75,7 @@ function DemoAccess() {
               <thead><tr>{["For", "Status", "Ends", "First opened", "Last seen", "Times opened", ""].map((h, i) => <th key={i} style={th}>{h}</th>)}</tr></thead>
               <tbody>{data.invites.map((i) => (
                 <tr key={i.id} data-demo-invite={i.state}>
-                  <td style={Object.assign({}, td, { fontWeight: 600, whiteSpace: "normal" })}>{i.label}</td>
+                  <td style={Object.assign({}, td, { fontWeight: 600, whiteSpace: "normal" })}>{i.restored ? "A link made before the last restart" : i.label}</td>
                   <td style={td}><Badge status={i.state === "active" ? "accepted" : i.state === "revoked" ? "rejected" : "expired"}>{i.state === "active" ? "Active" : i.state === "revoked" ? "Revoked" : "Ended"}</Badge></td>
                   <td style={td}>{when(i.expiresAt)}</td><td style={td}>{when(i.firstUsedAt)}</td><td style={td}>{when(i.lastSeenAt)}</td><td style={td}>{i.visits}</td>
                   <td style={td}>{i.state === "active" && <Button size="sm" variant="outline" icon="ban" onClick={() => revoke(i)}>Revoke</Button>}</td>
