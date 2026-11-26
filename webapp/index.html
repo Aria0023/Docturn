@@ -240,6 +240,7 @@
 <script type="text/babel" src="/ScheduleSync.jsx"></script>
 <script type="text/babel" src="/OnCallBoard.jsx"></script>
 <script type="text/babel" src="/AccountSettings.jsx"></script>
+<script type="text/babel" src="/DemoAccess.jsx"></script>
 <script type="text/babel" src="/Handoffs.jsx"></script>
 <script type="text/babel" src="/StaffDashboard.jsx"></script>
 <script type="text/babel" src="/Codes.jsx"></script>
@@ -372,6 +373,7 @@ const NAV = {
     // hospital's `billing` tab on purpose: this one is never gated by the
     // tenant module (the console has to work in order to switch it on).
     { id: "dev-billing", label: "Billing", icon: "receipt" },
+    { id: "demo-access", label: "Demo access", icon: "lock-keyhole" },
     { id: "settings",   label: "Organization config", icon: "sliders-horizontal" },
     { id: "users",      label: "Users by org", icon: "life-buoy" },
     { id: "compliance", label: "Compliance", icon: "shield-check" },
@@ -403,6 +405,7 @@ const TOP = {
   admissions: ["Admissions log", "Every patient routed to a hospitalist, from the server — newest first"],
   reports:    ["Reports", "Team census, pending admits and your own saved reports"],
   codes:      ["Codes", "Call a code, see who has answered, and track each step"],
+  "demo-access": ["Demo access", "Who can open the demo, and when they last did"],
   handoff:    ["Hand-off", "What the next physician needs to know about each of your patients"],
   history:    ["Assignment history", "Everything you've accepted — rolling 3 days"],
   team:       ["My care team", "Link midlevels and partners into your on-call unit"],
@@ -901,6 +904,7 @@ function App() {
   else if (nav === "reports") screen = <Reports />;
   else if (nav === "codes") screen = <Codes />;
   else if (nav === "handoff") screen = <Handoffs />;
+  else if (nav === "demo-access" && role === "developer") screen = <DemoAccess />;
   else if (nav === "history") screen = <HospitalistHistory admissions={st.myAdmissions} days={3} />;
   else if (nav === "team") {
     const consultCounts = {};

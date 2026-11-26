@@ -75,6 +75,7 @@ import {
   userPresence,
   patientHandoffs,
   assignmentFacts,
+  demoInvites,
   codeProtocols,
   codeActivations,
   codeActivationMembers,
@@ -1744,6 +1745,37 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(patientHandoffs.organizationId, orgId), eq(patientHandoffs.id, id), eq(patientHandoffs.toUserId, userId), isNull(patientHandoffs.acknowledgedAt)))
       .returning();
     return row;
+  }
+
+  // ── demo invitations (server/demo-gate.ts) ───────────────────────────────
+  async listDemoInvites() {
+    return this.db.select().from(demoInvites).orderBy(desc(demoInvites.id)).limit(200);
+  }
+  async createDemoInvite(row: typeof demoInvites.$inferInsert) {
+    const [saved] = await this.db.insert(demoInvites).values(row).returning();
+    return saved!;
+  }
+  async getDemoInvite(id: number) {
+    const [row] = await this.db.select().from(demoInvites).where(eq(demoInvites.id, id));
+    return row;
+  }
+  async getDemoInviteByHash(tokenHash: string) {
+    const [row] = await this.db.select().from(demoInvites).where(eq(demoInvites.tokenHash, tokenHash));
+    return row;
+  }
+  async revokeDemoInvite(id: number, at: Date) {
+    const [row] = await this.db.update(demoInvites).set({ revokedAt: at }).where(and(eq(demoInvites.id, id), isNull(demoInvites.revokedAt))).returning();
+    return row;
+  }
+  /** A link was opened: count the visit. */
+  async recordDemoVisit(id: number, at: Date) {
+    await this.db
+      .update(demoInvites)
+      .set({ visits: sql`${demoInvites.visits} + 1`, lastSeenAt: at, firstUsedAt: sql`COALESCE(${demoInvites.firstUsedAt}, ${at})` })
+      .where(eq(demoInvites.id, id));
+  }
+  async touchDemoInvite(id: number, at: Date) {
+    await this.db.update(demoInvites).set({ lastSeenAt: at }).where(eq(demoInvites.id, id));
   }
 
   // ── shared presence (server/services/presence.ts) ────────────────────────

@@ -48,6 +48,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
 import Babel from "@babel/standalone";
+import { minify } from "terser";
 
 export const BUILD_MANIFEST = "build-manifest.json";
 export const BUILD_SCHEMA = 1;
@@ -306,22 +307,38 @@ export async function buildWebapp({ srcDir, outDir, log = console.log } = {}) {
     outputs.push(out);
     return out;
   };
-  const banner = (name) => `/* ${name.replace(/\*\//g, "* /")} */\n`;
+  // What is shipped is not the source: no file names, no comments, and every
+  // local name shortened (terser). Top-level names are kept — the scripts are
+  // classic scripts that find each other's functions as globals — so this
+  // changes how the code reads, never what it does. It raises the cost of
+  // copying; it is not a lock.
+  const harden = async (code, label) => {
+    const out = await minify(code, {
+      compress: { passes: 2, drop_debugger: true },
+      mangle: { toplevel: false },
+      format: { comments: false },
+      toplevel: false,
+    });
+    if (!out.code) throw new Error(`build-webapp: could not minify the ${label}`);
+    return out.code;
+  };
+  const sep = (c) => c.trim() + "\n";
 
-  const runtimeCode = runtimePieces.map((p) => banner(p.name) + p.code.trim() + "\n").join(";\n");
+  const runtimeCode = await harden(runtimePieces.map((p) => sep(p.code)).join(";\n"), "runtime bundle");
   assertParses(runtimeCode, "runtime bundle");
   const runtime = runtimePieces.length ? emit("runtime", "js", runtimeCode) : null;
 
   const counters = {};
-  const groupOutputs = groups.map((g) => {
+  const groupOutputs = [];
+  for (const g of groups) {
     const stem = g.inline ? "inline" : "app";
     counters[stem] = (counters[stem] || 0) + 1;
-    const code = g.items.map((c) => banner(c.name) + c.code + "\n").join(";\n");
+    const code = await harden(g.items.map((c) => sep(c.code)).join(";\n"), `${stem} bundle`);
     // The first piece's prologue must stay first so the bundle keeps its mode.
     if (g.strict && !startsStrict(code)) throw new Error("build-webapp: lost the use-strict prologue");
     assertParses(code, `${stem} bundle`);
-    return emit(counters[stem] > 1 ? `${stem}-${counters[stem]}` : stem, "js", code);
-  });
+    groupOutputs.push(emit(counters[stem] > 1 ? `${stem}-${counters[stem]}` : stem, "js", code));
+  }
 
   // 4. Stylesheets → hashed copies (only when they have no relative url()).
   const links = parseLinks(html);
@@ -330,8 +347,10 @@ export async function buildWebapp({ srcDir, outDir, log = console.log } = {}) {
     if ((l.attrs.rel || "").toLowerCase() !== "stylesheet") continue;
     const p = localPath(l.attrs.href);
     if (!p) continue;
-    const css = (await readSource(p)).toString("utf8");
-    if (/url\(\s*(['"]?)(?!data:|\/|https?:)/i.test(css)) continue; // relative url(): keep in place
+    const raw = (await readSource(p)).toString("utf8");
+    if (/url\(\s*(['"]?)(?!data:|\/|https?:)/i.test(raw)) continue; // relative url(): keep in place
+    // Shipped without its notes.
+    const css = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\n[ \t]*(?=\n)/g, "");
     const out = emit(p.replace(/^.*\//, "").replace(/\.css$/, ""), "css", css);
     cssSwaps.push({ link: l, url: out.url });
   }
@@ -357,6 +376,8 @@ export async function buildWebapp({ srcDir, outDir, log = console.log } = {}) {
   // HTML comments describe the development shell; drop them, then the lines
   // that only held a removed tag or comment.
   shell = shell.replace(/<!--[\s\S]*?-->/g, "");
+  // The same for the notes inside inline stylesheets.
+  shell = shell.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_m, open, css, close) => open + css.replace(/\/\*[\s\S]*?\*\//g, "") + close);
   shell = shell.replace(/\n[ \t]*(?=\n)/g, "");
   const VERSION_PLACEHOLDER = "__DOCTURN_BUILD_VERSION__";
   shell = shell.replace(/<meta charset="utf-8">/i, (m) => `${m}\n<meta name="docturn-build" content="${VERSION_PLACEHOLDER}">`);

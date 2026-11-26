@@ -523,6 +523,21 @@
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var yr = $("[data-year]"); if (yr) yr.textContent = "© " + new Date().getFullYear();
 
+  // The demo is by invitation. Someone who followed a link into the app
+  // without one (or with one that has ended) lands here and is told so.
+  var demo = (/[?&]demo=(invite|expired)/.exec(window.location.search) || [])[1];
+  if (demo) {
+    var note = document.createElement("div");
+    note.setAttribute("role", "status");
+    note.setAttribute("data-demo-notice", demo);
+    note.style.cssText = "position:sticky;top:0;z-index:50;padding:12px 18px;text-align:center;font:600 14px/1.45 'Instrument Sans',system-ui,sans-serif;background:#0B7A72;color:#fff";
+    note.textContent = demo === "expired"
+      ? "That demo link has ended or is no longer valid. Ask us for a new one using the form below."
+      : "The DocTurn demo is by invitation. Request access using the form below and we will send you a link.";
+    document.body.insertBefore(note, document.body.firstChild);
+    try { window.history.replaceState(null, "", window.location.pathname + window.location.hash); } catch (e) {}
+  }
+
   var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* Bedside-monitor sweep: the trace is written left to right with an erase gap ahead of the pen. */

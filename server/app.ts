@@ -38,6 +38,7 @@ import { rememberSessionPrincipal, sessionPolicyGate } from "./session-policy.js
 import { createSessionStore } from "./session-store.js";
 import { requestMetricsMiddleware } from "./services/request-metrics.js";
 import { mountWebapp, type WebappOptions } from "./webapp-static.js";
+import { demoGate } from "./demo-gate.js";
 import { toSafeUser } from "@shared/schema";
 
 export interface CreateAppOptions {
@@ -95,6 +96,10 @@ export function createApp(opts: CreateAppOptions = {}): Express {
   // instance lives in server/config.ts so the compliance monitor can probe the
   // SAME middleware for the headers it emits.
   app.use(securityHeaders);
+  // The demo is by invitation (server/demo-gate.ts): before anything of the
+  // app — its API or its files — is served. A no-op unless DEMO_ACCESS_KEY is
+  // set on a demo instance.
+  app.use(demoGate());
   // Global JSON body parser (1 MB). The attachment-upload route needs a larger
   // limit for base64 file bodies, so it is excluded here and mounts its OWN
   // express.json({ limit: "12mb" }) — otherwise this 1 MB cap would reject the

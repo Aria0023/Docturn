@@ -60,6 +60,12 @@ export function publicPurchaseRequest(r: PurchaseRequest) {
 
 export function registerWebsiteRoutes(app: Express) {
   const dir = siteDir();
+  // Search engines index the public website and nothing of the app.
+  app.get("/robots.txt", (_req, res) => {
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.type("text/plain").send("User-agent: *\nAllow: /home\nAllow: /site/\nDisallow: /\n");
+  });
+
 
   app.get(["/home", "/home/"], (_req, res) => {
     if (!dir) return res.status(404).type("text/plain").send("Website not found");

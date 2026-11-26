@@ -6489,6 +6489,13 @@
     var sess = DT.getState().session;
     if (orgId == null || (sess && moduleOrgId(sess.org) === Number(orgId))) hydrateModules();
   }
+  // Demo invitations (platform operator; server/demo-gate.ts).
+  DT.actions.demoInvites = {
+    list: function () { return apiWithBody("GET", "/api/dev/demo-invites"); },
+    create: function (label, days) { return apiWithBody("POST", "/api/dev/demo-invites", { label: label, days: days }); },
+    revoke: function (id) { return apiWithBody("DELETE", "/api/dev/demo-invites/" + Number(id)); },
+  };
+
   // A staff member's job title (server/routes/accounts.ts). The list is re-read.
   DT.actions.setUserJobTitle = function (id, name, title) {
     return apiWithBody("POST", "/api/accounts/" + Number(id) + "/job-title", { jobTitle: String(title || "").trim().slice(0, 60) }).then(function () {

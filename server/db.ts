@@ -964,6 +964,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS billing_plans_code_uniq ON billing_plans(code)
 ALTER TABLE billing_plans ADD COLUMN IF NOT EXISTS show_on_website BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Order requests from the public website (/home). Business contacts only.
+-- Invitations to the demo: only a hash of each link's token. Mirrors shared/schema.ts.
+CREATE TABLE IF NOT EXISTS demo_invites (
+  id SERIAL PRIMARY KEY,
+  token_hash TEXT NOT NULL,
+  label TEXT NOT NULL,
+  created_by INTEGER,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMP NOT NULL,
+  revoked_at TIMESTAMP,
+  first_used_at TIMESTAMP,
+  last_seen_at TIMESTAMP,
+  visits INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS demo_invites_token_uniq ON demo_invites(token_hash);
+
 -- Who each server holds a live socket for. Ids only, no FKs. Mirrors shared/schema.ts.
 CREATE TABLE IF NOT EXISTS user_presence (
   instance_id TEXT NOT NULL,

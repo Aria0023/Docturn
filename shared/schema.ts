@@ -1617,6 +1617,26 @@ export type ReportDefinition = typeof reportDefinitions.$inferSelect;
 export type InsertReportDefinition = typeof reportDefinitions.$inferInsert;
 
 /**
+ * Invitations to the demo (server/demo-gate.ts). With the gate on, nobody
+ * reaches the app — its screens or its code — without a link made here.
+ * Only the SHA-256 of a link's token is stored. Platform-level (no tenant).
+ * Mirrored in server/db.ts.
+ */
+export const demoInvites = pgTable("demo_invites", {
+  id: serial("id").primaryKey(),
+  tokenHash: text("token_hash").notNull(),
+  label: text("label").notNull(),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  firstUsedAt: timestamp("first_used_at"),
+  lastSeenAt: timestamp("last_seen_at"),
+  visits: integer("visits").notNull().default(0),
+});
+export type DemoInvite = typeof demoInvites.$inferSelect;
+
+/**
  * Who each server holds a live realtime socket for (server/services/presence.ts),
  * so "who is online" is right with more than one server. Ids only; rows of a
  * server that stops refreshing age out. No foreign keys: a presence row must

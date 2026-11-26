@@ -534,6 +534,22 @@ export function mountWebapp(app: Express, dir: string, opts: WebappOptions = {})
   app.get(["/", "/index.html"], sendShell);
   if (manifest) app.get(manifest.index, sendShell);
 
+  /* the built app never hands out its source ---------------------------------
+     With a build on disk the browser runs /dist/*.js only. The readable
+     originals beside it (every .jsx, store.js, api-bridge.js) are not needed
+     by anyone, so they are not served: 404, exactly like a file that is not
+     there. Without a build (local development) they ARE the app. */
+  if (manifest) {
+    const SOURCE_ONLY = /^\/(?:[^/]+\.jsx|store\.js|api-bridge\.js)$/i;
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if ((req.method === "GET" || req.method === "HEAD") && SOURCE_ONLY.test(req.path)) {
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(404).type("text/plain").send("Not found");
+      }
+      next();
+    });
+  }
+
   /* compressed static files (precompressed sibling or runtime-compressed) */
   app.use(async (req: Request, res: Response, next: NextFunction) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
