@@ -255,16 +255,20 @@ describe("bundle mode: precompiled, production React, compressed, immutable hash
     expect(left.map((s) => s.src)).toEqual([manifest.bundles.runtime, ...manifest.bundles.compiled]);
 
     const runtime = readFileSync(join(dir, manifest.bundles.runtime!.slice(1)), "utf8");
-    expect(runtime).toContain("react.production.min.js");
-    expect(runtime).toContain("react-dom.production.min.js");
-    expect(runtime).not.toContain("react.development.js");
+    // The bundle carries no file names or comments any more, so production
+    // React is recognised by what only it contains: the error-decoder link
+    // (development React spells its errors out instead).
+    expect(runtime).toContain("error-decoder");
+    expect(runtime).not.toMatch(/react(?:-dom)?\.(?:production\.min|development)\.js/);
+    expect(runtime).not.toContain("Warning: Each child in a list");
+    expect(runtime).not.toMatch(/\/\*[\s\S]{0,200}?\.jsx/);
     expect(runtime).toContain("window.__dtLock"); // the inline boot block moved here
     for (const url of [manifest.bundles.runtime!, ...manifest.bundles.compiled]) {
       const code = readFileSync(join(dir, url.slice(1)), "utf8");
       expect(() => new vm.Script(code, { filename: url })).not.toThrow();
     }
     const app1 = readFileSync(join(dir, manifest.bundles.compiled[0]!.slice(1)), "utf8");
-    expect(app1.startsWith("/* /components.jsx */\n\"use strict\";")).toBe(true); // same mode as in-browser
+    expect(app1.startsWith("\"use strict\";")).toBe(true); // same mode as in-browser, and no file-name banner
     expect(app1).toContain("React.createElement");
   });
 
@@ -310,8 +314,14 @@ describe("bundle mode: precompiled, production React, compressed, immutable hash
       const etag = String(br.headers["etag"]);
       expect((await rawGet(app, url, { ...BR, "If-None-Match": etag })).status).toBe(304);
     }
-    for (const p of ["/manifest.webmanifest", "/icons/icon-192.png", "/api-bridge.js"]) {
+    for (const p of ["/manifest.webmanifest", "/icons/icon-192.png", "/tokens.css"]) {
       expect((await supertest(app).get(p)).headers["cache-control"], p).toBe("no-cache, must-revalidate");
+    }
+    // The readable sources beside the build are not served at all.
+    for (const p of ["/api-bridge.js", "/store.js", "/components.jsx", "/Codes.jsx"]) {
+      const res = await supertest(app).get(p);
+      expect([p, res.status, res.headers["cache-control"]]).toEqual([p, 404, "no-store"]);
+      expect(res.text).toBe("Not found");
     }
     const total = Object.values(manifest.files).reduce((a, f) => a + f.br, 0);
     expect(total).toBeLessThan(400 * 1024); // was 5.7 MB uncompressed before the build
