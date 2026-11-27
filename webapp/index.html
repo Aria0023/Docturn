@@ -96,6 +96,11 @@
   @keyframes dt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   @keyframes dt-toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   textarea, input { font-family: var(--font-sans); }
+  /* Modal dialogs (components.jsx Modal). The page behind does not scroll
+     when the dialog's own scroll reaches its end. */
+  dialog.dt-modal { overscroll-behavior: contain; }
+  dialog.dt-modal::backdrop { background: rgba(2, 6, 23, .55); background: var(--overlay, rgba(2, 6, 23, .55)); }
+  dialog.dt-modal:not([open]) { display: none; }
   /* Mobile shell height: 100vh for engines without dvh (iOS < 15.4), 100dvh
      where supported — both divided by --dt-zoom, because a person on "large"
      text zooms :root and viewport units do NOT shrink with it (the shell would

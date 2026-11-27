@@ -891,7 +891,7 @@ function Messaging() {
                   if (kind === "image") return (
                     <button key={at.id} type="button" data-attachment-open data-kind="image" onClick={() => setViewing(at)} aria-label={"Open image " + (at.fileName || "")}
                       style={{ clear: "both", display: "block", marginTop: 6, padding: 0, border: "none", background: "transparent", cursor: "pointer", maxWidth: "100%" }}>
-                      <img src={attachmentUrl(at)} alt={at.fileName} onLoad={onLateContent}
+                      <img src={attachmentUrl(at)} alt={at.fileName} decoding="async" onLoad={onLateContent}
                         style={{ maxWidth: "min(220px, 100%)", maxHeight: 220, borderRadius: 10, display: "block", border: "1px solid var(--border)" }} />
                     </button>
                   );

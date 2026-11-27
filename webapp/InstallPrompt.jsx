@@ -51,8 +51,15 @@ function InstallPrompt() {
   }
   function install() {
     if (deferred) {
-      deferred.prompt();
-      if (deferred.userChoice) deferred.userChoice.then(function () { setDeferred(null); window.__dtInstallEvent = null; });
+      // The browser's install event works once. Let go of it before asking,
+      // so a second tap can never call a spent event.
+      const ev = deferred;
+      setDeferred(null);
+      window.__dtInstallEvent = null;
+      try {
+        const asked = ev.prompt();
+        if (asked && typeof asked.catch === "function") asked.catch(function () {});
+      } catch (e) { /* already used, or the browser declined to show it */ }
     } else if (ios) {
       setIosHelp(true);
     }

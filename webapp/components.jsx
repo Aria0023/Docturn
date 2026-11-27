@@ -6,13 +6,18 @@ function Icon({ name, size = 16, color, strokeWidth = 2, style, className }) {
   React.useEffect(() => {
     const host = ref.current;
     if (!host || !window.lucide) return;
-    host.innerHTML = `<i data-lucide="${name}"></i>`;
+    // Built as a node, never as an HTML string: an icon name can come from
+    // data (an integration card, a custom tile), and text placed in markup is
+    // how script gets injected.
+    const glyph = document.createElement("i");
+    glyph.setAttribute("data-lucide", String(name || ""));
+    host.replaceChildren(glyph);
     window.lucide.createIcons({ attrs: { width: size, height: size, "stroke-width": strokeWidth }, root: host });
   }, [name, size, strokeWidth]);
   return <span ref={ref} className={className} style={{ display: "inline-flex", alignItems: "center", color, flex: "none", ...style }} />;
 }
 
-function Button({ variant = "default", size = "default", icon, children, onClick, type, full, style, title, disabled, "aria-label": ariaLabel }) {
+function Button({ variant = "default", size = "default", icon, children, onClick, type, form, full, style, title, disabled, "aria-label": ariaLabel }) {
   const base = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7,
     fontFamily: "var(--font-sans)", fontWeight: 500, borderRadius: "var(--radius-md)",
@@ -44,7 +49,7 @@ function Button({ variant = "default", size = "default", icon, children, onClick
     link: { background: "transparent", color: "var(--primary-ink)", textDecoration: "underline", height: "auto", padding: 0 },
   };
   return (
-    <button type={type || "button"} onClick={disabled ? undefined : onClick} disabled={!!disabled} title={title} aria-label={ariaLabel || (children ? undefined : title)}
+    <button type={type || "button"} form={form} onClick={disabled ? undefined : onClick} disabled={!!disabled} title={title} aria-label={ariaLabel || (children ? undefined : title)}
       onMouseEnter={(e) => { if (variant === "ghost" || variant === "secondary") e.currentTarget.style.background = "var(--secondary)"; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-md)"; if (variant === "outline") e.currentTarget.style.background = "var(--secondary)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = variants[variant].background; if (variant === "default") e.currentTarget.style.boxShadow = "var(--shadow-sm)"; }}
       style={{ ...base, ...sizes[size], ...variants[variant], ...style, ...(disabled ? { opacity: 0.5, cursor: "not-allowed" } : {}) }}>
@@ -184,25 +189,45 @@ function Logo({ height = 30 }) {
 }
 
 function Modal({ title, subtitle, icon, onClose, children, width = 460 }) {
+  // The browser's own dialog: it traps focus, makes the page behind inert,
+  // closes on Escape, and hands focus back to whatever opened it — none of
+  // which the old hand-rolled overlay did for keyboard or screen-reader users.
+  const ref = React.useRef(null);
+  const rid = (typeof React.useId === "function") ? React.useId() : null;
+  const titleId = "dtm" + String(rid || "x").replace(/[^a-zA-Z0-9_-]/g, "");
   React.useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    const d = ref.current;
+    if (!d) return undefined;
+    const held = document.activeElement;
+    try {
+      if (typeof d.showModal === "function") { if (!d.open) d.showModal(); }
+      else d.setAttribute("open", "");
+    } catch (e) { d.setAttribute("open", ""); }
+    // A field that asked for focus keeps it; opening must not steal it.
+    if (held && held !== document.body && d.contains(held) && typeof held.focus === "function") held.focus();
+    return () => { try { if (d.open && typeof d.close === "function") d.close(); } catch (e) { /* already closed */ } };
   }, []);
+  const outside = (e) => {
+    if (e.target !== e.currentTarget) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) { if (onClose) onClose(); }
+  };
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60, background: "var(--overlay)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, animation: "dt-toast-in .18s ease" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: width, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2xl, 0 24px 60px rgba(2,6,23,.28))", border: "1px solid var(--border)" }}>
+    <dialog ref={ref} className="dt-modal" aria-labelledby={titleId} onClick={outside}
+      onCancel={(e) => { e.preventDefault(); if (onClose) onClose(); }}
+      style={{ width: width, maxWidth: "calc(100% - 48px)", maxHeight: "90vh", overflowY: "auto", padding: 0, margin: "auto", color: "var(--foreground)", background: "var(--card)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-2xl, 0 24px 60px rgba(2,6,23,.28))", border: "1px solid var(--border)", animation: "dt-toast-in .18s ease" }}>
+      <div>
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "18px 20px", borderBottom: "1px solid var(--border)" }}>
           {icon && <span style={{ width: 36, height: 36, borderRadius: "var(--radius-md)", background: "var(--status-active-bg)", color: "var(--primary-ink)", display: "flex", alignItems: "center", justifyContent: "center", flex: "none" }}><Icon name={icon} size={18} /></span>}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
+            <h2 id={titleId} style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{title}</h2>
             {subtitle && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)", marginTop: 1 }}>{subtitle}</div>}
           </div>
           <button type="button" onClick={onClose} title="Close" aria-label="Close" style={{ width: 36, height: 36, margin: "-4px -6px 0 0", borderRadius: "var(--radius-md)", border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted-foreground)", flex: "none" }}><Icon name="x" size={18} /></button>
         </div>
         <div style={{ padding: 20 }}>{children}</div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

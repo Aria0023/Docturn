@@ -36,7 +36,7 @@ function MfaShell({ appName, children }) {
 
 function MfaErrorBox({ children }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
+    <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
       <Icon name="alert-triangle" size={15} style={{ marginTop: 1, flex: "none" }} /><span>{children}</span>
     </div>
   );
@@ -133,11 +133,17 @@ function MfaEnrollScreen({ me, appName, onDone, onSignOut }) {
 
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>2. Enter the 6-digit code it shows</div>
-            <Field icon="shield-check" value={code} onChange={(v) => { setCode(v); if (err) setErr(null); }} placeholder="123 456" />
+            {/* A real form: Enter submits, the phone shows a number pad, and
+                the browser offers the code from a text message. */}
+            <form id="dt-mfa-enrol" onSubmit={(e) => { e.preventDefault(); verify(); }}>
+              <Field label="Authentication code" icon="shield-check" value={code} onChange={(v) => { setCode(v); if (err) setErr(null); }} placeholder="123 456"
+                name="code" autoComplete="one-time-code" inputMode="numeric" autoCorrect="off" autoCapitalize="none" spellCheck={false} enterKeyHint="done"
+                inputProps={{ "aria-invalid": err ? true : undefined }} />
+            </form>
           </div>
 
           {err && <MfaErrorBox>{err}</MfaErrorBox>}
-          <Button full size="lg" icon="check" onClick={verify} style={{ opacity: (busy || !setup || code.replace(/\s+/g, "").length < 6) ? 0.55 : 1, pointerEvents: (busy || !setup) ? "none" : "auto" }}>{busy ? "Verifying…" : "Turn on two-factor authentication"}</Button>
+          <Button full size="lg" icon="check" type="submit" form="dt-mfa-enrol" style={{ opacity: (busy || !setup || code.replace(/\s+/g, "").length < 6) ? 0.55 : 1, pointerEvents: (busy || !setup) ? "none" : "auto" }}>{busy ? "Verifying…" : "Turn on two-factor authentication"}</Button>
 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontSize: 12, color: "var(--muted-foreground)" }}>
             <Icon name="lock" size={13} />Nothing else in {appName || "DocTurn"} is available until this is done.
@@ -191,12 +197,17 @@ function MfaChallengeScreen({ appName, challenge, onCancel }) {
         Enter the code from your authenticator app, a text-message code, or one of your backup codes.
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div onKeyDown={(e) => { if (e.key === "Enter") submit(); }}>
-          <Field icon="shield-check" value={code} onChange={(v) => { setCode(v); if (err) setErr(null); }} placeholder="123 456" />
-        </div>
+        {/* A real form (Enter submits; safe while composing text with an
+            input method). Backup codes contain letters, so the keyboard
+            stays a text keyboard here. */}
+        <form id="dt-mfa-challenge" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <Field label="Authentication code" icon="shield-check" value={code} onChange={(v) => { setCode(v); if (err) setErr(null); }} placeholder="123 456"
+            name="code" autoComplete="one-time-code" autoCorrect="off" autoCapitalize="none" spellCheck={false} enterKeyHint="done"
+            inputProps={{ autoFocus: true, "aria-invalid": err ? true : undefined }} />
+        </form>
         {err && <MfaErrorBox>{err}</MfaErrorBox>}
-        {smsNote && <div style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{smsNote}</div>}
-        <Button full size="lg" icon="log-in" onClick={submit} style={{ opacity: (busy || code.replace(/\s+/g, "").length < 6) ? 0.55 : 1, pointerEvents: busy ? "none" : "auto" }}>{busy ? "Verifying…" : "Verify and sign in"}</Button>
+        {smsNote && <div role="status" style={{ fontSize: 12.5, color: "var(--muted-foreground)" }}>{smsNote}</div>}
+        <Button full size="lg" icon="log-in" type="submit" form="dt-mfa-challenge" style={{ opacity: (busy || code.replace(/\s+/g, "").length < 6) ? 0.55 : 1, pointerEvents: busy ? "none" : "auto" }}>{busy ? "Verifying…" : "Verify and sign in"}</Button>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--muted-foreground)" }}>
           <button onClick={sms} style={{ border: "none", background: "transparent", color: "var(--primary-ink)", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Text me a code instead</button>
           <button onClick={onCancel} style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11.5, padding: 0 }}>Back to sign in</button>

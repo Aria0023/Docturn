@@ -97,6 +97,30 @@ const HEARTBEAT_MS = 20_000;
  */
 export const TYPING_MIN_INTERVAL_MS = 500;
 
+/**
+ * True when the handshake's Origin is this app's own host. Clients that are
+ * not browsers (native shells, scripts) send no Origin and are judged by their
+ * session alone. WS_ALLOWED_ORIGINS (comma-separated hosts) admits a front
+ * door that serves the page under a different name than the one it forwards.
+ */
+export function originAllowed(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  let host: string;
+  try {
+    host = new URL(String(origin)).host.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (!host) return false;
+  const first = (v: string | string[] | undefined) =>
+    (String(Array.isArray(v) ? v[0] : v || "").split(",")[0] ?? "").trim().toLowerCase();
+  const own = [first(req.headers.host), first(req.headers["x-forwarded-host"])].filter(Boolean);
+  if (own.includes(host)) return true;
+  const extra = (process.env.WS_ALLOWED_ORIGINS || "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean);
+  return extra.includes(host);
+}
+
 export class WsHub implements WsFanout {
   private wss: WebSocketServer;
   /** userId → set of sockets (a user may have multiple tabs/devices). */
@@ -160,6 +184,13 @@ export class WsHub implements WsFanout {
   }
 
   private async onConnection(ws: WebSocket, req: IncomingMessage) {
+    // A browser attaches the session cookie to a WebSocket opened from ANY
+    // site, and the same-origin policy does not apply to WebSockets. So a
+    // page on another origin is refused here, before the session is read.
+    if (!originAllowed(req)) {
+      ws.close(1008, "origin_not_allowed");
+      return;
+    }
     const session = await this.resolveSession(req);
     if (session === "locked") {
       ws.close(APP_LOCK_CLOSE_CODE, "session_locked");

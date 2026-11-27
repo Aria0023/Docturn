@@ -1,3 +1,4 @@
+import { withoutInlineScript } from "../webapp-static.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +71,10 @@ export function registerWebsiteRoutes(app: Express) {
   app.get(["/home", "/home/"], (_req, res) => {
     if (!dir) return res.status(404).type("text/plain").send("Website not found");
     res.setHeader("Cache-Control", "no-cache");
+    // The page carries no script of its own (it loads /site/site.js), so it
+    // is served under a policy that refuses any script written into it.
+    const csp = res.getHeader("Content-Security-Policy");
+    if (typeof csp === "string") res.setHeader("Content-Security-Policy", withoutInlineScript(csp));
     res.sendFile(join(dir, "index.html"));
   });
   app.get("/pricing", (_req, res) => res.redirect("/home#pricing"));

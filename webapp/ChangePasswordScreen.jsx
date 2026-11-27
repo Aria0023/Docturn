@@ -19,12 +19,16 @@ function ChangePasswordScreen({ me, appName, onDone, onSignOut }) {
   const [confirm, setConfirm] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState(null);
-  const weak = next && (next.length < 8 || /^(docturn|password)$/i.test(next));
-  const mismatch = confirm && next !== confirm;
-  const canSave = cur && next.length >= 8 && !weak && next === confirm && !busy;
+  // Complaints wait until the person has left the field (or tried to save):
+  // telling someone their password is too short on the first keystroke is noise.
+  const [seen, setSeen] = React.useState({});
+  const isWeak = next.length < 8 || /^(docturn|password)$/i.test(next);
+  const weak = seen.next && next && isWeak;
+  const mismatch = seen.confirm && confirm && next !== confirm;
+  const canSave = cur && !isWeak && next === confirm && !busy;
 
   function submit() {
-    if (!canSave) return;
+    if (!canSave) { setSeen({ next: true, confirm: true }); return; }
     setBusy(true); setErr(null);
     Promise.resolve(actions.changePassword(cur, next))
       .then((r) => {
@@ -52,18 +56,20 @@ function ChangePasswordScreen({ me, appName, onDone, onSignOut }) {
         <p style={{ fontSize: 13.5, color: "var(--muted-foreground)", margin: "0 0 20px", textAlign: "center", lineHeight: 1.5 }}>
           {me && me.name ? <b style={{ color: "var(--foreground)" }}>{me.name}</b> : "Your account"} was set up with a one-time password. Choose your own before continuing — nobody else will know it.
         </p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <Field label="Temporary password" icon="lock" type="password" value={cur} onChange={setCur} placeholder="The password you were given" inputProps={{ autoComplete: "current-password", name: "current" }} />
-          <Field label="New password" icon="key-round" type="password" value={next} onChange={setNext} placeholder="At least 8 characters" error={weak ? "At least 8 characters, and not a demo or default password." : ""} inputProps={{ autoComplete: "new-password", name: "new" }} />
-          <Field label="Confirm new password" icon="key-round" type="password" value={confirm} onChange={setConfirm} placeholder="Re-enter it" error={mismatch ? "Passwords don't match." : ""} inputProps={{ autoComplete: "new-password", name: "confirm", onKeyDown: (e) => { if (e.key === "Enter") submit(); } }} />
+        <form onSubmit={(e) => { e.preventDefault(); submit(); }} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Tells a password manager which account the new password belongs to. */}
+          <input type="text" name="username" autoComplete="username" value={(me && me.username) || ""} readOnly tabIndex={-1} aria-hidden="true" style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none", border: 0, padding: 0 }} />
+          <Field label="Temporary password" icon="lock" type="password" value={cur} onChange={setCur} placeholder="The password you were given" required inputProps={{ autoComplete: "current-password", name: "current" }} />
+          <Field label="New password" icon="key-round" type="password" value={next} onChange={setNext} placeholder="At least 8 characters" error={weak ? "At least 8 characters, and not a demo or default password." : ""} required onBlur={() => setSeen((x) => Object.assign({}, x, { next: true }))} inputProps={{ autoComplete: "new-password", name: "new", minLength: 8 }} />
+          <Field label="Confirm new password" icon="key-round" type="password" value={confirm} onChange={setConfirm} placeholder="Re-enter it" error={mismatch ? "Passwords don't match." : ""} required onBlur={() => setSeen((x) => Object.assign({}, x, { confirm: true }))} inputProps={{ autoComplete: "new-password", name: "confirm" }} />
           {err && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
+            <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 12px", borderRadius: "var(--radius-md)", background: "var(--status-rejected-bg)", border: "1px solid var(--status-rejected)", color: "var(--status-rejected)", fontSize: 12.5, lineHeight: 1.45 }}>
               <Icon name="alert-triangle" size={15} style={{ marginTop: 1, flex: "none" }} /><span>{err}</span>
             </div>
           )}
-          <Button full size="lg" onClick={submit} style={{ opacity: canSave ? 1 : 0.55, pointerEvents: canSave ? "auto" : "none" }}>{busy ? "Saving…" : "Save and continue"}</Button>
-          <button onClick={onSignOut} style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", fontSize: 12.5, cursor: "pointer", fontFamily: "var(--font-sans)", padding: 6 }}>Sign out instead</button>
-        </div>
+          <Button full size="lg" type="submit" style={{ opacity: canSave ? 1 : 0.55, pointerEvents: canSave ? "auto" : "none" }}>{busy ? "Saving…" : "Save and continue"}</Button>
+          <button type="button" onClick={onSignOut} style={{ border: "none", background: "transparent", color: "var(--muted-foreground)", fontSize: 12.5, cursor: "pointer", fontFamily: "var(--font-sans)", padding: 6 }}>Sign out instead</button>
+        </form>
       </div>
     </div>
   );

@@ -3883,7 +3883,7 @@
         bannerEl.style.cssText = "position:fixed;top:calc(10px + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:45;width:min(640px,calc(100vw - 24px));display:flex;flex-direction:column;gap:8px;font-family:inherit;";
         document.body.appendChild(bannerEl);
       }
-      bannerEl.innerHTML = "";
+      bannerEl.replaceChildren();
       due.slice(0, 3).forEach(function (b) {
         var critical = b.sev === "critical";
         var row = document.createElement("div");
