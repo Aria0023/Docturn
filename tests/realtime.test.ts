@@ -30,10 +30,10 @@ afterAll(async () => {
   await ctx.handle.close();
 });
 
-async function loginCookie(username: string): Promise<string> {
+async function loginCookie(username: string, orgCode = "ISPN"): Promise<string> {
   const res = await supertest(ctx.app)
     .post("/api/login")
-    .send({ orgCode: "ISPN", username, password: DEV_PASSWORD });
+    .send({ orgCode, username, password: DEV_PASSWORD });
   expect(res.status).toBe(200);
   const setCookie = res.headers["set-cookie"];
   const raw = Array.isArray(setCookie) ? setCookie[0] : setCookie;
@@ -174,6 +174,83 @@ describe("realtime websocket", () => {
     chenWs.close();
     patelWs.close();
     lopezWs.close();
+  });
+
+  /**
+   * A.CON-SHO-21: the typing relay resolves the conversation's participants
+   * server-side in the sender's org. Client-supplied participantIds are
+   * ignored, non-members are dropped, and a per-socket throttle stops floods.
+   */
+  describe("typing relay", () => {
+    const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    it("relays only to the conversation's real participants and ignores client-supplied ids", async () => {
+      const patelId = ctx.seedResult.userIds.patel!;
+      const lopezId = ctx.seedResult.userIds.lopez!;
+      const devId = ctx.seedResult.userIds.dev!;
+      const chenWs = await connect(await loginCookie("chen"));
+      const patelWs = await connect(await loginCookie("patel"));
+      const lopezWs = await connect(await loginCookie("lopez"));
+      const devWs = await connect(await loginCookie("dev", "DOCTURN"));
+      await Promise.all([chenWs, patelWs, lopezWs, devWs].map((c) => c.waitFor((m) => m.type === "CONNECTION_ESTABLISHED")));
+
+      const chen = supertest.agent(ctx.app);
+      await chen.post("/api/login").send({ orgCode: "ISPN", username: "chen", password: DEV_PASSWORD });
+      const convo = await chen.post("/api/messaging/conversations").send({ type: "direct", participantIds: [patelId] });
+      expect(convo.status).toBe(201);
+
+      // The client lies: names lopez (same org, not a member) and dev (other tenant).
+      const patelGot = patelWs.waitFor((m) => m.type === "user_typing" && m.conversationId === convo.body.id);
+      chenWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: convo.body.id, participantIds: [lopezId, devId, patelId] }));
+      const evt = await patelGot;
+      expect(evt).toEqual({ type: "user_typing", userId: ctx.seedResult.userIds.chen, conversationId: convo.body.id, typing: true });
+      await settle(150);
+      expect(lopezWs.buffer.some((m) => m.type === "user_typing")).toBe(false);
+      expect(devWs.buffer.some((m) => m.type === "user_typing")).toBe(false);
+
+      // A non-member (lopez) typing "in" that conversation reaches nobody.
+      lopezWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: convo.body.id, participantIds: [patelId, ctx.seedResult.userIds.chen] }));
+      // A member of another tenant naming this conversation id reaches nobody either.
+      devWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: convo.body.id, participantIds: [patelId] }));
+      await settle(200);
+      expect(patelWs.buffer.filter((m) => m.type === "user_typing").map((m) => m.userId)).toEqual([ctx.seedResult.userIds.chen]);
+      expect(chenWs.buffer.some((m) => m.type === "user_typing")).toBe(false);
+
+      // Garbage conversation ids are dropped silently.
+      chenWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: "abc" }));
+      chenWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: 999999 }));
+      await settle(150);
+      expect(patelWs.buffer.filter((m) => m.type === "user_typing")).toHaveLength(1);
+
+      for (const c of [chenWs, patelWs, lopezWs, devWs]) c.close();
+    });
+
+    it("throttles a typing flood per socket but always lets the start→stop transition through", async () => {
+      const patelId = ctx.seedResult.userIds.patel!;
+      const chenWs = await connect(await loginCookie("chen"));
+      const patelWs = await connect(await loginCookie("patel"));
+      await Promise.all([chenWs, patelWs].map((c) => c.waitFor((m) => m.type === "CONNECTION_ESTABLISHED")));
+      const chen = supertest.agent(ctx.app);
+      await chen.post("/api/login").send({ orgCode: "ISPN", username: "chen", password: DEV_PASSWORD });
+      const convo = await chen.post("/api/messaging/conversations").send({ type: "direct", participantIds: [patelId] });
+
+      // 300 events as fast as the socket will take them (the reported amplification test).
+      for (let i = 0; i < 300; i++) {
+        chenWs.ws.send(JSON.stringify({ type: "typing_start", conversationId: convo.body.id }));
+      }
+      await settle(300);
+      const relayed = patelWs.buffer.filter((m) => m.type === "user_typing" && m.conversationId === convo.body.id);
+      expect(relayed.length).toBeGreaterThanOrEqual(1);
+      expect(relayed.length).toBeLessThanOrEqual(2);
+
+      // The stop that follows a relayed start is delivered even inside the window.
+      const stop = patelWs.waitFor((m) => m.type === "user_typing" && m.typing === false);
+      chenWs.ws.send(JSON.stringify({ type: "typing_stop", conversationId: convo.body.id }));
+      await expect(stop).resolves.toMatchObject({ typing: false });
+
+      chenWs.close();
+      patelWs.close();
+    });
   });
 
   it("broadcasts presence to the tenant on connect", async () => {
